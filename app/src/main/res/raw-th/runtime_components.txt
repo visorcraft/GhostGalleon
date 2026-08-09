@@ -1,0 +1,31 @@
+ส่วนประกอบรันไทม์
+==================
+
+นี่คือส่วนประกอบของระบบและบริการภายนอกที่ Ghost Galleon พึ่งพาขณะทำงาน ไม่มีส่วนประกอบใดถูกรวมกับแอป
+ส่วนประกอบ Android ได้รับจากระบบปฏิบัติการ และบริการเครือข่ายดำเนินการโดยผู้ให้บริการของตัวเองภายใต้เงื่อนไขของตัวเอง
+
+ส่วนประกอบแพลตฟอร์ม Android (ทั้งหมด Apache-2.0 เป็นส่วนหนึ่งของ Android Open
+Source Project - https://source.android.com):
+
+- เฟรมเวิร์กแพลตฟอร์ม Android 14 (API level 34)
+  Window/input/display API ที่ Ghost Galleon สร้างขึ้น รวมถึง
+  การรองรับ multi-display Presentation และ SECONDARY_HOME
+- Android Runtime (ART)
+  ทำงานแอปและไลบรารีที่รวมอยู่
+- Storage Access Framework (SAF / DocumentsUI)
+  ให้สิทธิ์เข้าถึงโฟลเดอร์ ROM แบบถาวร Ghost Galleon ไม่ขอสิทธิ์พื้นที่เก็บข้อมูลโดยตรง
+- โคเดคสื่อของระบบ (animated WebP / GIF ผ่าน AnimatedImageDrawable)
+  ขับเคลื่อนผลงานศิลปะบนแผงฮีโร่แบบหลายชั้น
+
+บริการและแอปภายนอก:
+
+- SteamGridDB Web API - https://www.steamgriddb.com
+  การค้นหาผลงานศิลปะเพิ่มเติม ต้องการคีย์ API ที่ผู้ใช้ให้มา บริการดำเนินการโดย
+  ผู้ให้บริการของตัวเองภายใต้เงื่อนไขของตัวเอง ไม่มีโค้ดหรือข้อมูลของ SteamGridDB ถูกรวม
+- แอปตัวจำลอง (RetroArch, Azahar, Eden, melonDualDS, Dolphin,
+  NetherSX2, PPSSPP, Flycast, Cemu, Winlator)
+  ผู้ใช้ติดตั้งและอัปเดตแยกต่างหาก แต่ละแอปมีใบอนุญาตของตัวเอง Ghost Galleon เพียงส่ง
+  launch intents ไปยังแอปเหล่านั้น
+
+ข้อความใบอนุญาต Apache-2.0 ฉบับเต็มที่ครอบคลุมส่วนประกอบแพลตฟอร์ม Android ข้างต้น
+แสดงไว้ในแท็บบุคคลที่สาม

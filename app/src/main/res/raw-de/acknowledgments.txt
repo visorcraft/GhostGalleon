@@ -1,0 +1,53 @@
+Danksagungen und Zuschreibungen
+==============================
+
+Urheberrecht
+------------
+
+Ghost Galleon ist (c) VisorCraft LLC und Mitwirkende und wird unter der
+GNU General Public License v3.0 vertrieben (siehe den Tab „Ghost Galleon-Lizenz“).
+
+Design-Inspiration
+------------------
+
+Ghost Galleons Modell eines dualen Bildschirm-Launchers – ein
+interaktives Deck auf einem Panel mit einer Hero-Vorschau auf dem
+anderen, plus SECONDARY_HOME-Unterstützung für das untere Display –
+folgt dem Weg, den Cocoon
+(https://github.com/inssekt/CocoonFE) vorgezeichnet hat, der Dual-Screen-Shell
+für das One X Sugar. Das Kartenkarussell des Spielmodus orientiert sich an Daijisho
+(https://github.com/TapiocaFox/Daijishou) und GameDeck
+(https://play.google.com/store/apps/details?id=app.gamedeck). Das Grid-Mode-Layout ist
+eine liebevolle Hommage an die Nintendo-3DS- und Wii-Startmenüs.
+Von keinem dieser Projekte wird Code verwendet; sie dienten lediglich als Inspiration für das Design.
+
+Grafiken
+--------
+
+Box-Art und Hero-Bilder werden von SteamGridDB
+(https://www.steamgriddb.com) abgerufen, wenn der Benutzer einen API-Schlüssel
+bereitstellt, oder aus lokalen Bildern neben der ROM-Bibliothek des Benutzers
+gelesen. Die Grafiken gehören ihren jeweiligen Erstellern und werden nur
+auf dem Gerät zwischengespeichert.
+
+Emulatoren
+----------
+
+Ghost Galleon startet – aber bündelt oder verbreitet niemals – diese
+Emulatorprojekte. Wir danken ihren Autoren: RetroArch, Azahar, Eden,
+melonDS / melonDualDS, Dolphin, NetherSX2 / AetherSX2, PPSSPP, Flycast,
+Cemu und Winlator. Jeder ist eine separate App unter eigener Lizenz.
+
+Laufzeitumgebung
+----------------
+
+Erstellt mit Kotlin und AndroidX auf der Android-Plattform. Siehe die
+Tabs „Drittanbieter“ und „Laufzeitkomponenten“ für die vollständigen Listen.
+
+Fehlende Zuschreibungen melden
+------------------------------
+
+Wenn Sie Code oder Assets in dieser App finden, die wir nicht
+zugeordnet haben, eröffnen Sie bitte ein Issue unter
+https://github.com/visorcraft/GhostGalleon/issues und wir werden den
+Eintrag korrigieren.

@@ -1,0 +1,55 @@
+Crédits et attributions
+=======================
+
+Copyright
+---------
+
+Ghost Galleon est © VisorCraft LLC et contributeurs, distribué sous licence
+GNU General Public License v3.0 (voir l'onglet Licence Ghost Galleon).
+
+Inspiration du design
+---------------------
+
+Le modèle de lanceur à deux écrans de Ghost Galleon — une interface interactive
+sur un écran avec un aperçu du héros sur l'autre, ainsi que la
+gestion de SECONDARY_HOME pour l'affichage inférieur — suit la voie tracée par
+Cocoon (https://github.com/inssekt/CocoonFE), le shell à deux écrans pour le
+One X Sugar. Le carrousel de cartes du Mode Jeu s'inspire de Daijisho
+(https://github.com/TapiocaFox/Daijishou) et GameDeck
+(https://play.google.com/store/apps/details?id=app.gamedeck). La disposition
+du Mode Grille est un hommage chaleureux aux menus d'accueil de la Nintendo 3DS et de
+la Wii. Aucun code de ces projets n'est utilisé ; ils ont simplement inspiré
+le design.
+
+Illustrations
+-------------
+
+Les jaquettes et images de héros sont récupérées depuis SteamGridDB
+(https://www.steamgriddb.com) lorsque l'utilisateur fournit une clé API, ou
+lues depuis des images locales placées à côté de la bibliothèque de ROM de
+l'utilisateur. Les illustrations appartiennent à leurs créateurs respectifs
+et sont mises en cache uniquement sur l'appareil.
+
+Émulateurs
+----------
+
+Ghost Galleon lance — sans jamais intégrer ni distribuer — ces projets
+d'émulateurs. Nous remercions leurs auteurs : RetroArch, Azahar, Eden,
+melonDS / melonDualDS, Dolphin, NetherSX2 / AetherSX2, PPSSPP, Flycast,
+Cemu et Winlator. Chacun est une application distincte sous sa propre
+licence.
+
+Environnement d'exécution
+-------------------------
+
+Développé avec Kotlin et AndroidX sur la plateforme Android. Voir les
+onglets Composants tiers et Composants d'exécution pour les listes
+complètes.
+
+Signalement des omissions d'attribution
+---------------------------------------
+
+Si vous trouvez du code ou des ressources dans cette application dont nous
+avons omis de créditer les auteurs, veuillez ouvrir un ticket à l'adresse
+https://github.com/visorcraft/GhostGalleon/issues et nous corrigerons les
+informations.

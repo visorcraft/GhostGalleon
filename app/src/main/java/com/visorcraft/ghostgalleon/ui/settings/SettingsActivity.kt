@@ -1,0 +1,2254 @@
+package com.visorcraft.ghostgalleon.ui.settings
+
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
+import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Bundle
+import android.provider.OpenableColumns
+import android.text.InputType
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.visorcraft.ghostgalleon.GhostGalleonApp
+import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.art.ScrapeJob
+import com.visorcraft.ghostgalleon.art.SgdbScraper
+import com.visorcraft.ghostgalleon.library.AppLibrary
+import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
+import com.visorcraft.ghostgalleon.library.RetroAchievements
+import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.TreeLabels
+import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
+import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.CompanionRole
+import com.visorcraft.ghostgalleon.settings.SettingsBundle
+import com.visorcraft.ghostgalleon.settings.SettingsStore
+import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.label
+import com.visorcraft.ghostgalleon.state.UIMode
+import com.visorcraft.ghostgalleon.system.SystemInfoCollector
+import com.visorcraft.ghostgalleon.system.SystemInfoFormat
+import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
+import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
+import com.visorcraft.ghostgalleon.ui.deviceProfileName
+import com.visorcraft.ghostgalleon.ui.hideStatusBar
+import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.themeName
+import java.text.NumberFormat
+
+class SettingsActivity : AppCompatActivity() {
+
+    private val app get() = application as GhostGalleonApp
+
+    /** Settings pages: Display & Grid stay together; others are their own. */
+    private enum class SettingsPage(val titleRes: Int) {
+        DISPLAY_GRID(R.string.settings_page_display_grid),
+        APPS(R.string.settings_page_apps),
+        CONTROLS(R.string.settings_page_controls),
+        LIBRARY(R.string.settings_page_library),
+        STATS(R.string.settings_page_stats),
+        SYSTEM(R.string.settings_page_system),
+        ABOUT(R.string.settings_page_about),
+    }
+
+    private var currentPage: SettingsPage = SettingsPage.DISPLAY_GRID
+    private var pageHost: LinearLayout? = null
+    private val pageBodies = mutableMapOf<SettingsPage, LinearLayout>()
+    private val navItems = mutableMapOf<SettingsPage, TextView>()
+    private var pageDropdownLabel: TextView? = null
+
+    private val remappable = listOf(
+        Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS,
+        Action.TOGGLE_MODE, Action.OPEN_SETTINGS, Action.PAGE_PREV, Action.PAGE_NEXT,
+        Action.OPEN_QUICK_PANEL,
+    )
+
+    private var captureTarget: Action? = null
+    private var captureLabel: TextView? = null
+    private var capturePulse: ObjectAnimator? = null
+
+    private var scanning = false
+
+    private val appLibrary by lazy {
+        AppLibrary(PackageManagerAppsSource(packageManager, packageName))
+    }
+
+    private var hiddenValue: TextView? = null
+    private var hiddenRomsValue: TextView? = null
+    private var dockValue: TextView? = null
+
+    private fun appLabel(packageName: String): String =
+        appLibrary.all(app.settings).firstOrNull { it.packageName == packageName }
+            ?.label ?: packageName
+
+    private fun dockEntryLabel(key: String): String {
+        val romId = SlotKey.romId(key)
+        return if (romId != null) {
+            app.romEntries.firstOrNull { it.id == romId }?.name ?: key
+        } else {
+            appLabel(key)
+        }
+    }
+
+    private fun labelForStatsKey(key: String): String = dockEntryLabel(key)
+
+    private fun statRow(label: String, value: String): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            addView(rowLabel(label), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(this@SettingsActivity).apply {
+                text = value
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(0xCCFFFFFF.toInt())
+                gravity = Gravity.END
+            })
+        }
+
+    /** Bundled pack asset basenames under assets/platform_packs/. */
+    private fun listBundledPackAssets(): List<String> =
+        runCatching {
+            assets.list("platform_packs")
+                ?.filter { it.endsWith(".json", ignoreCase = true) }
+                ?.sorted()
+                .orEmpty()
+        }.getOrDefault(emptyList())
+
+    private fun loadBundledPackAsset(assetName: String) {
+        val text = runCatching {
+            assets.open("platform_packs/$assetName").bufferedReader().use { it.readText() }
+        }.getOrNull()
+        if (text == null) {
+            Toast.makeText(
+                this,
+                getString(R.string.settings_pack_missing, assetName),
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val parsed = app.platformPackStore.importJson(text)
+        if (parsed == null) {
+            Toast.makeText(
+                this,
+                getString(R.string.settings_pack_invalid, assetName),
+                Toast.LENGTH_LONG,
+            ).show()
+        } else {
+            Toast.makeText(
+                this,
+                getString(
+                    R.string.settings_pack_loaded,
+                    assetName,
+                    parsed.platforms.joinToString { it.id },
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+            recreate()
+        }
+    }
+
+    /** Merge all bundled packs into one overlay (later packs win on id clash). */
+    private fun loadAllBundledPacks() {
+        val names = listBundledPackAssets()
+        if (names.isEmpty()) {
+            Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
+            return
+        }
+        var merged = emptyList<com.visorcraft.ghostgalleon.rom.Platform>()
+        var loaded = 0
+        for (name in names) {
+            val text = runCatching {
+                assets.open("platform_packs/$name").bufferedReader().use { it.readText() }
+            }.getOrNull() ?: continue
+            val parsed = com.visorcraft.ghostgalleon.rom.PlatformPack.parse(text) ?: continue
+            merged = com.visorcraft.ghostgalleon.rom.PlatformPack.merge(merged, parsed.platforms)
+            loaded++
+        }
+        if (merged.isEmpty()) {
+            Toast.makeText(this, R.string.settings_no_valid_packs, Toast.LENGTH_LONG).show()
+            return
+        }
+        val root = org.json.JSONObject()
+            .put("schemaVersion", 1)
+            .put("platforms", org.json.JSONArray().apply {
+                merged.forEach { p ->
+                    put(org.json.JSONObject()
+                        .put("id", p.id)
+                        .put("displayName", p.displayName)
+                        .put("shortName", p.shortName)
+                        .put("folderNames", org.json.JSONArray(p.folderNames))
+                        .put("extensions", org.json.JSONArray(p.extensions))
+                        .put("players", org.json.JSONArray().apply {
+                            p.players.forEach { pl ->
+                                put(org.json.JSONObject()
+                                    .put("id", pl.id)
+                                    .put("displayName", pl.displayName)
+                                    .put("component", pl.component)
+                                    .put("action", pl.action ?: "")
+                                    .put("uriStyle", pl.uriStyle.name)
+                                    .put("grantRead", pl.grantRead)
+                                    .put("flags", pl.flags)
+                                    .put("extras", org.json.JSONObject().apply {
+                                        pl.extras.forEach { (k, v) -> put(k, v) }
+                                    }))
+                            }
+                        }))
+                }
+            })
+        val result = app.platformPackStore.importJson(root.toString())
+        if (result == null) {
+            Toast.makeText(this, R.string.settings_pack_merge_failed, Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(
+                this,
+                getString(
+                    R.string.settings_loaded_summary,
+                    resources.getQuantityString(R.plurals.count_packs, loaded, loaded),
+                    resources.getQuantityString(
+                        R.plurals.count_platforms,
+                        result.platforms.size,
+                        result.platforms.size,
+                    ),
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+            recreate()
+        }
+    }
+
+    private fun showBundledPackCatalog() {
+        val names = listBundledPackAssets()
+        if (names.isEmpty()) {
+            Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = names.map { it.removeSuffix(".json") }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_bundled_packs)
+            .setItems(labels) { _, which ->
+                loadBundledPackAsset(names[which])
+            }
+            .setNeutralButton(R.string.action_load_all) { _, _ -> loadAllBundledPacks() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun refreshAppsRows() {
+        hiddenValue?.text = formatNumber(app.settings.hiddenPackages.size)
+        hiddenRomsValue?.text = formatNumber(app.settings.hiddenRomIds.size)
+        val dock = app.settings.dockSlots.filterNotNull()
+        dockValue?.text =
+            if (dock.isEmpty()) getString(R.string.label_empty)
+            else dock.joinToString(" · ", transform = ::dockEntryLabel)
+    }
+
+    private fun modalRow(label: String, chip: String, onChip: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(rowLabel(label).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(this@SettingsActivity).apply {
+                text = chip
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(accent)
+                background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+                val hp = dp(12); val vp = dp(6)
+                setPadding(hp, vp, hp, vp)
+                setOnClickListener { onChip() }
+            })
+        }
+
+    private fun modalEmpty(text: String): View = TextView(this).apply {
+        this.text = text
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        setTextColor(0x66FFFFFF)
+        gravity = Gravity.CENTER
+        val v = dp(16)
+        setPadding(0, v, 0, v)
+    }
+
+    private fun showHiddenAppsDialog() {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(8), pad, dp(8))
+        }
+        fun rebuild() {
+            list.removeAllViews()
+            val hidden = app.settings.hiddenPackages
+                .sortedBy { appLabel(it).lowercase() }
+            if (hidden.isEmpty()) {
+                list.addView(modalEmpty(getString(R.string.settings_no_hidden_apps)))
+            } else {
+                hidden.forEach { pkg ->
+                    list.addView(modalRow(appLabel(pkg), getString(R.string.action_unhide)) {
+                        app.updateSettings(app.settings.copy(
+                            hiddenPackages = app.settings.hiddenPackages - pkg))
+                        refreshAppsRows()
+                        rebuild()
+                    }, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                }
+            }
+        }
+        rebuild()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_hidden_apps)
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private fun showHiddenRomsDialog() {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(8), pad, dp(8))
+        }
+        fun romLabel(id: String): String {
+            val rom = app.romEntries.firstOrNull { it.id == id }
+            return rom?.name ?: id.substringAfterLast(':').ifBlank { id }
+        }
+        fun rebuild() {
+            list.removeAllViews()
+            val hidden = app.settings.hiddenRomIds
+                .sortedBy { romLabel(it).lowercase() }
+            if (hidden.isEmpty()) {
+                list.addView(modalEmpty(getString(R.string.settings_no_hidden_roms)))
+            } else {
+                hidden.forEach { id ->
+                    list.addView(modalRow(romLabel(id), getString(R.string.action_unhide)) {
+                        val next = com.visorcraft.ghostgalleon.library.HiddenRoms
+                            .unhide(app.settings.hiddenRomIds, id)
+                        app.updateSettings(app.settings.copy(hiddenRomIds = next))
+                        refreshAppsRows()
+                        rebuild()
+                    }, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                }
+            }
+        }
+        rebuild()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_hidden_roms)
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    /** Pick an installed launcher app as the companion pin. */
+    private fun showPinnedCompanionPicker() {
+        val apps = appLibrary.visible(app.settings)
+            .sortedBy { it.label.lowercase() }
+        if (apps.isEmpty()) {
+            Toast.makeText(this, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = apps.map { it.label }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_pinned_companion)
+            .setItems(labels) { _, which ->
+                val pkg = apps[which].packageName
+                app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
+                recreate()
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                app.updateSettings(app.settings.copy(companionPinnedPackage = null))
+                recreate()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun showDockDialog() {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(8), pad, dp(8))
+        }
+        fun rebuild() {
+            list.removeAllViews()
+            val dock = app.settings.dockSlots.filterNotNull()
+            if (dock.isEmpty()) {
+                list.addView(modalEmpty(getString(R.string.settings_dock_empty)))
+            } else {
+                dock.forEach { key ->
+                    list.addView(modalRow(dockEntryLabel(key), getString(R.string.action_remove)) {
+                        app.updateSettings(app.settings.copy(
+                            dockSlots = app.settings.dockSlots.map {
+                                if (it == key) null else it
+                            }))
+                        refreshAppsRows()
+                        rebuild()
+                    }, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                }
+            }
+        }
+        rebuild()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.label_dock)
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private val platformPackLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            val text = runCatching {
+                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+            if (text == null) {
+                Toast.makeText(this, R.string.settings_pack_read_failed, Toast.LENGTH_SHORT).show()
+                return@registerForActivityResult
+            }
+            val parsed = app.platformPackStore.importJson(text)
+            if (parsed == null) {
+                Toast.makeText(this, R.string.settings_platform_pack_invalid, Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(
+                    this,
+                    resources.getQuantityString(
+                        R.plurals.count_platforms_imported,
+                        parsed.platforms.size,
+                        parsed.platforms.size,
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+                recreate()
+            }
+        }
+
+    private val exportLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json")
+        ) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                val text = SettingsBundle.pack(
+                    SettingsStore.toJson(app.settings),
+                    RomLibrary.entriesToJson(app.romLibrary.load()),
+                )
+                contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray(Charsets.UTF_8))
+                } ?: error("could not open $uri")
+            }.onSuccess {
+                Toast.makeText(this, R.string.settings_exported, Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(this, R.string.settings_export_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private val importLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                val text = contentResolver.openInputStream(uri)?.use {
+                    it.readBytes().toString(Charsets.UTF_8)
+                } ?: error("could not open $uri")
+                val (settingsJson, romJson) = SettingsBundle.unpack(text)
+                val newSettings = SettingsStore.parse(settingsJson)
+                val entries = RomLibrary.parseEntries(romJson)
+                app.romLibrary.save(entries)
+                app.publishRomEntries(app.romLibrary.load())
+                app.updateSettings(newSettings)
+            }.onSuccess {
+                Toast.makeText(this, R.string.settings_imported, Toast.LENGTH_SHORT).show()
+                recreate()
+            }.onFailure {
+                Toast.makeText(this, R.string.settings_invalid_file, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private val wallpaperPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri != null) {
+                runCatching {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                app.updateSettings(app.settings.copy(wallpaperUri = uri.toString()))
+                refreshWallpaperRow()
+            }
+        }
+
+    private val themeJsonPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            val text = runCatching {
+                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+            if (text == null) {
+                Toast.makeText(this, R.string.settings_theme_read_failed, Toast.LENGTH_SHORT).show()
+                return@registerForActivityResult
+            }
+            val tokens = ThemePack.parseJson(text)
+            if (tokens == null) {
+                Toast.makeText(this, R.string.settings_theme_invalid, Toast.LENGTH_LONG).show()
+            } else {
+                app.updateSettings(ThemePack.applyCustom(app.settings, tokens, text))
+                Toast.makeText(
+                    this,
+                    getString(R.string.format_theme, tokens.displayName),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                recreate()
+            }
+        }
+
+    private var wallpaperValue: TextView? = null
+    private var wallpaperClear: View? = null
+
+    private var sgdbKeyValue: TextView? = null
+    private var scrapeLabel: TextView? = null
+    private var scrapeValue: TextView? = null
+    private var scrapeRow: View? = null
+
+    private val scrapeListener = object : ScrapeJob.Listener {
+        override fun onProgress(done: Int, total: Int) {
+            scrapeLabel?.setText(R.string.action_cancel)
+            scrapeValue?.text = getString(R.string.format_progress, done, total)
+        }
+
+        override fun onFinished(summary: SgdbScraper.Summary) {
+            refreshSgdbRows()
+            if (!isFinishing && !isDestroyed) {
+                val message = getString(
+                    if (summary.cancelled) {
+                        R.string.artwork_summary_cancelled
+                    } else {
+                        R.string.artwork_summary
+                    },
+                    summary.downloaded,
+                    summary.skipped,
+                    summary.failed,
+                )
+                Toast.makeText(this@SettingsActivity, message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun refreshSgdbRows() {
+        val hasKey = !app.settings.sgdbApiKey.isNullOrEmpty()
+        val job = app.scrapeJob
+        val running = job.isRunning
+        sgdbKeyValue?.setText(if (hasKey) R.string.label_set else R.string.label_not_set)
+        if (running) {
+            scrapeLabel?.setText(R.string.action_cancel)
+            scrapeValue?.text = if (job.progressTotal > 0) {
+                getString(
+                    R.string.format_progress,
+                    job.progressDone,
+                    job.progressTotal,
+                )
+            } else {
+                getString(R.string.glyph_ellipsis)
+            }
+        } else {
+            scrapeLabel?.setText(R.string.settings_download_artwork)
+            scrapeValue?.text = if (hasKey) "" else getString(R.string.settings_add_api_key_first)
+        }
+        val usable = hasKey || running
+        scrapeRow?.isEnabled = usable
+        scrapeRow?.alpha = if (usable) 1f else 0.5f
+    }
+
+    private fun showCollectionsDialog() {
+        val names = app.settings.collections.keys.sortedBy { it.lowercase() }
+            .toMutableList()
+        names.add(0, getString(R.string.settings_new_collection_row))
+        AlertDialog.Builder(this)
+            .setTitle(R.string.label_collections)
+            .setItems(names.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    val input = EditText(this).apply {
+                        setHint(R.string.settings_collection_name_hint)
+                        setTextColor(Color.WHITE)
+                        setHintTextColor(0x66FFFFFF)
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.settings_new_collection)
+                        .setView(input)
+                        .setPositiveButton(R.string.action_create) { _, _ ->
+                            val next = com.visorcraft.ghostgalleon.library.CollectionsOps
+                                .createCollection(
+                                    app.settings.collections,
+                                    input.text?.toString().orEmpty(),
+                                )
+                            app.updateSettings(app.settings.copy(collections = next))
+                            recreate()
+                        }
+                        .setNegativeButton(R.string.action_cancel, null)
+                        .show()
+                } else {
+                    val name = names[which]
+                    val count = app.settings.collections[name]?.size ?: 0
+                    AlertDialog.Builder(this)
+                        .setTitle(name)
+                        .setMessage(resources.getQuantityString(
+                            R.plurals.count_items,
+                            count,
+                            count,
+                        ))
+                        .setPositiveButton(R.string.action_rename) { _, _ ->
+                            val input = EditText(this).apply {
+                                setText(name)
+                                setTextColor(Color.WHITE)
+                            }
+                            AlertDialog.Builder(this)
+                                .setTitle(R.string.action_rename)
+                                .setView(input)
+                                .setPositiveButton(R.string.action_save) { _, _ ->
+                                    val next = com.visorcraft.ghostgalleon.library.CollectionsOps
+                                        .renameCollection(
+                                            app.settings.collections,
+                                            name,
+                                            input.text?.toString().orEmpty(),
+                                        )
+                                    app.updateSettings(app.settings.copy(collections = next))
+                                    recreate()
+                                }
+                                .setNegativeButton(R.string.action_cancel, null)
+                                .show()
+                        }
+                        .setNeutralButton(R.string.action_delete) { _, _ ->
+                            val next = com.visorcraft.ghostgalleon.library.CollectionsOps
+                                .deleteCollection(app.settings.collections, name)
+                            app.updateSettings(app.settings.copy(collections = next))
+                            recreate()
+                        }
+                        .setNegativeButton(R.string.action_close, null)
+                        .show()
+                }
+            }
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private fun showDefaultPlayersDialog() {
+        val platforms = com.visorcraft.ghostgalleon.rom.Platforms.ALL
+        val labels = platforms.map { p ->
+            val defId = app.settings.defaultPlayers[p.id]
+            val def = defId?.let { id -> p.players.firstOrNull { it.id == id } }
+                ?: p.player
+            getString(R.string.format_label_value, p.displayName, def.displayName)
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_default_players)
+            .setItems(labels) { _, which ->
+                val platform = platforms[which]
+                val playerLabels = platform.players.map { it.displayName }.toTypedArray()
+                AlertDialog.Builder(this)
+                    .setTitle(platform.displayName)
+                    .setItems(playerLabels) { _, pWhich ->
+                        val player = platform.players[pWhich]
+                        app.updateSettings(
+                            app.settings.copy(
+                                defaultPlayers = app.settings.defaultPlayers +
+                                    (platform.id to player.id),
+                            ),
+                        )
+                        recreate()
+                    }
+                    .setNegativeButton(R.string.action_cancel, null)
+                    .show()
+            }
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    private fun showSgdbKeyDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(app.settings.sgdbApiKey ?: "")
+            setSelectAllOnFocus(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(offTint)
+            setHint(R.string.settings_api_key_hint)
+        }
+        val container = FrameLayout(this).apply {
+            val margin = dp(20)
+            setPadding(margin, dp(12), margin, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_sgdb_api_key)
+            .setView(container)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val key = input.text.toString().trim().ifEmpty { null }
+                app.updateSettings(app.settings.copy(sgdbApiKey = key))
+                refreshSgdbRows()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun showRaUsernameDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            setText(app.settings.raUsername ?: "")
+            setSelectAllOnFocus(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(offTint)
+            setHint(R.string.settings_ra_username_hint)
+        }
+        val container = FrameLayout(this).apply {
+            val margin = dp(20)
+            setPadding(margin, dp(12), margin, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_ra_username)
+            .setView(container)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { null }
+                app.updateSettings(app.settings.copy(raUsername = name))
+                recreate()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun showRaApiKeyDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(app.settings.raApiKey ?: "")
+            setSelectAllOnFocus(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(offTint)
+            setHint(R.string.settings_api_key_hint)
+        }
+        val container = FrameLayout(this).apply {
+            val margin = dp(20)
+            setPadding(margin, dp(12), margin, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_ra_api_key)
+            .setView(container)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val key = input.text.toString().trim().ifEmpty { null }
+                app.updateSettings(app.settings.copy(raApiKey = key))
+                recreate()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    /**
+     * Demo path: parse a tiny embedded RA progress payload for the currently
+     * selected ROM (or first library ROM) so the hero RA line can be verified.
+     */
+    private fun loadRaSampleForSelection() {
+        val romId = SlotKey.romId(app.deckState.selectedKey)
+            ?: app.romEntries.firstOrNull { it.visibleInUi }?.id
+        if (romId == null) {
+            Toast.makeText(this, R.string.settings_no_rom_selected, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sample = """
+            {"ID":1,"Title":"Sample","NumAwardedToUser":3,"NumAchievements":10,"HardcoreMode":0}
+        """.trimIndent()
+        if (app.settings.raApiKey.isNullOrBlank()) {
+            app.updateSettings(app.settings.copy(raApiKey = "sample"), notify = false)
+        }
+        app.setRaProgress(romId, sample)
+        val line = RetroAchievements.heroLine(
+            app.raProgressFor(romId),
+            !app.settings.raApiKey.isNullOrBlank(),
+        )
+        Toast.makeText(
+            this,
+            line?.let(::resolveText) ?: getString(R.string.settings_ra_sample_loaded),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    private fun onScrapeRowClicked() {
+        val job = app.scrapeJob
+        if (job.isRunning) {
+            job.cancel()
+            scrapeValue?.setText(R.string.settings_cancelling)
+            return
+        }
+        val key = app.settings.sgdbApiKey ?: return
+        if (job.start(key, app.romEntries)) {
+            scrapeLabel?.setText(R.string.action_cancel)
+            scrapeValue?.setText(R.string.glyph_ellipsis)
+        }
+    }
+
+    private val romFolderPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri != null) {
+                runCatching {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val trees = app.settings.romTreeUris
+                if (uri.toString() !in trees) {
+                    app.updateSettings(app.settings.copy(romTreeUris = trees + uri.toString()))
+                }
+                refreshFolderRows()
+            }
+        }
+
+    private var folderRows: LinearLayout? = null
+
+    private fun removeRomFolder(uriString: String) {
+        runCatching {
+            contentResolver.releasePersistableUriPermission(
+                Uri.parse(uriString), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        app.updateSettings(app.settings.copy(
+            romTreeUris = app.settings.romTreeUris - uriString))
+        refreshFolderRows()
+    }
+
+    private fun refreshFolderRows() {
+        val rows = folderRows ?: return
+        rows.removeAllViews()
+        app.settings.romTreeUris.forEach { uriString ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(rowLabel(resolveText(TreeLabels.label(uriString))), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(this).apply {
+                setText(R.string.action_remove)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(accent)
+                background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+                val hp = dp(12); val vp = dp(6)
+                setPadding(hp, vp, hp, vp)
+                setOnClickListener { removeRomFolder(uriString) }
+            })
+            rows.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        }
+    }
+
+    private fun wallpaperDisplayName(uriString: String): String = runCatching {
+        val uri = Uri.parse(uriString)
+        contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+        } ?: uri.lastPathSegment ?: getString(R.string.label_set)
+    }.getOrDefault(getString(R.string.label_set))
+
+    private fun refreshWallpaperRow() {
+        val uri = app.settings.wallpaperUri
+        wallpaperValue?.text = if (uri != null) {
+            wallpaperDisplayName(uri)
+        } else {
+            getString(R.string.action_none)
+        }
+        wallpaperClear?.visibility = if (uri != null) View.VISIBLE else View.GONE
+    }
+
+    private val accent get() = app.settings.accentColor
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        title = getString(R.string.settings_title)
+        setContentView(buildContent())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideStatusBar(window)
+        app.scrapeJob.addListener(scrapeListener)
+        refreshSgdbRows()
+    }
+
+    override fun onPause() {
+        app.scrapeJob.removeListener(scrapeListener)
+        super.onPause()
+    }
+
+    private fun dp(value: Int): Int =
+        com.visorcraft.ghostgalleon.ui.UiDimens.dp(this, value)
+
+    private val integerFormat by lazy(LazyThreadSafetyMode.NONE) {
+        NumberFormat.getIntegerInstance(resources.configuration.locales[0])
+    }
+
+    private fun formatNumber(value: Int): String = integerFormat.format(value)
+
+    private fun dpF(value: Int): Float =
+        com.visorcraft.ghostgalleon.ui.UiDimens.dpF(this, value)
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or (alpha shl 24)
+
+    private val offTint = 0x4DFFFFFF.toInt()
+
+    private fun sectionHeader(text: String): TextView = TextView(this).apply {
+        this.text = text.uppercase(resources.configuration.locales[0])
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        setTextColor(withAlpha(accent, 0xCC))
+        letterSpacing = 0.15f
+    }
+    private fun sectionCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = TileBackgrounds.card(this@SettingsActivity)
+        val pad = dp(20)
+        setPadding(pad, pad, pad, pad)
+    }
+
+    private fun rowLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+        setTextColor(Color.WHITE)
+    }
+
+    /** A 64dp control row: label left, control right. */
+    private fun controlRow(label: String, control: View): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(rowLabel(label), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(control)
+        }
+
+    private fun accentSwitch(checked: Boolean, onChange: (Boolean) -> Unit): Switch =
+        Switch(this).apply {
+            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+            thumbTintList = ColorStateList(states, intArrayOf(accent, offTint))
+            trackTintList = ColorStateList(
+                states, intArrayOf(withAlpha(accent, 0x66), offTint))
+            isChecked = checked
+            setOnCheckedChangeListener { _, isOn -> onChange(isOn) }
+        }
+
+    private fun pillDrawable(fill: Int, radiusDp: Int, stroke: Int = 0): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dpF(radiusDp)
+            if (stroke != 0) setStroke(dp(1), stroke)
+        }
+
+    /**
+     * Segmented pill control (Default mode / Grid scrolling / chrome preset).
+     * Optional [bindSelected] receives a setter so hosts can rebind selection
+     * when external state changes without a full recreate.
+     * [onSelect] is last so trailing-lambda call sites keep working.
+     */
+    private fun segmented(
+        options: List<Pair<String, String>>, // value -> pill text
+        current: String,
+        bindSelected: ((setSelected: (String) -> Unit) -> Unit)? = null,
+        onSelect: (String) -> Unit,
+    ): View {
+        val track = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = pillDrawable(0xFF1C1C22.toInt(), 20, 0x26FFFFFF)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+        }
+        val pills = mutableMapOf<String, TextView>()
+        var selected = current
+
+        fun restyle() {
+            pills.forEach { (value, pill) ->
+                if (value == selected) {
+                    pill.background = pillDrawable(accent, 17)
+                    pill.setTextColor(Color.BLACK)
+                } else {
+                    pill.background = null
+                    pill.setTextColor(Color.WHITE)
+                }
+            }
+        }
+
+        options.forEach { (value, text) ->
+            val pill = TextView(this).apply {
+                this.text = text
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                letterSpacing = 0.1f
+                gravity = Gravity.CENTER
+                isFocusable = true
+                setPadding(dp(14), 0, dp(14), 0)
+                setOnClickListener {
+                    if (selected != value) {
+                        selected = value
+                        onSelect(value)
+                    }
+                    restyle()
+                }
+            }
+            pills[value] = pill
+            track.addView(pill, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)))
+        }
+        restyle()
+        bindSelected?.invoke { value ->
+            if (selected != value) {
+                selected = value
+                restyle()
+            }
+        }
+        return track
+    }
+
+    /** Two-pill segmented control for the default mode. */
+    private fun modeSegmented(current: UIMode): View = segmented(
+        listOf(
+            UIMode.GRID.name to getString(R.string.label_grid),
+            UIMode.GAME.name to getString(R.string.label_game),
+        ),
+        current.name,
+    ) { app.updateSettings(app.settings.copy(defaultMode = UIMode.valueOf(it))) }
+
+    /** Bound-key chip: card-surface pill, accent text. */
+    private fun keyChip(bound: String): TextView = TextView(this).apply {
+        text = bound
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setTextColor(accent)
+        background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+        setPadding(dp(12), dp(6), dp(12), dp(6))
+    }
+
+    /** Wide layout (top Sugar panel / docked): left nav blade. Narrow: dropdown. */
+    private fun isWideSettings(): Boolean {
+        val dm = resources.displayMetrics
+        return dm.widthPixels >= (700f * dm.density).toInt()
+    }
+
+    private fun selectPage(page: SettingsPage) {
+        currentPage = page
+        val host = pageHost ?: return
+        host.removeAllViews()
+        val body = pageBodies[page] ?: return
+        (body.parent as? ViewGroup)?.removeView(body)
+        host.addView(body, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        paintNav()
+        pageDropdownLabel?.setText(page.titleRes)
+    }
+
+    private fun paintNav() {
+        navItems.forEach { (page, view) ->
+            val selected = page == currentPage
+            view.setTextColor(if (selected) Color.BLACK else Color.WHITE)
+            view.background = if (selected) {
+                pillDrawable(accent, 14)
+            } else {
+                null
+            }
+            view.setTypeface(
+                null,
+                if (selected) android.graphics.Typeface.BOLD
+                else android.graphics.Typeface.NORMAL,
+            )
+        }
+    }
+
+    private fun buildNavBlade(): View {
+        val blade = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = GradientDrawable().apply {
+                setColor(0xFF121218.toInt())
+                cornerRadius = dpF(20)
+            }
+        }
+        SettingsPage.entries.forEach { page ->
+            val item = TextView(this).apply {
+                setText(page.titleRes)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                isFocusable = true
+                setOnClickListener { selectPage(page) }
+            }
+            navItems[page] = item
+            blade.addView(item, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(6) })
+        }
+        paintNav()
+        return blade
+    }
+
+    private fun buildPageDropdown(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(0xFF1C1C22.toInt())
+                cornerRadius = dpF(18)
+                setStroke(dp(1), 0x33FFFFFF)
+            }
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            isFocusable = true
+            setOnClickListener { showPagePicker() }
+        }
+        val label = TextView(this).apply {
+            setText(currentPage.titleRes)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(Color.WHITE)
+        }
+        pageDropdownLabel = label
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(TextView(this).apply {
+            setText(R.string.glyph_dropdown)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(accent)
+        })
+        return row
+    }
+
+    private fun showPagePicker() {
+        val labels = SettingsPage.entries.map { getString(it.titleRes) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_page_picker)
+            .setItems(labels) { _, which ->
+                selectPage(SettingsPage.entries[which])
+            }
+            .show()
+    }
+
+    private fun buildContent(): View {
+        val s = app.settings
+        val wide = isWideSettings()
+
+        SettingsPage.entries.forEach { page ->
+            pageBodies[page] = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 0, 0, dp(24))
+            }
+        }
+
+        fun addSection(page: SettingsPage, title: String, card: LinearLayout) {
+            val root = pageBodies.getValue(page)
+            root.addView(sectionHeader(title), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(24)
+                bottomMargin = dp(10)
+            })
+            root.addView(card, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        val shell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+            setPadding(dp(24), dp(20), dp(24), dp(16))
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            setText(R.string.glyph_back)
+            scaleX = if (resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+                -1f
+            } else {
+                1f
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = getString(R.string.action_back)
+            setOnClickListener { finish() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(TextView(this).apply {
+            setText(R.string.settings_title)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTextColor(Color.WHITE)
+            setPadding(dp(16), 0, 0, 0)
+        })
+        shell.addView(header, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        shell.addView(View(this).apply {
+            setBackgroundColor(accent)
+        }, LinearLayout.LayoutParams(dp(40), dp(2)).apply {
+            marginStart = dp(64)
+            topMargin = dp(6)
+            bottomMargin = dp(12)
+        })
+
+        if (!wide) {
+            shell.addView(buildPageDropdown(), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) })
+        }
+
+        fun toggle(card: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+            card.addView(controlRow(label, accentSwitch(checked, onChange)),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        }
+
+        fun seek(card: LinearLayout, label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+            val labelRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val valueView = TextView(this).apply {
+                text = formatNumber(value)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                setTextColor(accent)
+            }
+            labelRow.addView(valueView)
+            card.addView(labelRow, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+            card.addView(SeekBar(this).apply {
+                progressTintList = ColorStateList.valueOf(accent)
+                thumbTintList = ColorStateList.valueOf(accent)
+                progressBackgroundTintList = ColorStateList.valueOf(offTint)
+                minimumHeight = dp(32)
+                this.max = max - min
+                progress = value - min
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                        if (fromUser) valueView.text = formatNumber(p + min)
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar) = Unit
+                    override fun onStopTrackingTouch(sb: SeekBar) = onChange(sb.progress + min)
+                })
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        val displayCard = sectionCard()
+        toggle(displayCard, getString(R.string.settings_gyro_orientation), s.gyroEnabled) {
+            app.updateSettings(app.settings.copy(gyroEnabled = it))
+        }
+        toggle(displayCard, getString(R.string.settings_angle_lock), s.angleLock) {
+            app.updateSettings(app.settings.copy(angleLock = it))
+        }
+        toggle(displayCard, getString(R.string.settings_show_hints), s.showHints) {
+            app.updateSettings(app.settings.copy(showHints = it))
+        }
+        displayCard.addView(controlRow(
+            getString(R.string.settings_default_mode),
+            modeSegmented(s.defaultMode),
+        ),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+
+        val themeOptions = ThemePack.BUILTINS.map {
+            it.id to themeName(it.id).uppercase(resources.configuration.locales[0])
+        }
+        val themeCurrent = ThemePack.resolve(s).id.let { id ->
+            if (ThemePack.BUILTINS.any { it.id == id }) id else ThemePack.GHOST.id
+        }
+        displayCard.addView(controlRow(
+            getString(R.string.settings_theme),
+            segmented(themeOptions, themeCurrent) { packId ->
+                val tokens = ThemePack.byId(packId)
+                app.updateSettings(ThemePack.applyToSettings(app.settings, tokens))
+                recreate()
+            },
+        ), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val themeImportRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { themeJsonPicker.launch(arrayOf("application/json", "text/*", "*/*")) }
+            setOnLongClickListener {
+                if (app.settings.themeCustomJson != null) {
+                    app.updateSettings(
+                        ThemePack.applyToSettings(app.settings, ThemePack.GHOST),
+                    )
+                    Toast.makeText(
+                        this@SettingsActivity,
+                        R.string.settings_custom_theme_cleared,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    recreate()
+                }
+                true
+            }
+        }
+        themeImportRow.addView(rowLabel(getString(R.string.settings_import_theme)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        themeImportRow.addView(TextView(this).apply {
+            setText(if (s.themeCustomJson != null) {
+                R.string.label_custom
+            } else {
+                R.string.label_saf
+            })
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(if (s.themeCustomJson != null) accent else 0x66FFFFFF.toInt())
+        })
+        displayCard.addView(themeImportRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val profileOptions = listOf(
+            "auto" to getString(R.string.label_auto),
+            "onex-sugar" to getString(R.string.label_sugar),
+            "generic-dual" to getString(R.string.label_dual),
+            "single" to getString(R.string.label_single),
+        )
+        displayCard.addView(controlRow(
+            getString(R.string.settings_device_profile),
+            segmented(profileOptions, s.deviceProfileId) { id ->
+                app.updateSettings(app.settings.copy(
+                    deviceProfileId = id,
+                    userPinnedPrimaryId = null,
+                ))
+                app.refreshDisplayConfig()
+                recreate()
+            },
+        ), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val interactiveOptions = listOf(
+            "auto" to getString(R.string.label_auto),
+            "default" to getString(R.string.label_default),
+            "secondary" to getString(R.string.label_secondary),
+        )
+        val interactiveCurrent = when {
+            s.interactiveDisplayMode.startsWith("id:") -> "auto"
+            else -> s.interactiveDisplayMode
+        }
+        displayCard.addView(controlRow(
+            getString(R.string.settings_interactive_display),
+            segmented(interactiveOptions, interactiveCurrent) { mode ->
+                app.updateSettings(app.settings.copy(
+                    interactiveDisplayMode = mode,
+                    userPinnedPrimaryId = null,
+                ))
+                app.refreshDisplayConfig()
+                recreate()
+            },
+        ), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val orientOptions = listOf(
+            "auto" to getString(R.string.label_auto),
+            "sensor_landscape" to getString(R.string.label_sensor),
+            "lock_landscape" to getString(R.string.label_lock),
+        )
+        displayCard.addView(controlRow(
+            getString(R.string.settings_orientation),
+            segmented(orientOptions, s.orientationMode) { mode ->
+                app.updateSettings(app.settings.copy(orientationMode = mode))
+                recreate()
+            },
+        ), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val resetDisplayRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(
+                    userPinnedPrimaryId = null,
+                    interactiveDisplayMode = "auto",
+                    deviceProfileId = "auto",
+                ))
+                app.refreshDisplayConfig()
+                Toast.makeText(
+                    this@SettingsActivity,
+                    R.string.settings_display_roles_reset,
+                    Toast.LENGTH_SHORT,
+                ).show()
+                recreate()
+            }
+        }
+        resetDisplayRow.addView(rowLabel(getString(R.string.settings_reset_display_roles)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        displayCard.addView(resetDisplayRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_section_display), displayCard)
+
+        val chrome = s.browseChrome
+        val chromeCard = sectionCard()
+        fun chromePresetId(c: com.visorcraft.ghostgalleon.settings.BrowseChrome): String = when {
+            c.isFull() -> "full"
+            c.isMinimal() -> "minimal"
+            else -> "custom"
+        }
+        val presetOptions = listOf(
+            "minimal" to getString(R.string.label_minimal),
+            "custom" to getString(R.string.label_custom),
+            "full" to getString(R.string.label_full),
+        )
+        var rebindChromePreset: ((String) -> Unit)? = null
+        chromeCard.addView(controlRow(
+            getString(R.string.settings_chrome_preset),
+            segmented(
+                presetOptions,
+                chromePresetId(chrome),
+                bindSelected = { set -> rebindChromePreset = set },
+            ) { id ->
+                when (id) {
+                    "full" -> {
+                        app.updateSettings(
+                            app.settings.copy(
+                                browseChrome = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL,
+                            ),
+                        )
+                        recreate()
+                    }
+                    "minimal" -> {
+                        app.updateSettings(
+                            app.settings.copy(
+                                browseChrome = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL,
+                            ),
+                        )
+                        recreate()
+                    }
+                    else -> {
+                        rebindChromePreset?.invoke(
+                            chromePresetId(app.settings.browseChrome),
+                        )
+                    }
+                }
+            },
+        ), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        fun chromeFlag(
+            label: String,
+            checked: Boolean,
+            set: (com.visorcraft.ghostgalleon.settings.BrowseChrome, Boolean) ->
+                com.visorcraft.ghostgalleon.settings.BrowseChrome,
+        ) {
+            toggle(chromeCard, label, checked) { on ->
+                val next = set(app.settings.browseChrome, on)
+                app.updateSettings(app.settings.copy(browseChrome = next))
+                rebindChromePreset?.invoke(chromePresetId(next))
+            }
+        }
+        chromeFlag(getString(R.string.settings_installed_rail), chrome.installedRail) { c, v -> c.copy(installedRail = v) }
+        chromeFlag(getString(R.string.settings_games_rail), chrome.gamesRail) { c, v -> c.copy(gamesRail = v) }
+        chromeFlag(getString(R.string.settings_top_rail), chrome.topRail) { c, v -> c.copy(topRail = v) }
+        chromeFlag(getString(R.string.settings_today_rail), chrome.todayRail) { c, v -> c.copy(todayRail = v) }
+        chromeFlag(getString(R.string.settings_week_rail), chrome.weekRail) { c, v -> c.copy(weekRail = v) }
+        chromeFlag(getString(R.string.settings_month_rail), chrome.monthRail) { c, v -> c.copy(monthRail = v) }
+        chromeFlag(getString(R.string.settings_alpha_rail), chrome.alphaRail) { c, v -> c.copy(alphaRail = v) }
+        chromeFlag(getString(R.string.settings_unplayed_rail), chrome.unplayedRail) { c, v -> c.copy(unplayedRail = v) }
+        chromeFlag(getString(R.string.settings_random_chip), chrome.randomChip) { c, v -> c.copy(randomChip = v) }
+        chromeFlag(getString(R.string.settings_genre_chips), chrome.genreChips) { c, v -> c.copy(genreChips = v) }
+        chromeFlag(getString(R.string.settings_developer_chips), chrome.developerChips) { c, v -> c.copy(developerChips = v) }
+        chromeFlag(getString(R.string.settings_year_chips), chrome.yearChips) { c, v -> c.copy(yearChips = v) }
+        chromeFlag(
+            getString(R.string.settings_launchable_only),
+            chrome.launchableOnly,
+        ) { c, v -> c.copy(launchableOnly = v) }
+        chromeFlag(getString(R.string.settings_platform_chips), chrome.platformChips) { c, v -> c.copy(platformChips = v) }
+        chromeFlag(getString(R.string.settings_collection_rails), chrome.collectionRails) { c, v -> c.copy(collectionRails = v) }
+        chromeFlag(
+            getString(R.string.settings_status_pill),
+            chrome.deckStatusPill,
+        ) { c, v -> c.copy(deckStatusPill = v) }
+        chromeFlag(
+            getString(R.string.settings_resume_chip),
+            chrome.resumeChip,
+        ) { c, v -> c.copy(resumeChip = v) }
+        chromeFlag(
+            getString(R.string.settings_quick_browse),
+            chrome.quickPanelBrowse,
+        ) { c, v -> c.copy(quickPanelBrowse = v) }
+        addSection(
+            SettingsPage.DISPLAY_GRID,
+            getString(R.string.settings_chrome_section),
+            chromeCard,
+        )
+
+        val companionCard = sectionCard()
+        val roleOptions = listOf(
+            CompanionRole.HERO.name to getString(R.string.role_hero),
+            CompanionRole.NOW_PLAYING.name to getString(R.string.label_now),
+            CompanionRole.PERF_HUD.name to getString(R.string.label_perf),
+            CompanionRole.PINNED_APP.name to getString(R.string.label_pin),
+        )
+        companionCard.addView(
+            controlRow(
+                getString(R.string.settings_companion_role),
+                segmented(roleOptions, s.companionRole) { next ->
+                    app.updateSettings(app.settings.copy(companionRole = next))
+                },
+            ),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
+        val pinRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showPinnedCompanionPicker() }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(companionPinnedPackage = null))
+                Toast.makeText(this@SettingsActivity, R.string.settings_pin_cleared, Toast.LENGTH_SHORT).show()
+                recreate()
+                true
+            }
+        }
+        pinRow.addView(rowLabel(getString(R.string.settings_pinned_companion)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        pinRow.addView(TextView(this).apply {
+            text = s.companionPinnedPackage?.let { pkg ->
+                appLabel(pkg)
+            } ?: getString(R.string.settings_no_pin)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f))
+        companionCard.addView(pinRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        companionCard.addView(TextView(this).apply {
+            setText(R.string.settings_pin_help)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+            setPadding(0, 0, 0, dp(4))
+        })
+        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_companion_section), companionCard)
+
+        val gridCard = sectionCard()
+        gridCard.addView(controlRow(getString(R.string.settings_grid_scrolling), segmented(
+            listOf(
+                "vertical" to getString(R.string.label_vertical),
+                "horizontal" to getString(R.string.label_horizontal),
+            ),
+            s.gridDirection,
+        ) { app.updateSettings(app.settings.copy(gridDirection = it)) }),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        seek(gridCard, getString(R.string.settings_grid_columns), s.gridColumns, 3, 8) {
+            app.updateSettings(app.settings.copy(gridColumns = it))
+        }
+        seek(gridCard, getString(R.string.settings_icon_size), s.iconSizeDp, 48, 128) {
+            app.updateSettings(app.settings.copy(iconSizeDp = it))
+        }
+        toggle(gridCard, getString(R.string.settings_show_app_names), s.showLabels) {
+            app.updateSettings(app.settings.copy(showLabels = it))
+        }
+        val wallpaperRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { wallpaperPicker.launch(arrayOf("image/*")) }
+        }
+        wallpaperRow.addView(rowLabel(getString(R.string.settings_grid_wallpaper)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val valueView = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        wallpaperValue = valueView
+        wallpaperRow.addView(valueView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12) })
+        val clearView = TextView(this).apply {
+            setText(R.string.action_clear)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(Color.WHITE)
+            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+            val hp = dp(12); val vp = dp(6)
+            setPadding(hp, vp, hp, vp)
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(wallpaperUri = null))
+                refreshWallpaperRow()
+            }
+        }
+        wallpaperClear = clearView
+        wallpaperRow.addView(clearView)
+        refreshWallpaperRow()
+        gridCard.addView(wallpaperRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_grid_section), gridCard)
+
+        val appsCard = sectionCard()
+        val hiddenRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showHiddenAppsDialog() }
+        }
+        hiddenRow.addView(rowLabel(getString(R.string.settings_hidden_apps)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hiddenValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        }
+        hiddenRow.addView(hiddenValue)
+        appsCard.addView(hiddenRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val dockRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showDockDialog() }
+        }
+        dockRow.addView(rowLabel(getString(R.string.label_dock)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        dockValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.END
+        }
+        dockRow.addView(dockValue, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
+        appsCard.addView(dockRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        refreshAppsRows()
+        addSection(SettingsPage.APPS, getString(R.string.settings_page_apps), appsCard)
+
+        val controlsCard = sectionCard()
+        toggle(controlsCard, getString(R.string.settings_haptics), s.haptics) {
+            app.updateSettings(app.settings.copy(haptics = it))
+        }
+        val labRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                startActivity(Intent(this@SettingsActivity, ControllerLabActivity::class.java))
+            }
+        }
+        labRow.addView(rowLabel(getString(R.string.settings_controller_lab)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        labRow.addView(TextView(this).apply {
+            setText(R.string.action_open)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        controlsCard.addView(labRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        remappable.forEach { action ->
+            val bound = app.settings.keyMap.entries
+                .firstOrNull { it.value == action }?.key?.let {
+                    getString(R.string.format_keycode, it)
+                } ?: getString(R.string.settings_unbound)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+            }
+            row.addView(rowLabel(resolveText(action.label())), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val chip = keyChip(bound)
+            row.addView(chip)
+            row.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+                if (captureTarget != action) {
+                    row.background = if (hasFocus) {
+                        GradientDrawable().apply {
+                            cornerRadius = dpF(16)
+                            setStroke(dp(2), accent)
+                        }
+                    } else {
+                        null
+                    }
+                }
+            }
+            row.setOnClickListener {
+                captureTarget = action
+                captureLabel = chip
+                chip.setText(R.string.settings_press_button)
+                chip.setTextColor(Color.BLACK)
+                chip.background = pillDrawable(accent, 14)
+                capturePulse?.cancel()
+                capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.35f).apply {
+                    duration = 500
+                    repeatMode = ValueAnimator.REVERSE
+                    repeatCount = ValueAnimator.INFINITE
+                    start()
+                }
+            }
+            controlsCard.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        }
+        addSection(SettingsPage.CONTROLS, getString(R.string.settings_page_controls), controlsCard)
+
+        val libraryCard = sectionCard()
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        folderRows = rows
+        libraryCard.addView(rows, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        refreshFolderRows()
+        val addRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { romFolderPicker.launch(null) }
+        }
+        addRow.addView(rowLabel(getString(R.string.settings_add_rom_folder)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addRow.addView(TextView(this).apply {
+            setText(R.string.glyph_add)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(accent)
+            gravity = Gravity.CENTER
+            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        libraryCard.addView(addRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val hiddenRomsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showHiddenRomsDialog() }
+        }
+        hiddenRomsRow.addView(rowLabel(getString(R.string.settings_hidden_roms)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hiddenRomsValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+            text = formatNumber(app.settings.hiddenRomIds.size)
+        }
+        hiddenRomsRow.addView(hiddenRomsValue)
+        libraryCard.addView(hiddenRomsRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val rescanLabel = rowLabel(getString(R.string.settings_rescan_library))
+        fun startRescan(force: Boolean) {
+            if (scanning) return
+            scanning = true
+            rescanLabel.setText(if (force) {
+                R.string.settings_full_scan
+            } else {
+                R.string.settings_scanning
+            })
+            app.romLibrary.rescan(
+                this@SettingsActivity,
+                app.settings,
+                force = force,
+            ) { result ->
+                scanning = false
+                rescanLabel.setText(R.string.settings_rescan_library)
+                app.noteRescanOutcome(result)
+                if (result is RomLibrary.RescanResult.Success) {
+                    app.publishRomEntries(result.entries)
+                }
+                if (isFinishing || isDestroyed) return@rescan
+                when (result) {
+                    is RomLibrary.RescanResult.Success -> {
+                        val skip = result.skippedCleanTrees
+                        val msg = if (skip > 0) {
+                            resources.getQuantityString(
+                                R.plurals.count_roms_trees_unchanged,
+                                skip,
+                                result.entries.size,
+                                skip,
+                            )
+                        } else {
+                            resources.getQuantityString(
+                                R.plurals.count_roms_found,
+                                result.entries.size,
+                                result.entries.size,
+                            )
+                        }
+                        Toast.makeText(this@SettingsActivity, msg, Toast.LENGTH_LONG).show()
+                    }
+                    RomLibrary.RescanResult.Unreadable ->
+                        Toast.makeText(this@SettingsActivity,
+                            getString(R.string.settings_card_unreadable),
+                            Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        val rescanRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { startRescan(force = false) }
+            setOnLongClickListener {
+                startRescan(force = true)
+                true
+            }
+        }
+        rescanRow.addView(rescanLabel, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        rescanRow.addView(TextView(this).apply {
+            setText(R.string.settings_hold_full)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+        })
+        libraryCard.addView(rescanRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val pinFavsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                val keys = app.settings.favorites.toList()
+                if (keys.isEmpty()) {
+                    Toast.makeText(this@SettingsActivity,
+                        R.string.browse_no_favorites, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val filled = com.visorcraft.ghostgalleon.library.CollectionsOps
+                    .bulkFillSlots(app.settings.gridSlots, keys)
+                app.updateSettings(app.settings.copy(gridSlots = filled))
+                Toast.makeText(this@SettingsActivity,
+                    resources.getQuantityString(
+                        R.plurals.count_pinned_favorites_grid,
+                        keys.size,
+                        keys.size,
+                    ),
+                    Toast.LENGTH_SHORT).show()
+            }
+        }
+        pinFavsRow.addView(
+            rowLabel(getString(R.string.settings_pin_favorites)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        libraryCard.addView(pinFavsRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val collectionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showCollectionsDialog() }
+        }
+        collectionsRow.addView(rowLabel(getString(R.string.label_collections)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        collectionsRow.addView(TextView(this).apply {
+            text = formatNumber(app.settings.collections.size)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(collectionsRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val playersRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showDefaultPlayersDialog() }
+        }
+        playersRow.addView(rowLabel(getString(R.string.settings_default_players)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        playersRow.addView(TextView(this).apply {
+            text = if (app.settings.defaultPlayers.isEmpty()) {
+                getString(R.string.settings_system_defaults)
+            } else {
+                resources.getQuantityString(
+                    R.plurals.count_set,
+                    app.settings.defaultPlayers.size,
+                    app.settings.defaultPlayers.size,
+                )
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(playersRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val raUserRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showRaUsernameDialog() }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(raUsername = null))
+                Toast.makeText(this@SettingsActivity,
+                    R.string.settings_ra_username_cleared, Toast.LENGTH_SHORT).show()
+                recreate()
+                true
+            }
+        }
+        raUserRow.addView(rowLabel(getString(R.string.settings_ra_username)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        raUserRow.addView(TextView(this).apply {
+            text = app.settings.raUsername?.takeIf { it.isNotBlank() }
+                ?: getString(R.string.label_not_set)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(raUserRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val raKeyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showRaApiKeyDialog() }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(raApiKey = null))
+                Toast.makeText(this@SettingsActivity,
+                    R.string.settings_ra_api_key_cleared, Toast.LENGTH_SHORT).show()
+                recreate()
+                true
+            }
+        }
+        raKeyRow.addView(rowLabel(getString(R.string.settings_ra_api_key)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        raKeyRow.addView(TextView(this).apply {
+            setText(if (!app.settings.raApiKey.isNullOrBlank()) {
+                R.string.label_set
+            } else {
+                R.string.label_not_set
+            })
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(raKeyRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val raSampleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { loadRaSampleForSelection() }
+        }
+        raSampleRow.addView(rowLabel(getString(R.string.settings_load_ra_sample)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        raSampleRow.addView(TextView(this).apply {
+            setText(R.string.settings_demo)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+        })
+        libraryCard.addView(raSampleRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val keyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showSgdbKeyDialog() }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(sgdbApiKey = null))
+                refreshSgdbRows()
+                Toast.makeText(this@SettingsActivity,
+                    R.string.settings_api_key_cleared, Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+        keyRow.addView(rowLabel(getString(R.string.settings_sgdb_api_key)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val keyValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        }
+        sgdbKeyValue = keyValue
+        keyRow.addView(keyValue)
+        libraryCard.addView(keyRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val downloadRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { onScrapeRowClicked() }
+        }
+        val downloadLabel = rowLabel(getString(R.string.settings_download_artwork))
+        scrapeLabel = downloadLabel
+        downloadRow.addView(downloadLabel, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val downloadValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        }
+        scrapeValue = downloadValue
+        downloadRow.addView(downloadValue)
+        scrapeRow = downloadRow
+        libraryCard.addView(downloadRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        refreshSgdbRows()
+
+        val exportRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { exportLauncher.launch(getString(R.string.file_settings_export)) }
+        }
+        exportRow.addView(rowLabel(getString(R.string.settings_export)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        libraryCard.addView(exportRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val importRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { importLauncher.launch(arrayOf("application/json")) }
+        }
+        importRow.addView(rowLabel(getString(R.string.settings_import)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        libraryCard.addView(importRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val packRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                platformPackLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+            }
+            setOnLongClickListener {
+                app.platformPackStore.clear()
+                Toast.makeText(
+                    this@SettingsActivity,
+                    getString(R.string.settings_platform_pack_cleared),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                recreate()
+                true
+            }
+        }
+        packRow.addView(rowLabel(getString(R.string.settings_import_platform_pack)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        packRow.addView(TextView(this).apply {
+            text = if (app.platformPackStore.hasPack()) {
+                resources.getQuantityString(
+                    R.plurals.count_packs,
+                    Platforms.packOverlay().size,
+                    Platforms.packOverlay().size,
+                )
+            } else {
+                getString(R.string.action_none)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(packRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val bundledCount = listBundledPackAssets().size
+        val examplePackRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showBundledPackCatalog() }
+        }
+        examplePackRow.addView(rowLabel(getString(R.string.settings_bundled_packs)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        examplePackRow.addView(TextView(this).apply {
+            text = if (bundledCount > 0) {
+                resources.getQuantityString(R.plurals.count_packs, bundledCount, bundledCount)
+            } else {
+                getString(R.string.action_none)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(examplePackRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val setupRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(setupDismissed = false))
+                Toast.makeText(this@SettingsActivity,
+                    R.string.settings_setup_reset_done, Toast.LENGTH_SHORT).show()
+            }
+        }
+        setupRow.addView(rowLabel(getString(R.string.settings_reset_setup)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        libraryCard.addView(setupRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addSection(SettingsPage.LIBRARY, getString(R.string.settings_page_library), libraryCard)
+
+        val statsCard = sectionCard()
+        val most = com.visorcraft.ghostgalleon.library.LibraryStats.mostPlayed(
+            app.settings.playtimeMs, limit = 12,
+        )
+        val recent = com.visorcraft.ghostgalleon.library.LibraryStats.recentlyPlayed(
+            app.settings.lastLaunchedMs, limit = 12,
+        )
+        if (!com.visorcraft.ghostgalleon.library.LibraryStats.hasAnySessions(
+                app.settings.playtimeMs, app.settings.lastLaunchedMs,
+            )
+        ) {
+            statsCard.addView(TextView(this).apply {
+                setText(R.string.stats_no_sessions)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(0x99FFFFFF.toInt())
+                setPadding(0, dp(8), 0, dp(8))
+            })
+        } else {
+            statsCard.addView(sectionHeader(getString(R.string.stats_most_played)))
+            most.forEach { row ->
+                statsCard.addView(statRow(labelForStatsKey(row.key),
+                    resolveText(
+                        com.visorcraft.ghostgalleon.library.SessionMath.formatPlaytime(row.score),
+                    )))
+            }
+            if (most.isEmpty()) {
+                statsCard.addView(TextView(this).apply {
+                    setText(R.string.browse_no_playtime)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(0x66FFFFFF.toInt())
+                })
+            }
+            statsCard.addView(sectionHeader(getString(R.string.stats_recently_played)))
+            recent.forEach { row ->
+                val whenLabel = com.visorcraft.ghostgalleon.library.SessionMath.formatLastPlayed(
+                    row.score, System.currentTimeMillis(),
+                )?.let(::resolveText) ?: getString(R.string.glyph_dash)
+                statsCard.addView(statRow(labelForStatsKey(row.key), whenLabel))
+            }
+            if (recent.isEmpty()) {
+                statsCard.addView(TextView(this).apply {
+                    setText(R.string.stats_no_launches)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(0x66FFFFFF.toInt())
+                })
+            }
+        }
+        addSection(SettingsPage.STATS, getString(R.string.settings_page_stats), statsCard)
+        val systemCard = sectionCard()
+        val topo = app.refreshDisplayConfig()
+        val systemCardExtra = systemCard
+        val effectiveProfile = DeviceProfileCatalog.effective(
+            app.settings.deviceProfileId,
+            com.visorcraft.ghostgalleon.display.AndroidDisplayProbe.read(this),
+        )
+        val displayMode = if (topo.mode == com.visorcraft.ghostgalleon.display.SurfaceMode.DUAL) {
+            getString(R.string.label_dual)
+        } else {
+            getString(R.string.label_single)
+        }
+        systemCardExtra.addView(statRow(
+            getString(R.string.settings_display_mode),
+            getString(
+                R.string.settings_display_mode_value,
+                displayMode,
+                deviceProfileName(effectiveProfile.id),
+            ),
+        ))
+        systemCardExtra.addView(statRow(
+            getString(R.string.settings_topology),
+            getString(
+                R.string.settings_topology_value,
+                formatNumber(topo.primaryDisplayId),
+                topo.companionDisplayId?.let(::formatNumber)
+                    ?: getString(R.string.glyph_dash),
+                formatNumber(topo.launchDisplayId),
+                topo.secondaryHomeDisplayId?.let(::formatNumber)
+                    ?: getString(R.string.glyph_dash),
+                topo.largerDisplayId?.let(::formatNumber)
+                    ?: getString(R.string.glyph_dash),
+            ),
+        ))
+        val readings = SystemInfoCollector.collect(this)
+        SystemInfoFormat.rows(readings).forEach { (label, value) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(4), 0, dp(4))
+            }
+            row.addView(rowLabel(resolveText(label)), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(this).apply {
+                text = resolveText(value)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(0xCCFFFFFF.toInt())
+                gravity = Gravity.END
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f,
+            ))
+            systemCard.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            })
+        }
+        val refreshSys = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { recreate() }
+        }
+        refreshSys.addView(rowLabel(getString(R.string.settings_refresh_readings)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        systemCard.addView(refreshSys, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        addSection(SettingsPage.SYSTEM, getString(R.string.settings_page_system), systemCard)
+        pageBodies.getValue(SettingsPage.ABOUT).addView(
+            AboutPage.build(this, accent),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        if (wide) {
+            body.addView(buildNavBlade(), LinearLayout.LayoutParams(
+                dp(220), ViewGroup.LayoutParams.MATCH_PARENT,
+            ).apply { marginEnd = dp(20) })
+        }
+        val host = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        pageHost = host
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(host, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+        body.addView(scroll, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f,
+        ))
+        shell.addView(body, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        selectPage(currentPage)
+        return shell
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val target = captureTarget ?: return super.onKeyDown(keyCode, event)
+        val withoutTarget = app.settings.keyMap.filterValues { it != target }
+        val newMap = withoutTarget + (keyCode to target)
+        app.updateSettings(app.settings.copy(keyMap = newMap))
+        capturePulse?.cancel()
+        capturePulse = null
+        captureLabel?.apply {
+            alpha = 1f
+            text = getString(R.string.format_keycode, keyCode)
+            setTextColor(accent)
+            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+        }
+        captureTarget = null
+        captureLabel = null
+        return true
+    }
+}

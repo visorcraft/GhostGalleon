@@ -1,0 +1,74 @@
+# Gradle, Kotlin, and Android build output
+.gradle/
+.kotlin/
+build/
+out/
+.externalNativeBuild/
+.cxx/
+captures/
+
+# Machine-local Android configuration and signing material
+local.properties
+release-signing.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# IDE, editor, and OS metadata
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Generated binaries, crash dumps, logs, and temporary files
+*.apk
+*.aab
+*.apks
+*.idsig
+*.class
+*.hprof
+hs_err_pid*
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Python tooling used by scripts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local agent / AI workspaces and instructions (not product)
+/.superpowers/
+/.loop/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+
+# Ad-hoc device QA artifacts dropped in repository root
+/device-qa/
+/gg_*.png
+/bot*.png
+/top.png
+/d1.png
+/ui.xml
+/_review*
+/_*.txt

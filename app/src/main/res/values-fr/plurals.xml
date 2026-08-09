@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Français: plural forms. -->
+    <plurals name="browse_matches_for_query">
+        <item quantity="one">%1$d résultat pour « %2$s »</item>
+        <item quantity="other">%1$d résultats pour « %2$s »</item>
+    </plurals>
+    <plurals name="system_cpu_cores">
+        <item quantity="one">%1$d cœur</item>
+        <item quantity="other">%1$d cœurs</item>
+    </plurals>
+    <plurals name="count_items">
+        <item quantity="one">%1$d élément</item>
+        <item quantity="other">%1$d éléments</item>
+    </plurals>
+    <plurals name="count_roms_found">
+        <item quantity="one">%1$d ROM trouvé</item>
+        <item quantity="other">%1$d ROMs trouvés</item>
+    </plurals>
+    <plurals name="count_roms_restored">
+        <item quantity="one">Bibliothèque restaurée (%1$d ROM)</item>
+        <item quantity="other">Bibliothèque restaurée (%1$d ROMs)</item>
+    </plurals>
+    <plurals name="count_platforms">
+        <item quantity="one">%1$d plateforme</item>
+        <item quantity="other">%1$d plateformes</item>
+    </plurals>
+    <plurals name="count_platforms_imported">
+        <item quantity="one">%1$d plateforme importée</item>
+        <item quantity="other">%1$d plateformes importées</item>
+    </plurals>
+    <plurals name="count_packs">
+        <item quantity="one">%1$d pack</item>
+        <item quantity="other">%1$d packs</item>
+    </plurals>
+    <plurals name="count_set">
+        <item quantity="one">%1$d ensemble</item>
+        <item quantity="other">%1$d ensembles</item>
+    </plurals>
+    <plurals name="count_selected">
+        <item quantity="one">%1$d sélectionné</item>
+        <item quantity="other">%1$d sélectionnés</item>
+    </plurals>
+    <plurals name="count_titles_copied">
+        <item quantity="one">%1$d titre copié</item>
+        <item quantity="other">%1$d titres copiés</item>
+    </plurals>
+    <plurals name="count_pinned_dock">
+        <item quantity="one">%1$d épinglé au dock</item>
+        <item quantity="other">%1$d épinglés au dock</item>
+    </plurals>
+    <plurals name="count_unpinned_dock">
+        <item quantity="one">%1$d désépinglé du dock</item>
+        <item quantity="other">%1$d désépinglés du dock</item>
+    </plurals>
+    <plurals name="count_hidden_roms">
+        <item quantity="one">%1$d ROM masqué</item>
+        <item quantity="other">%1$d ROMs masqués</item>
+    </plurals>
+    <plurals name="count_marked_played">
+        <item quantity="one">%1$d marqué comme joué</item>
+        <item quantity="other">%1$d marqués comme joués</item>
+    </plurals>
+    <plurals name="count_cleared_stats">
+        <item quantity="one">Stats effacées pour %1$d titre</item>
+        <item quantity="other">Stats effacées pour %1$d titres</item>
+    </plurals>
+    <plurals name="count_cleared_favorites">
+        <item quantity="one">%1$d favori effacé</item>
+        <item quantity="other">%1$d favoris effacés</item>
+    </plurals>
+    <plurals name="deck_clear_all_favorites_confirm">
+        <item quantity="one">Supprimer %1$d favori ?</item>
+        <item quantity="other">Supprimer les %1$d favoris ?</item>
+    </plurals>
+    <plurals name="count_removed_collection">
+        <item quantity="one">%1$d retiré de %2$s</item>
+        <item quantity="other">%1$d retirés de %2$s</item>
+    </plurals>
+    <plurals name="count_pinned_favorites_grid">
+        <item quantity="one">%1$d favori épinglé dans la grille</item>
+        <item quantity="other">%1$d favoris épinglés dans la grille</item>
+    </plurals>
+    <plurals name="count_roms_trees_unchanged">
+        <item quantity="one">%1$d ROM (%2$d arborescence inchangée)</item>
+        <item quantity="other">%1$d ROMs (%2$d arborescences inchangées)</item>
+    </plurals>
+</resources>

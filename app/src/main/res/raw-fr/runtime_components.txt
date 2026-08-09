@@ -1,0 +1,37 @@
+Composants d'exécution
+======================
+
+Voici les composants système et services externes dont Ghost Galleon dépend
+au moment de l'exécution. Aucun d'entre eux n'est inclus dans l'application
+— ceux d'Android sont fournis par le système d'exploitation, et le service
+réseau est exploité par son propre fournisseur selon ses propres conditions.
+
+Composants de la plateforme Android (tous Apache-2.0, faisant partie de
+l'Android Open Source Project - https://source.android.com) :
+
+- Plateforme Android 14 (API niveau 34)
+  API Window/input/display sur lesquelles Ghost Galleon est construit,
+  incluant le support multi-écran Presentation et SECONDARY_HOME.
+- Android Runtime (ART)
+  Exécute l'application et les bibliothèques qu'elle intègre.
+- Storage Access Framework (SAF / DocumentsUI)
+  Fournit les autorisations d'arborescence du dossier de ROM ; Ghost
+  Galleon ne détient aucune permission de stockage propre.
+- Codecs médias système (WebP/GIF animé via AnimatedImageDrawable)
+  Affichent les illustrations en couches du panneau de héros.
+
+Services et applications externes :
+
+- API Web SteamGridDB - https://www.steamgriddb.com
+  Recherche optionnelle d'illustrations ; une clé API fournie par
+  l'utilisateur est requise. Le service est exploité par son propre
+  fournisseur selon ses propres conditions ; aucun code ni aucune donnée
+  SteamGridDB ne sont inclus.
+- Applications d'émulateurs (RetroArch, Azahar, Eden, melonDualDS, Dolphin,
+  NetherSX2, PPSSPP, Flycast, Cemu, Winlator)
+  Installées et mises à jour séparément par l'utilisateur, chacune sous
+  sa propre licence. Ghost Galleon leur envoie uniquement des intents de
+  lancement.
+
+Le texte complet de la licence Apache-2.0 couvrant les composants de la
+plateforme Android ci-dessus est reproduit dans l'onglet Composants tiers.

@@ -1,0 +1,47 @@
+Créditos y atribución
+=====================
+
+Derechos de autor
+-----------------
+
+Ghost Galleon es © VisorCraft LLC y colaboradores, distribuido bajo la
+GNU General Public License v3.0 (véase la pestaña Licencia de Ghost Galleon).
+
+Inspiración de diseño
+---------------------
+
+El modelo de lanzador de doble pantalla de Ghost Galleon - un deck interactivo en un
+panel con una vista previa del héroe en el otro, más el manejo de SECONDARY_HOME para
+la pantalla inferior - sigue la huella trazada por Cocoon
+(https://github.com/inssekt/CocoonFE), el shell de doble pantalla para el
+One X Sugar. El carrusel de tarjetas del Modo Juego toma sus referencias de Daijisho
+(https://github.com/TapiocaFox/Daijishou) y GameDeck
+(https://play.google.com/store/apps/details?id=app.gamedeck). El diseño del
+Modo Grid es un humilde homenaje a los menús de inicio del Nintendo 3DS y Wii.
+Ghost Galleon no utiliza código de ninguno de estos proyectos; solo inspiraron el diseño.
+
+Recursos gráficos
+-----------------
+
+Las imágenes de portada y del héroe se obtienen de SteamGridDB
+(https://www.steamgriddb.com) cuando el usuario proporciona una clave API, o se leen
+desde imágenes locales junto a la biblioteca de ROM del usuario. Los recursos gráficos pertenecen a sus respectivos creadores y se almacenan en caché solo en el dispositivo.
+
+Emuladores
+----------
+
+Ghost Galleon inicia - pero nunca empaqueta o distribuye - estos proyectos de emulador.
+Agradecemos a sus autores: RetroArch, Azahar, Eden, melonDS / melonDualDS, Dolphin, NetherSX2 / AetherSX2, PPSSPP, Flycast, Cemu y Winlator. Cada uno es una aplicación separada bajo su propia licencia.
+
+Tiempo de ejecución
+-------------------
+
+Creado con Kotlin y AndroidX en la plataforma Android. Consulte las
+pestañas Componentes de terceros y Tiempo de ejecución para las listas completas.
+
+Informar sobre omisiones de atribución
+--------------------------------------
+
+Si encuentra código o recursos en esta aplicación que no hemos acreditado,
+abra un issue en
+https://github.com/visorcraft/GhostGalleon/issues y corregiremos el registro.

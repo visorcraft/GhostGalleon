@@ -1,0 +1,291 @@
+<p align="center">
+  <img src="static/icon-512.png" alt="Ghost Galleon logo" width="250" />
+</p>
+
+<h1 align="center">Ghost Galleon</h1>
+<p align="center"><i>Ghost Galleon Dual Screen Launcher</i></p>
+
+<p align="center">
+  <b>A dual-screen Android launcher built for the One X Sugar handheld.</b>
+  <br />
+  Grid Mode (3DS/Wii-style icon grid + dock) and Game Mode (card carousel) across one or two displays,
+  <br />
+  with portable display topology, live screen swap, gyro-aware orientation, remappable gamepad input, and a SAF-scanned ROM library.
+</p>
+
+<p align="center">
+  <a href="https://github.com/visorcraft/GhostGalleon/releases/latest"><img src="https://img.shields.io/github/v/release/visorcraft/GhostGalleon?sort=semver" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
+  <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
+  <img src="https://img.shields.io/badge/version-0.5.0-informational" alt="0.5.0" />
+</p>
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/grid-mode.png" alt="Ghost Galleon Grid Mode on the bottom display with icon grid and dock" />
+      <br />
+      <sub><b>Grid Mode</b> - curated 3DS-style grid, blank "+" slots, and the dock.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/hero-panel.png" alt="Ghost Galleon hero preview panel on the top display" />
+      <br />
+      <sub><b>Hero panel</b> - the companion display previews the current selection.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/game-mode.png" alt="Ghost Galleon Game Mode card carousel" />
+      <br />
+      <sub><b>Game Mode</b> - Daijisho/GameDeck-style card carousel.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/app-picker.png" alt="Ghost Galleon searchable app and ROM picker" />
+      <br />
+      <sub><b>Picker</b> - search apps and ROMs to fill any grid or dock slot.</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
+## What is Ghost Galleon?
+
+Ghost Galleon is a home-screen replacement for Android handhelds. It is **built and QA’d on the One X Sugar** (Android 14, top 2160×1080 + bottom 1240×1080) and also runs on **single-display** devices via Auto topology.
+
+On dual-screen hardware one panel hosts the interactive deck (grid or carousel) while the other shows a companion surface (hero preview, Now Playing, Perf HUD, or a pinned app). Ghost Galleon holds the Android **HOME** role (and **SECONDARY_HOME** on dual panels), is designed for full gamepad control, and supports swipe-up all-apps.
+
+### Highlights
+
+- **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, long-press Move/Remove, favorites, folders, pin/unpin to dock. Optional deck clock/battery (off by default).
+- **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, clock/battery, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full).
+- **Portable display topology** — interactive vs companion vs launch from `DisplayManager` (no hard-coded 0/1). Profiles: Auto, One X Sugar, Generic dual, Single. Swap/Settings icons sit on the **physically larger** panel in DUAL.
+- **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin.
+- **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel.
+- **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat.
+- **Swipe-up / re-HOME drawer** — all-apps + ROMs without reloading the deck.
+- **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
+- **ROM library** — 19 built-in platforms, SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
+- **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
+- **Themes** — Ghost, 3DS Teal, OLED Black, Neon; optional custom theme JSON.
+- **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Stats, System (topology diagnostics), About.
+- **Export/import** — full settings, layout, and ROM-library JSON.
+- **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.
+- **Optional platform packs** — extra platform/player JSON under `docs/platform-packs/` (loadable in Settings).
+
+---
+
+## Displays & topology
+
+| Role | Meaning |
+|------|---------|
+| **Primary / interactive** | Grid or Game Mode (input target). |
+| **Companion** | Other dual surface: hero / Now Playing / Perf / pin. |
+| **Secondary home placement** | Panel where `CompanionActivity` runs (first non-default display). |
+| **Larger display** | Physically largest panel — hosts Swap + Settings chrome in DUAL. |
+
+On the **One X Sugar**, Auto/Sugar prefers the **bottom** panel for interactive content and the **top** for hero. System `SECONDARY_HOME` is absorbed so swipe-up does not thrash the deck.
+
+**Settings → System** shows the resolved topology (e.g. `primary=1 companion=0 launch=0 secondaryHome=1 larger=0`) plus hardware readings. **Single-display** devices run in SINGLE mode.
+
+---
+
+## ROM library
+
+Scans use Storage Access Framework tree grants only — no broad storage permission.
+
+- **Grant:** Settings → Library → “Add ROM folder”.
+- **Scan:** grant triggers a scan; “Rescan library” walks trees off the UI thread. Index is cached as JSON.
+- **Matching:** extension + platform folder name (tree root or first path segment, case-insensitive).
+- **Grid:** tap “+” → searchable picker (apps + ROMs).
+- **Carousel:** Game Mode lists apps and ROMs with filters; Switch updates/DLC are deduped when a base package is present.
+- **Launch:** prefers the non-interactive (launch) display so the deck stays put.
+
+| Built-in platforms | Primary registered player | Device status |
+|---|---|---|
+| GB / GBC / GBA / NES / SNES / Genesis / N64 / PS1 / Saturn / Arcade | Platform-specific RetroArch cores | GBA and SNES verified; remaining templates registered |
+| Nintendo DS | melonDualDS | verified |
+| Nintendo 3DS | Azahar | verified |
+| Nintendo Switch | Eden | verified |
+| PSP | PPSSPP | template registered |
+| PlayStation 2 | NetherSX2 | template registered |
+| Dreamcast | Flycast | template registered |
+| GameCube / Wii | Dolphin | templates registered |
+| Wii U | Cemu | template registered |
+
+Alternate players are available where the registry defines them. Windows titles
+can be pinned as Android app launches, but Winlator is not a built-in ROM platform.
+
+---
+
+## Artwork
+
+Offline-first. Tiles, carousel cards, and hero use box art when available.
+
+- **Local:** `images/` / `media/` / `art/` next to ROMs (romm layout), cached privately.
+- **SteamGridDB (optional):** Settings → Library → API key → “Download missing artwork”.
+- **RetroAchievements (optional):** username + API key for hero progress when configured.
+
+---
+
+## Permissions & data access
+
+Ghost Galleon requests only Android's `INTERNET` permission, used by the optional
+SteamGridDB and RetroAchievements integrations. All other launcher behavior is
+offline. ROM folders and custom artwork use user-selected, persistent Storage
+Access Framework grants; the app requests no broad storage permission.
+
+---
+
+## Default controls
+
+| Button | Action |
+|---|---|
+| D-pad / left stick / HAT | Navigate (auto-repeat when held) |
+| Down from last grid row / carousel | Focus dock |
+| A / Enter | Launch |
+| Tap | Focus; tap again to launch |
+| Long-press | Grid/dock: Move / Pin·Unpin / Remove; Game Mode: Details / collections / pin / stats |
+| B | Back |
+| X | Swap interactive / companion |
+| Y | Toggle Grid / Game mode |
+| Start | Settings |
+| Select | Quick Panel |
+| L1 / R1 | Page |
+| Swipe up / re-HOME | All-apps drawer |
+
+Remap everything under Settings → Controls. Controller Lab is available for capture/testing.
+
+---
+
+## Settings map
+
+| Page | Contents |
+|------|----------|
+| **Display & Grid** | Orientation, hints, default mode, themes, wallpaper, device profile, interactive display, companion role, **Browse chrome** (Minimal / Custom / Full + per-feature toggles), grid layout |
+| **Apps** | Hidden apps, dock management |
+| **Controls** | Haptics, remappable keys, Controller Lab |
+| **Library** | ROM folders, Hidden ROMs, rescan, SteamGridDB, RetroAchievements, export/import, platform packs |
+| **Stats** | Most played / recently played |
+| **System** | Topology (primary / companion / launch / secondaryHome / larger), hardware readings |
+| **About** | Version, git SHA, credits, licenses |
+
+---
+
+## Languages & localization
+
+Ghost Galleon ships complete UI catalogs for:
+
+| Language | Android locale | Resources |
+|---|---|---|
+| English | `en-US` | `app/src/main/res/values/` |
+| Español | `es` | `app/src/main/res/values-es/` |
+| Deutsch | `de` | `app/src/main/res/values-de/` |
+| ไทย | `th` | `app/src/main/res/values-th/` |
+| Français | `fr` | `app/src/main/res/values-fr/` |
+
+Android selects the compiled catalog from the system/app language. On Android 13+
+the language can also be chosen from Android's per-app language settings. AGP
+generates the supported-locale config from these resource directories, so there is
+no manual locale list in the app.
+
+Static UI prose and grammatical counts live in
+`app/src/main/res/values/strings.xml` and `plurals.xml`. Android-free domain code
+returns typed `UiText`, which Android resolves only at view, dialog, toast, or
+accessibility boundaries. Brands, URLs, technical
+identifiers, legal IDs, and glyphs live separately in
+`strings_nontranslatable.xml`. App/ROM titles, user names, hardware values, and
+imported metadata remain dynamic.
+
+Localized About prose lives in `raw-<locale>/acknowledgments.txt` and
+`runtime_components.txt`. GPL and third-party license texts remain their
+authoritative untranslated versions.
+
+When changing UI text:
+
+1. Update base English plus every supported `values-<locale>` catalog.
+2. Preserve numbered format placeholders and locale-specific plural grammar.
+3. Update localized About documents when their English source changes.
+4. Regenerate the exhaustive inventory with `python3 scripts/i18n_audit.py --write`.
+5. Run audit, lint, unit tests, and both APK builds; verify long text on both displays.
+
+[`docs/localization-inventory.md`](docs/localization-inventory.md) lists every key,
+all five catalogs, every plural, localized raw documents, intentional
+non-translatable values, and translator checks. It is generated; do not hand-edit it.
+
+---
+
+## Build from source
+
+Requires JDK **17** and Android SDK **34** (`sdk.dir` in local-only
+`local.properties`). The app uses minSdk **26** and target/compileSdk **34**.
+
+```bash
+git clone https://github.com/visorcraft/GhostGalleon.git
+cd GhostGalleon
+
+python3 scripts/i18n_audit.py --check
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+adb install --no-streaming -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Signed release builds require local `release-signing.properties`:
+
+```bash
+./gradlew :app:clean :app:assembleRelease
+sha256sum app/build/outputs/apk/release/app-release.apk
+adb install --no-streaming -r app/build/outputs/apk/release/app-release.apk
+adb shell cmd package set-home-activity --user 0 \
+  com.visorcraft.ghostgalleon/com.visorcraft.ghostgalleon.ui.MainActivity
+adb shell am force-stop com.visorcraft.ghostgalleon
+adb shell input keyevent HOME
+```
+
+The One X Sugar can keep the old process alive and clear its HOME default during
+an update, so force-stop and restore HOME after every reinstall. Debug and release
+use different signing keys; switching between them requires uninstalling first.
+Export settings from Settings → Library before uninstalling.
+
+### Host unit tests
+
+```bash
+./gradlew :app:testDebugUnitTest
+```
+
+Pure modules under `display/`, typed localization text, settings migrations,
+library browse/stats, and input maps are covered without a device.
+
+---
+
+## Releases & updates
+
+Download the signed `app-release.apk` from the
+[GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
+On-device updates use Obtainium with GitHub releases as the source.
+
+A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration
+(`-PbridgeBlackPearl=true`); normal users install only the
+`com.visorcraft.ghostgalleon` release. SAF grants cannot migrate between package
+names, so migrated users must select their ROM folders again.
+
+---
+
+## Documentation
+
+- [Credits & attribution](CREDITS.md) and [third-party licenses](docs/credits-third-party.md) — also in-app under Settings → About.
+- Complete [localization inventory](docs/localization-inventory.md) and translator checklist.
+- Example [platform packs](docs/platform-packs/).
+- [GitHub releases](https://github.com/visorcraft/GhostGalleon/releases)
+
+---
+
+## License
+
+Ghost Galleon is free and open-source software under the
+[GNU General Public License v3.0](LICENSE). Bundled libraries are Apache-2.0;
+see [CREDITS.md](CREDITS.md) for the full attribution record.
