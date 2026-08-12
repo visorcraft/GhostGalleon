@@ -416,4 +416,43 @@ class DualPaintPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `shouldMarkGreedy only for stolen KEEP return`() {
+        assertTrue(
+            DualPaintPolicy.shouldMarkGreedy(
+                policy = SessionPolicy.KEEP_COMPANION,
+                returningFromElsewhere = true,
+                companionHealthy = false,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.shouldMarkGreedy(
+                policy = SessionPolicy.KEEP_COMPANION,
+                returningFromElsewhere = true,
+                companionHealthy = true,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.shouldMarkGreedy(
+                policy = SessionPolicy.KEEP_COMPANION,
+                returningFromElsewhere = false,
+                companionHealthy = false,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.shouldMarkGreedy(
+                policy = SessionPolicy.YIELD_BOTH,
+                returningFromElsewhere = true,
+                companionHealthy = false,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.shouldMarkGreedy(
+                policy = null,
+                returningFromElsewhere = true,
+                companionHealthy = false,
+            ),
+        )
+    }
 }

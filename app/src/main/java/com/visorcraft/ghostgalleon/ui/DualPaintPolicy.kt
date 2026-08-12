@@ -215,6 +215,18 @@ object DualPaintPolicy {
     }
 
     /**
+     * KEEP HOME return whose companion is missing or not healthy on the
+     * companion display: mark the process-only greedy flag, then RESTART.
+     */
+    fun shouldMarkGreedy(
+        policy: SessionPolicy?,
+        returningFromElsewhere: Boolean,
+        companionHealthy: Boolean,
+    ): Boolean = policy == SessionPolicy.KEEP_COMPANION &&
+        returningFromElsewhere &&
+        !companionHealthy
+
+    /**
      * Role-swap may restart companion except while a YIELD session owns both
      * panels. [allowHeal] timing is unchanged.
      */

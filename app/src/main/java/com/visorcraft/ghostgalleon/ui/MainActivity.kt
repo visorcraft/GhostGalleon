@@ -35,11 +35,13 @@ class MainActivity : BaseDeckActivity() {
         val surface = app.sessionSurface
         val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
             !app.settings.companionPinnedPackage.isNullOrBlank()
+        // Mark before resumeCompanionAction so KEEP+stolen becomes RESTART.
+        maybeMarkGreedyIfStolen(returningFromElsewhere)
         val action = DualPaintPolicy.resumeCompanionAction(
             dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
             returningFromElsewhere = returningFromElsewhere,
             policy = surface?.policy,
-            greedy = surface?.greedy == true,
+            greedy = app.sessionSurface?.greedy == true,
             pinReady = pinReady,
         )
         when (action) {
@@ -69,11 +71,14 @@ class MainActivity : BaseDeckActivity() {
         val surface = app.sessionSurface
         val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
             !app.settings.companionPinnedPackage.isNullOrBlank()
+        // Same mark as onResume so HOME (onNewIntent then onResume) does not
+        // treat stolen KEEP as HEAL_IF_MISSING and consume the RESTART debounce.
+        maybeMarkGreedyIfStolen(returningFromElsewhere)
         val action = DualPaintPolicy.resumeCompanionAction(
             dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
             returningFromElsewhere = returningFromElsewhere,
             policy = surface?.policy,
-            greedy = surface?.greedy == true,
+            greedy = app.sessionSurface?.greedy == true,
             pinReady = pinReady,
         )
         if (action == DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING) {
@@ -83,6 +88,35 @@ class MainActivity : BaseDeckActivity() {
         if (!returningFromElsewhere) {
             requestAppDrawer(allowToggle = true)
         }
+    }
+
+    /**
+     * KEEP return with companion missing / not STARTED on the secondary
+     * target: process-only greedy flag. Does not write Settings.
+     */
+    private fun maybeMarkGreedyIfStolen(returningFromElsewhere: Boolean) {
+        val surface = app.sessionSurface ?: return
+        if (surface.greedy) return
+        if (!DualPaintPolicy.shouldMarkGreedy(
+                policy = surface.policy,
+                returningFromElsewhere = returningFromElsewhere,
+                companionHealthy = companionHealthyOnSecondary(),
+            )
+        ) return
+        app.markSessionGreedy()
+        Log.i("GGSession", "greedy package=${surface.packageName} player=${surface.playerId}")
+    }
+
+    private fun companionHealthyOnSecondary(): Boolean {
+        val topo = app.displayConfig
+        if (topo.mode != SurfaceMode.DUAL) return true
+        val target = topo.secondaryHomeDisplayId
+            ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
+            ?: return false
+        val live = app.liveCompanions().filter { !it.isFinishing }
+        val seat = app.companionSeatHolder()
+        return live.any { it.isHealthyCompanion(target) } ||
+            seat?.isHealthyCompanion(target) == true
     }
 
     private fun healCompanionIfMissing(returningFromElsewhere: Boolean) {
