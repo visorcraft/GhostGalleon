@@ -185,7 +185,106 @@ class GhostGalleonApp : Application() {
     // moved here. If the process dies the job dies with it - a re-run
     // resumes where cached art left off.
     val scrapeJob: ScrapeJob by lazy {
-        ScrapeJob { SgdbScraper(artCache, HttpSgdbTransport()) }
+        ScrapeJob {
+            SgdbScraper(
+                artCache,
+                HttpSgdbTransport(),
+                skipMiss = { rom ->
+                    val q = com.visorcraft.ghostgalleon.art.Sgdb.normalizeName(rom.name)
+                    com.visorcraft.ghostgalleon.art.SgdbMissCache.shouldSkip(
+                        sgdbMisses[rom.id],
+                        q,
+                        System.currentTimeMillis(),
+                    )
+                },
+                onMiss = { id, query -> noteSgdbMiss(id, query) },
+            )
+        }
+    }
+
+    @Volatile
+    private var sgdbMisses: Map<String, com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss> =
+        emptyMap()
+
+    private fun noteSgdbMiss(romId: String, query: String) {
+        sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.record(
+            sgdbMisses, romId, query, System.currentTimeMillis(),
+        )
+        persistSgdbMisses()
+    }
+
+    private fun loadSgdbMissFile() {
+        val file = File(filesDir, "sgdb_miss.json")
+        if (!file.isFile) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            val next = mutableMapOf<String, com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss>()
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val id = keys.next()
+                val o = root.optJSONObject(id) ?: continue
+                val query = o.optString("query", "")
+                val at = o.optLong("atMs", 0L)
+                if (query.isNotBlank() && at > 0L) {
+                    next[id] = com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss(id, query, at)
+                }
+            }
+            sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.prune(
+                next,
+                System.currentTimeMillis(),
+            )
+        }
+    }
+
+    private fun persistSgdbMisses() {
+        SETTINGS_IO.execute {
+            runCatching {
+                val root = JSONObject()
+                sgdbMisses.forEach { (id, miss) ->
+                    root.put(
+                        id,
+                        JSONObject().put("query", miss.query).put("atMs", miss.atMs),
+                    )
+                }
+                File(filesDir, "sgdb_miss.json").writeText(root.toString())
+            }
+        }
+    }
+
+    @Volatile
+    private var browseChipCacheKey: Int = 0
+    @Volatile
+    private var browseChipCache: com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipSnapshot? =
+        null
+
+    fun browseChipSnapshot(
+        roms: List<RomEntry>,
+        settings: Settings,
+        nowMs: Long,
+    ): com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipSnapshot {
+        val key = contentEpoch xor
+            roms.size xor
+            settings.lastLaunchedMs.size xor
+            settings.playtimeMs.size xor
+            settings.favorites.size xor
+            settings.hiddenRomIds.size xor
+            (nowMs / 60_000L).toInt()
+        browseChipCache?.let { if (browseChipCacheKey == key) return it }
+        val snap = com.visorcraft.ghostgalleon.library.LibraryBrowse.browseChipSnapshot(
+            roms = roms,
+            lastLaunchedMs = settings.lastLaunchedMs,
+            playtimeMs = settings.playtimeMs,
+            hiddenRomIds = settings.hiddenRomIds,
+            nowMs = nowMs,
+            launchablePlatformIds = launchablePlatformIds(settings.browseChrome.launchableOnly),
+        )
+        browseChipCacheKey = key
+        browseChipCache = snap
+        return snap
+    }
+
+    fun invalidateBrowseChipCache() {
+        browseChipCache = null
     }
 
     // In-memory snapshot of the persisted ROM index, read by every deck.
@@ -675,6 +774,7 @@ class GhostGalleonApp : Application() {
             }
         }
         loadRaCacheFile()
+        loadSgdbMissFile()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
@@ -810,6 +910,7 @@ class GhostGalleonApp : Application() {
         if (drawerRelevant || (!chromeOnly && notify)) {
             contentEpoch++
             if (drawerRelevant) invalidateDrawerListCache()
+            invalidateBrowseChipCache()
         }
         if (displayPolicyChanged) refreshDisplayConfig()
         if (notify) {

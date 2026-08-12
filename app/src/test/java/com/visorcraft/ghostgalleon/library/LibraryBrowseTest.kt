@@ -591,6 +591,26 @@ class LibraryBrowseTest {
     }
 
     @Test
+    fun `browseChipSnapshot matches present* counts in one pass`() {
+        val snap = LibraryBrowse.browseChipSnapshot(
+            roms = library,
+            lastLaunchedMs = mapOf(SlotKey.rom("snes:Zelda.rom") to 10L),
+            playtimeMs = mapOf(SlotKey.rom("snes:Zelda.rom") to 1_000L),
+            hiddenRomIds = emptySet(),
+            nowMs = 10L,
+            launchablePlatformIds = null,
+        )
+        assertEquals(LibraryBrowse.presentGenreCounts(library), snap.genres)
+        assertEquals(LibraryBrowse.presentDeveloperCounts(library), snap.developers)
+        assertEquals(LibraryBrowse.presentYearDecadeCounts(library), snap.years)
+        assertEquals(LibraryBrowse.presentPlatformCounts(library), snap.platforms)
+        assertEquals(4, snap.listedRoms)
+        assertEquals(1, snap.recent)
+        assertEquals(1, snap.top)
+        assertEquals(3, snap.unplayed)
+    }
+
+    @Test
     fun `presentDeveloperCounts and developer filter`() {
         val counts = LibraryBrowse.presentDeveloperCounts(library, limit = 10).toMap()
         assertEquals(2, counts["Nintendo"])

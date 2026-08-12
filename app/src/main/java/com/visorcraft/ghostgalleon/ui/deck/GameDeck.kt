@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSnapHelper
 import androidx.recyclerview.widget.RecyclerView
@@ -412,6 +413,7 @@ class GameDeck(
 
         // Live settings (chrome-only updates must not keep a stale snapshot).
         settings = (activity.application as GhostGalleonApp).settings
+        val oldEntries = entries
         installEntries(buildEntries())
         applyRootWallpaper(root)
         rebuildFilterChrome(chrome, context, ::dp)
@@ -427,8 +429,11 @@ class GameDeck(
             existing.cardSpacing == nextSpacing &&
             existing.cellPadding == nextPad
         ) {
-            // Reuse holders so same-key recycle keeps art overlays.
-            existing.also { it.notifyDataSetChanged() }
+            val diff = DiffUtil.calculateDiff(
+                EntryDiff(oldEntries, entries),
+                false,
+            )
+            existing.also { diff.dispatchUpdatesTo(it) }
         } else {
             CardAdapter(context, nextSize, nextSpacing, nextPad).also {
                 rv.adapter = it
@@ -868,6 +873,8 @@ class GameDeck(
         )
 
         val q = state.libraryBrowse
+        val nowMs = System.currentTimeMillis()
+        val counts = app().browseChipSnapshot(roms, settings, nowMs)
         fun setQuery(next: LibraryBrowse.BrowseQuery, force: Boolean = false) {
             state.setLibraryBrowse(next, force = force)
         }
@@ -908,7 +915,7 @@ class GameDeck(
             chip(
                 counted(
                     R.string.label_recent,
-                    LibraryBrowse.recentCount(settings.lastLaunchedMs),
+                    counts.recent,
                 ),
                 q.mode == LibraryBrowse.Mode.RECENT,
                 // Long-press: jump list of recent titles (same depth as Continue).
@@ -924,17 +931,13 @@ class GameDeck(
                 ))
             },
         )
-        val nowMs = System.currentTimeMillis()
         if (chrome.todayRail) {
             addGap()
             row.addView(
                 chip(
                     counted(
                         R.string.label_today,
-                        LibraryBrowse.playedInWindowCount(
-                            settings.lastLaunchedMs, nowMs,
-                            LibraryBrowse.DAY_WINDOW_MS,
-                        ),
+                        counts.today,
                     ),
                     q.mode == LibraryBrowse.Mode.PLAYED_TODAY,
                 ) {
@@ -955,10 +958,7 @@ class GameDeck(
                 chip(
                     counted(
                         R.string.label_week,
-                        LibraryBrowse.playedInWindowCount(
-                            settings.lastLaunchedMs, nowMs,
-                            LibraryBrowse.WEEK_WINDOW_MS,
-                        ),
+                        counts.week,
                     ),
                     q.mode == LibraryBrowse.Mode.PLAYED_THIS_WEEK,
                 ) {
@@ -979,10 +979,7 @@ class GameDeck(
                 chip(
                     counted(
                         R.string.label_month,
-                        LibraryBrowse.playedInWindowCount(
-                            settings.lastLaunchedMs, nowMs,
-                            LibraryBrowse.MONTH_WINDOW_MS,
-                        ),
+                        counts.month,
                     ),
                     q.mode == LibraryBrowse.Mode.PLAYED_THIS_MONTH,
                 ) {
@@ -1018,7 +1015,7 @@ class GameDeck(
         if (chrome.gamesRail) {
             addGap()
             val gameApps = LibraryBrowse.filterGameApps(library.visible(settings)) { it.isGame }.size
-            val romN = LibraryBrowse.listedRomCount(roms, settings.hiddenRomIds)
+            val romN = counts.listedRoms
             row.addView(
                 chip(
                     counted(
@@ -1044,7 +1041,7 @@ class GameDeck(
                 chip(
                     counted(
                         R.string.label_top,
-                        LibraryBrowse.topPlayedCount(settings.playtimeMs),
+                        counts.top,
                     ),
                     q.mode == LibraryBrowse.Mode.MOST_PLAYED,
                 ) {
@@ -1120,7 +1117,7 @@ class GameDeck(
             addGap()
             val alphaN = LibraryBrowse.alphaCatalogCount(
                 library.curated(settings).size,
-                LibraryBrowse.listedRomCount(roms, settings.hiddenRomIds),
+                counts.listedRoms,
             )
             row.addView(
                 chip(
@@ -1144,11 +1141,7 @@ class GameDeck(
                 chip(
                     counted(
                         R.string.label_new,
-                        LibraryBrowse.unplayedRomCount(
-                            roms,
-                            settings.lastLaunchedMs,
-                            settings.hiddenRomIds,
-                        ),
+                        counts.unplayed,
                     ),
                     q.mode == LibraryBrowse.Mode.UNPLAYED,
                 ) {
@@ -1187,11 +1180,7 @@ class GameDeck(
             }
         }
         if (chrome.platformChips) {
-            val platformRoms = LibraryBrowse.filterByLaunchablePlatforms(
-                HiddenRoms.listed(roms, settings.hiddenRomIds),
-                resolveLaunchablePlatformIds(),
-            )
-            LibraryBrowse.presentPlatformCounts(platformRoms).forEach { (pid, count) ->
+            counts.platforms.forEach { (pid, count) ->
                 addGap()
                 val short = Platforms.byId(pid)?.shortName ?: pid
                 row.addView(
@@ -1213,7 +1202,7 @@ class GameDeck(
         }
         // Genre chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.genreChips) {
-            LibraryBrowse.presentGenreCounts(roms, settings.hiddenRomIds).forEach { (genre, count) ->
+            counts.genres.forEach { (genre, count) ->
                 addGap()
                 val selected = q.genre?.equals(genre, ignoreCase = true) == true
                 row.addView(
@@ -1231,7 +1220,7 @@ class GameDeck(
         }
         // Developer chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.developerChips) {
-            LibraryBrowse.presentDeveloperCounts(roms, settings.hiddenRomIds).forEach { (dev, count) ->
+            counts.developers.forEach { (dev, count) ->
                 addGap()
                 val selected = q.developer?.equals(dev, ignoreCase = true) == true
                 row.addView(
@@ -1249,7 +1238,7 @@ class GameDeck(
         }
         // Year decade chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.yearChips) {
-            LibraryBrowse.presentYearDecadeCounts(roms, settings.hiddenRomIds).forEach { (decade, count) ->
+            counts.years.forEach { (decade, count) ->
                 addGap()
                 val selected = q.yearDecade?.equals(decade, ignoreCase = true) == true
                 row.addView(
@@ -2347,6 +2336,7 @@ class GameDeck(
             developer = rom?.developer,
             year = rom?.year,
             rating = rom?.rating,
+            description = rom?.description,
             lastLaunchedMs = settings.lastLaunchedMs[key],
             playtimeMs = settings.playtimeMs[key] ?: 0L,
             favorite = key in settings.favorites,
@@ -2480,6 +2470,7 @@ class GameDeck(
                 add(SlotMenu.Choice.OPEN_WITH)
                 add(SlotMenu.Choice.PLAYER)
                 add(SlotMenu.Choice.SET_ART)
+                add(SlotMenu.Choice.DOWNLOAD_ART)
                 add(SlotMenu.Choice.ADD_TO_GRID)
                 add(SlotMenu.Choice.HIDE)
             }
@@ -2508,6 +2499,7 @@ class GameDeck(
                 SlotMenu.Choice.OPEN_WITH -> openWithMenu(entry)
                 SlotMenu.Choice.PLAYER -> entry.rom?.let { showPlayerProfileMenu(it) }
                 SlotMenu.Choice.SET_ART -> entry.rom?.let { setArtOverride(it) }
+                SlotMenu.Choice.DOWNLOAD_ART -> entry.rom?.let { requestMissingArtwork(activity, it) }
                 SlotMenu.Choice.ADD_TO_GRID -> addToGrid(key)
                 SlotMenu.Choice.HIDE -> entry.rom?.let { hideRom(it) }
                 else -> {}
@@ -2911,5 +2903,17 @@ class GameDeck(
         /** RecyclerView payload: only ring/scale/multi-select chrome. */
         const val PAYLOAD_SELECTION = "selection"
         const val TAG_GAME_WALLPAPER = "game_wallpaper"
+    }
+
+    private class EntryDiff(
+        private val old: List<CarouselEntry>,
+        private val next: List<CarouselEntry>,
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize(): Int = old.size
+        override fun getNewListSize(): Int = next.size
+        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            old[oldItemPosition].key == next[newItemPosition].key
+        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            old[oldItemPosition] == next[newItemPosition]
     }
 }

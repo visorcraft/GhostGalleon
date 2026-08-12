@@ -39,6 +39,7 @@ class GameDetailsTest {
                 developer = "Maddy Makes Games",
                 year = "2018",
                 rating = "9.5",
+                description = "  Climb the mountain.  ",
                 lastLaunchedMs = 1_000L,
                 playtimeMs = 90 * 60_000L, // 1h 30m
                 favorite = true,
@@ -57,6 +58,7 @@ class GameDetailsTest {
         assertTrue("Indie" in values)
         assertTrue("Speedrun" in values)
         assertTrue("rom:celeste" in values)
+        assertTrue("Climb the mountain." in values)
         assertTrue(R.string.label_rom in ids)
         assertTrue(R.string.time_minutes_ago in ids)
         assertTrue(R.string.time_hours_minutes in ids)
@@ -84,6 +86,7 @@ class GameDetailsTest {
         assertTrue(R.string.glyph_dash in ids)
         assertFalse(R.string.details_platform in ids)
         assertFalse(R.string.details_genre in ids)
+        assertFalse("Climb" in body.literalArgs())
     }
 
     @Test

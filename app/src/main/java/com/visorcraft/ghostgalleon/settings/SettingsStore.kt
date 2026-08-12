@@ -154,7 +154,7 @@ class SettingsStore(private val file: File) {
             // interactiveDisplayMode is absent.
             deviceProfileId = o.optString("deviceProfileId", "auto").ifBlank { "auto" },
             interactiveDisplayMode = migrateInteractiveDisplayMode(o, schemaVersion),
-            orientationMode = o.optString("orientationMode", "auto").ifBlank { "auto" },
+            orientationMode = migrateOrientationMode(o),
             userPinnedPrimaryId = if (o.has("userPinnedPrimaryId") && !o.isNull("userPinnedPrimaryId")) {
                 o.optInt("userPinnedPrimaryId")
             } else {
@@ -172,14 +172,21 @@ class SettingsStore(private val file: File) {
             searchHistory = o.optJSONArray("searchHistory").toStringList()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() },
+            stickDeadzone = o.optInt("stickDeadzone", 50).coerceIn(20, 80),
             schemaVersion = CURRENT_SCHEMA,
         )
         }
 
         /**
-         * Map legacy [Settings.primaryDisplay] into interactiveDisplayMode when
-         * the v8 field is missing. 1 → "secondary", 0 → "default".
+         * Promote legacy [Settings.angleLock] to orientationMode when the
+         * v8 field is still auto/absent.
          */
+        private fun migrateOrientationMode(o: JSONObject): String {
+            val mode = o.optString("orientationMode", "auto").trim().ifBlank { "auto" }
+            if (mode != "auto") return mode
+            return if (o.optBoolean("angleLock", false)) "lock_landscape" else "auto"
+        }
+
         private fun migrateInteractiveDisplayMode(o: JSONObject, schemaVersion: Int): String {
             if (o.has("interactiveDisplayMode") && !o.isNull("interactiveDisplayMode")) {
                 val m = o.optString("interactiveDisplayMode", "auto").trim()
@@ -279,6 +286,7 @@ class SettingsStore(private val file: File) {
             )
             .put("browseChrome", s.browseChrome.toJson())
             .put("searchHistory", JSONArray(s.searchHistory))
+            .put("stickDeadzone", s.stickDeadzone)
             .put("schemaVersion", CURRENT_SCHEMA)
         }
 

@@ -143,6 +143,8 @@ class SgdbScraper(
     // ArtCache target for the kind before the bytes reach disk.
     private val shrink: (bytes: ByteArray, kind: ArtCache.ArtKind) -> ByteArray? =
         { bytes, kind -> ArtCache.downscaledPngBytes(bytes, kind) },
+    private val skipMiss: (RomEntry) -> Boolean = { false },
+    private val onMiss: (romId: String, query: String) -> Unit = { _, _ -> },
 ) : ScrapeRunner {
 
     data class Summary(
@@ -208,6 +210,7 @@ class SgdbScraper(
             entries,
             hasGrid = { id -> cache.diskHas(id) },
             hasHero = { id -> cache.diskHas(id, ArtCache.ArtKind.HERO) },
+            skipMiss = skipMiss,
         )
         val skipped = entries.size - queue.size
         if (queue.isEmpty()) {
@@ -274,9 +277,16 @@ class SgdbScraper(
             val query = Sgdb.normalizeName(rom.name)
             if (query.isEmpty()) return false
             val searchJson = request(sleep) { transport.get(Sgdb.searchUrl(query), apiKey) }
-                ?: return false
+            if (searchJson == null) {
+                onMiss(rom.id, query)
+                return false
+            }
             if (cancelled) return false
-            val gameId = Sgdb.parseSearchFirstId(searchJson) ?: return false
+            val gameId = Sgdb.parseSearchFirstId(searchJson)
+            if (gameId == null) {
+                onMiss(rom.id, query)
+                return false
+            }
 
             var stored = false
             if (need.needGrid) {

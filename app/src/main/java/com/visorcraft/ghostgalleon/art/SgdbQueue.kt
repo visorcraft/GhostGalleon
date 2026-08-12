@@ -29,8 +29,10 @@ object SgdbQueue {
         entries: List<RomEntry>,
         hasGrid: (romId: String) -> Boolean,
         hasHero: (romId: String) -> Boolean,
+        skipMiss: (RomEntry) -> Boolean = { false },
     ): List<Need> {
         val needs = entries.mapNotNull { rom ->
+            if (skipMiss(rom)) return@mapNotNull null
             if (rom.artUri != null && hasGrid(rom.id) && hasHero(rom.id)) return@mapNotNull null
             val gridOk = rom.artUri != null || hasGrid(rom.id)
             val heroOk = hasHero(rom.id)

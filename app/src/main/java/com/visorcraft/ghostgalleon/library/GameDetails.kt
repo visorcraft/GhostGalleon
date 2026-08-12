@@ -6,6 +6,7 @@ import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.joinText
 import com.visorcraft.ghostgalleon.i18n.localizedListText
 import com.visorcraft.ghostgalleon.i18n.text
+import com.visorcraft.ghostgalleon.rom.HeroDetail
 
 /** Pure detail-sheet model and translation-safe text. */
 object GameDetails {
@@ -21,6 +22,7 @@ object GameDetails {
         val developer: String? = null,
         val year: String? = null,
         val rating: String? = null,
+        val description: String? = null,
         val lastLaunchedMs: Long? = null,
         val playtimeMs: Long = 0L,
         val favorite: Boolean = false,
@@ -62,6 +64,10 @@ object GameDetails {
     fun body(input: Input): UiText {
         val lines = mutableListOf<UiText>()
         lines += dynamicText(input.title.trim().ifEmpty { input.key })
+        HeroDetail.descriptionText(input.description)?.let { desc ->
+            lines += dynamicText("")
+            lines += dynamicText(desc)
+        }
         lines += dynamicText("")
         lines += text(
             R.string.details_type,

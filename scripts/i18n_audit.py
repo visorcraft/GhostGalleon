@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "app/src/main/res"
-KOTLIN = ROOT / "app/src/main/java/com/visorcraft/ghostgalleon/ui"
+KOTLIN = ROOT / "app/src/main/java/com/visorcraft/ghostgalleon"
 MANIFEST = ROOT / "app/src/main/AndroidManifest.xml"
 OUTPUT = ROOT / "docs/localization-inventory.md"
 SUPPORTED_LOCALES = {

@@ -62,20 +62,20 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 
 ### Highlights
 
-- **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, favorites, folders, pin/unpin to dock. Long-press opens a **sectioned, scrollable** context menu with **Remove from grid** near the top (Arrange → Dock → Library → Customize → More).
+- **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, favorites, folders, pin/unpin to dock. Long-press opens a **sectioned, scrollable** context menu with **Remove from grid** near the top (Arrange → Dock → Library → Customize → More). **Search library** stays in Grid (adds to a blank slot when the title is not already pinned).
 - **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Browse chips update the carousel **in place** (no dual-panel flash). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, clock/battery, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full).
 - **Portable display topology** — interactive vs companion vs launch from `DisplayManager` (no hard-coded 0/1). Profiles: Auto, One X Sugar, Generic dual, Single. Swap/Settings icons sit on the **physically larger** panel in DUAL.
 - **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin; also recovers a stuck pure-black secondary panel.
 - **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel. Hero uses a compact platform · play · player subline and readable action chips.
-- **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat.
+- **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat. D-pad is remappable; stick deadzone is in Settings → Controls; Controller Lab can bind the last key.
 - **Swipe-up / re-HOME drawer** — all-apps + ROMs without reloading the deck.
 - **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
 - **ROM library** — 19 built-in platforms, SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
 - **Themes** — Ghost, Teal, OLED Black, Neon; optional custom theme JSON.
-- **Performance-minded** — R8-minified release APK, single carousel snap path (no double-scroll), browse adapter reuse, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, debounced settings save, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
+- **Performance-minded** — R8-minified release APK, single carousel snap path, DiffUtil browse updates, one-pass chip counts, JPEG tile cache + RGB_565 grid decode, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
 - **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Stats, System (topology diagnostics), About.
-- **Export/import** — full settings, layout, and ROM-library JSON.
+- **Export/import** — full settings, layout, and ROM-library JSON, plus a zip of the artwork cache.
 - **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.
 - **Optional platform packs** — extra platform/player JSON under `docs/platform-packs/` (loadable in Settings).
 
@@ -102,7 +102,7 @@ Scans use Storage Access Framework tree grants only — no broad storage permiss
 
 - **Grant:** Settings → Library → “Add ROM folder”.
 - **Scan:** grant triggers a scan; “Rescan library” walks trees off the UI thread. Index is cached as JSON.
-- **Matching:** extension + platform folder name (tree root or first path segment, case-insensitive).
+- **Matching:** extension + platform folder name (tree root or first path segment, case-insensitive). Disc sets prefer `.m3u` / `.cue` over sibling `.bin`; BIOS/firmware folders are skipped.
 - **Grid:** tap “+” → searchable picker (apps + ROMs).
 - **Carousel:** Game Mode lists apps and ROMs with filters; Switch updates/DLC are deduped when a base package is present.
 - **Launch:** prefers the non-interactive (launch) display so the deck stays put.
@@ -128,8 +128,8 @@ can be pinned as Android app launches, but Winlator is not a built-in ROM platfo
 
 Offline-first. Tiles, carousel cards, and hero use box art when available.
 
-- **Local:** `images/` / `media/` / `art/` next to ROMs (romm layout), cached privately.
-- **SteamGridDB (optional):** Settings → Library → API key → “Download missing artwork”.
+- **Local:** `images/` / `media/` / `art/` next to ROMs (romm layout), cached privately. Logos/wheels fill tiles when box art is missing and show on the hero.
+- **SteamGridDB (optional):** Settings → Library → API key → “Download missing artwork”, or per-title **Download missing art** from a ROM’s menu. Pause below a battery floor (0 = off).
 - **RetroAchievements (optional):** username + API key for hero progress when configured.
 
 ---

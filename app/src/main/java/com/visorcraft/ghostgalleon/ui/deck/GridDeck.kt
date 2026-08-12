@@ -1088,10 +1088,11 @@ class GridDeck(
                     key?.let { state.select(it, force = true) }
                     state.setMode(com.visorcraft.ghostgalleon.state.UIMode.GAME)
                 }
-                SlotMenu.Choice.SEARCH_LIBRARY -> {
-                    val app = activity.application as GhostGalleonApp
-                    app.pendingLibrarySearch = true
-                    state.setMode(com.visorcraft.ghostgalleon.state.UIMode.GAME)
+                SlotMenu.Choice.SEARCH_LIBRARY -> openLibrarySearch()
+                SlotMenu.Choice.DOWNLOAD_ART -> key?.let { k ->
+                    val id = SlotKey.romId(k) ?: return@let
+                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    requestMissingArtwork(activity, rom)
                 }
                 SlotMenu.Choice.MIRROR_TO_COLLECTION -> key?.let { k ->
                     val fid = SlotKey.folderId(k) ?: return@let
@@ -1228,6 +1229,7 @@ class GridDeck(
                 developer = rom?.developer,
                 year = rom?.year,
                 rating = rom?.rating,
+                description = rom?.description,
                 lastLaunchedMs = settings.lastLaunchedMs[key],
                 playtimeMs = settings.playtimeMs[key] ?: 0L,
                 favorite = key in settings.favorites,
@@ -1378,6 +1380,37 @@ class GridDeck(
     }
 
     // --- App picker ---
+
+    /** Search apps + ROMs without leaving Grid Mode. */
+    private fun openLibrarySearch() {
+        val appPicker = AppPicker(
+            activity,
+            settings.accentColor,
+            library.visible(settings),
+            roms,
+            iconLoader,
+            title = activity.getString(R.string.browse_search_library),
+            onPick = { key ->
+                closePicker()
+                val existing = settings.gridSlots.indexOf(key)
+                if (existing >= 0) {
+                    state.selectSlot(existing, key)
+                    return@AppPicker
+                }
+                val blank = GridSlots.firstEmptyIndex(settings.gridSlots)
+                updateGridSlots(GridSlots.fill(settings.gridSlots, blank, key), blank)
+                state.selectSlot(blank, key)
+                Toast.makeText(activity, R.string.deck_added_to_grid, Toast.LENGTH_SHORT).show()
+            },
+            onHide = { packageName ->
+                closePicker()
+                DeckOverlays.hideApp(activity, packageName)
+            },
+            onClose = { closePicker() },
+        )
+        picker = appPicker
+        DeckOverlays.attach(rootView, appPicker.view)
+    }
 
     private fun openPicker(slot: Int) {
         val appPicker = AppPicker(

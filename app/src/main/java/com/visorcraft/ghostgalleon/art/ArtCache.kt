@@ -117,15 +117,29 @@ class ArtCache(private val dir: File) {
         // Scrape / non-URI writers own the bytes without a URI stamp.
         runCatching { memory.remove(romId) }
         if (kind == ArtKind.HERO) runCatching { memory.remove(romId + ".hero") }
+        noteDiskWrite(bytes.size)
         evictIfOverCap()
     }
 
     // Deletes the least-recently-used cache files (lastModified order) until
     // the directory is back under DISK_CACHE_CAP_BYTES. The just-written
     // file has the newest timestamp, so a single oversized write survives.
+    /** Approximate on-disk size; -1 means unknown (force a scan). */
+    @Volatile
+    private var approxDiskBytes: Long = -1L
+
     private fun evictIfOverCap(capBytes: Long = DISK_CACHE_CAP_BYTES) {
+        // Skip a full directory listing while we still believe we are under cap.
+        if (approxDiskBytes in 0L until capBytes) return
         val files = dir.listFiles()?.toList() ?: return
-        evictionCandidates(files, capBytes).forEach { it.delete() }
+        val evict = evictionCandidates(files, capBytes)
+        evict.forEach { it.delete() }
+        approxDiskBytes = files.sumOf { it.length() } - evict.sumOf { it.length() }
+    }
+
+    private fun noteDiskWrite(addedBytes: Int) {
+        val cur = approxDiskBytes
+        if (cur >= 0L) approxDiskBytes = cur + addedBytes.toLong()
     }
 
     /**
@@ -195,6 +209,10 @@ class ArtCache(private val dir: File) {
         artOverrides: Map<String, String> = emptyMap(),
         isStillValid: () -> Boolean = { true },
     ) {
+        val localUri = ArtOverride.effectiveArtUri(rom, artOverrides)
+        runCatching {
+            if (memory.get(memKeyFor(rom.id, ArtKind.GRID, localUri)) != null) return
+        }
         load(
             context, rom, maxDimension,
             kind = ArtKind.GRID,
@@ -245,7 +263,7 @@ class ArtCache(private val dir: File) {
                     if (isStillValid()) {
                         runCatching {
                             val out = ByteArrayOutputStream()
-                            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                            bmp.compress(CACHE_COMPRESS_FORMAT, CACHE_COMPRESS_QUALITY, out)
                             writeDiskBytesFromUri(diskKey, out.toByteArray(), kind, uri)
                         }
                     }
@@ -268,7 +286,10 @@ class ArtCache(private val dir: File) {
         val bytes = readDiskBytes(romId, kind) ?: return null
         val stampText = sourceStampFile(romId, kind).takeIf { it.isFile }?.readText()
         if (!sourceStampMatches(stampText, expectedSourceUri)) return null
-        return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+        val opts = BitmapFactory.Options().apply {
+            if (kind == ArtKind.GRID) inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) }
             .getOrNull()
     }
 
@@ -289,6 +310,7 @@ class ArtCache(private val dir: File) {
             tmp.delete()
         }
         sourceStampFile(romId, kind).writeText(sourceUri)
+        noteDiskWrite(bytes.size)
         runCatching { memory.remove(romId) }
         if (kind == ArtKind.HERO) runCatching { memory.remove(romId + ".hero") }
         // Also drop any source-suffixed mem keys for this rom (best-effort).
@@ -305,6 +327,10 @@ class ArtCache(private val dir: File) {
 
         /** Min age before a disk hit rewrites lastModified (ms). */
         internal const val LRU_TOUCH_MIN_GAP_MS = 60_000L
+
+        /** JPEG is much cheaper than PNG@100 and BitmapFactory still decodes it. */
+        private val CACHE_COMPRESS_FORMAT = Bitmap.CompressFormat.JPEG
+        private const val CACHE_COMPRESS_QUALITY = 85
 
         // Lazy: host unit tests load ArtCache without a Looper.
         private val MAIN_HANDLER by lazy { Handler(Looper.getMainLooper()) }
@@ -415,11 +441,14 @@ class ArtCache(private val dir: File) {
                 } else {
                     sampleSizeFor(bounds.outWidth, bounds.outHeight, GRID_SCRAPE_TARGET_PX)
                 }
-                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    if (kind == ArtKind.GRID) inPreferredConfig = Bitmap.Config.RGB_565
+                }
                 val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
                     ?: return null
                 val out = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                bmp.compress(CACHE_COMPRESS_FORMAT, CACHE_COMPRESS_QUALITY, out)
                 out.toByteArray()
             }.getOrNull()
 
@@ -441,6 +470,7 @@ class ArtCache(private val dir: File) {
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             val opts = BitmapFactory.Options().apply {
                 inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDimension)
+                inPreferredConfig = Bitmap.Config.RGB_565
             }
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, opts)

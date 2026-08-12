@@ -39,6 +39,7 @@ class SlotMenu(
         OPEN_WITH(R.string.action_open_with),
         PLAYER(R.string.action_player),
         SET_ART(R.string.action_set_artwork),
+        DOWNLOAD_ART(R.string.action_download_artwork),
         ADD_TO_GRID(R.string.action_add_to_grid),
         ADD_TO_COLLECTION(R.string.action_add_to_collection),
         REMOVE_FROM_COLLECTION(R.string.action_remove_from_collection),
@@ -291,6 +292,7 @@ class SlotMenu(
                     add(Row.Item(Choice.OPEN_WITH))
                     add(Row.Item(Choice.PLAYER))
                     add(Row.Item(Choice.SET_ART))
+                    add(Row.Item(Choice.DOWNLOAD_ART))
                     add(Row.Item(Choice.HIDE, destructive = true))
                 }
                 if (isApp) {

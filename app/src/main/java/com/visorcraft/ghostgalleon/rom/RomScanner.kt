@@ -33,6 +33,7 @@ object RomScanner {
                 // Dotfiles/junk anywhere in the path: .DS_Store, ._ AppleDouble
                 // files, hidden directories.
                 if (doc.relativePath.split('/').any { it.startsWith('.') }) return@docs
+                if (DiscHygiene.skipPath(doc.relativePath)) return@docs
                 if (doc.name.equals("gamelist.xml", ignoreCase = true)) {
                     gamelistDocs.add(doc)
                     return@docs
@@ -65,8 +66,10 @@ object RomScanner {
                 )
             }
         }
-        val sorted = entries.sortedWith(
-            compareBy({ it.platformId }, { it.name.lowercase() }, { it.id }),
+        val sorted = DiscHygiene.preferDiscMasters(
+            entries.sortedWith(
+                compareBy({ it.platformId }, { it.name.lowercase() }, { it.id }),
+            ),
         )
         if (readText == null || gamelistDocs.isEmpty()) return sorted
         val meta = gamelistDocs.flatMap { doc ->

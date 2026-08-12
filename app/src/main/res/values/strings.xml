@@ -60,6 +60,7 @@
     <string name="action_save">Save</string>
     <string name="action_search">Search</string>
     <string name="action_set_artwork">Set artwork</string>
+    <string name="action_download_artwork">Download missing art</string>
     <string name="action_skip_for_now">Skip for now</string>
     <string name="action_swap">Swap</string>
     <string name="action_swap_screens">Swap screens</string>
@@ -100,6 +101,7 @@
     <string name="label_never">Never</string>
     <string name="label_new">New</string>
     <string name="label_not_set">Not set</string>
+    <string name="label_off">Off</string>
     <string name="label_now">Now</string>
     <string name="label_now_playing">NOW PLAYING</string>
     <string name="label_perf">Perf</string>
@@ -143,6 +145,7 @@
     <string name="format_dot_pair">%1$s · %2$s</string>
     <string name="format_selected_check">%1$s ✓</string>
     <string name="format_progress">%1$d/%2$d</string>
+    <string name="format_percent">%1$d%%</string>
     <string name="format_open_count">Open (%1$d)</string>
     <string name="format_select_count">Select (%1$d)</string>
     <string name="format_count_only">· %1$d</string>
@@ -369,6 +372,9 @@
     <string name="setup_check_emulator">Install an emulator</string>
     <string name="setup_check_sgdb">Optional: SteamGridDB API key</string>
     <string name="setup_add_rom_folder">Add ROM folder</string>
+    <string name="setup_get_emulator">Get an emulator</string>
+    <string name="setup_get_emulator_title">Install a player</string>
+    <string name="setup_no_missing_players">All built-in players are installed</string>
     <string name="setup_sgdb_set">SteamGridDB key (set)</string>
     <string name="setup_sgdb_optional">SteamGridDB API key (optional)</string>
     <string name="setup_open_settings">Open Settings</string>
@@ -384,8 +390,6 @@
     <string name="settings_page_system">System</string>
     <string name="settings_page_about">About</string>
     <string name="settings_section_display">Display</string>
-    <string name="settings_gyro_orientation">Gyroscope orientation</string>
-    <string name="settings_angle_lock">Angle lock (landscape only)</string>
     <string name="settings_show_hints">Show control hints</string>
     <string name="settings_default_mode">Default mode</string>
     <string name="settings_theme">Theme</string>
@@ -436,6 +440,7 @@
     <string name="settings_dock_empty">Dock is empty</string>
     <string name="settings_haptics">Haptics</string>
     <string name="settings_controller_lab">Controller lab</string>
+    <string name="settings_stick_deadzone">Stick deadzone</string>
     <string name="settings_press_button">Press a button…</string>
     <string name="settings_unbound">unbound</string>
     <string name="settings_add_rom_folder">Add ROM folder</string>
@@ -443,7 +448,7 @@
     <string name="settings_rescan_library">Rescan library</string>
     <string name="settings_scanning">Scanning…</string>
     <string name="settings_full_scan">Full scan…</string>
-    <string name="settings_hold_full">hold=full</string>
+    <string name="settings_hold_full">Hold for full scan</string>
     <string name="settings_card_unreadable">Card unreadable - library unchanged</string>
     <string name="settings_pin_favorites">Pin favorites to empty grid slots</string>
     <string name="settings_default_players">Default players</string>
@@ -461,9 +466,19 @@
     <string name="settings_api_key_hint">Paste API key</string>
     <string name="settings_api_key_cleared">API key cleared</string>
     <string name="settings_download_artwork">Download missing artwork</string>
+    <string name="artwork_need_api_key">Add a SteamGridDB key in Settings first</string>
+    <string name="artwork_download_busy">Artwork download already running</string>
+    <string name="artwork_already_cached">Artwork already on device</string>
+    <string name="artwork_download_started">Downloading artwork…</string>
     <string name="settings_add_api_key_first">Add API key first</string>
     <string name="settings_cancelling">Cancelling…</string>
     <string name="settings_export">Export settings</string>
+    <string name="settings_export_art">Export artwork cache</string>
+    <string name="settings_import_art">Import artwork cache</string>
+    <string name="settings_art_exported">Exported %1$d art files</string>
+    <string name="settings_art_imported">Imported %1$d art files</string>
+    <string name="settings_art_export_failed">Artwork export failed</string>
+    <string name="settings_art_import_failed">Artwork import failed</string>
     <string name="settings_import">Import settings</string>
     <string name="settings_exported">Settings exported</string>
     <string name="settings_export_failed">Export failed</string>
@@ -535,6 +550,10 @@
     <!-- Controller lab -->
     <string name="controller_lab_title">Controller Lab</string>
     <string name="controller_lab_intro">Press buttons / move sticks — values update live. Back exits.</string>
+    <string name="controller_bind_last">Bind last key…</string>
+    <string name="controller_bind_title">Assign last key</string>
+    <string name="controller_no_key">Press a button first</string>
+    <string name="controller_bound">Bound %1$s to keycode %2$d</string>
     <string name="controller_key_empty">Key: —</string>
     <string name="controller_action_empty">Action: —</string>
     <string name="controller_axes_empty">Axes: —</string>
@@ -619,6 +638,7 @@
     <string name="scrape_blocked_wifi_only">Connect to Wi‑Fi to download artwork (Wi‑Fi only is on)</string>
     <string name="scrape_blocked_low_battery">Battery low — charge or raise the scrape battery floor in Settings</string>
     <string name="settings_scrape_wifi_only">Artwork download: Wi‑Fi only</string>
+    <string name="settings_scrape_battery">Pause artwork download below battery</string>
     <string name="action_mirror_to_folder">Mirror to grid folder</string>
     <string name="deck_mirrored_to_folder">Mirrored collection to grid folder</string>
     <string name="deck_empty_collection">Collection is empty</string>

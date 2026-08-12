@@ -26,8 +26,10 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.art.ArtArchive
 import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
 import com.visorcraft.ghostgalleon.library.AppLibrary
@@ -50,9 +52,11 @@ import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.deviceProfileName
+import com.visorcraft.ghostgalleon.ui.applyThemeFontScale
 import com.visorcraft.ghostgalleon.ui.hideStatusBar
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.themeName
+import java.io.File
 import java.text.NumberFormat
 
 class SettingsActivity : AppCompatActivity() {
@@ -77,6 +81,7 @@ class SettingsActivity : AppCompatActivity() {
     private var pageDropdownLabel: TextView? = null
 
     private val remappable = listOf(
+        Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
         Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS,
         Action.TOGGLE_MODE, Action.OPEN_SETTINGS, Action.PAGE_PREV, Action.PAGE_NEXT,
         Action.OPEN_QUICK_PANEL,
@@ -462,6 +467,45 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.settings_exported, Toast.LENGTH_SHORT).show()
             }.onFailure {
                 Toast.makeText(this, R.string.settings_export_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private val exportArtLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/zip")
+        ) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                val n = contentResolver.openOutputStream(uri)?.use { out ->
+                    ArtArchive.zip(File(filesDir, "art"), out)
+                } ?: error("could not open $uri")
+                n
+            }.onSuccess { n ->
+                Toast.makeText(
+                    this,
+                    getString(R.string.settings_art_exported, n),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }.onFailure {
+                Toast.makeText(this, R.string.settings_art_export_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private val importArtLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    ArtArchive.unzip(input, File(filesDir, "art"))
+                } ?: error("could not open $uri")
+            }.onSuccess { n ->
+                Toast.makeText(
+                    this,
+                    getString(R.string.settings_art_imported, n),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }.onFailure {
+                Toast.makeText(this, R.string.settings_art_import_failed, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -934,6 +978,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private val accent get() = app.settings.accentColor
 
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(applyThemeFontScale(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = getString(R.string.settings_title)
@@ -1280,7 +1328,15 @@ class SettingsActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         }
 
-        fun seek(card: LinearLayout, label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+        fun seek(
+            card: LinearLayout,
+            label: String,
+            value: Int,
+            min: Int,
+            max: Int,
+            format: (Int) -> String = { formatNumber(it) },
+            onChange: (Int) -> Unit,
+        ) {
             val labelRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -1288,7 +1344,7 @@ class SettingsActivity : AppCompatActivity() {
             labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val valueView = TextView(this).apply {
-                text = formatNumber(value)
+                text = format(value)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                 setTextColor(accent)
             }
@@ -1304,7 +1360,7 @@ class SettingsActivity : AppCompatActivity() {
                 progress = value - min
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
-                        if (fromUser) valueView.text = formatNumber(p + min)
+                        if (fromUser) valueView.text = format(p + min)
                     }
                     override fun onStartTrackingTouch(sb: SeekBar) = Unit
                     override fun onStopTrackingTouch(sb: SeekBar) = onChange(sb.progress + min)
@@ -1316,12 +1372,6 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         val displayCard = sectionCard()
-        toggle(displayCard, getString(R.string.settings_gyro_orientation), s.gyroEnabled) {
-            app.updateSettings(app.settings.copy(gyroEnabled = it))
-        }
-        toggle(displayCard, getString(R.string.settings_angle_lock), s.angleLock) {
-            app.updateSettings(app.settings.copy(angleLock = it))
-        }
         toggle(displayCard, getString(R.string.settings_show_hints), s.showHints) {
             app.updateSettings(app.settings.copy(showHints = it))
         }
@@ -1427,7 +1477,13 @@ class SettingsActivity : AppCompatActivity() {
         displayCard.addView(controlRow(
             getString(R.string.settings_orientation),
             segmented(orientOptions, s.orientationMode) { mode ->
-                app.updateSettings(app.settings.copy(orientationMode = mode))
+                app.updateSettings(
+                    app.settings.copy(
+                        orientationMode = mode,
+                        angleLock = mode == "lock_landscape",
+                        gyroEnabled = mode != "lock_landscape",
+                    ),
+                )
                 recreate()
             },
         ), LinearLayout.LayoutParams(
@@ -1851,6 +1907,16 @@ class SettingsActivity : AppCompatActivity() {
         })
         controlsCard.addView(labRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        seek(
+            controlsCard,
+            getString(R.string.settings_stick_deadzone),
+            s.stickDeadzone,
+            20,
+            80,
+            format = { n -> getString(R.string.format_percent, n) },
+        ) { n ->
+            app.updateSettings(app.settings.copy(stickDeadzone = n), notify = false)
+        }
         remappable.forEach { action ->
             val bound = app.settings.keyMap.entries
                 .firstOrNull { it.value == action }?.key?.let {
@@ -2120,21 +2186,23 @@ class SettingsActivity : AppCompatActivity() {
         })
         libraryCard.addView(raKeyRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
-        val raSampleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
-            setOnClickListener { loadRaSampleForSelection() }
+        if (BuildConfig.DEBUG) {
+            val raSampleRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+                setOnClickListener { loadRaSampleForSelection() }
+            }
+            raSampleRow.addView(rowLabel(getString(R.string.settings_load_ra_sample)), LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            raSampleRow.addView(TextView(this).apply {
+                setText(R.string.settings_demo)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(0x66FFFFFF.toInt())
+            })
+            libraryCard.addView(raSampleRow, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         }
-        raSampleRow.addView(rowLabel(getString(R.string.settings_load_ra_sample)), LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        raSampleRow.addView(TextView(this).apply {
-            setText(R.string.settings_demo)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x66FFFFFF.toInt())
-        })
-        libraryCard.addView(raSampleRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val keyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2184,6 +2252,18 @@ class SettingsActivity : AppCompatActivity() {
         ) { on ->
             app.updateSettings(app.settings.copy(scrapeWifiOnly = on), notify = false)
         }
+        seek(
+            libraryCard,
+            getString(R.string.settings_scrape_battery),
+            s.scrapePauseBelowBattery,
+            0,
+            50,
+            format = { n ->
+                resolveText(com.visorcraft.ghostgalleon.art.ScrapePolicy.floorLabel(n))
+            },
+        ) { n ->
+            app.updateSettings(app.settings.copy(scrapePauseBelowBattery = n), notify = false)
+        }
         refreshSgdbRows()
 
         val exportRow = LinearLayout(this).apply {
@@ -2205,6 +2285,26 @@ class SettingsActivity : AppCompatActivity() {
         importRow.addView(rowLabel(getString(R.string.settings_import)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         libraryCard.addView(importRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val exportArtRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { exportArtLauncher.launch(getString(R.string.file_art_export)) }
+        }
+        exportArtRow.addView(rowLabel(getString(R.string.settings_export_art)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        libraryCard.addView(exportArtRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val importArtRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { importArtLauncher.launch(arrayOf("application/zip", "*/*")) }
+        }
+        importArtRow.addView(rowLabel(getString(R.string.settings_import_art)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        libraryCard.addView(importArtRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val packRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

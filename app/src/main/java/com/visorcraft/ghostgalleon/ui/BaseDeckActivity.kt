@@ -1,7 +1,9 @@
 package com.visorcraft.ghostgalleon.ui
 
 import android.app.role.RoleManager
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
@@ -58,11 +60,11 @@ import com.visorcraft.ghostgalleon.ui.deck.launchSlotKey
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 import com.visorcraft.ghostgalleon.ui.settings.SetupCard
 
-// Stick hysteresis thresholds: engage at 0.7, stay engaged until under 0.5.
-private const val AXIS_ENGAGE_THRESHOLD = 0.7f
-private const val AXIS_RELEASE_THRESHOLD = 0.5f
-
 abstract class BaseDeckActivity : AppCompatActivity() {
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(applyThemeFontScale(newBase))
+    }
 
     companion object {
         /** Logcat tag for full-paint diagnostics (`adb logcat -s GGPaint`). */
@@ -697,6 +699,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             snap,
             onAddRomFolder = { setupRomFolderPicker.launch(null) },
             onSgdbKey = { showSetupSgdbKeyDialog() },
+            onGetEmulator = { showSetupGetEmulatorDialog() },
             onOpenSettings = {
                 launchOnOtherDisplay(
                     this, deckState, Intent(this, SettingsActivity::class.java))
@@ -754,6 +757,42 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
         // Still needed: repaint checklist on the primary content root.
         maybeShowSetup()
+    }
+
+    private fun showSetupGetEmulatorDialog() {
+        val offers = com.visorcraft.ghostgalleon.rom.PlayerInstall.missingPrimaries(
+            installed = { packageManager.isInstalled(it) },
+        )
+        if (offers.isEmpty()) {
+            Toast.makeText(this, R.string.setup_no_missing_players, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = offers.map { it.displayName }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.setup_get_emulator_title)
+            .setItems(labels) { _, which ->
+                if (which !in offers.indices) return@setItems
+                openPlayerStore(offers[which].packageName)
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun openPlayerStore(packageName: String) {
+        val market = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse(com.visorcraft.ghostgalleon.rom.PlayerInstall.marketUri(packageName)),
+        )
+        val launched = runCatching { startActivity(market) }.isSuccess
+        if (!launched) {
+            val web = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(com.visorcraft.ghostgalleon.rom.PlayerInstall.webStoreUri(packageName)),
+            )
+            runCatching { startActivity(web) }.onFailure {
+                Toast.makeText(this, R.string.deck_unavailable, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun showSetupSgdbKeyDialog() {
@@ -960,13 +999,19 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         ) {
             return super.onGenericMotionEvent(event)
         }
+        val release = com.visorcraft.ghostgalleon.input.StickThresholds.release(
+            settings.stickDeadzone,
+        )
+        val engage = com.visorcraft.ghostgalleon.input.StickThresholds.engage(
+            settings.stickDeadzone,
+        )
         for (dir in axisDirections) {
             val raw = event.getAxisValue(dir.axis)
             val deflection = if (dir.negative) -raw else raw
-            if (dir.engaged && deflection < AXIS_RELEASE_THRESHOLD) {
+            if (dir.engaged && deflection < release) {
                 dir.engaged = false
                 navRepeater.onRelease(dir.action)
-            } else if (!dir.engaged && deflection >= AXIS_ENGAGE_THRESHOLD) {
+            } else if (!dir.engaged && deflection >= engage) {
                 dir.engaged = true
                 navRepeater.onPress(dir.action)
             }
@@ -1061,4 +1106,14 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         else -> handleAction(action) || fallThrough()
     }
 
+}
+
+/** Apply the active theme's fontScale to this activity's configuration. */
+internal fun applyThemeFontScale(base: Context): Context {
+    val app = base.applicationContext as? GhostGalleonApp ?: return base
+    val extra = com.visorcraft.ghostgalleon.settings.ThemePack.resolve(app.settings).fontScale
+    if (extra == 1f) return base
+    val cfg = Configuration(base.resources.configuration)
+    cfg.fontScale = (cfg.fontScale * extra).coerceIn(0.85f, 1.4f)
+    return base.createConfigurationContext(cfg)
 }

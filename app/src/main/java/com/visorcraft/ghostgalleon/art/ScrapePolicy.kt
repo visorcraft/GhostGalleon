@@ -68,4 +68,12 @@ object ScrapePolicy {
         BlockReason.WIFI_ONLY -> text(R.string.scrape_blocked_wifi_only)
         BlockReason.LOW_BATTERY -> text(R.string.scrape_blocked_low_battery)
     }
+
+    /**
+     * Settings slider label: Off when [percent] is 0 (gate disabled),
+     * otherwise “N%”.
+     */
+    fun floorLabel(percent: Int): UiText =
+        if (percent <= 0) text(R.string.label_off)
+        else text(R.string.format_percent, percent.coerceAtLeast(0))
 }

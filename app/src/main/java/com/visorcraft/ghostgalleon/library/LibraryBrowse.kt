@@ -840,6 +840,89 @@ object LibraryBrowse {
         hiddenRomIds: Set<String> = emptySet(),
     ): Int = HiddenRoms.listed(roms, hiddenRomIds).size
 
+    /** One-pass chip counts so browse chrome rebuilds do not rewalk the library. */
+    data class BrowseChipSnapshot(
+        val recent: Int,
+        val today: Int,
+        val week: Int,
+        val month: Int,
+        val top: Int,
+        val listedRoms: Int,
+        val unplayed: Int,
+        val platforms: List<Pair<String, Int>>,
+        val genres: List<Pair<String, Int>>,
+        val developers: List<Pair<String, Int>>,
+        val years: List<Pair<String, Int>>,
+    )
+
+    fun browseChipSnapshot(
+        roms: List<RomEntry>,
+        lastLaunchedMs: Map<String, Long>,
+        playtimeMs: Map<String, Long>,
+        hiddenRomIds: Set<String>,
+        nowMs: Long,
+        launchablePlatformIds: Set<String>?,
+        genreLimit: Int = 12,
+        developerLimit: Int = 10,
+        yearLimit: Int = 8,
+    ): BrowseChipSnapshot {
+        val listed = HiddenRoms.listed(roms, hiddenRomIds)
+        val launchable = filterByLaunchablePlatforms(listed, launchablePlatformIds)
+        val platformCounts = linkedMapOf<String, Int>()
+        val genreCounts = linkedMapOf<String, Int>()
+        val genreDisplay = linkedMapOf<String, String>()
+        val devCounts = linkedMapOf<String, Int>()
+        val devDisplay = linkedMapOf<String, String>()
+        val yearCounts = linkedMapOf<String, Int>()
+        var unplayed = 0
+        // One walk of listed ROMs (was 4× HiddenRoms.listed via present*).
+        for (rom in listed) {
+            if (isUnplayed(SlotKey.rom(rom.id), lastLaunchedMs)) unplayed++
+            genreTokens(rom.genre).forEach { token ->
+                val key = token.lowercase()
+                if (key !in genreDisplay) genreDisplay[key] = token
+                genreCounts[key] = (genreCounts[key] ?: 0) + 1
+            }
+            rom.developer?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+                val key = raw.lowercase()
+                if (key !in devDisplay) devDisplay[key] = raw
+                devCounts[key] = (devCounts[key] ?: 0) + 1
+            }
+            yearDecadeOf(rom.year)?.let { d ->
+                yearCounts[d] = (yearCounts[d] ?: 0) + 1
+            }
+        }
+        val platformSrc = if (launchablePlatformIds == null) listed else launchable
+        for (rom in platformSrc) {
+            platformCounts[rom.platformId] = (platformCounts[rom.platformId] ?: 0) + 1
+        }
+        return BrowseChipSnapshot(
+            recent = recentCount(lastLaunchedMs),
+            today = playedInWindowCount(lastLaunchedMs, nowMs, DAY_WINDOW_MS),
+            week = playedInWindowCount(lastLaunchedMs, nowMs, WEEK_WINDOW_MS),
+            month = playedInWindowCount(lastLaunchedMs, nowMs, MONTH_WINDOW_MS),
+            top = topPlayedCount(playtimeMs),
+            listedRoms = listed.size,
+            unplayed = unplayed,
+            platforms = platformCounts.entries.sortedBy { it.key }.map { it.key to it.value },
+            genres = genreCounts.entries
+                .sortedWith(
+                    compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
+                )
+                .take(genreLimit.coerceAtLeast(0))
+                .map { (k, n) -> (genreDisplay[k] ?: k) to n },
+            developers = devCounts.entries
+                .sortedWith(
+                    compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
+                )
+                .take(developerLimit.coerceAtLeast(0))
+                .map { (k, n) -> (devDisplay[k] ?: k) to n },
+            years = yearCounts.entries.sortedBy { it.key }
+                .take(yearLimit.coerceAtLeast(0))
+                .map { it.key to it.value },
+        )
+    }
+
     /**
      * Games rail size proxy: game apps + listed ROMs.
      * Non-positive parts clamp to 0.

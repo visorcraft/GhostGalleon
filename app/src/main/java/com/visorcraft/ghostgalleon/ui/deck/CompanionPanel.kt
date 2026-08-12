@@ -75,6 +75,7 @@ object CompanionPanel {
     private const val TAG_HERO_SHOT = "hero_shot"
     private const val TAG_HERO_VIDEO = "hero_video"
     private const val TAG_HERO_BANNER = "hero_banner"
+    private const val TAG_HERO_LOGO = "hero_logo"
     private const val TAG_RESUME_CHIP = "resume_chip"
     /** Visible so PRIMARY TOP_STRIP paths can detect a hero panel in the tree. */
     const val TAG_PANEL_ROOT = "panel_root"
@@ -238,6 +239,11 @@ object CompanionPanel {
                 rom,
                 settings.artOverrides,
                 artPx,
+            )
+            bindHeroLogo(
+                view.findViewWithTag(TAG_HERO_LOGO),
+                (context.applicationContext as GhostGalleonApp).artCache,
+                rom,
             )
             name.text = rom.name
             val platform = Platforms.byId(rom.platformId)
@@ -471,6 +477,37 @@ object CompanionPanel {
         } else {
             tv.visibility = View.GONE
             tv.text = ""
+        }
+    }
+
+    /** Wordmark / wheel overlay when [RomEntry.logoUri] is set. */
+    private fun bindHeroLogo(
+        image: ImageView?,
+        cache: ArtCache,
+        rom: RomEntry,
+    ) {
+        if (image == null) return
+        val uri = HeroDetail.logoUri(rom)
+        if (uri == null) {
+            image.visibility = View.GONE
+            image.setImageDrawable(null)
+            image.tag = null
+            return
+        }
+        image.visibility = View.VISIBLE
+        image.tag = uri
+        image.setImageDrawable(null)
+        val targetPx = (200 * image.resources.displayMetrics.density).toInt()
+        cache.loadUri(
+            image.context,
+            key = "${rom.id}.logo",
+            uriString = uri,
+            maxDimension = targetPx,
+            isStillValid = { image.tag == uri },
+        ) { bmp ->
+            if (bmp != null && image.tag == uri && image.isAttachedToWindow) {
+                image.setImageBitmap(bmp)
+            }
         }
     }
 
@@ -1101,6 +1138,16 @@ object CompanionPanel {
             bindRomHeroArt(
                 banner, artFrame, cache, selectedRom, settings.artOverrides, artPx,
             )
+            val logo = ImageView(context).apply {
+                tag = TAG_HERO_LOGO
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                visibility = View.GONE
+            }
+            hero.addView(logo, LinearLayout.LayoutParams(dp(200), dp(48)).apply {
+                topMargin = dp(6)
+                gravity = Gravity.CENTER_HORIZONTAL
+            })
+            bindHeroLogo(logo, cache, selectedRom)
             // Title must fit above actions on short secondary panels.
             hero.addView(TextView(context).apply {
                 tag = TAG_HERO_NAME

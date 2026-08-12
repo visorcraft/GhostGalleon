@@ -69,6 +69,17 @@ class RomScannerTest {
     }
 
     @Test
+    fun `bios folders and sibling bins are dropped`() {
+        val entries = RomScanner.scan(listOf(cardTree(listOf(
+            doc("7F7E-2949:roms/ps1/bios/scph5501.bin"),
+            doc("7F7E-2949:roms/ps1/Game.cue"),
+            doc("7F7E-2949:roms/ps1/Game.bin"),
+        ))))
+        assertEquals(listOf("Game"), entries.map { it.name })
+        assertTrue(entries.all { it.id.endsWith(".cue") })
+    }
+
+    @Test
     fun `wrong extensions and non-rom files are ignored`() {
         val entries = RomScanner.scan(listOf(cardTree(listOf(
             doc("7F7E-2949:roms/snes/save.srm"),       // save file, not a ROM

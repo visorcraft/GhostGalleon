@@ -38,6 +38,17 @@ class SgdbQueueTest {
     }
 
     @Test
+    fun `skipMiss drops entries before work`() {
+        val q = SgdbQueue.prioritize(
+            listOf(rom("a"), rom("b")),
+            hasGrid = { false },
+            hasHero = { false },
+            skipMiss = { it.id == "a" },
+        )
+        assertEquals(listOf("b"), q.map { it.entry.id })
+    }
+
+    @Test
     fun `workerCount bounds by jobs and max`() {
         assertEquals(0, SgdbQueue.workerCount(0))
         assertEquals(1, SgdbQueue.workerCount(1))

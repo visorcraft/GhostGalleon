@@ -43,6 +43,21 @@ class HeroDetailTest {
     }
 
     @Test
+    fun `logoUri reads rom field`() {
+        val rom = RomEntry(
+            id = "snes:x.smc",
+            name = "x",
+            platformId = "snes",
+            uri = "content://r",
+            path = null,
+            logoUri = "content://logo",
+        )
+        assertEquals("content://logo", HeroDetail.logoUri(rom))
+        assertNull(HeroDetail.logoUri(rom.copy(logoUri = "  ")))
+        assertNull(HeroDetail.logoUri(rom.copy(logoUri = null)))
+    }
+
+    @Test
     fun `screenshotUri reads rom field`() {
         val rom = RomEntry(
             id = "snes:x.smc",

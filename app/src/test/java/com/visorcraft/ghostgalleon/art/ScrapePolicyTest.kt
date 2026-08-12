@@ -99,4 +99,20 @@ class ScrapePolicyTest {
         assertEquals(3, ids.size)
         assertTrue(R.string.scrape_blocked_no_network in ids)
     }
+
+    @Test
+    fun `floorLabel is Off at zero else percent`() {
+        assertEquals(
+            listOf(R.string.label_off),
+            ScrapePolicy.floorLabel(0).resourceIds(),
+        )
+        assertEquals(
+            listOf(R.string.format_percent),
+            ScrapePolicy.floorLabel(15).resourceIds(),
+        )
+        assertEquals(
+            listOf(R.string.label_off),
+            ScrapePolicy.floorLabel(-3).resourceIds(),
+        )
+    }
 }

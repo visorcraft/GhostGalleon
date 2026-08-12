@@ -5,7 +5,7 @@
     <string name="action_add_to_collection">Zur Sammlung hinzufügen…</string>
     <string name="action_add_to_dock">An Dock anheften</string>
     <string name="action_add_to_folder">Zum Ordner hinzufügen</string>
-    <string name="action_add_to_grid">Zum Grid hinzufügen</string>
+    <string name="action_add_to_grid">Zum Raster hinzufügen</string>
     <string name="action_app_info">App-Info</string>
     <string name="action_art">Artwork</string>
     <string name="action_back">Zurück</string>
@@ -45,7 +45,7 @@
     <string name="action_pin_to_dock">An Dock anheften</string>
     <string name="action_player">Player…</string>
     <string name="action_remove">Entfernen</string>
-    <string name="action_remove_from_grid">Vom Grid entfernen</string>
+    <string name="action_remove_from_grid">Vom Raster entfernen</string>
     <string name="action_remove_from_collection">Aus Sammlung entfernen</string>
     <string name="action_rename">Umbenennen</string>
     <string name="action_reset_icon">Symbol zurücksetzen</string>
@@ -53,6 +53,7 @@
     <string name="action_save">Speichern</string>
     <string name="action_search">Suchen</string>
     <string name="action_set_artwork">Artwork festlegen</string>
+    <string name="action_download_artwork">Fehlendes Artwork laden</string>
     <string name="action_skip_for_now">Vorerst überspringen</string>
     <string name="action_swap">Tauschen</string>
     <string name="action_swap_screens">Bildschirme tauschen</string>
@@ -81,7 +82,7 @@
     <string name="label_full">Voll</string>
     <string name="label_game">Spiel</string>
     <string name="label_games">Spiele</string>
-    <string name="label_grid">Grid</string>
+    <string name="label_grid">Raster</string>
     <string name="label_installed">Installiert</string>
     <string name="label_minimal">Minimal</string>
     <string name="label_missing">Fehlt</string>
@@ -89,6 +90,7 @@
     <string name="label_never">Nie</string>
     <string name="label_new">Neu</string>
     <string name="label_not_set">Nicht festgelegt</string>
+    <string name="label_off">Aus</string>
     <string name="label_now">Jetzt</string>
     <string name="label_now_playing">JETZT SPIELEND</string>
     <string name="label_perf">Leistung</string>
@@ -130,6 +132,7 @@
     <string name="format_dot_pair">%1$s · %2$s</string>
     <string name="format_selected_check">%1$s ✓</string>
     <string name="format_progress">%1$d/%2$d</string>
+    <string name="format_percent">%1$d%%</string>
     <string name="format_open_count">Öffnen (%1$d)</string>
     <string name="format_select_count">Auswählen (%1$d)</string>
     <string name="format_count_only">· %1$d</string>
@@ -263,8 +266,8 @@
     <string name="deck_rename_named">%1$s umbenennen</string>
     <string name="deck_artwork_set">Artwork festgelegt</string>
     <string name="deck_cannot_open_image_picker">Bildauswahl kann nicht geöffnet werden</string>
-    <string name="deck_added_to_grid">Zum Grid hinzugefügt</string>
-    <string name="deck_pinned_to_grid">An Grid angeheftet</string>
+    <string name="deck_added_to_grid">Zum Raster hinzugefügt</string>
+    <string name="deck_pinned_to_grid">An Raster angeheftet</string>
     <string name="deck_already_in_dock">Bereits im Dock</string>
     <string name="deck_dock_full">Dock ist voll</string>
     <string name="deck_not_in_dock">Nicht im Dock</string>
@@ -287,7 +290,7 @@
     <string name="bulk_invert">Auswahl auf der Leiste umkehren</string>
     <string name="bulk_favorite">Ausgewählte favorisieren (%1$d)</string>
     <string name="bulk_unfavorite">Ausgewählte Entfavorisieren (%1$d)</string>
-    <string name="bulk_pin_grid">Ausgewählte an Grid anheften (%1$d)</string>
+    <string name="bulk_pin_grid">Ausgewählte an Raster anheften (%1$d)</string>
     <string name="bulk_pin_dock">Ausgewählte an Dock anheften (%1$d)</string>
     <string name="bulk_unpin_dock">Von Dock lösen (%1$d)</string>
     <string name="bulk_copy_titles">Titel kopieren (%1$d)</string>
@@ -328,7 +331,7 @@
     <string name="profile_sugar">One X Sugar</string>
     <string name="profile_generic_dual">Generisch Dual</string>
     <string name="profile_single">Einzeldisplay</string>
-    <string name="role_hero">Hero</string>
+    <string name="role_hero">Held</string>
     <string name="role_now_playing">Jetzt Spielend</string>
     <string name="role_perf_hud">Leistungs-HUD</string>
     <string name="role_pinned_app">Angeheftete App</string>
@@ -342,12 +345,15 @@
     <string name="setup_check_emulator">Emulator installieren</string>
     <string name="setup_check_sgdb">Optional: SteamGridDB-API-Schlüssel</string>
     <string name="setup_add_rom_folder">ROM-Ordner hinzufügen</string>
+    <string name="setup_get_emulator">Emulator holen</string>
+    <string name="setup_get_emulator_title">Player installieren</string>
+    <string name="setup_no_missing_players">Alle eingebauten Player sind installiert</string>
     <string name="setup_sgdb_set">SteamGridDB-Schlüssel (festgelegt)</string>
     <string name="setup_sgdb_optional">SteamGridDB-API-Schlüssel (optional)</string>
     <string name="setup_open_settings">Einstellungen öffnen</string>
     <string name="settings_title">Ghost Galleon Einstellungen</string>
     <string name="settings_page_picker">Einstellungsseite</string>
-    <string name="settings_page_display_grid">Ansicht &amp; Grid</string>
+    <string name="settings_page_display_grid">Ansicht &amp; Raster</string>
     <string name="settings_page_apps">Apps</string>
     <string name="settings_page_controls">Steuerung</string>
     <string name="settings_page_library">Bibliothek</string>
@@ -355,8 +361,7 @@
     <string name="settings_page_system">System</string>
     <string name="settings_page_about">Über</string>
     <string name="settings_section_display">Display</string>
-    <string name="settings_gyro_orientation">Gyroskop-Ausrichtung</string>
-    <string name="settings_angle_lock">Winkelsperre (nur Querformat)</string>
+
     <string name="settings_show_hints">Steuerungshinweise anzeigen</string>
     <string name="settings_default_mode">Standardmodus</string>
     <string name="settings_theme">Design</string>
@@ -393,12 +398,12 @@
     <string name="settings_pin_cleared">Pin gelöscht</string>
     <string name="settings_no_pin">Keine (lang drücken zum Löschen)</string>
     <string name="settings_pin_help">Zum Löschen die Pin-Zeile gedrückt halten. Bei Dual-Screen-Spielen (NDS/3DS) wird der Pin automatisch deaktiviert.</string>
-    <string name="settings_grid_section">Grid</string>
-    <string name="settings_grid_scrolling">Grid-Scrolling</string>
-    <string name="settings_grid_columns">Grid-Spalten</string>
+    <string name="settings_grid_section">Raster</string>
+    <string name="settings_grid_scrolling">Raster-Bildlauf</string>
+    <string name="settings_grid_columns">Raster-Spalten</string>
     <string name="settings_icon_size">Symbolgröße (dp)</string>
     <string name="settings_show_app_names">App-Namen anzeigen</string>
-    <string name="settings_grid_wallpaper">Grid-Hintergrundbild</string>
+    <string name="settings_grid_wallpaper">Raster-Hintergrundbild</string>
     <string name="settings_hidden_apps">Ausgeblendete Apps</string>
     <string name="settings_hidden_roms">Ausgeblendete ROMs</string>
     <string name="settings_no_hidden_apps">Keine ausgeblendeten Apps</string>
@@ -407,6 +412,7 @@
     <string name="settings_dock_empty">Dock ist leer</string>
     <string name="settings_haptics">Haptik</string>
     <string name="settings_controller_lab">Controller-Labor</string>
+    <string name="settings_stick_deadzone">Stick-Totzone</string>
     <string name="settings_press_button">Taste drücken…</string>
     <string name="settings_unbound">ungebunden</string>
     <string name="settings_add_rom_folder">ROM-Ordner hinzufügen</string>
@@ -414,9 +420,9 @@
     <string name="settings_rescan_library">Bibliothek neu scannen</string>
     <string name="settings_scanning">Scanne…</string>
     <string name="settings_full_scan">Vollständiger Scan…</string>
-    <string name="settings_hold_full">Halten=voll</string>
+    <string name="settings_hold_full">Gedrückt halten für vollständigen Scan</string>
     <string name="settings_card_unreadable">Karte nicht lesbar – Bibliothek unverändert</string>
-    <string name="settings_pin_favorites">Favoriten an leere Grid-Slots anheften</string>
+    <string name="settings_pin_favorites">Favoriten an leere Rasterplätze anheften</string>
     <string name="settings_default_players">Standard-Player</string>
     <string name="settings_system_defaults">Systemstandards</string>
     <string name="settings_ra_username">RetroAchievements-Benutzername</string>
@@ -432,9 +438,19 @@
     <string name="settings_api_key_hint">API-Schlüssel einfügen</string>
     <string name="settings_api_key_cleared">API-Schlüssel gelöscht</string>
     <string name="settings_download_artwork">Fehlende Artworks herunterladen</string>
+    <string name="artwork_need_api_key">Zuerst SteamGridDB-Schlüssel in den Einstellungen setzen</string>
+    <string name="artwork_download_busy">Artwork-Download läuft bereits</string>
+    <string name="artwork_already_cached">Artwork bereits auf dem Gerät</string>
+    <string name="artwork_download_started">Artwork wird heruntergeladen…</string>
     <string name="settings_add_api_key_first">Zuerst API-Schlüssel hinzufügen</string>
     <string name="settings_cancelling">Abbrechen…</string>
     <string name="settings_export">Einstellungen exportieren</string>
+    <string name="settings_export_art">Artwork-Cache exportieren</string>
+    <string name="settings_import_art">Artwork-Cache importieren</string>
+    <string name="settings_art_exported">%1$d Artwork-Dateien exportiert</string>
+    <string name="settings_art_imported">%1$d Artwork-Dateien importiert</string>
+    <string name="settings_art_export_failed">Artwork-Export fehlgeschlagen</string>
+    <string name="settings_art_import_failed">Artwork-Import fehlgeschlagen</string>
     <string name="settings_import">Einstellungen importieren</string>
     <string name="settings_exported">Einstellungen exportiert</string>
     <string name="settings_export_failed">Export fehlgeschlagen</string>
@@ -500,6 +516,10 @@
     <string name="system_power_wireless">Kabelloses Laden</string>
     <string name="controller_lab_title">Controller-Labor</string>
     <string name="controller_lab_intro">Tasten drücken / Sticks bewegen — Werte werden live aktualisiert. Zurück zum Beenden.</string>
+    <string name="controller_bind_last">Letzte Taste zuweisen…</string>
+    <string name="controller_bind_title">Letzte Taste zuweisen</string>
+    <string name="controller_no_key">Zuerst eine Taste drücken</string>
+    <string name="controller_bound">%1$s auf Tastencode %2$d gelegt</string>
     <string name="controller_key_empty">Taste: —</string>
     <string name="controller_action_empty">Aktion: —</string>
     <string name="controller_axes_empty">Achsen: —</string>
@@ -515,7 +535,7 @@
     <string name="about_version">v%1$s</string>
     <string name="about_android_api">Android · API %1$d</string>
     <string name="about_visit">Besuchen</string>
-    <string name="about_grid_mode">Grid-Modus</string>
+    <string name="about_grid_mode">Raster-Modus</string>
     <string name="about_grid_mode_body">Ein kuratiertes, für Controller optimiertes Start-Raster mit Ordnern, Dock-Verknüpfungen, benutzerdefinierten Namen und Artwork.</string>
     <string name="about_game_mode">Spielmodus</string>
     <string name="about_game_mode_body">Apps und ROMs nach Plattform, Verlauf, Favoriten, Sammlungen und Suche durchsuchen.</string>
@@ -551,7 +571,7 @@
     <string name="menu_section_library">Bibliothek</string>
     <string name="menu_section_customize">Anpassen</string>
     <string name="menu_section_more">Mehr</string>
-    <string name="deck_removed_from_grid">Vom Grid entfernt</string>
+    <string name="deck_removed_from_grid">Vom Raster entfernt</string>
 
     <string name="settings_dual_recovery_title">Dual-Bildschirm schwarz</string>
     <string name="settings_dual_recovery_body">Wenn ein oder beide Panels schwarz sind: (1) Companion unten neu starten oder X ein- bis zweimal drücken; (2) Spiel starten und zurück; (3) Ghost Galleon beenden, dann HOME; (4) Neu starten falls nötig.</string>
@@ -585,7 +605,8 @@
     <string name="scrape_blocked_wifi_only">Mit WLAN verbinden (nur WLAN ist an)</string>
     <string name="scrape_blocked_low_battery">Akku schwach — laden oder Schwelle in Einstellungen anheben</string>
     <string name="settings_scrape_wifi_only">Artwork-Download: nur WLAN</string>
-    <string name="action_mirror_to_folder">In Grid-Ordner spiegeln</string>
-    <string name="deck_mirrored_to_folder">Sammlung in Grid-Ordner gespiegelt</string>
+    <string name="settings_scrape_battery">Artwork-Download unter diesem Akkustand pausieren</string>
+    <string name="action_mirror_to_folder">In Raster-Ordner spiegeln</string>
+    <string name="deck_mirrored_to_folder">Sammlung in Raster-Ordner gespiegelt</string>
     <string name="deck_empty_collection">Sammlung ist leer</string>
 </resources>

@@ -77,6 +77,7 @@ class SettingsStoreTest {
             orientationMode = "sensor_landscape",
             userPinnedPrimaryId = 1,
             searchHistory = listOf("zelda", "mario"),
+            stickDeadzone = 40,
         )
         store.save(s)
         val loaded = SettingsStore(f).load()
@@ -113,6 +114,17 @@ class SettingsStoreTest {
         assertEquals("secondary", loaded.interactiveDisplayMode)
         assertEquals("auto", loaded.deviceProfileId)
         assertEquals(SettingsStore.CURRENT_SCHEMA, loaded.schemaVersion)
+    }
+
+    @Test
+    fun `legacy angleLock promotes to lock landscape when orientation is auto`() {
+        val f = tmp.root.resolve("cfg-angle/settings.json")
+        SettingsStore(f).save(Settings.DEFAULT.copy(angleLock = true, setupDismissed = true))
+        val raw = org.json.JSONObject(f.readText())
+        raw.put("orientationMode", "auto")
+        raw.put("angleLock", true)
+        f.writeText(raw.toString())
+        assertEquals("lock_landscape", SettingsStore(f).load().orientationMode)
     }
 
     @Test

@@ -118,6 +118,11 @@ data class Settings(
      * dialog history. Absent on disk → empty (within schema v8; no bump).
      */
     val searchHistory: List<String> = emptyList(),
+    /**
+     * Analog stick deadzone percent (20–80). Release = n/100; engage = n+20.
+     * Within schema v8; absent on disk → 50 (legacy 0.50 / 0.70).
+     */
+    val stickDeadzone: Int = 50,
     val schemaVersion: Int = 8,
 ) {
     companion object {

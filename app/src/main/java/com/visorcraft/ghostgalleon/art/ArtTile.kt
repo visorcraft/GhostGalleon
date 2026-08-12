@@ -1,12 +1,14 @@
 package com.visorcraft.ghostgalleon.art
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import androidx.core.view.children
+import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
 
@@ -84,14 +86,38 @@ object ArtTile {
             isStillValid = { overlay.tag == rom.id },
         ) { bitmap ->
             // onResult is already main-thread; skip an extra post frame.
-            if (bitmap != null && overlay.tag == rom.id &&
-                overlay.isAttachedToWindow
-            ) {
-                overlay.setImageDrawable(
-                    RoundedBitmapDrawableFactory.create(context.resources, bitmap)
-                        .apply { cornerRadius = radiusPx },
-                )
+            if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@load
+            if (bitmap != null) {
+                applyRounded(overlay, context, bitmap, radiusPx)
+                return@load
+            }
+            // Local logo/wheel when box art is missing (already scanned).
+            val logo = HeroDetail.logoUri(rom) ?: return@load
+            cache.loadUri(
+                context,
+                key = "${rom.id}.logo",
+                uriString = logo,
+                maxDimension = targetPx,
+                isStillValid = { overlay.tag == rom.id },
+            ) { logoBmp ->
+                if (logoBmp != null && overlay.tag == rom.id &&
+                    overlay.isAttachedToWindow
+                ) {
+                    applyRounded(overlay, context, logoBmp, radiusPx)
+                }
             }
         }
+    }
+
+    private fun applyRounded(
+        overlay: ImageView,
+        context: Context,
+        bitmap: Bitmap,
+        radiusPx: Float,
+    ) {
+        overlay.setImageDrawable(
+            RoundedBitmapDrawableFactory.create(context.resources, bitmap)
+                .apply { cornerRadius = radiusPx },
+        )
     }
 }

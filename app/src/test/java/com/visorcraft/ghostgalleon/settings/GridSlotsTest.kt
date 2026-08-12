@@ -12,6 +12,13 @@ class GridSlotsTest {
     }
 
     @Test
+    fun `firstEmptyIndex is the first null or size when full`() {
+        assertEquals(0, GridSlots.firstEmptyIndex(GridSlots.blank(3)))
+        assertEquals(1, GridSlots.firstEmptyIndex(listOf("a", null, "b")))
+        assertEquals(2, GridSlots.firstEmptyIndex(listOf("a", "b")))
+    }
+
+    @Test
     fun `fill places a package in the slot without touching others`() {
         val slots = listOf("a.b", null, "c.d")
         assertEquals(listOf("a.b", "x.y", "c.d"), GridSlots.fill(slots, 1, "x.y"))

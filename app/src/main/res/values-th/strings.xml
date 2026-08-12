@@ -53,6 +53,7 @@
     <string name="action_save">บันทึก</string>
     <string name="action_search">ค้นหา</string>
     <string name="action_set_artwork">ตั้งค่าอาร์ตเวิร์ค</string>
+    <string name="action_download_artwork">ดาวน์โหลดอาร์ตที่ขาด</string>
     <string name="action_skip_for_now">ข้ามไปก่อน</string>
     <string name="action_swap">สลับ</string>
     <string name="action_swap_screens">สลับหน้าจอ</string>
@@ -89,6 +90,7 @@
     <string name="label_never">ไม่เคย</string>
     <string name="label_new">ใหม่</string>
     <string name="label_not_set">ไม่ได้ตั้ง</string>
+    <string name="label_off">ปิด</string>
     <string name="label_now">ตอนนี้</string>
     <string name="label_now_playing">กำลังเล่น</string>
     <string name="label_perf">ประสิทธิภาพ</string>
@@ -130,6 +132,7 @@
     <string name="format_dot_pair">%1$s · %2$s</string>
     <string name="format_selected_check">%1$s ✓</string>
     <string name="format_progress">%1$d/%2$d</string>
+    <string name="format_percent">%1$d%%</string>
     <string name="format_open_count">เปิด (%1$d)</string>
     <string name="format_select_count">เลือก (%1$d)</string>
     <string name="format_count_only">· %1$d</string>
@@ -322,8 +325,8 @@
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>
-    <string name="theme_oled">OLED Black</string>
-    <string name="theme_neon">Neon</string>
+    <string name="theme_oled">ดำ OLED</string>
+    <string name="theme_neon">นีออน</string>
     <string name="profile_auto">อัตโนมัติ</string>
     <string name="profile_sugar">One X Sugar</string>
     <string name="profile_generic_dual">คู่ทั่วไป</string>
@@ -342,6 +345,9 @@
     <string name="setup_check_emulator">ติดตั้งอีมูเลเตอร์</string>
     <string name="setup_check_sgdb">ไม่บังคับ: คีย์ API SteamGridDB</string>
     <string name="setup_add_rom_folder">เพิ่มโฟลเดอร์ ROM</string>
+    <string name="setup_get_emulator">ติดตั้งโปรแกรมจำลอง</string>
+    <string name="setup_get_emulator_title">ติดตั้งตัวเล่น</string>
+    <string name="setup_no_missing_players">ติดตั้งตัวเล่นในตัวครบแล้ว</string>
     <string name="setup_sgdb_set">คีย์ SteamGridDB (ตั้งค่าแล้ว)</string>
     <string name="setup_sgdb_optional">คีย์ API SteamGridDB (ไม่บังคับ)</string>
     <string name="setup_open_settings">เปิดการตั้งค่า</string>
@@ -355,8 +361,6 @@
     <string name="settings_page_system">ระบบ</string>
     <string name="settings_page_about">เกี่ยวกับ</string>
     <string name="settings_section_display">หน้าจอ</string>
-    <string name="settings_gyro_orientation">การวางแนวไจโรสโคป</string>
-    <string name="settings_angle_lock">ล็อกมุม (แนวนอนเท่านั้น)</string>
     <string name="settings_show_hints">แสดงคำแนะนำการควบคุม</string>
     <string name="settings_default_mode">โหมดเริ่มต้น</string>
     <string name="settings_theme">ธีม</string>
@@ -407,6 +411,7 @@
     <string name="settings_dock_empty">ด็อกว่างเปล่า</string>
     <string name="settings_haptics">แรงสั่นสะเทือน</string>
     <string name="settings_controller_lab">ห้องทดลองคอนโทรลเลอร์</string>
+    <string name="settings_stick_deadzone">เดดโซนสติ๊ก</string>
     <string name="settings_press_button">กดปุ่ม…</string>
     <string name="settings_unbound">ไม่ได้เชื่อม</string>
     <string name="settings_add_rom_folder">เพิ่มโฟลเดอร์ ROM</string>
@@ -414,7 +419,7 @@
     <string name="settings_rescan_library">สแกนไลบรารีใหม่</string>
     <string name="settings_scanning">กำลังสแกน…</string>
     <string name="settings_full_scan">สแกนเต็ม…</string>
-    <string name="settings_hold_full">กดค้าง=เต็ม</string>
+    <string name="settings_hold_full">กดค้างเพื่อสแกนเต็ม</string>
     <string name="settings_card_unreadable">อ่านการ์ดไม่ได้ - ไลบรารีไม่เปลี่ยน</string>
     <string name="settings_pin_favorites">ปักหมุดรายการโปรดลงช่องว่าง</string>
     <string name="settings_default_players">โปรแกรมเล่นเริ่มต้น</string>
@@ -432,9 +437,19 @@
     <string name="settings_api_key_hint">วางคีย์ API</string>
     <string name="settings_api_key_cleared">ล้างคีย์ API แล้ว</string>
     <string name="settings_download_artwork">ดาวน์โหลดอาร์ตเวิร์คที่หายไป</string>
+    <string name="artwork_need_api_key">เพิ่มคีย์ SteamGridDB ในการตั้งค่าก่อน</string>
+    <string name="artwork_download_busy">กำลังดาวน์โหลดอาร์ตอยู่แล้ว</string>
+    <string name="artwork_already_cached">มีอาร์ตบนอุปกรณ์แล้ว</string>
+    <string name="artwork_download_started">กำลังดาวน์โหลดอาร์ต…</string>
     <string name="settings_add_api_key_first">เพิ่มคีย์ API ก่อน</string>
     <string name="settings_cancelling">กำลังยกเลิก…</string>
     <string name="settings_export">ส่งออกการตั้งค่า</string>
+    <string name="settings_export_art">ส่งออกแคชอาร์ต</string>
+    <string name="settings_import_art">นำเข้าแคชอาร์ต</string>
+    <string name="settings_art_exported">ส่งออกไฟล์อาร์ต %1$d ไฟล์</string>
+    <string name="settings_art_imported">นำเข้าไฟล์อาร์ต %1$d ไฟล์</string>
+    <string name="settings_art_export_failed">ส่งออกอาร์ตไม่สำเร็จ</string>
+    <string name="settings_art_import_failed">นำเข้าอาร์ตไม่สำเร็จ</string>
     <string name="settings_import">นำเข้าการตั้งค่า</string>
     <string name="settings_exported">ส่งออกการตั้งค่าแล้ว</string>
     <string name="settings_export_failed">ส่งออกล้มเหลว</string>
@@ -500,6 +515,10 @@
     <string name="system_power_wireless">ไร้สาย</string>
     <string name="controller_lab_title">ห้องทดลองคอนโทรลเลอร์</string>
     <string name="controller_lab_intro">กดปุ่ม/เลื่อนสติ๊ก — ค่าอัปเดตสด กลับออก</string>
+    <string name="controller_bind_last">ผูกปุ่มล่าสุด…</string>
+    <string name="controller_bind_title">กำหนดปุ่มล่าสุด</string>
+    <string name="controller_no_key">กดปุ่มก่อน</string>
+    <string name="controller_bound">ผูก %1$s กับรหัส %2$d</string>
     <string name="controller_key_empty">คีย์: —</string>
     <string name="controller_action_empty">การทำงาน: —</string>
     <string name="controller_axes_empty">แกน: —</string>
@@ -585,6 +604,7 @@
     <string name="scrape_blocked_wifi_only">เชื่อมต่อ Wi‑Fi เพื่อดาวน์โหลดอาร์ต (โหมด Wi‑Fi เท่านั้น)</string>
     <string name="scrape_blocked_low_battery">แบตต่ำ — ชาร์จหรือเพิ่มเกณฑ์ในตั้งค่า</string>
     <string name="settings_scrape_wifi_only">ดาวน์โหลดอาร์ต: Wi‑Fi เท่านั้น</string>
+    <string name="settings_scrape_battery">หยุดดาวน์โหลดอาร์ตเมื่อแบตเตอรี่ต่ำกว่า</string>
     <string name="action_mirror_to_folder">สะท้อนไปโฟลเดอร์กริด</string>
     <string name="deck_mirrored_to_folder">สะท้อนคอลเลกชันไปโฟลเดอร์กริดแล้ว</string>
     <string name="deck_empty_collection">คอลเลกชันว่าง</string>

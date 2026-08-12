@@ -48,6 +48,7 @@ object SetupCard {
         snap: SetupNeeds.Snapshot,
         onAddRomFolder: () -> Unit,
         onSgdbKey: () -> Unit,
+        onGetEmulator: () -> Unit,
         onOpenSettings: () -> Unit,
         onEnableCompanionChrome: () -> Unit,
         onDismiss: () -> Unit,
@@ -145,6 +146,19 @@ object SetupCard {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { topMargin = activity.dp(16) },
             )
+            if (snap.installedPlayerCount == 0) {
+                card.addView(
+                    actionBtn(
+                        activity.getString(R.string.setup_get_emulator),
+                        false,
+                        onGetEmulator,
+                    ),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = activity.dp(8) },
+                )
+            }
             card.addView(
                 actionBtn(
                     activity.getString(

@@ -21,6 +21,12 @@ object GridSlots {
 
     // Filling past the current end (a padded blank) extends the list with
     // nulls up to [index], then sets it — the padded slot becomes real.
+    /** First null slot, or [slots.size] so [fill] can grow past the end. */
+    fun firstEmptyIndex(slots: List<String?>): Int {
+        val i = slots.indexOfFirst { it == null }
+        return if (i >= 0) i else slots.size
+    }
+
     fun fill(slots: List<String?>, index: Int, packageName: String): List<String?> {
         if (index < 0) return slots
         if (index >= slots.size) {

@@ -53,6 +53,7 @@
     <string name="action_save">Guardar</string>
     <string name="action_search">Buscar</string>
     <string name="action_set_artwork">Establecer arte</string>
+    <string name="action_download_artwork">Descargar arte faltante</string>
     <string name="action_skip_for_now">Omitir por ahora</string>
     <string name="action_swap">Intercambiar</string>
     <string name="action_swap_screens">Intercambiar pantallas</string>
@@ -89,6 +90,7 @@
     <string name="label_never">Nunca</string>
     <string name="label_new">Nuevo</string>
     <string name="label_not_set">No establecido</string>
+    <string name="label_off">Desactivado</string>
     <string name="label_now">Ahora</string>
     <string name="label_now_playing">EN REPRODUCCIÓN</string>
     <string name="label_perf">Rend</string>
@@ -130,6 +132,7 @@
     <string name="format_dot_pair">%1$s · %2$s</string>
     <string name="format_selected_check">%1$s ✓</string>
     <string name="format_progress">%1$d/%2$d</string>
+    <string name="format_percent">%1$d%%</string>
     <string name="format_open_count">Abrir (%1$d)</string>
     <string name="format_select_count">Seleccionar (%1$d)</string>
     <string name="format_count_only">· %1$d</string>
@@ -342,6 +345,9 @@
     <string name="setup_check_emulator">Instalar un emulador</string>
     <string name="setup_check_sgdb">Opcional: clave API de SteamGridDB</string>
     <string name="setup_add_rom_folder">Añadir carpeta ROM</string>
+    <string name="setup_get_emulator">Obtener un emulador</string>
+    <string name="setup_get_emulator_title">Instalar un reproductor</string>
+    <string name="setup_no_missing_players">Todos los reproductores integrados están instalados</string>
     <string name="setup_sgdb_set">Clave SteamGridDB (establecida)</string>
     <string name="setup_sgdb_optional">Clave API de SteamGridDB (opcional)</string>
     <string name="setup_open_settings">Abrir Ajustes</string>
@@ -355,8 +361,6 @@
     <string name="settings_page_system">Sistema</string>
     <string name="settings_page_about">Acerca de</string>
     <string name="settings_section_display">Pantalla</string>
-    <string name="settings_gyro_orientation">Orientación del giroscopio</string>
-    <string name="settings_angle_lock">Bloqueo de ángulo (solo horizontal)</string>
     <string name="settings_show_hints">Mostrar pistas de control</string>
     <string name="settings_default_mode">Modo predeterminado</string>
     <string name="settings_theme">Tema</string>
@@ -407,6 +411,7 @@
     <string name="settings_dock_empty">Dock vacío</string>
     <string name="settings_haptics">Hápticos</string>
     <string name="settings_controller_lab">Laboratorio de controladores</string>
+    <string name="settings_stick_deadzone">Zona muerta del stick</string>
     <string name="settings_press_button">Pulsa un botón…</string>
     <string name="settings_unbound">sin asignar</string>
     <string name="settings_add_rom_folder">Añadir carpeta ROM</string>
@@ -414,7 +419,7 @@
     <string name="settings_rescan_library">Reescanear biblioteca</string>
     <string name="settings_scanning">Escaneando…</string>
     <string name="settings_full_scan">Escaneo completo…</string>
-    <string name="settings_hold_full">mantener=completo</string>
+    <string name="settings_hold_full">Mantén pulsado para análisis completo</string>
     <string name="settings_card_unreadable">Tarjeta ilegible - biblioteca sin cambios</string>
     <string name="settings_pin_favorites">Fijar favoritos a ranuras vacías de cuadrícula</string>
     <string name="settings_default_players">Reproductores predeterminados</string>
@@ -432,9 +437,19 @@
     <string name="settings_api_key_hint">Pegar clave API</string>
     <string name="settings_api_key_cleared">Clave API borrada</string>
     <string name="settings_download_artwork">Descargar arte faltante</string>
+    <string name="artwork_need_api_key">Añade primero una clave de SteamGridDB en Ajustes</string>
+    <string name="artwork_download_busy">La descarga de arte ya está en curso</string>
+    <string name="artwork_already_cached">El arte ya está en el dispositivo</string>
+    <string name="artwork_download_started">Descargando arte…</string>
     <string name="settings_add_api_key_first">Añadir clave API primero</string>
     <string name="settings_cancelling">Cancelando…</string>
     <string name="settings_export">Exportar ajustes</string>
+    <string name="settings_export_art">Exportar caché de arte</string>
+    <string name="settings_import_art">Importar caché de arte</string>
+    <string name="settings_art_exported">Se exportaron %1$d archivos de arte</string>
+    <string name="settings_art_imported">Se importaron %1$d archivos de arte</string>
+    <string name="settings_art_export_failed">Error al exportar el arte</string>
+    <string name="settings_art_import_failed">Error al importar el arte</string>
     <string name="settings_import">Importar ajustes</string>
     <string name="settings_exported">Ajustes exportados</string>
     <string name="settings_export_failed">Error al exportar</string>
@@ -500,6 +515,10 @@
     <string name="system_power_wireless">Inalámbrico</string>
     <string name="controller_lab_title">Laboratorio de controladores</string>
     <string name="controller_lab_intro">Pulsa botones / mueve sticks — valores se actualizan en vivo. Volver sale.</string>
+    <string name="controller_bind_last">Asignar última tecla…</string>
+    <string name="controller_bind_title">Asignar última tecla</string>
+    <string name="controller_no_key">Pulsa un botón primero</string>
+    <string name="controller_bound">%1$s asignado al código %2$d</string>
     <string name="controller_key_empty">Tecla: —</string>
     <string name="controller_action_empty">Acción: —</string>
     <string name="controller_axes_empty">Ejes: —</string>
@@ -585,6 +604,7 @@
     <string name="scrape_blocked_wifi_only">Conéctate a Wi‑Fi para descargar arte (solo Wi‑Fi activo)</string>
     <string name="scrape_blocked_low_battery">Batería baja — carga o sube el umbral en Ajustes</string>
     <string name="settings_scrape_wifi_only">Descarga de arte: solo Wi‑Fi</string>
+    <string name="settings_scrape_battery">Pausar descarga de arte por debajo de la batería</string>
     <string name="action_mirror_to_folder">Copiar a carpeta de la cuadrícula</string>
     <string name="deck_mirrored_to_folder">Colección copiada a carpeta de la cuadrícula</string>
     <string name="deck_empty_collection">La colección está vacía</string>

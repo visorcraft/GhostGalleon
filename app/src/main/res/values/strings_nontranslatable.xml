@@ -23,4 +23,5 @@
     <string name="glyph_dash" translatable="false">—</string>
     <string name="label_ra" translatable="false">RA %1$s</string>
     <string name="file_settings_export" translatable="false">ghost-galleon-settings.json</string>
+    <string name="file_art_export" translatable="false">ghost-galleon-art.zip</string>
 </resources>

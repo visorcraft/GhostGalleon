@@ -16,6 +16,7 @@ import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
+import com.visorcraft.ghostgalleon.ui.resolveText
 
 interface Deck {
     fun primaryView(context: Context): View
@@ -108,4 +109,89 @@ internal fun launchSlotKey(
             launchOnOtherDisplay(activity, state, it)
             app?.noteLaunch(key)
         }
+}
+
+/**
+ * One-ROM SteamGridDB scrape (grid + hero slots still missing).
+ * Uses the app-scoped [com.visorcraft.ghostgalleon.art.ScrapeJob].
+ */
+internal fun requestMissingArtwork(activity: AppCompatActivity, rom: RomEntry) {
+    val app = activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp ?: return
+    val cache = app.artCache
+    val needsWork = com.visorcraft.ghostgalleon.art.SgdbQueue.prioritize(
+        listOf(rom),
+        hasGrid = { cache.diskHas(it) },
+        hasHero = { cache.diskHas(it, com.visorcraft.ghostgalleon.art.ArtCache.ArtKind.HERO) },
+    ).isNotEmpty()
+    when (
+        com.visorcraft.ghostgalleon.art.ArtworkDownload.gate(
+            hasKey = !app.settings.sgdbApiKey.isNullOrBlank(),
+            running = app.scrapeJob.isRunning,
+            needsWork = needsWork,
+        )
+    ) {
+        com.visorcraft.ghostgalleon.art.ArtworkDownload.Gate.NO_KEY -> {
+            Toast.makeText(activity, R.string.artwork_need_api_key, Toast.LENGTH_SHORT).show()
+            return
+        }
+        com.visorcraft.ghostgalleon.art.ArtworkDownload.Gate.BUSY -> {
+            Toast.makeText(activity, R.string.artwork_download_busy, Toast.LENGTH_SHORT).show()
+            return
+        }
+        com.visorcraft.ghostgalleon.art.ArtworkDownload.Gate.NOTHING_NEEDED -> {
+            Toast.makeText(activity, R.string.artwork_already_cached, Toast.LENGTH_SHORT).show()
+            return
+        }
+        com.visorcraft.ghostgalleon.art.ArtworkDownload.Gate.START -> Unit
+    }
+    when (
+        val decision = com.visorcraft.ghostgalleon.art.ScrapeEnvironment.decision(
+            activity,
+            app.settings,
+        )
+    ) {
+        is com.visorcraft.ghostgalleon.art.ScrapePolicy.Decision.Block -> {
+            Toast.makeText(
+                activity,
+                activity.resolveText(
+                    com.visorcraft.ghostgalleon.art.ScrapePolicy.blockMessage(decision.reason),
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        com.visorcraft.ghostgalleon.art.ScrapePolicy.Decision.Allow -> Unit
+    }
+    val apiKey = app.settings.sgdbApiKey ?: return
+    val job = app.scrapeJob
+    val listener = object : com.visorcraft.ghostgalleon.art.ScrapeJob.Listener {
+        override fun onProgress(done: Int, total: Int) = Unit
+        override fun onFinished(summary: com.visorcraft.ghostgalleon.art.SgdbScraper.Summary) {
+            job.removeListener(this)
+            if (!activity.isFinishing) {
+                Toast.makeText(
+                    activity,
+                    activity.getString(
+                        if (summary.cancelled) {
+                            R.string.artwork_summary_cancelled
+                        } else {
+                            R.string.artwork_summary
+                        },
+                        summary.downloaded,
+                        summary.skipped,
+                        summary.failed,
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            app.deckState.notifySelectionRefresh()
+        }
+    }
+    job.addListener(listener)
+    if (!job.start(apiKey, listOf(rom))) {
+        job.removeListener(listener)
+        Toast.makeText(activity, R.string.artwork_download_busy, Toast.LENGTH_SHORT).show()
+        return
+    }
+    Toast.makeText(activity, R.string.artwork_download_started, Toast.LENGTH_SHORT).show()
 }

@@ -48,6 +48,7 @@ class SlotMenuRowsTest {
         assertTrue(actions.contains(SlotMenu.Choice.UNPIN_FROM_DOCK))
         assertTrue(actions.contains(SlotMenu.Choice.UNFAVORITE))
         assertTrue(actions.contains(SlotMenu.Choice.OPEN_WITH))
+        assertTrue(actions.contains(SlotMenu.Choice.DOWNLOAD_ART))
         assertTrue(actions.contains(SlotMenu.Choice.HIDE))
         assertTrue(actions.contains(SlotMenu.Choice.BROWSE_RELATED))
         val remove = rows.filterIsInstance<SlotMenu.Row.Item>()

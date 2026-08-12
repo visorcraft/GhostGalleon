@@ -282,7 +282,7 @@ class AppPicker(
     }
 
     companion object {
-        private const val SEARCH_DEBOUNCE_MS = 60L
+        private const val SEARCH_DEBOUNCE_MS = 110L
     }
 
     // Confirm-style modal for a picker row: "Hide app" adds the package to
