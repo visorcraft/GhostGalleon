@@ -1,6 +1,8 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class CompanionRoleTest {
@@ -76,7 +78,7 @@ class CompanionRoleTest {
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
                     openSessionKey = "rom:nds:mario.nds",
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                 ),
             ),
         )
@@ -86,7 +88,7 @@ class CompanionRoleTest {
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
-                    openSessionPlatformId = "3ds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                     openSessionKey = null,
                 ),
             ),
@@ -99,7 +101,7 @@ class CompanionRoleTest {
                     pinnedPackage = "com.example.pin",
                     pinnedPackageInstalled = true,
                     openSessionKey = "rom:nds:mario.nds",
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                 ),
             ),
         )
@@ -172,10 +174,25 @@ class CompanionRoleTest {
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
                     pinnedPackageInstalled = true,
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                     openSessionKey = "rom:nds:x.nds",
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `pinHonesty openSession NDS with KEEP_COMPANION is not DUAL_CLAIM`() {
+        val honesty = CompanionRoleResolve.pinHonesty(
+            CompanionRoleResolve.Context(
+                preferred = CompanionRole.PINNED_APP,
+                pinnedPackage = "com.example.pin",
+                pinnedPackageInstalled = true,
+                openSessionKey = "rom:nds:mario.nds",
+                sessionPolicy = SessionPolicy.KEEP_COMPANION,
+            ),
+        )
+        assertNotEquals(CompanionRoleResolve.PinHonesty.DUAL_CLAIM, honesty)
+        assertEquals(CompanionRoleResolve.PinHonesty.READY, honesty)
     }
 }

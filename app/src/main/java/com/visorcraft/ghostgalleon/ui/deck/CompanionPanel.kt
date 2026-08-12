@@ -1060,9 +1060,6 @@ object CompanionPanel {
 
         // Companion role chips (Hero / Now Playing / Perf / Pin).
         val preferredRole = CompanionRole.parse(settings.companionRole)
-        val sessionPlatform = app.openSession?.key?.let { k ->
-            SlotKey.platformIdOf(k)
-        }
         val pinPkg = settings.companionPinnedPackage
         val pinInstalled = pinPkg != null && context.packageManager.isInstalled(pinPkg)
         val effectiveRole = CompanionRoleResolve.effective(
@@ -1070,7 +1067,7 @@ object CompanionPanel {
                 preferred = preferredRole,
                 openSessionKey = app.openSession?.key,
                 pinnedPackage = pinPkg,
-                openSessionPlatformId = sessionPlatform,
+                sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = pinInstalled,
             ),
         )
@@ -1792,7 +1789,7 @@ object CompanionPanel {
                 preferred = CompanionRole.PINNED_APP,
                 openSessionKey = app.openSession?.key,
                 pinnedPackage = pinPkg,
-                openSessionPlatformId = app.openSession?.key?.let { SlotKey.platformIdOf(it) },
+                sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = installed,
             ),
         )
