@@ -163,6 +163,51 @@ internal fun requestMissingArtwork(activity: AppCompatActivity, rom: RomEntry) {
         com.visorcraft.ghostgalleon.art.ScrapePolicy.Decision.Allow -> Unit
     }
     val apiKey = app.settings.sgdbApiKey ?: return
+    pickSgdbMatchThenStart(activity, app, rom, apiKey)
+}
+
+private fun pickSgdbMatchThenStart(
+    activity: AppCompatActivity,
+    app: com.visorcraft.ghostgalleon.GhostGalleonApp,
+    rom: RomEntry,
+    apiKey: String,
+) {
+    Thread {
+        val query = com.visorcraft.ghostgalleon.art.Sgdb.normalizeName(rom.name)
+        val json = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
+            .get(com.visorcraft.ghostgalleon.art.Sgdb.searchUrl(query), apiKey)
+        val hits = json?.let {
+            com.visorcraft.ghostgalleon.art.Sgdb.parseSearchHits(it)
+        }.orEmpty()
+        activity.runOnUiThread {
+            if (activity.isFinishing) return@runOnUiThread
+            if (hits.size <= 1) {
+                hits.firstOrNull()?.let {
+                    com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = it.id
+                }
+                startArtworkJob(activity, app, rom, apiKey)
+                return@runOnUiThread
+            }
+            val labels = hits.map { it.name }.toTypedArray()
+            android.app.AlertDialog.Builder(activity)
+                .setTitle(R.string.artwork_pick_match)
+                .setItems(labels) { _, which ->
+                    val hit = hits.getOrNull(which) ?: return@setItems
+                    com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = hit.id
+                    startArtworkJob(activity, app, rom, apiKey)
+                }
+                .setNegativeButton(R.string.action_cancel, null)
+                .show()
+        }
+    }.start()
+}
+
+private fun startArtworkJob(
+    activity: AppCompatActivity,
+    app: com.visorcraft.ghostgalleon.GhostGalleonApp,
+    rom: RomEntry,
+    apiKey: String,
+) {
     val job = app.scrapeJob
     val listener = object : com.visorcraft.ghostgalleon.art.ScrapeJob.Listener {
         override fun onProgress(done: Int, total: Int) = Unit

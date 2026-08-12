@@ -32,6 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger
 object Sgdb {
     const val BASE = "https://www.steamgriddb.com/api/v2"
 
+    /** One-shot per-ROM game id chosen by the user before a scrape starts. */
+    val forcedGameIds: java.util.concurrent.ConcurrentHashMap<String, Long> =
+        java.util.concurrent.ConcurrentHashMap()
+
     private val BRACKET = Regex("""\[[^\]]*\]""")
     private val PAREN = Regex("""\([^)]*\)""")
 
@@ -67,11 +71,24 @@ object Sgdb {
         }
     }.getOrDefault(emptyList())
 
+    data class SearchHit(val id: Long, val name: String)
+
+    /** Named search hits, first [limit] entries. */
+    fun parseSearchHits(json: String, limit: Int = 6): List<SearchHit> = runCatching {
+        val data = JSONObject(json).optJSONArray("data") ?: return emptyList()
+        buildList {
+            for (i in 0 until minOf(data.length(), limit.coerceAtLeast(0))) {
+                val o = data.getJSONObject(i)
+                val id = o.optLong("id", o.optLong("ID", -1L))
+                val name = o.optString("name", o.optString("Name", "")).trim()
+                if (id > 0L) add(SearchHit(id, name.ifEmpty { id.toString() }))
+            }
+        }
+    }.getOrDefault(emptyList())
+
     /** First game id of a search/autocomplete response, else null. */
-    fun parseSearchFirstId(json: String): Long? = runCatching {
-        val data = JSONObject(json).optJSONArray("data")
-        if (data == null || data.length() == 0) null else data.getJSONObject(0).getLong("id")
-    }.getOrNull()
+    fun parseSearchFirstId(json: String): Long? =
+        parseSearchHits(json, limit = 1).firstOrNull()?.id
 
     /** First image URL of a grids/heroes response, else null. */
     fun parseFirstImageUrl(json: String): String? = runCatching {
@@ -289,13 +306,18 @@ class SgdbScraper(
         return runCatching {
             val query = Sgdb.normalizeName(rom.name)
             if (query.isEmpty()) return false
-            val searchJson = request(sleep) { transport.get(Sgdb.searchUrl(query), apiKey) }
-            if (searchJson == null) {
-                onMiss(rom.id, query)
-                return false
+            val forced = Sgdb.forcedGameIds.remove(rom.id)
+            val gameId = if (forced != null) {
+                forced
+            } else {
+                val searchJson = request(sleep) { transport.get(Sgdb.searchUrl(query), apiKey) }
+                if (searchJson == null) {
+                    onMiss(rom.id, query)
+                    return false
+                }
+                if (cancelled) return false
+                Sgdb.parseSearchFirstId(searchJson)
             }
-            if (cancelled) return false
-            val gameId = Sgdb.parseSearchFirstId(searchJson)
             if (gameId == null) {
                 onMiss(rom.id, query)
                 return false

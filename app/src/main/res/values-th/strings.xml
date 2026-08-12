@@ -47,6 +47,8 @@
     <string name="action_pin_to_dock">ปักหมุดลงด็อก</string>
     <string name="action_player">โปรแกรมเล่น…</string>
     <string name="action_remove">ลบออก</string>
+    <string name="action_edit_members">แก้ไขสมาชิก</string>
+    <string name="artwork_pick_match">เลือกงานศิลป์ที่ตรงกัน</string>
     <string name="action_remove_from_grid">ลบออกจากกริด</string>
     <string name="action_remove_from_collection">ลบออกจากคอลเลกชัน</string>
     <string name="action_rename">เปลี่ยนชื่อ</string>

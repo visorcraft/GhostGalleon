@@ -1752,6 +1752,7 @@ class GameDeck(
         val count = settings.collections[name]?.size ?: 0
         val labels = arrayOf(
             activity.getString(R.string.format_open_count, count),
+            activity.getString(R.string.action_edit_members),
             activity.getString(R.string.action_rename),
             activity.getString(R.string.deck_delete_collection),
             activity.getString(R.string.action_cancel),
@@ -1767,8 +1768,28 @@ class GameDeck(
                         ),
                         force = true,
                     )
-                    1 -> promptRenameCollection(name)
-                    2 -> {
+                    1 -> CollectionDialogs.promptMembers(
+                        activity,
+                        app(),
+                        name,
+                        labelOf = { k ->
+                            entries.firstOrNull { it.key == k }?.label
+                                ?: continueLabel(k, settings)
+                        },
+                        onChanged = {
+                            if (state.libraryBrowse.collectionName == name) {
+                                state.setLibraryBrowse(
+                                    LibraryBrowse.BrowseQuery(
+                                        mode = LibraryBrowse.Mode.COLLECTION,
+                                        collectionName = name,
+                                    ),
+                                    force = true,
+                                )
+                            }
+                        },
+                    )
+                    2 -> promptRenameCollection(name)
+                    3 -> {
                         val next = CollectionsOps.deleteCollection(settings.collections, name)
                         app().updateSettings(settings.copy(collections = next))
                         // Leave collection filter if it pointed at the deleted rail.

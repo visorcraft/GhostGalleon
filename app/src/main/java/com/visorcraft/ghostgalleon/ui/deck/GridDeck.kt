@@ -331,6 +331,29 @@ class GridDeck(
         if (moveIndex == null) openSlotMenu(position)
     }
 
+    private fun bindFolderThumb(image: ImageView, key: String) {
+        val app = activity.application as GhostGalleonApp
+        val px = (96 * activity.resources.displayMetrics.density).toInt()
+        SlotKey.romId(key)?.let { id ->
+            val rom = roms.firstOrNull { it.id == id } ?: return
+            app.artCache.load(
+                activity, rom, px,
+                artOverrides = app.settings.artOverrides,
+                isStillValid = { image.isAttachedToWindow },
+            ) { bmp ->
+                if (bmp != null && image.isAttachedToWindow) {
+                    com.visorcraft.ghostgalleon.art.ArtCache.showDisplayed(image, bmp)
+                }
+            }
+            return
+        }
+        if (!SlotKey.isFolder(key) && !SlotKey.isRom(key)) {
+            CustomIcon.bind(
+                image, iconLoader, app.artCache, settings, key, px,
+            )
+        }
+    }
+
     private fun memberLabel(key: String): String {
         SlotKey.romId(key)?.let { id ->
             return roms.firstOrNull { it.id == id }?.name ?: key
@@ -350,6 +373,7 @@ class GridDeck(
             k to memberLabel(k)
         }
         closeFolderPanel()
+        val app = activity.application as GhostGalleonApp
         val panel = FolderPanel(
             activity,
             settings.accentColor,
@@ -361,7 +385,6 @@ class GridDeck(
             },
             onClose = { closeFolderPanel() },
             onRemoveMember = { memberKey ->
-                val app = activity.application as GhostGalleonApp
                 val folders = Folders.removeMember(app.settings.folders, fid, memberKey)
                 val collections = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
                     .syncCollectionFromFolder(folders, fid, app.settings.collections)
@@ -372,8 +395,10 @@ class GridDeck(
                     Toast.LENGTH_SHORT,
                 ).show()
             },
+            onBindThumb = { image, key ->
+                bindFolderThumb(image, key)
+            },
             onMirrorToCollection = {
-                val app = activity.application as GhostGalleonApp
                 val next = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
                     .mirrorFolderToCollection(
                         app.settings.folders,
@@ -925,8 +950,10 @@ class GridDeck(
             onPick = { key ->
                 closePicker()
                 val app = activity.application as GhostGalleonApp
-                app.updateSettings(app.settings.copy(
-                    folders = Folders.addMember(app.settings.folders, folderId, key)))
+                val folders = Folders.addMember(app.settings.folders, folderId, key)
+                val collections = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
+                    .syncCollectionFromFolder(folders, folderId, app.settings.collections)
+                app.updateSettings(app.settings.copy(folders = folders, collections = collections))
                 Toast.makeText(activity, R.string.deck_added_to_folder, Toast.LENGTH_SHORT).show()
             },
             onHide = { packageName ->

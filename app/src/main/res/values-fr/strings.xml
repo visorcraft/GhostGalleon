@@ -47,6 +47,8 @@
     <string name="action_pin_to_dock">Épingler au dock</string>
     <string name="action_player">Lecteur…</string>
     <string name="action_remove">Retirer</string>
+    <string name="action_edit_members">Modifier les membres</string>
+    <string name="artwork_pick_match">Choisir la correspondance d’art</string>
     <string name="action_remove_from_grid">Retirer de la grille</string>
     <string name="action_remove_from_collection">Retirer de la collection</string>
     <string name="action_rename">Renommer</string>

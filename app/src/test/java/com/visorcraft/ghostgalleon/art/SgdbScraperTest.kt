@@ -86,11 +86,31 @@ class SgdbScraperTest {
             "https://www.steamgriddb.com/api/v2/heroes/game/42",
             Sgdb.heroesUrl(42),
         )
+        assertEquals(
+            "https://www.steamgriddb.com/api/v2/logos/game/42",
+            Sgdb.logosUrl(42),
+        )
     }
 
     @Test
     fun `search response parsing takes the first result`() {
         assertEquals(5261L, Sgdb.parseSearchFirstId(searchJson(5261)))
+        val hits = Sgdb.parseSearchHits(
+            """{"success":true,"data":[
+              {"id":1,"name":"Alpha"},
+              {"id":2,"name":"Beta"},
+              {"id":3,"name":"Gamma"}
+            ]}""",
+            limit = 2,
+        )
+        assertEquals(listOf(1L to "Alpha", 2L to "Beta"), hits.map { it.id to it.name })
+        assertEquals(
+            listOf("https://a", "https://b"),
+            Sgdb.parseImageUrls(
+                """{"data":[{"url":"https://a"},{"url":"https://b"},{"url":"https://c"}]}""",
+                limit = 2,
+            ),
+        )
         assertNull(Sgdb.parseSearchFirstId("""{"success":true,"data":[]}"""))
         assertNull(Sgdb.parseSearchFirstId("not json"))
     }

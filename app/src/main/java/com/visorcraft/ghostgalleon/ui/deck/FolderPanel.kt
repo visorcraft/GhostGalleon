@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -15,8 +16,8 @@ import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.ui.dp
 
 /**
- * Modal list of folder members. A launches the selected member; B closes.
- * Long-press or Y removes the selected member. D-pad navigates rows.
+ * Modal folder of members as a small art grid. A launches; B closes.
+ * Long-press or Y removes the selected member without closing.
  */
 class FolderPanel(
     private val context: Context,
@@ -28,10 +29,13 @@ class FolderPanel(
     private val onRemoveMember: ((String) -> Unit)? = null,
     /** Mirror folder members into a same-named Game Mode collection. */
     private val onMirrorToCollection: (() -> Unit)? = null,
+    /** Bind thumbnail art into the cell [ImageView] for [key]. */
+    private val onBindThumb: ((ImageView, String) -> Unit)? = null,
 ) {
     private var selection = 0
-    private val rows = mutableListOf<TextView>()
+    private val cells = mutableListOf<View>()
     private var memberKeys: MutableList<Pair<String, String>> = members.toMutableList()
+    private var gridHost: LinearLayout? = null
 
     val view: View by lazy {
 
@@ -52,55 +56,16 @@ class FolderPanel(
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, context.dp(8))
         })
-        if (memberKeys.isEmpty()) {
-            card.addView(TextView(context).apply {
-                setText(R.string.deck_empty_folder)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(0x99FFFFFF.toInt())
-                gravity = Gravity.CENTER
-                setPadding(context.dp(16), context.dp(20), context.dp(16), context.dp(20))
-            })
-        } else {
-            val list = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            memberKeys.forEachIndexed { index, (key, label) ->
-                val row = TextView(context).apply {
-                    text = label
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                    setTextColor(0xFFFFFFFF.toInt())
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(context.dp(16), context.dp(12), context.dp(16), context.dp(12))
-                    setOnClickListener {
-                        selection = index
-                        paintRows()
-                        onLaunch(key)
-                    }
-                    setOnLongClickListener {
-                        selection = index
-                        paintRows()
-                        removeSelected()
-                        true
-                    }
-                }
-                rows.add(row)
-                list.addView(row, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    topMargin = context.dp(2)
-                    bottomMargin = context.dp(2)
-                })
-            }
-            paintRows()
-            val scroll = ScrollView(context).apply {
-                addView(list)
-            }
-            card.addView(scroll, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.dp(280),
-            ))
+        val grid = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
         }
+        gridHost = grid
+        rebuildGrid()
+        val scroll = ScrollView(context).apply { addView(grid) }
+        card.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            context.dp(320),
+        ))
         if (onMirrorToCollection != null && memberKeys.isNotEmpty()) {
             card.addView(TextView(context).apply {
                 setText(R.string.action_mirror_to_collection)
@@ -126,16 +91,79 @@ class FolderPanel(
             setPadding(0, context.dp(8), 0, 0)
         })
         overlay.addView(card, FrameLayout.LayoutParams(
-            context.dp(300),
+            context.dp(360),
             ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.CENTER,
         ))
         overlay
     }
 
-    private fun paintRows() {
-        rows.forEachIndexed { index, row ->
-            row.background = if (index == selection) {
+    private fun rebuildGrid() {
+        val grid = gridHost ?: return
+        grid.removeAllViews()
+        cells.clear()
+        if (memberKeys.isEmpty()) {
+            grid.addView(TextView(context).apply {
+                setText(R.string.deck_empty_folder)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(0x99FFFFFF.toInt())
+                gravity = Gravity.CENTER
+                setPadding(context.dp(16), context.dp(20), context.dp(16), context.dp(20))
+            })
+            return
+        }
+        val cols = 3
+        val cellSize = context.dp(96)
+        var row: LinearLayout? = null
+        memberKeys.forEachIndexed { index, (key, label) ->
+            if (index % cols == 0) {
+                row = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                }
+                grid.addView(row, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = context.dp(8) })
+            }
+            val cell = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(context.dp(4), context.dp(4), context.dp(4), context.dp(4))
+                setOnClickListener {
+                    selection = index
+                    paintCells()
+                    onLaunch(key)
+                }
+                setOnLongClickListener {
+                    selection = index
+                    paintCells()
+                    removeSelected()
+                    true
+                }
+            }
+            val thumb = ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            cell.addView(thumb, LinearLayout.LayoutParams(cellSize, cellSize))
+            onBindThumb?.invoke(thumb, key)
+            cell.addView(TextView(context).apply {
+                text = label
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(cellSize, ViewGroup.LayoutParams.WRAP_CONTENT))
+            cells.add(cell)
+            row?.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        paintCells()
+    }
+
+    private fun paintCells() {
+        cells.forEachIndexed { index, cell ->
+            cell.background = if (index == selection) {
                 TileBackgrounds.selected(context, accentColor)
             } else {
                 null
@@ -146,24 +174,30 @@ class FolderPanel(
     private fun removeSelected() {
         val remove = onRemoveMember ?: return
         if (memberKeys.isEmpty()) return
-        val key = memberKeys[selection].first
+        val idx = selection.coerceIn(0, memberKeys.lastIndex)
+        val key = memberKeys[idx].first
         remove(key)
-        // Close so the host rebuilds with fresh membership (keeps UI honest).
-        onClose()
+        memberKeys.removeAt(idx)
+        if (memberKeys.isNotEmpty()) {
+            selection = idx.coerceAtMost(memberKeys.lastIndex)
+        }
+        rebuildGrid()
     }
 
     fun handleAction(action: Action): Boolean {
         when (action) {
-            Action.NAV_UP -> {
+            Action.NAV_UP, Action.NAV_LEFT -> {
                 if (memberKeys.isNotEmpty()) {
-                    selection = (selection + memberKeys.size - 1) % memberKeys.size
-                    paintRows()
+                    val step = if (action == Action.NAV_UP) 3 else 1
+                    selection = (selection + memberKeys.size - step) % memberKeys.size
+                    paintCells()
                 }
             }
-            Action.NAV_DOWN -> {
+            Action.NAV_DOWN, Action.NAV_RIGHT -> {
                 if (memberKeys.isNotEmpty()) {
-                    selection = (selection + 1) % memberKeys.size
-                    paintRows()
+                    val step = if (action == Action.NAV_DOWN) 3 else 1
+                    selection = (selection + step) % memberKeys.size
+                    paintCells()
                 }
             }
             Action.CONFIRM -> {
@@ -171,10 +205,7 @@ class FolderPanel(
                     onLaunch(memberKeys[selection].first)
                 }
             }
-            Action.TOGGLE_MODE -> {
-                // Y: remove selected member (same as long-press).
-                removeSelected()
-            }
+            Action.TOGGLE_MODE -> removeSelected()
             Action.BACK -> onClose()
             else -> {}
         }

@@ -47,6 +47,8 @@
     <string name="action_pin_to_dock">An Dock anheften</string>
     <string name="action_player">Player…</string>
     <string name="action_remove">Entfernen</string>
+    <string name="action_edit_members">Mitglieder bearbeiten</string>
+    <string name="artwork_pick_match">Artwork-Treffer wählen</string>
     <string name="action_remove_from_grid">Vom Raster entfernen</string>
     <string name="action_remove_from_collection">Aus Sammlung entfernen</string>
     <string name="action_rename">Umbenennen</string>

@@ -15,9 +15,20 @@ object PlayerReadiness {
     }
 
     /**
-     * True when [template] can be offered as ready: non-RA templates are
-     * ready when the package is installed; RA templates also need the core
-     * file to exist.
+     * True when we can actually stat [path]. RetroArch cores live under
+     * another app's `/data/data/…` tree — this process cannot see them, so
+     * a missing-file check would always fail and block every RA launch.
+     */
+    fun canProbeCorePath(path: String): Boolean {
+        val p = path.trim()
+        if (p.isEmpty()) return false
+        if (p.startsWith("/data/data/") || p.startsWith("/data/user/")) return false
+        return true
+    }
+
+    /**
+     * True when [template] can be offered as ready: package installed, and
+     * (when the core path is probeable) the `.so` exists.
      */
     fun isReady(
         template: PlayerTemplate,
@@ -26,6 +37,7 @@ object PlayerReadiness {
     ): Boolean {
         if (!installed(PlayerResolver.packageName(template))) return false
         val core = libretroCorePath(template) ?: return true
+        if (!canProbeCorePath(core)) return true
         return fileExists(core)
     }
 

@@ -47,6 +47,8 @@
     <string name="action_pin_to_dock">Pin to dock</string>
     <string name="action_player">Player…</string>
     <string name="action_remove">Remove</string>
+    <string name="action_edit_members">Edit members</string>
+    <string name="artwork_pick_match">Choose artwork match</string>
     <string name="action_remove_from_grid">Remove from grid</string>
     <string name="action_remove_from_collection">Remove from collection</string>
     <!-- Slot menu section headers -->

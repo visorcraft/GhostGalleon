@@ -650,7 +650,6 @@ class SettingsActivity : AppCompatActivity() {
                                     input.text?.toString().orEmpty(),
                                 )
                             app.updateSettings(app.settings.copy(collections = next))
-                            recreate()
                         }
                         .setNegativeButton(R.string.action_cancel, null)
                         .show()
@@ -666,14 +665,27 @@ class SettingsActivity : AppCompatActivity() {
                         ))
                         .setItems(
                             arrayOf(
+                                getString(R.string.action_edit_members),
                                 getString(R.string.action_mirror_to_folder),
                                 getString(R.string.action_rename),
                                 getString(R.string.action_delete),
                             ),
                         ) { _, action ->
                             when (action) {
-                                0 -> mirrorCollectionToGridFolder(name)
-                                1 -> {
+                                0 -> com.visorcraft.ghostgalleon.ui.deck.CollectionDialogs
+                                    .promptMembers(
+                                        this,
+                                        app,
+                                        name,
+                                        labelOf = { k ->
+                                            com.visorcraft.ghostgalleon.settings.SlotKey.romId(k)
+                                                ?.let { id ->
+                                                    app.romEntries.firstOrNull { it.id == id }?.name
+                                                } ?: k
+                                        },
+                                    )
+                                1 -> mirrorCollectionToGridFolder(name)
+                                2 -> {
                                     val input = EditText(this).apply {
                                         setText(name)
                                         setTextColor(Color.WHITE)
@@ -691,16 +703,14 @@ class SettingsActivity : AppCompatActivity() {
                                             app.updateSettings(
                                                 app.settings.copy(collections = next),
                                             )
-                                            recreate()
                                         }
                                         .setNegativeButton(R.string.action_cancel, null)
                                         .show()
                                 }
-                                2 -> {
+                                3 -> {
                                     val next = com.visorcraft.ghostgalleon.library.CollectionsOps
                                         .deleteCollection(app.settings.collections, name)
                                     app.updateSettings(app.settings.copy(collections = next))
-                                    recreate()
                                 }
                             }
                         }
@@ -736,7 +746,6 @@ class SettingsActivity : AppCompatActivity() {
         )
         app.updateSettings(live.copy(folders = folders, gridSlots = slots))
         Toast.makeText(this, R.string.deck_mirrored_to_folder, Toast.LENGTH_SHORT).show()
-        recreate()
     }
 
     private fun showDefaultPlayersDialog() {

@@ -47,6 +47,8 @@
     <string name="action_pin_to_dock">Fijar al dock</string>
     <string name="action_player">Reproductor…</string>
     <string name="action_remove">Eliminar</string>
+    <string name="action_edit_members">Editar miembros</string>
+    <string name="artwork_pick_match">Elegir coincidencia de arte</string>
     <string name="action_remove_from_grid">Quitar de la cuadrícula</string>
     <string name="action_remove_from_collection">Eliminar de colección</string>
     <string name="action_rename">Renombrar</string>
