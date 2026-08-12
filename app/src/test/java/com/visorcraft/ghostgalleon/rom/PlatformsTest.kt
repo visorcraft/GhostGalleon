@@ -198,4 +198,15 @@ class PlatformsTest {
         assertTrue(Platforms.WINDOWS.acceptsExtension("exe"))
         assertTrue(Platforms.PSVITA.acceptsExtension("VPK"))
     }
+
+    @Test
+    fun `dual-surface players yield and other NDS players keep`() {
+        val nds = Platforms.NDS.players.associateBy { it.id }
+        assertEquals(SessionPolicy.YIELD_BOTH, nds.getValue("melondualds").sessionPolicy)
+        assertEquals(SessionPolicy.KEEP_COMPANION, nds.getValue("melonds").sessionPolicy)
+        assertEquals(SessionPolicy.KEEP_COMPANION, nds.getValue("drastic").sessionPolicy)
+        assertEquals(SessionPolicy.KEEP_COMPANION, nds.getValue("ra-melonds").sessionPolicy)
+        assertEquals(SessionPolicy.YIELD_BOTH, Platforms.N3DS.player.sessionPolicy)
+        assertEquals(SessionPolicy.KEEP_COMPANION, Platforms.SNES.player.sessionPolicy)
+    }
 }

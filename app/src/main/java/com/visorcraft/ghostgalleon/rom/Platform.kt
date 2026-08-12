@@ -44,6 +44,7 @@ data class PlayerTemplate(
     // device that hangs warm relaunches (see retroArch()), so it is
     // NEW_TASK-only.
     val flags: Int = Intent.FLAG_ACTIVITY_NEW_TASK,
+    val sessionPolicy: SessionPolicy = SessionPolicy.KEEP_COMPANION,
 )
 
 data class Platform(
@@ -203,6 +204,7 @@ object Platforms {
                 action = "me.magnum.melondualds.LAUNCH_ROM",
                 uriStyle = UriStyle.URI,
                 extras = mapOf("uri" to "{file.uri}"),
+                sessionPolicy = SessionPolicy.YIELD_BOTH,
             ),
             PlayerTemplate(
                 id = "melonds",
@@ -239,6 +241,7 @@ object Platforms {
                 action = "android.intent.action.VIEW",
                 uriStyle = UriStyle.URI,
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or CLEAR_FLAGS,
+                sessionPolicy = SessionPolicy.YIELD_BOTH,
             ),
         ),
     )
