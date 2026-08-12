@@ -123,6 +123,10 @@ class CompanionActivity : BaseDeckActivity() {
 
     private fun redirectToSecondary(target: Int) {
         if (selfClosing || isFinishing || didRedirect) return
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+            closeQuietly()
+            return
+        }
         if (!AndroidDisplayProbe.hasDisplay(this, target)) return
         didRedirect = true
         val intent = Intent(this, CompanionActivity::class.java)
@@ -159,6 +163,10 @@ class CompanionActivity : BaseDeckActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+            closeQuietly()
+            return
+        }
         // All-apps is Main-only (AGENTS + DualPaintPolicy). Companion must
         // never open the drawer — SECONDARY_HOME redelivery storms would
         // flash/glitch All-apps and thrash paints.

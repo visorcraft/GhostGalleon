@@ -46,6 +46,7 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.deck.AppIconLoader
 import com.visorcraft.ghostgalleon.ui.deck.AppPicker
@@ -1085,11 +1086,11 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 val main = this as? MainActivity
                     ?: app.liveDeckActivities().filterIsInstance<MainActivity>()
                         .firstOrNull()
-                val dual = DualPaintPolicy.shouldRestartCompanionAfterSwap(
-                    dualMode = app.displayConfig.mode ==
-                        com.visorcraft.ghostgalleon.display.SurfaceMode.DUAL,
-                )
-                if (dual && main != null) {
+                if (DualPaintPolicy.allowCompanionRestartDuringSwap(
+                        dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                        policy = app.sessionSurface?.policy,
+                    ) && main != null
+                ) {
                     main.restartCompanionPanel(
                         if (swapped) "swap-recover" else "swap-recover-fallback",
                     )
@@ -1100,6 +1101,12 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                } else if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+                    Toast.makeText(
+                        this,
+                        R.string.session_yields_both_screens,
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 } else if (!swapped) {
                     Toast.makeText(
                         this,

@@ -331,6 +331,7 @@
     <string name="deck_unavailable">Nicht verfügbar</string>
     <string name="deck_only_one_display">Nur ein Display — Tauschen nicht verfügbar</string>
     <string name="deck_restart_bottom_panel">Unteres Panel wird neu gestartet…</string>
+    <string name="session_yields_both_screens">Dieses Spiel nutzt beide Bildschirme</string>
     <string name="deck_add_rom_folder_done">ROM-Ordner hinzugefügt</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>
