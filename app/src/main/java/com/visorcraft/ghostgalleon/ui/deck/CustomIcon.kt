@@ -25,6 +25,7 @@ object CustomIcon {
         packageName: String,
         targetPx: Int,
     ) {
+        ArtCache.dropDisplayed(image)
         image.setImageDrawable(iconLoader.load(packageName))
         val uri = settings.customIcons[packageName]
         if (uri == null) {
@@ -44,7 +45,7 @@ object CustomIcon {
                     image.getTag(R.id.custom_icon_key) == packageName &&
                     image.isAttachedToWindow
                 ) {
-                    image.setImageBitmap(bitmap)
+                    ArtCache.showDisplayed(image, bitmap)
                 }
             }
         }

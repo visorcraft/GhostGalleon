@@ -186,4 +186,81 @@ class ArtCacheTest {
     fun `disk cache cap is 256 MiB`() {
         assertEquals(256L * 1024 * 1024, ArtCache.DISK_CACHE_CAP_BYTES)
     }
+
+    @Test
+    fun `webp disk cache starts at API 30`() {
+        assertEquals(30, ArtCache.WEBP_MIN_SDK)
+        assertFalse(ArtCache.usesWebpDiskCache(29))
+        assertTrue(ArtCache.usesWebpDiskCache(30))
+        assertTrue(ArtCache.usesWebpDiskCache(34))
+        assertEquals(
+            android.graphics.Bitmap.CompressFormat.JPEG,
+            ArtCache.cacheCompressFormat(29),
+        )
+        assertEquals(
+            android.graphics.Bitmap.CompressFormat.WEBP_LOSSY,
+            ArtCache.cacheCompressFormat(30),
+        )
+    }
+
+    @Test
+    fun `pixelByteCount matches RGB_565 vs ARGB packing`() {
+        assertEquals(0, ArtCache.pixelByteCount(0, 10, true))
+        assertEquals(512 * 512 * 2, ArtCache.pixelByteCount(512, 512, rgb565 = true))
+        assertEquals(1600 * 400 * 4, ArtCache.pixelByteCount(1600, 400, rgb565 = false))
+    }
+
+    @Test
+    fun `canReuseInBitmap rejects displayed recycled undersized or wrong config`() {
+        assertTrue(
+            ArtCache.canReuseInBitmap(
+                candidateBytes = 100,
+                candidateConfigName = "RGB_565",
+                candidateRecycled = false,
+                displayCount = 0,
+                neededBytes = 80,
+                neededConfigName = "RGB_565",
+            ),
+        )
+        assertFalse(
+            ArtCache.canReuseInBitmap(
+                candidateBytes = 100,
+                candidateConfigName = "RGB_565",
+                candidateRecycled = false,
+                displayCount = 1,
+                neededBytes = 80,
+                neededConfigName = "RGB_565",
+            ),
+        )
+        assertFalse(
+            ArtCache.canReuseInBitmap(
+                candidateBytes = 100,
+                candidateConfigName = "RGB_565",
+                candidateRecycled = true,
+                displayCount = 0,
+                neededBytes = 80,
+                neededConfigName = "RGB_565",
+            ),
+        )
+        assertFalse(
+            ArtCache.canReuseInBitmap(
+                candidateBytes = 50,
+                candidateConfigName = "RGB_565",
+                candidateRecycled = false,
+                displayCount = 0,
+                neededBytes = 80,
+                neededConfigName = "RGB_565",
+            ),
+        )
+        assertFalse(
+            ArtCache.canReuseInBitmap(
+                candidateBytes = 100,
+                candidateConfigName = "ARGB_8888",
+                candidateRecycled = false,
+                displayCount = 0,
+                neededBytes = 80,
+                neededConfigName = "RGB_565",
+            ),
+        )
+    }
 }

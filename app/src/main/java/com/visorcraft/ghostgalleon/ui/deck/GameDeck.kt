@@ -390,6 +390,10 @@ class GameDeck(
     private var cellPaddingPx: Int = 0
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
     private var letterChipViews: List<Pair<Char, TextView>> = emptyList()
+    /** Last filter-chrome structure; equal → restyle chip colors only. */
+    private var chromeStructureKey: String = ""
+    /** Browse chips + live selected predicates for in-place restyle. */
+    private val browseChipHandles = mutableListOf<Pair<TextView, () -> Boolean>>()
 
     private var slotMenu: SlotMenu? = null
     private var picker: AppPicker? = null
@@ -416,7 +420,13 @@ class GameDeck(
         val oldEntries = entries
         installEntries(buildEntries())
         applyRootWallpaper(root)
-        rebuildFilterChrome(chrome, context, ::dp)
+        val nextChrome = filterChromeStructureKey()
+        if (nextChrome == chromeStructureKey && browseChipHandles.isNotEmpty()) {
+            restyleBrowseChips()
+        } else {
+            rebuildFilterChrome(chrome, context, ::dp)
+            chromeStructureKey = nextChrome
+        }
 
         val nextSize = dp(settings.cardSizeDp).coerceAtLeast(1)
         val nextSpacing = cardSpacingPx.coerceAtLeast(dp(12))
@@ -497,11 +507,66 @@ class GameDeck(
         }
     }
 
+    private fun filterChromeStructureKey(): String {
+        val q = state.libraryBrowse
+        val snap = app().browseChipSnapshot(roms, settings, System.currentTimeMillis())
+        val cont = LibraryBrowse.continueKey(
+            availableContinueKeys(settings),
+            settings.lastLaunchedMs,
+        )
+        return LibraryBrowse.filterChromeStructureKey(
+            platformBadge = q.platformId.orEmpty(),
+            genreBadge = q.genre.orEmpty(),
+            developerBadge = q.developer.orEmpty(),
+            yearBadge = q.yearDecade.orEmpty(),
+            letterJump = LibraryBrowse.letterJumpStructureKey(
+                q.mode,
+                entries.map { it.label },
+            ),
+            clearFilters = LibraryBrowse.hasActiveMetaFilters(q),
+            searchText = q.text,
+            sort = q.sort.name,
+            chromeFlags = settings.browseChrome.chipBarSignature(),
+            countsSig = listOf(
+                snap.recent, snap.today, snap.week, snap.month, snap.top,
+                snap.listedRoms, snap.unplayed,
+                snap.platforms, snap.genres, snap.developers, snap.years,
+                settings.favorites.size,
+                library.visible(settings).size,
+                library.curated(settings).size,
+                settings.collections.entries.sortedBy { it.key }
+                    .map { it.key to it.value.size },
+            ).toString(),
+            continueName = cont?.let { continueLabel(it, settings) }.orEmpty(),
+            selectSig = if (state.multiSelectEnabled) {
+                "s${state.multiSelectKeys.size}"
+            } else {
+                ""
+            },
+        )
+    }
+
+    private fun restyleBrowseChips() {
+        browseChipHandles.forEach { (tv, selected) ->
+            paintChip(tv, selected())
+        }
+        paintLetterJumpSelection()
+    }
+
+    private fun paintChip(tv: TextView, selected: Boolean) {
+        tv.setTextColor(if (selected) Color.BLACK else Color.WHITE)
+        tv.setBackgroundColor(
+            if (selected) settings.accentColor
+            else TileBackgrounds.chipIdleColor(tv.context),
+        )
+    }
+
     private fun rebuildFilterChrome(
         chrome: LinearLayout,
         context: Context,
         dp: (Int) -> Int,
     ) {
+        browseChipHandles.clear()
         chrome.removeAllViews()
         val q = state.libraryBrowse
         q.platformId?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
@@ -606,6 +671,7 @@ class GameDeck(
         }
         filterChrome = chrome
         rebuildFilterChrome(chrome, context, ::dp)
+        chromeStructureKey = filterChromeStructureKey()
         content.addView(
             chrome,
             LinearLayout.LayoutParams(
@@ -844,17 +910,14 @@ class GameDeck(
         }
         fun chip(
             label: String,
-            selected: Boolean,
+            selected: () -> Boolean,
             onLongClick: (() -> Unit)? = null,
             onClick: () -> Unit,
         ): TextView =
             TextView(context).apply {
                 text = label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(if (selected) Color.BLACK else Color.WHITE)
-                setBackgroundColor(
-                    if (selected) settings.accentColor
-                    else TileBackgrounds.chipIdleColor(context))
+                paintChip(this, selected())
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 setOnClickListener { onClick() }
                 if (onLongClick != null) {
@@ -863,6 +926,7 @@ class GameDeck(
                         true
                     }
                 }
+                browseChipHandles.add(this to selected)
             }
         fun localized(value: UiText): String = context.resolveText(value)
         fun counted(labelRes: Int, count: Int): String = localized(
@@ -886,11 +950,7 @@ class GameDeck(
         row.addView(
             chip(
                 localized(LibraryBrowse.allChipLabel(q.sort)),
-                q.mode == LibraryBrowse.Mode.ALL && q.platformId == null &&
-                    q.genre.isNullOrBlank() &&
-                    q.developer.isNullOrBlank() &&
-                    q.yearDecade.isNullOrBlank() &&
-                    q.text.isBlank() && q.collectionName == null,
+                { LibraryBrowse.isAllChipSelected(state.libraryBrowse) },
                 onLongClick = { showSortOrderDialog() },
             ) {
                 val live = app().settings
@@ -917,7 +977,7 @@ class GameDeck(
                     R.string.label_recent,
                     counts.recent,
                 ),
-                q.mode == LibraryBrowse.Mode.RECENT,
+                { state.libraryBrowse.mode == LibraryBrowse.Mode.RECENT },
                 // Long-press: jump list of recent titles (same depth as Continue).
                 onLongClick = { showRecentHistory() },
             ) {
@@ -939,7 +999,7 @@ class GameDeck(
                         R.string.label_today,
                         counts.today,
                     ),
-                    q.mode == LibraryBrowse.Mode.PLAYED_TODAY,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.PLAYED_TODAY },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.PLAYED_TODAY,
@@ -960,7 +1020,7 @@ class GameDeck(
                         R.string.label_week,
                         counts.week,
                     ),
-                    q.mode == LibraryBrowse.Mode.PLAYED_THIS_WEEK,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.PLAYED_THIS_WEEK },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.PLAYED_THIS_WEEK,
@@ -981,7 +1041,7 @@ class GameDeck(
                         R.string.label_month,
                         counts.month,
                     ),
-                    q.mode == LibraryBrowse.Mode.PLAYED_THIS_MONTH,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.PLAYED_THIS_MONTH },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.PLAYED_THIS_MONTH,
@@ -999,7 +1059,7 @@ class GameDeck(
             row.addView(
                 chip(
                     counted(R.string.label_installed, library.visible(settings).size),
-                    q.mode == LibraryBrowse.Mode.RECENTLY_INSTALLED,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.RECENTLY_INSTALLED },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.RECENTLY_INSTALLED,
@@ -1022,7 +1082,7 @@ class GameDeck(
                         R.string.label_games,
                         LibraryBrowse.gamesCatalogCount(gameApps, romN),
                     ),
-                    q.mode == LibraryBrowse.Mode.GAMES,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.GAMES },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.GAMES,
@@ -1043,7 +1103,7 @@ class GameDeck(
                         R.string.label_top,
                         counts.top,
                     ),
-                    q.mode == LibraryBrowse.Mode.MOST_PLAYED,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.MOST_PLAYED },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.MOST_PLAYED,
@@ -1068,7 +1128,7 @@ class GameDeck(
         row.addView(
             chip(
                 localized(contChipLabel),
-                false,
+                { false },
                 onLongClick = { showContinueHistory() },
             ) {
                 // Live settings: GameDeck holds a construction-time snapshot, so
@@ -1092,7 +1152,7 @@ class GameDeck(
         )
         if (chrome.randomChip) {
             addGap()
-            row.addView(chip(context.getString(R.string.label_random), false) {
+            row.addView(chip(context.getString(R.string.label_random), { false }) {
                 pickRandomEntry()
             })
         }
@@ -1100,7 +1160,7 @@ class GameDeck(
         row.addView(
             chip(
                 counted(R.string.label_favorites_short, settings.favorites.size),
-                q.mode == LibraryBrowse.Mode.FAVORITES,
+                { state.libraryBrowse.mode == LibraryBrowse.Mode.FAVORITES },
                 onLongClick = { showFavoritesManageDialog() },
             ) {
                 setBrowse(q.copy(
@@ -1122,7 +1182,7 @@ class GameDeck(
             row.addView(
                 chip(
                     counted(R.string.label_alpha_sort, alphaN),
-                    q.mode == LibraryBrowse.Mode.ALPHA,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.ALPHA },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.ALPHA,
@@ -1143,7 +1203,7 @@ class GameDeck(
                         R.string.label_new,
                         counts.unplayed,
                     ),
-                    q.mode == LibraryBrowse.Mode.UNPLAYED,
+                    { state.libraryBrowse.mode == LibraryBrowse.Mode.UNPLAYED },
                 ) {
                     setBrowse(q.copy(
                         mode = LibraryBrowse.Mode.UNPLAYED,
@@ -1160,13 +1220,15 @@ class GameDeck(
             LibraryBrowse.presentCollectionRails(settings.collections).forEach { name ->
                 if (name.equals(CollectionsOps.FAVORITES_RAIL, ignoreCase = true)) return@forEach
                 addGap()
-                val selected = q.mode == LibraryBrowse.Mode.COLLECTION &&
-                    q.collectionName == name
                 val members = settings.collections[name]?.size ?: 0
                 row.addView(
                     chip(
                         counted(name, members),
-                        selected,
+                        {
+                            val cur = state.libraryBrowse
+                            cur.mode == LibraryBrowse.Mode.COLLECTION &&
+                                cur.collectionName == name
+                        },
                         onLongClick = { showCollectionManageDialog(name) },
                     ) {
                         setBrowse(
@@ -1186,7 +1248,7 @@ class GameDeck(
                 row.addView(
                     chip(
                         counted(short, count),
-                        q.platformId == pid,
+                        { state.libraryBrowse.platformId == pid },
                         onLongClick = { showPlatformChipMenu(pid, short) },
                     ) {
                         setBrowse(
@@ -1206,7 +1268,12 @@ class GameDeck(
                 addGap()
                 val selected = q.genre?.equals(genre, ignoreCase = true) == true
                 row.addView(
-                    chip(counted(genre, count), selected) {
+                    chip(
+                        counted(genre, count),
+                        {
+                            state.libraryBrowse.genre?.equals(genre, ignoreCase = true) == true
+                        },
+                    ) {
                         setBrowse(
                             q.copy(
                                 mode = LibraryBrowse.Mode.ALL,
@@ -1224,7 +1291,12 @@ class GameDeck(
                 addGap()
                 val selected = q.developer?.equals(dev, ignoreCase = true) == true
                 row.addView(
-                    chip(counted(dev, count), selected) {
+                    chip(
+                        counted(dev, count),
+                        {
+                            state.libraryBrowse.developer?.equals(dev, ignoreCase = true) == true
+                        },
+                    ) {
                         setBrowse(
                             q.copy(
                                 mode = LibraryBrowse.Mode.ALL,
@@ -1244,7 +1316,10 @@ class GameDeck(
                 row.addView(
                     chip(
                         counted(context.resolveText(LibraryBrowse.decadeText(decade)), count),
-                        selected,
+                        {
+                            state.libraryBrowse.yearDecade?.equals(decade, ignoreCase = true) ==
+                                true
+                        },
                     ) {
                         setBrowse(
                             q.copy(
@@ -1264,7 +1339,7 @@ class GameDeck(
             row.addView(
                 chip(
                     counted(R.string.browse_clear_filters, n),
-                    true,
+                    { true },
                 ) {
                     setBrowse(LibraryBrowse.clearMetaFilters(q), true)
                     Toast.makeText(
@@ -1280,7 +1355,7 @@ class GameDeck(
             chip(
                 if (q.text.isBlank()) context.getString(R.string.action_search)
                 else context.getString(R.string.format_search_query, q.text),
-                q.text.isNotBlank(),
+                { state.libraryBrowse.text.isNotBlank() },
                 onLongClick = { showSearchHistory() },
             ) {
                 openSearchDialog()
@@ -1293,7 +1368,7 @@ class GameDeck(
             } else {
                 context.getString(R.string.label_select)
             },
-            state.multiSelectEnabled,
+            { state.multiSelectEnabled },
         ) {
             if (state.multiSelectEnabled) {
                 showBulkActions()

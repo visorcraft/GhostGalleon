@@ -163,6 +163,28 @@ data class BrowseChrome(
         deckStatusPill == from.deckStatusPill && resumeChip == from.resumeChip
 
     /**
+     * Flags that change which browse chips exist (not StatusPill / Resume).
+     * Used as the chrome half of [LibraryBrowse.filterChromeStructureKey].
+     */
+    fun chipBarSignature(): String = buildString {
+        if (installedRail) append('i')
+        if (gamesRail) append('g')
+        if (topRail) append('t')
+        if (todayRail) append('d')
+        if (weekRail) append('w')
+        if (monthRail) append('m')
+        if (alphaRail) append('a')
+        if (unplayedRail) append('u')
+        if (randomChip) append('r')
+        if (genreChips) append('G')
+        if (developerChips) append('D')
+        if (yearChips) append('Y')
+        if (launchableOnly) append('L')
+        if (platformChips) append('P')
+        if (collectionRails) append('C')
+    }
+
+    /**
      * Ordered flag snapshot for Settings chrome switches (core first, then
      * power rails). Used to rebind Switch isChecked after Minimal/Full without
      * recreating the activity — must match [chromeFlag] get order in Settings.

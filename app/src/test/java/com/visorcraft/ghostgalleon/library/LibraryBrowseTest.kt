@@ -8,6 +8,7 @@ import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -947,6 +948,118 @@ class LibraryBrowseTest {
         assertEquals(
             text(R.string.format_dot_pair, base, "Super long na…"),
             LibraryBrowse.continueChipLabel("Super long name here", maxNameLen = 14),
+        )
+    }
+
+    @Test
+    fun `isAllChipSelected is unrestricted catalog only`() {
+        val all = LibraryBrowse.BrowseQuery()
+        assertTrue(LibraryBrowse.isAllChipSelected(all))
+        assertFalse(
+            LibraryBrowse.isAllChipSelected(all.copy(mode = LibraryBrowse.Mode.RECENT)),
+        )
+        assertFalse(
+            LibraryBrowse.isAllChipSelected(all.copy(platformId = "snes")),
+        )
+        assertFalse(
+            LibraryBrowse.isAllChipSelected(all.copy(text = "zelda")),
+        )
+        assertFalse(
+            LibraryBrowse.isAllChipSelected(
+                all.copy(mode = LibraryBrowse.Mode.COLLECTION, collectionName = "Kids"),
+            ),
+        )
+    }
+
+    @Test
+    fun `letterJumpStructureKey is empty off A-Z rails`() {
+        val labels = listOf("Zelda", "Mario", "Pokemon")
+        assertEquals(
+            "",
+            LibraryBrowse.letterJumpStructureKey(LibraryBrowse.Mode.RECENT, labels),
+        )
+        assertEquals(
+            "",
+            LibraryBrowse.letterJumpStructureKey(LibraryBrowse.Mode.ALL, labels),
+        )
+        val alpha = LibraryBrowse.letterJumpStructureKey(LibraryBrowse.Mode.ALPHA, labels)
+        assertTrue(alpha.contains("M:1"))
+        assertTrue(alpha.contains("P:1"))
+        assertTrue(alpha.contains("Z:1"))
+        assertEquals(
+            alpha,
+            LibraryBrowse.letterJumpStructureKey(LibraryBrowse.Mode.UNPLAYED, labels),
+        )
+        assertEquals(
+            "",
+            LibraryBrowse.letterJumpStructureKey(LibraryBrowse.Mode.ALPHA, emptyList()),
+        )
+    }
+
+    @Test
+    fun `filterChromeStructureKey ignores mode and matches on structure`() {
+        val a = LibraryBrowse.filterChromeStructureKey(
+            platformBadge = "",
+            genreBadge = "",
+            developerBadge = "",
+            yearBadge = "",
+            letterJump = "",
+            clearFilters = false,
+            searchText = "",
+            sort = "DEFAULT",
+            chromeFlags = "PC",
+            countsSig = "1,2",
+            continueName = "Eden",
+            selectSig = "",
+        )
+        val sameStructure = LibraryBrowse.filterChromeStructureKey(
+            platformBadge = "",
+            genreBadge = "",
+            developerBadge = "",
+            yearBadge = "",
+            letterJump = "",
+            clearFilters = false,
+            searchText = "",
+            sort = "DEFAULT",
+            chromeFlags = "PC",
+            countsSig = "1,2",
+            continueName = "Eden",
+            selectSig = "",
+        )
+        assertEquals(a, sameStructure)
+        assertNotEquals(
+            a,
+            LibraryBrowse.filterChromeStructureKey(
+                platformBadge = "snes",
+                genreBadge = "",
+                developerBadge = "",
+                yearBadge = "",
+                letterJump = "",
+                clearFilters = true,
+                searchText = "",
+                sort = "DEFAULT",
+                chromeFlags = "PC",
+                countsSig = "1,2",
+                continueName = "Eden",
+                selectSig = "",
+            ),
+        )
+        assertNotEquals(
+            a,
+            LibraryBrowse.filterChromeStructureKey(
+                platformBadge = "",
+                genreBadge = "",
+                developerBadge = "",
+                yearBadge = "",
+                letterJump = "A:3",
+                clearFilters = false,
+                searchText = "",
+                sort = "DEFAULT",
+                chromeFlags = "PC",
+                countsSig = "1,2",
+                continueName = "Eden",
+                selectSig = "",
+            ),
         )
     }
 

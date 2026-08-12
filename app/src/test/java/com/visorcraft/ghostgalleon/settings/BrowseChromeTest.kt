@@ -4,6 +4,7 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -74,6 +75,22 @@ class BrowseChromeTest {
                 BrowseChrome.FULL.copy(resumeChip = false),
             ),
         )
+    }
+
+    @Test
+    fun `chipBarSignature encodes rails not status chrome`() {
+        assertEquals("PC", BrowseChrome.MINIMAL.chipBarSignature())
+        assertEquals(
+            BrowseChrome.MINIMAL.chipBarSignature(),
+            BrowseChrome.MINIMAL.copy(deckStatusPill = true, resumeChip = true)
+                .chipBarSignature(),
+        )
+        assertNotEquals(
+            BrowseChrome.MINIMAL.chipBarSignature(),
+            BrowseChrome.MINIMAL.copy(todayRail = true).chipBarSignature(),
+        )
+        assertTrue(BrowseChrome.FULL.chipBarSignature().contains("P"))
+        assertTrue(BrowseChrome.FULL.chipBarSignature().contains("d"))
     }
 
     @Test

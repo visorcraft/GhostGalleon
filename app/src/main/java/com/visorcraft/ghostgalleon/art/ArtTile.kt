@@ -2,10 +2,13 @@ package com.visorcraft.ghostgalleon.art
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.core.graphics.drawable.RoundedBitmapDrawable
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import androidx.core.view.children
 import com.visorcraft.ghostgalleon.rom.HeroDetail
@@ -77,6 +80,7 @@ object ArtTile {
         artOverrides: Map<String, String> = emptyMap(),
     ) {
         val context = overlay.context
+        releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
         overlay.tag = rom.id
         val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
@@ -115,9 +119,21 @@ object ArtTile {
         bitmap: Bitmap,
         radiusPx: Float,
     ) {
+        releaseDisplayed(overlay)
+        ArtCache.acquireDisplay(bitmap)
         overlay.setImageDrawable(
             RoundedBitmapDrawableFactory.create(context.resources, bitmap)
                 .apply { cornerRadius = radiusPx },
         )
+    }
+
+    private fun releaseDisplayed(overlay: ImageView) {
+        displayedBitmap(overlay.drawable)?.let { ArtCache.releaseDisplay(it) }
+    }
+
+    private fun displayedBitmap(drawable: Drawable?): Bitmap? = when (drawable) {
+        is RoundedBitmapDrawable -> drawable.bitmap
+        is BitmapDrawable -> drawable.bitmap
+        else -> null
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
@@ -11,6 +12,7 @@ import com.visorcraft.ghostgalleon.rom.RomEntry
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
@@ -38,6 +40,17 @@ class ArtCache(private val dir: File) {
     private val memory by lazy {
         object : LruCache<String, Bitmap>(MEMORY_BYTES) {
             override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+
+            override fun entryRemoved(
+                evicted: Boolean,
+                key: String,
+                oldValue: Bitmap,
+                newValue: Bitmap?,
+            ) {
+                // Capacity evictions (and explicit drops) feed the inBitmap
+                // pool when no ImageView still displays the pixels.
+                if (evicted || newValue == null) offerReusable(oldValue)
+            }
         }
     }
 
@@ -263,7 +276,11 @@ class ArtCache(private val dir: File) {
                     if (isStillValid()) {
                         runCatching {
                             val out = ByteArrayOutputStream()
-                            bmp.compress(CACHE_COMPRESS_FORMAT, CACHE_COMPRESS_QUALITY, out)
+                            bmp.compress(
+                                cacheCompressFormat(Build.VERSION.SDK_INT),
+                                CACHE_COMPRESS_QUALITY,
+                                out,
+                            )
                             writeDiskBytesFromUri(diskKey, out.toByteArray(), kind, uri)
                         }
                     }
@@ -286,11 +303,7 @@ class ArtCache(private val dir: File) {
         val bytes = readDiskBytes(romId, kind) ?: return null
         val stampText = sourceStampFile(romId, kind).takeIf { it.isFile }?.readText()
         if (!sourceStampMatches(stampText, expectedSourceUri)) return null
-        val opts = BitmapFactory.Options().apply {
-            if (kind == ArtKind.GRID) inPreferredConfig = Bitmap.Config.RGB_565
-        }
-        return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) }
-            .getOrNull()
+        return decodeBytes(bytes, sample = 1, rgb565 = kind == ArtKind.GRID)
     }
 
     /** Persist URI-sourced art and stamp the source so a later different
@@ -328,9 +341,148 @@ class ArtCache(private val dir: File) {
         /** Min age before a disk hit rewrites lastModified (ms). */
         internal const val LRU_TOUCH_MIN_GAP_MS = 60_000L
 
-        /** JPEG is much cheaper than PNG@100 and BitmapFactory still decodes it. */
-        private val CACHE_COMPRESS_FORMAT = Bitmap.CompressFormat.JPEG
+        /**
+         * Disk encode: WEBP_LOSSY on API 30+ (smaller, faster than JPEG at
+         * the same quality); JPEG below that. BitmapFactory sniffs either
+         * inside the existing `.png` filenames.
+         */
+        internal const val WEBP_MIN_SDK = 30
         private const val CACHE_COMPRESS_QUALITY = 85
+        private const val REUSABLE_CAP = 12
+
+        private val reusable = ArrayDeque<Bitmap>()
+        private val displayCounts = ConcurrentHashMap<Bitmap, Int>()
+
+        /** True when new disk writes should be WEBP_LOSSY. Pure. */
+        internal fun usesWebpDiskCache(sdkInt: Int): Boolean = sdkInt >= WEBP_MIN_SDK
+
+        internal fun cacheCompressFormat(sdkInt: Int): Bitmap.CompressFormat =
+            if (usesWebpDiskCache(sdkInt)) {
+                Bitmap.CompressFormat.WEBP_LOSSY
+            } else {
+                Bitmap.CompressFormat.JPEG
+            }
+
+        /** Packed size for an [inBitmap] candidate. Pure. */
+        internal fun pixelByteCount(width: Int, height: Int, rgb565: Boolean): Int {
+            if (width <= 0 || height <= 0) return 0
+            return width * height * if (rgb565) 2 else 4
+        }
+
+        /**
+         * Whether a pooled bitmap may back a decode. Displayed bitmaps are
+         * rejected so inBitmap cannot overwrite pixels an ImageView still
+         * shows. Pure — pinned by host tests.
+         */
+        internal fun canReuseInBitmap(
+            candidateBytes: Int,
+            candidateConfigName: String?,
+            candidateRecycled: Boolean,
+            displayCount: Int,
+            neededBytes: Int,
+            neededConfigName: String,
+        ): Boolean {
+            if (candidateRecycled || displayCount > 0) return false
+            if (candidateConfigName != neededConfigName) return false
+            if (neededBytes <= 0 || candidateBytes < neededBytes) return false
+            return true
+        }
+
+        /** ImageView is showing [bitmap] — do not reuse it as inBitmap. */
+        fun acquireDisplay(bitmap: Bitmap) {
+            displayCounts.merge(bitmap, 1, Int::plus)
+        }
+
+        /** ImageView dropped [bitmap] (rebind / clear). */
+        fun releaseDisplay(bitmap: Bitmap) {
+            displayCounts.compute(bitmap) { _, n ->
+                val next = (n ?: 1) - 1
+                if (next <= 0) null else next
+            }
+        }
+
+        /** Drop the display ref on [image]'s current [BitmapDrawable], if any. */
+        fun dropDisplayed(image: android.widget.ImageView) {
+            val bmp = (image.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                ?: return
+            releaseDisplay(bmp)
+        }
+
+        /** Point [image] at [bitmap] and mark it displayed. */
+        fun showDisplayed(image: android.widget.ImageView, bitmap: Bitmap) {
+            dropDisplayed(image)
+            acquireDisplay(bitmap)
+            image.setImageBitmap(bitmap)
+        }
+
+        internal fun offerReusable(bitmap: Bitmap) {
+            if (!bitmap.isMutable || bitmap.isRecycled) return
+            if ((displayCounts[bitmap] ?: 0) > 0) return
+            synchronized(reusable) {
+                if (reusable.size >= REUSABLE_CAP) return
+                reusable.addLast(bitmap)
+            }
+        }
+
+        internal fun takeReusable(neededBytes: Int, config: Bitmap.Config): Bitmap? {
+            val want = config.name
+            synchronized(reusable) {
+                val it = reusable.iterator()
+                while (it.hasNext()) {
+                    val candidate = it.next()
+                    val ok = canReuseInBitmap(
+                        candidateBytes = if (candidate.isRecycled) 0 else candidate.byteCount,
+                        candidateConfigName = candidate.config.name,
+                        candidateRecycled = candidate.isRecycled,
+                        displayCount = displayCounts[candidate] ?: 0,
+                        neededBytes = neededBytes,
+                        neededConfigName = want,
+                    )
+                    if (!ok) {
+                        if (candidate.isRecycled || (displayCounts[candidate] ?: 0) > 0) {
+                            it.remove()
+                        }
+                        continue
+                    }
+                    it.remove()
+                    return candidate
+                }
+            }
+            return null
+        }
+
+        private fun decodeBytes(bytes: ByteArray, sample: Int, rgb565: Boolean): Bitmap? {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            val step = sample.coerceAtLeast(1)
+            val opts = decodeOptions(bounds.outWidth, bounds.outHeight, step, rgb565)
+            val hit = runCatching {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            }.getOrNull()
+            if (hit != null) return hit
+            opts.inBitmap = null
+            return runCatching {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            }.getOrNull()
+        }
+
+        private fun decodeOptions(
+            srcW: Int,
+            srcH: Int,
+            sample: Int,
+            rgb565: Boolean,
+        ): BitmapFactory.Options {
+            val w = (srcW / sample).coerceAtLeast(1)
+            val h = (srcH / sample).coerceAtLeast(1)
+            val config = if (rgb565) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
+            return BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = config
+                inMutable = true
+                inBitmap = takeReusable(pixelByteCount(w, h, rgb565), config)
+            }
+        }
 
         // Lazy: host unit tests load ArtCache without a Looper.
         private val MAIN_HANDLER by lazy { Handler(Looper.getMainLooper()) }
@@ -419,9 +571,10 @@ class ArtCache(private val dir: File) {
 
         /**
          * Bounds-then-sample downscale of encoded image [bytes], re-encoded
-         * as PNG at the cache target for [kind] (grid: ~[GRID_SCRAPE_TARGET_PX]
-         * px max dimension; hero: ~[HERO_SCRAPE_TARGET_WIDTH_PX] px wide —
-         * heroes are wide and short, so the sample tracks width alone).
+         * as WEBP_LOSSY (API 30+) or JPEG at the cache target for [kind]
+         * (grid: ~[GRID_SCRAPE_TARGET_PX] px max dimension; hero:
+         * ~[HERO_SCRAPE_TARGET_WIDTH_PX] px wide — heroes are wide and
+         * short, so the sample tracks width alone).
          * Null when [bytes] is not a decodable image. Android-only
          * (BitmapFactory); host tests inject a fake through the caller's
          * seam ([SgdbScraper]'s `shrink`).
@@ -441,14 +594,17 @@ class ArtCache(private val dir: File) {
                 } else {
                     sampleSizeFor(bounds.outWidth, bounds.outHeight, GRID_SCRAPE_TARGET_PX)
                 }
-                val opts = BitmapFactory.Options().apply {
-                    inSampleSize = sample
-                    if (kind == ArtKind.GRID) inPreferredConfig = Bitmap.Config.RGB_565
-                }
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                    ?: return null
+                val rgb565 = kind == ArtKind.GRID
+                val bmp = decodeBytes(bytes, sample, rgb565) ?: return null
                 val out = ByteArrayOutputStream()
-                bmp.compress(CACHE_COMPRESS_FORMAT, CACHE_COMPRESS_QUALITY, out)
+                bmp.compress(
+                    cacheCompressFormat(Build.VERSION.SDK_INT),
+                    CACHE_COMPRESS_QUALITY,
+                    out,
+                )
+                // Scrape shrink never displays this bitmap — return the
+                // allocation to the inBitmap pool.
+                offerReusable(bmp)
                 out.toByteArray()
             }.getOrNull()
 
@@ -468,10 +624,13 @@ class ArtCache(private val dir: File) {
                 BitmapFactory.decodeStream(it, null, bounds)
             }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            val opts = BitmapFactory.Options().apply {
-                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDimension)
-                inPreferredConfig = Bitmap.Config.RGB_565
+            val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDimension)
+            val opts = decodeOptions(bounds.outWidth, bounds.outHeight, sample, rgb565 = true)
+            val hit = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
             }
+            if (hit != null) return@runCatching hit
+            opts.inBitmap = null
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, opts)
             }

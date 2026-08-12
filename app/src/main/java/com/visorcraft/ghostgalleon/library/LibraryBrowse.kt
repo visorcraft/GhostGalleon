@@ -110,6 +110,53 @@ object LibraryBrowse {
             !q.yearDecade.isNullOrBlank() ||
             q.text.isNotBlank()
 
+    /** All chip highlight: unrestricted catalog rail. */
+    fun isAllChipSelected(q: BrowseQuery): Boolean =
+        q.mode == Mode.ALL && q.collectionName == null && !hasActiveMetaFilters(q)
+
+    /**
+     * Letter-jump strip identity: empty when the mode has no strip, otherwise
+     * present letters + counts. Mode-only chip taps that do not change this
+     * (Recent ↔ Today) leave filter chrome structure intact.
+     */
+    fun letterJumpStructureKey(mode: Mode, labels: List<String>): String {
+        if (mode != Mode.ALPHA && mode != Mode.UNPLAYED) return ""
+        return presentLetterCounts(labels).joinToString(",") { "${it.first}:${it.second}" }
+    }
+
+    /**
+     * Filter-chrome structure (views + labels), excluding which chip is
+     * highlighted. Equal keys → restyle selection colors instead of
+     * removeAllViews. Pure; host-tested.
+     */
+    fun filterChromeStructureKey(
+        platformBadge: String,
+        genreBadge: String,
+        developerBadge: String,
+        yearBadge: String,
+        letterJump: String,
+        clearFilters: Boolean,
+        searchText: String,
+        sort: String,
+        chromeFlags: String,
+        countsSig: String,
+        continueName: String,
+        selectSig: String,
+    ): String = listOf(
+        platformBadge,
+        genreBadge,
+        developerBadge,
+        yearBadge,
+        letterJump,
+        if (clearFilters) "1" else "0",
+        searchText,
+        sort,
+        chromeFlags,
+        countsSig,
+        continueName,
+        selectSig,
+    ).joinToString("\u001f")
+
     /**
      * Count of active meta filters (for chip labels like "Clear filters · 2").
      */

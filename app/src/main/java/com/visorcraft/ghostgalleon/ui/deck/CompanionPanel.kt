@@ -490,12 +490,14 @@ object CompanionPanel {
         val uri = HeroDetail.logoUri(rom)
         if (uri == null) {
             image.visibility = View.GONE
+            ArtCache.dropDisplayed(image)
             image.setImageDrawable(null)
             image.tag = null
             return
         }
         image.visibility = View.VISIBLE
         image.tag = uri
+        ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
         val targetPx = (200 * image.resources.displayMetrics.density).toInt()
         cache.loadUri(
@@ -506,7 +508,7 @@ object CompanionPanel {
             isStillValid = { image.tag == uri },
         ) { bmp ->
             if (bmp != null && image.tag == uri && image.isAttachedToWindow) {
-                image.setImageBitmap(bmp)
+                ArtCache.showDisplayed(image, bmp)
             }
         }
     }
@@ -521,12 +523,14 @@ object CompanionPanel {
         val uri = HeroDetail.screenshotUri(rom)
         if (uri == null) {
             image.visibility = View.GONE
+            ArtCache.dropDisplayed(image)
             image.setImageDrawable(null)
             image.tag = null
             return
         }
         image.visibility = View.VISIBLE
         image.tag = uri
+        ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
         val targetPx = (320 * image.resources.displayMetrics.density).toInt()
         cache.loadUri(
@@ -538,7 +542,7 @@ object CompanionPanel {
         ) { bmp ->
             image.post {
                 if (bmp != null && image.tag == uri && image.isAttachedToWindow) {
-                    image.setImageBitmap(bmp)
+                    ArtCache.showDisplayed(image, bmp)
                 }
             }
         }
@@ -621,6 +625,7 @@ object CompanionPanel {
         val metrics = context.resources.displayMetrics
         val image = bannerFrame.children.filterIsInstance<ImageView>().first()
         bannerFrame.visibility = View.GONE
+        ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
         image.tag = rom.id
         tileFrame.visibility = View.VISIBLE
@@ -648,7 +653,7 @@ object CompanionPanel {
             if (bitmap != null && bitmap.width >= bitmap.height * 4 / 3 &&
                 image.tag == rom.id && image.isAttachedToWindow
             ) {
-                image.setImageBitmap(bitmap)
+                ArtCache.showDisplayed(image, bitmap)
                 tileFrame.visibility = View.GONE
                 bannerFrame.visibility = View.VISIBLE
             }
@@ -832,7 +837,7 @@ object CompanionPanel {
                 if (bitmap != null && image.isAttachedToWindow &&
                     selectedRom(state.selectedKey, roms, app)?.id == romId
                 ) {
-                    image.setImageBitmap(bitmap)
+                    ArtCache.showDisplayed(image, bitmap)
                     image.visibility = View.VISIBLE
                     tile.visibility = View.GONE
                 }
