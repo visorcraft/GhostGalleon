@@ -227,13 +227,23 @@ object DualPaintPolicy {
         !companionHealthy
 
     /**
-     * Role-swap may restart companion except while a YIELD session owns both
-     * panels. [allowHeal] timing is unchanged.
+     * Open YIELD or greedy KEEP owns the companion panel. Heal, embed, pin,
+     * and companion spawn stay off until the session record is cleared.
+     */
+    fun sessionOwnsCompanionDisplay(
+        policy: SessionPolicy?,
+        greedy: Boolean,
+    ): Boolean = policy == SessionPolicy.YIELD_BOTH || greedy
+
+    /**
+     * Role-swap may restart companion except while a YIELD or greedy KEEP
+     * session owns both panels. [allowHeal] timing is unchanged.
      */
     fun allowCompanionRestartDuringSwap(
         dualMode: Boolean,
         policy: SessionPolicy?,
-    ): Boolean = dualMode && policy != SessionPolicy.YIELD_BOTH
+        greedy: Boolean,
+    ): Boolean = dualMode && !sessionOwnsCompanionDisplay(policy, greedy)
 
     /** Interval for live PERF_HUD reading refresh (ms). No full SETTINGS paint. */
     const val PERF_HUD_REFRESH_MS = 1_500L

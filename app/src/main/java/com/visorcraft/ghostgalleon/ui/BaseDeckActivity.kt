@@ -46,7 +46,6 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
-import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.deck.AppIconLoader
 import com.visorcraft.ghostgalleon.ui.deck.AppPicker
@@ -1089,6 +1088,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 if (DualPaintPolicy.allowCompanionRestartDuringSwap(
                         dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
                         policy = app.sessionSurface?.policy,
+                        greedy = app.sessionSurface?.greedy == true,
                     ) && main != null
                 ) {
                     main.restartCompanionPanel(
@@ -1101,7 +1101,11 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                } else if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+                } else if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                        app.sessionSurface?.policy,
+                        app.sessionSurface?.greedy == true,
+                    )
+                ) {
                     Toast.makeText(
                         this,
                         R.string.session_yields_both_screens,

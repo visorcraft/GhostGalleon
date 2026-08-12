@@ -390,29 +390,74 @@ class DualPaintPolicyTest {
     }
 
     @Test
+    fun `sessionOwnsCompanionDisplay is YIELD or greedy`() {
+        assertTrue(
+            DualPaintPolicy.sessionOwnsCompanionDisplay(
+                policy = SessionPolicy.YIELD_BOTH,
+                greedy = false,
+            ),
+        )
+        assertTrue(
+            DualPaintPolicy.sessionOwnsCompanionDisplay(
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = true,
+            ),
+        )
+        assertTrue(
+            DualPaintPolicy.sessionOwnsCompanionDisplay(
+                policy = null,
+                greedy = true,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.sessionOwnsCompanionDisplay(
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = false,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.sessionOwnsCompanionDisplay(
+                policy = null,
+                greedy = false,
+            ),
+        )
+    }
+
+    @Test
     fun `allowCompanionRestartDuringSwap blocked when yielding both`() {
         assertFalse(
             DualPaintPolicy.allowCompanionRestartDuringSwap(
                 dualMode = true,
                 policy = SessionPolicy.YIELD_BOTH,
+                greedy = false,
             ),
         )
         assertTrue(
             DualPaintPolicy.allowCompanionRestartDuringSwap(
                 dualMode = true,
                 policy = SessionPolicy.KEEP_COMPANION,
+                greedy = false,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.allowCompanionRestartDuringSwap(
+                dualMode = true,
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = true,
             ),
         )
         assertTrue(
             DualPaintPolicy.allowCompanionRestartDuringSwap(
                 dualMode = true,
                 policy = null,
+                greedy = false,
             ),
         )
         assertFalse(
             DualPaintPolicy.allowCompanionRestartDuringSwap(
                 dualMode = false,
                 policy = SessionPolicy.KEEP_COMPANION,
+                greedy = false,
             ),
         )
     }

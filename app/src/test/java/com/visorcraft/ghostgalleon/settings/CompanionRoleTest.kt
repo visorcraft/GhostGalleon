@@ -185,6 +185,47 @@ class CompanionRoleTest {
     }
 
     @Test
+    fun `pinHonesty greedy KEEP is DUAL_CLAIM like YIELD`() {
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.DUAL_CLAIM,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    openSessionKey = "rom:snes:x.smc",
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = true,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.READY,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = false,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRole.PINNED_APP,
+            CompanionRoleResolve.effective(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `pinHonesty openSession NDS with KEEP_COMPANION is not DUAL_CLAIM`() {
         val honesty = CompanionRoleResolve.pinHonesty(
             CompanionRoleResolve.Context(

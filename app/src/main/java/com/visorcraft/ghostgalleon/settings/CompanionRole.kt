@@ -32,6 +32,8 @@ object CompanionRoleResolve {
         /** Policy of the launched player; dual-claim when [SessionPolicy.YIELD_BOTH]. */
         val sessionPolicy: SessionPolicy? = null,
         val pinnedPackageInstalled: Boolean = true,
+        /** Open greedy KEEP owns both panels — same dual-claim as YIELD. */
+        val sessionGreedy: Boolean = false,
     )
 
     /**
@@ -43,14 +45,16 @@ object CompanionRoleResolve {
         EMPTY,
         /** Package set but not installed. */
         MISSING,
-        /** Yield-both session owns both displays — do not fight them. */
+        /** Yield or greedy KEEP owns both displays — do not fight them. */
         DUAL_CLAIM,
         /** Pin package is set and installed. */
         READY,
     }
 
     fun pinHonesty(ctx: Context): PinHonesty {
-        if (ctx.sessionPolicy == SessionPolicy.YIELD_BOTH) return PinHonesty.DUAL_CLAIM
+        if (ctx.sessionPolicy == SessionPolicy.YIELD_BOTH || ctx.sessionGreedy) {
+            return PinHonesty.DUAL_CLAIM
+        }
         if (ctx.pinnedPackage.isNullOrBlank()) return PinHonesty.EMPTY
         if (!ctx.pinnedPackageInstalled) return PinHonesty.MISSING
         return PinHonesty.READY

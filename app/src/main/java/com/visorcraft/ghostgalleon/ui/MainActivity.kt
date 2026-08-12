@@ -120,9 +120,11 @@ class MainActivity : BaseDeckActivity() {
     }
 
     private fun healCompanionIfMissing(returningFromElsewhere: Boolean) {
-        // YIELD owns both panels until HOME return; do not spawn onto a live DS.
-        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH &&
-            !returningFromElsewhere
+        // YIELD or open greedy KEEP owns both panels until HOME return.
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                app.sessionSurface?.policy,
+                app.sessionSurface?.greedy == true,
+            ) && !returningFromElsewhere
         ) {
             return
         }
@@ -204,8 +206,12 @@ class MainActivity : BaseDeckActivity() {
     }
 
     private fun launchCompanionIfPresent(returningFromElsewhere: Boolean = false) {
-        // YIELD owns both panels; starting Companion here would steal one.
-        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) return
+        // YIELD or open greedy KEEP owns both panels; do not steal one.
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                app.sessionSurface?.policy,
+                app.sessionSurface?.greedy == true,
+            )
+        ) return
         val topo = app.refreshDisplayConfig()
         if (topo.mode != SurfaceMode.DUAL) return
         val secondaryHomeId = topo.secondaryHomeDisplayId

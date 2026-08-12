@@ -1094,6 +1094,7 @@ object CompanionPanel {
                 pinnedPackage = pinPkg,
                 sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = pinInstalled,
+                sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
         val toDp: (Int) -> Int = { v -> dp(v) }
@@ -1820,6 +1821,7 @@ object CompanionPanel {
                 pinnedPackage = pinPkg,
                 sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = installed,
+                sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
         when (honesty) {
@@ -1875,7 +1877,11 @@ object CompanionPanel {
                     setPadding(0, dp(12), 0, dp(16))
                 })
                 val embedHost = FrameLayout(activity)
-                val embedded = ActivityEmbed.available() &&
+                val pinAllowed = !DualPaintPolicy.sessionOwnsCompanionDisplay(
+                    app.sessionSurface?.policy,
+                    app.sessionSurface?.greedy == true,
+                )
+                val embedded = pinAllowed && ActivityEmbed.available() &&
                     ActivityEmbed.attach(embedHost, activity, pinPkg)
                 if (embedded) {
                     col.addView(
@@ -1885,7 +1891,7 @@ object CompanionPanel {
                         ).apply { topMargin = dp(8) },
                     )
                 } else {
-                    if (ActivityEmbed.available()) {
+                    if (pinAllowed && ActivityEmbed.available()) {
                         col.addView(TextView(activity).apply {
                             setText(R.string.deck_embed_unavailable)
                             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1894,15 +1900,17 @@ object CompanionPanel {
                             setPadding(0, 0, 0, dp(8))
                         })
                     }
-                    col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
-                        val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
-                            ?: return@pinActionChip
-                        val displayId = activity.currentDisplayId() ?: 0
-                        val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
-                        runCatching {
-                            activity.startActivity(intent, options.toBundle())
-                        }
-                    })
+                    if (pinAllowed) {
+                        col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
+                            val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
+                                ?: return@pinActionChip
+                            val displayId = activity.currentDisplayId() ?: 0
+                            val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+                            runCatching {
+                                activity.startActivity(intent, options.toBundle())
+                            }
+                        })
+                    }
                 }
                 col.addView(pinActionChip(activity, settings, dp, R.string.action_change_pin) {
                     ActivityEmbed.release(embedHost)
