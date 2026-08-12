@@ -61,9 +61,26 @@ class MainActivity : BaseDeckActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        healCompanionIfMissing(leftHomeSinceResume())
+        val returningFromElsewhere = leftHomeSinceResume()
+        // Heal only when policy says HEAL_IF_MISSING. A HOME return is
+        // onNewIntent then onResume; consuming allowHeal here would reject
+        // onResume's RESTART (YIELD / greedy KEEP / no-session).
+        // Already-resumed HOME redelivery never re-fires onResume.
+        val surface = app.sessionSurface
+        val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
+            !app.settings.companionPinnedPackage.isNullOrBlank()
+        val action = DualPaintPolicy.resumeCompanionAction(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            returningFromElsewhere = returningFromElsewhere,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            pinReady = pinReady,
+        )
+        if (action == DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING) {
+            healCompanionIfMissing(returningFromElsewhere)
+        }
         // Still on home (never onStop'd): swipe-up / re-HOME opens all-apps.
-        if (!leftHomeSinceResume()) {
+        if (!returningFromElsewhere) {
             requestAppDrawer(allowToggle = true)
         }
     }
