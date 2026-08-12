@@ -430,10 +430,14 @@ class ArtCache(private val dir: File) {
                 val it = reusable.iterator()
                 while (it.hasNext()) {
                     val candidate = it.next()
+                    if (candidate.isRecycled) {
+                        it.remove()
+                        continue
+                    }
                     val ok = canReuseInBitmap(
-                        candidateBytes = if (candidate.isRecycled) 0 else candidate.byteCount,
+                        candidateBytes = candidate.byteCount,
                         candidateConfigName = candidate.config.name,
-                        candidateRecycled = candidate.isRecycled,
+                        candidateRecycled = false,
                         displayCount = displayCounts[candidate] ?: 0,
                         neededBytes = neededBytes,
                         neededConfigName = want,
