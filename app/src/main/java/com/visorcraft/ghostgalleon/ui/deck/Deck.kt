@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.LaunchSession
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLauncher
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -71,7 +72,8 @@ internal fun launchOnOtherDisplay(activity: Activity, state: DeckState, intent: 
 // platform template fires on the non-interactive display), app packages
 // through their launcher intent. A ROM that dropped out of the library
 // toasts instead of launching. [playerId] forces Open-with; otherwise the
-// platform's settings default is used. Records play sessions via noteLaunch.
+// platform's settings default is used. On success: noteLaunch first (ends
+// any prior play session + surface), then beginSession for the new surface.
 internal fun launchSlotKey(
     activity: AppCompatActivity,
     state: DeckState,
@@ -93,12 +95,21 @@ internal fun launchSlotKey(
                 settings?.romProfiles.orEmpty(),
                 settings?.defaultPlayers?.get(entry.platformId),
             )
-            val ok = RomLauncher.launch(
+            val template = RomLauncher.launch(
                 activity, state, entry,
                 playerId = playerId,
                 preferredPlayerId = preferred,
             )
-            if (ok) app?.noteLaunch(key)
+            if (template != null && app != null) {
+                app.noteLaunch(key)
+                app.beginSession(
+                    LaunchSession.forRom(
+                        key,
+                        template,
+                        app.displayConfig.launchDisplayId,
+                    ),
+                )
+            }
         } else {
             Toast.makeText(activity, R.string.deck_rom_missing, Toast.LENGTH_SHORT).show()
         }
@@ -107,7 +118,12 @@ internal fun launchSlotKey(
     activity.packageManager.getLaunchIntentForPackage(key)
         ?.let {
             launchOnOtherDisplay(activity, state, it)
-            app?.noteLaunch(key)
+            if (app != null) {
+                app.noteLaunch(key)
+                app.beginSession(
+                    LaunchSession.forApp(key, app.displayConfig.launchDisplayId),
+                )
+            }
         }
 }
 
