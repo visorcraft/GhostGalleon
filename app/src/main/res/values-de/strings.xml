@@ -321,7 +321,7 @@
     <string name="deck_restart_bottom_panel">Unteres Panel wird neu gestartet…</string>
     <string name="deck_add_rom_folder_done">ROM-Ordner hinzugefügt</string>
     <string name="theme_ghost">Ghost</string>
-    <string name="theme_threeds">3DS Teal</string>
+    <string name="theme_threeds">Teal</string>
     <string name="theme_oled">OLED Schwarz</string>
     <string name="theme_neon">Neon</string>
     <string name="profile_auto">Auto</string>

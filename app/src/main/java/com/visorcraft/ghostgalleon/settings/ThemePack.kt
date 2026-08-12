@@ -2,7 +2,7 @@ package com.visorcraft.ghostgalleon.settings
 
 /**
  * Visual theme tokens applied across decks/settings. Pure; host-tested.
- * Built-in packs cover Ghost (current), 3DS teal, OLED pure black, Neon.
+ * Built-in packs cover Ghost (current), Teal, OLED pure black, Neon.
  */
 data class ThemeTokens(
     val id: String,
@@ -25,7 +25,7 @@ object ThemePack {
     )
     val THREEDS = ThemeTokens(
         id = "threeds",
-        displayName = "3DS Teal",
+        displayName = "Teal",
         accentColor = 0xFF00A8A0.toInt(),
         panelLift = 0xFF0D2A2A.toInt(),
         chipIdle = 0xFF143838.toInt(),

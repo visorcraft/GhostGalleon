@@ -141,14 +141,21 @@ object CompanionPanel {
         Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
     }.getOrNull()
 
+    // Glow tint cache: PM icon + 16×16 average is too heavy for every NAV.
+    private val glowColorByPackage = HashMap<String, Int>(32)
+
     // Glow tint: dominant color of the selected app's icon when available,
     // otherwise the accent color.
     private fun glowColor(context: Context, packageName: String?, settings: Settings): Int {
         if (packageName != null) {
+            glowColorByPackage[packageName]?.let { return it }
             runCatching { context.packageManager.getApplicationIcon(packageName) }
                 .getOrNull()
                 ?.let { dominantColor(it) }
-                ?.let { return it }
+                ?.let {
+                    glowColorByPackage[packageName] = it
+                    return it
+                }
         }
         return settings.accentColor
     }
@@ -204,7 +211,8 @@ object CompanionPanel {
             val show = settings.browseChrome.resumeChip && !settings.hideResumeChip
             chip.visibility = if (show) View.VISIBLE else View.GONE
         }
-        val rom = selectedRom(state.selectedKey, roms)
+        val app = context.applicationContext as? GhostGalleonApp
+        val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
             // In-place only when the hero is already in ROM shape (banner
             // frame + tile TextView + name + platform subtitle).
@@ -248,7 +256,7 @@ object CompanionPanel {
             view.findViewWithTag<TextView>(TAG_HERO_META)?.visibility = View.GONE
             view.findViewWithTag<TextView>(TAG_HERO_PLAYER)?.visibility = View.GONE
             bindMetadataLine(view.findViewWithTag(TAG_HERO_METADATA), rom)
-            val appCtx = context.applicationContext as GhostGalleonApp
+            val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
             bindRaLine(
                 view.findViewWithTag(TAG_HERO_RA),
                 appCtx.raProgressFor(rom.id),
@@ -266,7 +274,7 @@ object CompanionPanel {
             }
             bindScreenshot(
                 view.findViewWithTag(TAG_HERO_SHOT),
-                (context.applicationContext as GhostGalleonApp).artCache,
+                appCtx.artCache,
                 rom,
             )
             bindHeroVideo(view.findViewWithTag(TAG_HERO_VIDEO), rom)
@@ -276,8 +284,7 @@ object CompanionPanel {
             appCtx.requestRaProgress(rom.id, rom.name)
             return true
         }
-        val entry = library.visible(settings)
-            .firstOrNull { it.packageName == state.selectedKey }
+        val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
         // Find as View first: the ROM hero tags a TextView tile with
         // TAG_HERO_ICON, and findViewWithTag<ImageView> would throw a
         // ClassCastException on it instead of returning null.
@@ -292,25 +299,29 @@ object CompanionPanel {
         val icon = heroIcon as? ImageView ?: return false
         if (name == null) return false
         val targetPx = (240 * context.resources.displayMetrics.density).toInt()
-        val iconDrawable = runCatching {
-            context.packageManager.getApplicationIcon(entry.packageName)
-        }.getOrNull()
+        val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
         CustomIcon.bind(
             icon, AppIconLoader(context.packageManager),
-            (context.applicationContext as GhostGalleonApp).artCache,
+            appCtx.artCache,
             settings, entry.packageName, targetPx)
         name.text = entry.label
-        // Retint the glow with the newly selected icon's dominant color.
+        // Cached glow (no PM + 16×16 average every NAV).
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
             context,
-            iconDrawable?.let { dominantColor(it) } ?: settings.accentColor,
+            glowColor(context, entry.packageName, settings),
         )
         return true
     }
 
     // The ROM referenced by a "rom:<id>" selection key, if still indexed.
-    private fun selectedRom(key: String?, roms: List<RomEntry>): RomEntry? {
+    private fun selectedRom(
+        key: String?,
+        roms: List<RomEntry>,
+        app: GhostGalleonApp? = null,
+    ): RomEntry? {
         val id = SlotKey.romId(key) ?: return null
+        // Process-wide O(1) map first; linear scan only if map is cold/stale.
+        app?.romById?.get(id)?.let { return it }
         return roms.firstOrNull { it.id == id }
     }
 
@@ -319,13 +330,10 @@ object CompanionPanel {
         library: AppLibrary,
         roms: List<RomEntry>,
         settings: Settings,
+        app: GhostGalleonApp? = null,
     ): String = when {
-        SlotKey.isRom(key) -> {
-            val id = SlotKey.romId(key)
-            roms.firstOrNull { it.id == id }?.name ?: key
-        }
-        else -> library.visible(settings)
-            .firstOrNull { it.packageName == key }?.label ?: key
+        SlotKey.isRom(key) -> selectedRom(key, roms, app)?.name ?: key
+        else -> library.byPackage(settings)[key]?.label ?: key
     }
 
     /**
@@ -587,20 +595,25 @@ object CompanionPanel {
                 artOverrides = artOverrides,
             )
         }
+        // Cap decode to scrape target / panel width — full widthPixels bloated
+        // dual-screen memory for a banner that is ~40% panel height.
+        val heroMax = minOf(
+            metrics.widthPixels,
+            ArtCache.HERO_SCRAPE_TARGET_WIDTH_PX,
+        )
         cache.load(
             context, rom,
-            maxDimension = metrics.widthPixels,
+            maxDimension = heroMax,
             kind = ArtCache.ArtKind.HERO,
             isStillValid = { image.tag == rom.id },
         ) { bitmap ->
-            image.post {
-                if (bitmap != null && bitmap.width >= bitmap.height * 4 / 3 &&
-                    image.tag == rom.id && image.isAttachedToWindow
-                ) {
-                    image.setImageBitmap(bitmap)
-                    tileFrame.visibility = View.GONE
-                    bannerFrame.visibility = View.VISIBLE
-                }
+            // onResult is main-thread already.
+            if (bitmap != null && bitmap.width >= bitmap.height * 4 / 3 &&
+                image.tag == rom.id && image.isAttachedToWindow
+            ) {
+                image.setImageBitmap(bitmap)
+                tileFrame.visibility = View.GONE
+                bannerFrame.visibility = View.VISIBLE
             }
         }
     }
@@ -713,7 +726,7 @@ object CompanionPanel {
 
         // Kick live RA for ROM selection (same as full hero).
         if (model.isRom) {
-            val rom = selectedRom(state.selectedKey, roms)
+            val rom = selectedRom(state.selectedKey, roms, app)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
         return root
@@ -726,7 +739,7 @@ object CompanionPanel {
         settings: Settings,
         app: GhostGalleonApp,
     ): SelectionStrip.Model {
-        val rom = selectedRom(state.selectedKey, roms)
+        val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
             val pmInstalled = { pkg: String -> app.packageManager.isInstalled(pkg) }
             val preferred = RomProfiles.preferredPlayerId(
@@ -743,8 +756,7 @@ object CompanionPanel {
                 hasRaCredentials = !settings.raApiKey.isNullOrBlank(),
             )
         }
-        val entry = library.visible(settings)
-            .firstOrNull { it.packageName == state.selectedKey }
+        val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
         if (entry != null) return SelectionStrip.forApp(entry.label)
         return SelectionStrip.empty()
     }
@@ -760,7 +772,7 @@ object CompanionPanel {
         artSize: Int,
     ) {
         host.removeAllViews()
-        val rom = selectedRom(state.selectedKey, roms)
+        val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
             val tile = PlatformTile.view(context, rom.platformId, cornerRadiusDp = 12).apply {
                 tag = TAG_HERO_ICON
@@ -780,20 +792,17 @@ object CompanionPanel {
                 artOverrides = settings.artOverrides,
                 isStillValid = { image.isAttachedToWindow },
             ) { bitmap ->
-                image.post {
-                    if (bitmap != null && image.isAttachedToWindow &&
-                        selectedRom(state.selectedKey, roms)?.id == romId
-                    ) {
-                        image.setImageBitmap(bitmap)
-                        image.visibility = View.VISIBLE
-                        tile.visibility = View.GONE
-                    }
+                if (bitmap != null && image.isAttachedToWindow &&
+                    selectedRom(state.selectedKey, roms, app)?.id == romId
+                ) {
+                    image.setImageBitmap(bitmap)
+                    image.visibility = View.VISIBLE
+                    tile.visibility = View.GONE
                 }
             }
             return
         }
-        val entry = library.visible(settings)
-            .firstOrNull { it.packageName == state.selectedKey }
+        val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
         val image = ImageView(context).apply {
             tag = TAG_HERO_ICON
             scaleType = ImageView.ScaleType.CENTER_INSIDE
@@ -842,7 +851,7 @@ object CompanionPanel {
         val artSize = (SelectionStrip.ART_SIZE_DP * density).toInt()
         bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
         if (model.isRom) {
-            val rom = selectedRom(state.selectedKey, roms)
+            val rom = selectedRom(state.selectedKey, roms, app)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
         return true
@@ -983,9 +992,9 @@ object CompanionPanel {
 
         // Hero area.
         val selected = state.selectedKey
-        val selectedRom = selectedRom(selected, roms)
-        val selectedEntry = if (selectedRom == null) {
-            library.visible(settings).firstOrNull { it.packageName == selected }
+        val selectedRom = selectedRom(selected, roms, app)
+        val selectedEntry = if (selectedRom == null && selected != null) {
+            library.byPackage(settings)[selected]
         } else {
             null
         }
@@ -1026,7 +1035,7 @@ object CompanionPanel {
                 excludeKey = state.selectedKey,
             )
             val cont = candidates.firstOrNull() ?: return@run
-            val contName = resumeLabel(cont, library, roms, settings)
+            val contName = resumeLabel(cont, library, roms, settings, app)
             // Filled accent pill + white text (dark card + black text was
             // unreadable on the secondary OLED).
             hero.addView(TextView(context).apply {
@@ -1528,11 +1537,9 @@ object CompanionPanel {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
         })
-        fun paintRows() {
-            // Drop previous value/label pairs (keep title + hint = first 2 kids).
-            while (col.childCount > 2) {
-                col.removeViewAt(col.childCount - 1)
-            }
+        fun ensureRows() {
+            // Build static label/value shells once; ticks only mutate values.
+            if (col.childCount > 2) return
             val readings = SystemInfoCollector.collect(context)
             SystemInfoFormat.rows(readings).forEachIndexed { index, (label, value) ->
                 col.addView(TextView(context).apply {
@@ -1549,13 +1556,21 @@ object CompanionPanel {
                 })
             }
         }
-        paintRows()
+        fun paintValues() {
+            ensureRows()
+            val readings = SystemInfoCollector.collect(context)
+            SystemInfoFormat.rows(readings).forEachIndexed { index, (_, value) ->
+                col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
+                    ?.text = context.resolveText(value)
+            }
+        }
+        paintValues()
         // Live refresh without SETTINGS / setContentView thrash.
         val handler = Handler(Looper.getMainLooper())
         val tick = object : Runnable {
             override fun run() {
                 if (!col.isAttachedToWindow) return
-                paintRows()
+                paintValues()
                 handler.postDelayed(this, DualPaintPolicy.PERF_HUD_REFRESH_MS)
             }
         }
@@ -1747,12 +1762,9 @@ object CompanionPanel {
             gravity = Gravity.CENTER
         })
         val label = when {
-            SlotKey.isRom(session.key) -> {
-                val id = SlotKey.romId(session.key)
-                roms.firstOrNull { it.id == id }?.name ?: session.key
-            }
-            else -> library.visible(settings)
-                .firstOrNull { it.packageName == session.key }?.label
+            SlotKey.isRom(session.key) ->
+                selectedRom(session.key, roms, app)?.name ?: session.key
+            else -> library.byPackage(settings)[session.key]?.label
                 ?: session.key
         }
         nowPlaying.addView(TextView(activity).apply {

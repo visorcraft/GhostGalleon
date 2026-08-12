@@ -321,7 +321,7 @@
     <string name="deck_restart_bottom_panel">Reiniciando panel inferior…</string>
     <string name="deck_add_rom_folder_done">Carpeta ROM añadida</string>
     <string name="theme_ghost">Ghost</string>
-    <string name="theme_threeds">3DS Teal</string>
+    <string name="theme_threeds">Teal</string>
     <string name="theme_oled">Negro OLED</string>
     <string name="theme_neon">Neón</string>
     <string name="profile_auto">Auto</string>

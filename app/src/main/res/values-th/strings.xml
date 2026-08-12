@@ -321,7 +321,7 @@
     <string name="deck_restart_bottom_panel">กำลังรีสตาร์ทพาเนลด้านล่าง…</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
     <string name="theme_ghost">Ghost</string>
-    <string name="theme_threeds">3DS Teal</string>
+    <string name="theme_threeds">Teal</string>
     <string name="theme_oled">OLED Black</string>
     <string name="theme_neon">Neon</string>
     <string name="profile_auto">อัตโนมัติ</string>

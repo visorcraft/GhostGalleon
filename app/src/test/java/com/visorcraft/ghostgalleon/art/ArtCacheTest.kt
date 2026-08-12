@@ -117,6 +117,12 @@ class ArtCacheTest {
     }
 
     @Test
+    fun `lru touch gap is one minute so flings do not thrash mtime`() {
+        // Contract: disk hits only rewrite lastModified after this gap.
+        assertEquals(60_000L, ArtCache.LRU_TOUCH_MIN_GAP_MS)
+    }
+
+    @Test
     fun `hero sample size tracks width alone`() {
         // Heroes are wide and short; the scrape path passes the width as
         // both dimensions so height never blocks sampling.

@@ -196,6 +196,11 @@ class GhostGalleonApp : Application() {
     var romEntries: List<RomEntry> = emptyList()
         private set
 
+    /** O(1) ROM lookup by id; rebuilt with [romEntries]. */
+    @Volatile
+    var romById: Map<String, RomEntry> = emptyMap()
+        private set
+
     // Honest open session (pause while launcher focused / device asleep).
     // Exposed for Now Playing companion UI.
     @Volatile
@@ -317,7 +322,7 @@ class GhostGalleonApp : Application() {
         raFetchAttempted = raFetchAttempted + id
         val cachedGameId = raProgressByRomId[id]?.gameId
         val platform = platformId
-            ?: romEntries.firstOrNull { it.id == id }?.platformId
+            ?: romById[id]?.platformId
         RA_IO.execute {
             val progress = try {
                 RaFetcher.fetchProgress(
@@ -428,6 +433,7 @@ class GhostGalleonApp : Application() {
             val loaded = romLibrary.load()
             val prev = romEntries
             romEntries = loaded
+            romById = loaded.associateBy { it.id }
             // Only rebuild decks when the index actually changed. Boot used
             // to always notifyChanged → second full setContentView on both
             // panels during first paint (contributed to black surfaces).
@@ -508,10 +514,15 @@ class GhostGalleonApp : Application() {
     // picker/carousel/grid see the new entries immediately.
     fun publishRomEntries(entries: List<RomEntry>) {
         romEntries = entries
+        romById = entries.associateBy { it.id }
         contentEpoch++
         invalidateDrawerListCache()
         deckState.notifyChanged()
     }
+
+    /** O(1) ROM by id from the process snapshot (falls back to linear scan). */
+    fun romEntry(id: String): RomEntry? =
+        romById[id] ?: romEntries.firstOrNull { it.id == id }
 
     /** Stamp last-launched and open a play session for [key]. */
     fun noteLaunch(key: String, nowMs: Long = System.currentTimeMillis()) {

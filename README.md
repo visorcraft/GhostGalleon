@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.7.1-informational" alt="0.7.1" />
+  <img src="https://img.shields.io/badge/version-0.7.2-informational" alt="0.7.2" />
 </p>
 
 ---
@@ -72,8 +72,8 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 - **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
 - **ROM library** — 19 built-in platforms, SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
-- **Themes** — Ghost, 3DS Teal, OLED Black, Neon; optional custom theme JSON.
-- **Performance-minded** — R8-minified release APK, in-place selection/browse paths, debounced settings save, background app-catalog warm-up, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
+- **Themes** — Ghost, Teal, OLED Black, Neon; optional custom theme JSON.
+- **Performance-minded** — R8-minified release APK, single carousel snap path (no double-scroll), browse adapter reuse, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, debounced settings save, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
 - **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Stats, System (topology diagnostics), About.
 - **Export/import** — full settings, layout, and ROM-library JSON.
 - **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.

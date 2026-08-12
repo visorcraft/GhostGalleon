@@ -73,6 +73,28 @@ class AppLibraryTest {
     }
 
     @Test
+    fun `byPackage is O1 lookup and respects custom names`() {
+        val s = Settings.DEFAULT.copy(
+            customNames = mapOf("com.alpha.app" to "My Alpha"),
+        )
+        val map = library.byPackage(s)
+        assertEquals("My Alpha", map["com.alpha.app"]?.label)
+        assertEquals("Zeta", map["com.zeta.game"]?.label)
+        // Stable across equal settings (memoized).
+        assertEquals(map, library.byPackage(s))
+    }
+
+    @Test
+    fun `visible is memoized for equal hidden and names`() {
+        val s = Settings.DEFAULT.copy(hiddenPackages = setOf("com.mid.emu"))
+        val a = library.visible(s)
+        val b = library.visible(s)
+        assertEquals(a, b)
+        // Same instance when cache hits (identity).
+        assertEquals(true, a === b)
+    }
+
+    @Test
     fun `custom names replace labels in visible`() {
         val s = Settings.DEFAULT.copy(
             customNames = mapOf("com.alpha.app" to "My Alpha"),

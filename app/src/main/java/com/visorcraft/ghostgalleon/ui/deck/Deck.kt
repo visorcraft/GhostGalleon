@@ -83,7 +83,8 @@ internal fun launchSlotKey(
     val app = activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp
     if (SlotKey.isRom(key)) {
         val id = SlotKey.romId(key)
-        val entry = roms.firstOrNull { it.id == id }
+        val entry = id?.let { app?.romById?.get(it) }
+            ?: roms.firstOrNull { it.id == id }
         if (entry != null) {
             val settings = app?.settings
             val preferred = RomProfiles.preferredPlayerId(

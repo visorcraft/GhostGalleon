@@ -344,7 +344,7 @@
 
     <!-- Built-in names -->
     <string name="theme_ghost">Ghost</string>
-    <string name="theme_threeds">3DS Teal</string>
+    <string name="theme_threeds">Teal</string>
     <string name="theme_oled">OLED Black</string>
     <string name="theme_neon">Neon</string>
     <string name="profile_auto">Auto</string>

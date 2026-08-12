@@ -83,15 +83,14 @@ object ArtTile {
             artOverrides = artOverrides,
             isStillValid = { overlay.tag == rom.id },
         ) { bitmap ->
-            overlay.post {
-                if (bitmap != null && overlay.tag == rom.id &&
-                    overlay.isAttachedToWindow
-                ) {
-                    overlay.setImageDrawable(
-                        RoundedBitmapDrawableFactory.create(context.resources, bitmap)
-                            .apply { cornerRadius = radiusPx },
-                    )
-                }
+            // onResult is already main-thread; skip an extra post frame.
+            if (bitmap != null && overlay.tag == rom.id &&
+                overlay.isAttachedToWindow
+            ) {
+                overlay.setImageDrawable(
+                    RoundedBitmapDrawableFactory.create(context.resources, bitmap)
+                        .apply { cornerRadius = radiusPx },
+                )
             }
         }
     }

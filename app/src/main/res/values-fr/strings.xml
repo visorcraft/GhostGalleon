@@ -321,7 +321,7 @@
     <string name="deck_restart_bottom_panel">Redémarrage du panneau inférieur…</string>
     <string name="deck_add_rom_folder_done">Dossier ROM ajouté</string>
     <string name="theme_ghost">Fantôme</string>
-    <string name="theme_threeds">3DS Turquoise</string>
+    <string name="theme_threeds">Turquoise</string>
     <string name="theme_oled">OLED Noir</string>
     <string name="theme_neon">Néon</string>
     <string name="profile_auto">Auto</string>

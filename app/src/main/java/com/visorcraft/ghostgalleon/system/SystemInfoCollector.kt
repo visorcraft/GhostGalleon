@@ -16,16 +16,37 @@ import java.io.File
  */
 object SystemInfoCollector {
 
+    // Static hardware facts change only across reboots — cache for PERF_HUD ticks.
+    @Volatile
+    private var cachedCpuMaxMhz: Int? = null
+    @Volatile
+    private var cpuMaxResolved: Boolean = false
+    @Volatile
+    private var cachedSecondary: Triple<String, Long, Long>? = null
+    @Volatile
+    private var secondaryResolved: Boolean = false
+    @Volatile
+    private var cachedRamTotal: Long = -1L
+
     fun collect(context: Context): SystemReadings {
         val am = context.getSystemService(ActivityManager::class.java)
         val mem = ActivityManager.MemoryInfo()
         am?.getMemoryInfo(mem)
+        if (cachedRamTotal < 0L) cachedRamTotal = mem.totalMem
         val data = StatFs(Environment.getDataDirectory().absolutePath)
         val internalTotal = data.totalBytes
         val internalFree = data.availableBytes
 
-        val secondary = findSecondaryVolume()
+        if (!secondaryResolved) {
+            cachedSecondary = findSecondaryVolume()
+            secondaryResolved = true
+        }
+        val secondary = cachedSecondary
         val battery = readBattery(context)
+        if (!cpuMaxResolved) {
+            cachedCpuMaxMhz = readMaxCpuFreqMhz()
+            cpuMaxResolved = true
+        }
 
         return SystemReadings(
             manufacturer = Build.MANUFACTURER.orEmpty(),
@@ -36,8 +57,8 @@ object SystemInfoCollector {
             sdkInt = Build.VERSION.SDK_INT,
             cpuCoreCount = Runtime.getRuntime().availableProcessors(),
             cpuAbi = Build.SUPPORTED_ABIS?.firstOrNull().orEmpty(),
-            cpuMaxMhz = readMaxCpuFreqMhz(),
-            ramTotalBytes = mem.totalMem,
+            cpuMaxMhz = cachedCpuMaxMhz,
+            ramTotalBytes = if (cachedRamTotal > 0L) cachedRamTotal else mem.totalMem,
             ramAvailBytes = mem.availMem,
             internalTotalBytes = internalTotal,
             internalFreeBytes = internalFree,

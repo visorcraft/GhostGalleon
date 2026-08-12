@@ -11,15 +11,19 @@ import com.visorcraft.ghostgalleon.rom.RomEntry
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
 /**
  * ROM artwork cache: a disk cache under `filesDir/art/` keyed by RomEntry
  * id (SHA-256 hashed filename, since ids contain ':'/'/'), backed by an
  * in-memory LRU. Disk usage is capped at [DISK_CACHE_CAP_BYTES]: writes
- * evict least-recently-used files (lastModified, bumped on read hits).
- * All I/O and bitmap decode/encode runs on a single background executor;
- * results are delivered on the main thread.
+ * evict least-recently-used files (lastModified, bumped on read hits —
+ * throttled so flings do not rewrite mtime on every hit).
+ * All I/O and bitmap decode/encode runs on a bounded background pool;
+ * results are delivered on the main thread. Concurrent loads for the same
+ * memory key coalesce into one decode.
  *
  * The disk path is pure JVM (File + bytes) so host tests can drive it with
  * a temp dir; android.util.LruCache is an Android stub in host tests, so
@@ -55,13 +59,23 @@ class ArtCache(private val dir: File) {
     fun diskHas(romId: String, kind: ArtKind = ArtKind.GRID): Boolean =
         fileFor(romId, kind).isFile
 
-    /** Raw cached bytes for [romId], or null on a miss. A hit bumps the
-     *  file's lastModified so disk eviction stays least-recently-USED. */
+    /** Raw cached bytes for [romId], or null on a miss. A hit may bump the
+     *  file's lastModified (throttled) so disk eviction stays LRU without
+     *  rewriting mtime on every carousel fling hit. */
     fun readDiskBytes(romId: String, kind: ArtKind = ArtKind.GRID): ByteArray? =
         fileFor(romId, kind).takeIf { it.isFile }?.let { file ->
-            file.setLastModified(System.currentTimeMillis())
+            touchLruIfStale(file)
             file.readBytes()
         }
+
+    /** Bump mtime at most every [LRU_TOUCH_MIN_GAP_MS] to cut fs metadata
+     *  thrash when the same tiles are re-read during flings. */
+    private fun touchLruIfStale(file: File, nowMs: Long = System.currentTimeMillis()) {
+        val age = nowMs - file.lastModified()
+        if (age >= LRU_TOUCH_MIN_GAP_MS) {
+            file.setLastModified(nowMs)
+        }
+    }
 
     /**
      * Drop memory + disk GRID/HERO slots for [romId] (and their source
@@ -201,28 +215,47 @@ class ArtCache(private val dir: File) {
         onResult: (Bitmap?) -> Unit,
     ) {
         memory.get(memKey)?.let { onResult(it); return }
+        // Coalesce concurrent loads (bind + ±2 prefetch for the same tile).
+        var startWork = false
+        val waiters = inFlight.compute(memKey) { _, existing ->
+            if (existing == null) {
+                startWork = true
+                CopyOnWriteArrayList<(Bitmap?) -> Unit>().also { it.add(onResult) }
+            } else {
+                existing.add(onResult)
+                existing
+            }
+        }!!
+        if (!startWork) return
+
         val appContext = context.applicationContext
         DECODE_EXECUTOR.execute {
-            // The queue is single-thread FIFO: by the time this runs the
-            // view may have been rebound many flings ago. Bail before the
-            // expensive part; the post-decode tag guard stays as the final
-            // correctness check.
-            if (!isStillValid()) return@execute
-            val bitmap = decodeCached(diskKey, kind, expectedSourceUri = uriString)
-                ?: uriString?.let { uri ->
-                    decodeDownscaled(appContext, uri, maxDimension)?.also { bmp ->
+            // Drop only when every waiter is already stale *and* we would
+            // still pay for URI decode/compress. Disk hits stay cheap and
+            // warm memory for the next bind of the same key.
+            val diskHit = decodeCached(diskKey, kind, expectedSourceUri = uriString)
+            val bitmap = diskHit ?: uriString?.let { uri ->
+                // Bail before openInputStream + PNG encode when the sole
+                // waiter scrolled away (typical fling backlog).
+                val onlyStale = waiters.size == 1 && !isStillValid()
+                if (onlyStale) return@let null
+                decodeDownscaled(appContext, uri, maxDimension)?.also { bmp ->
+                    // Skip disk write when the view already moved on — still
+                    // put memory so a near-term rebind is free.
+                    if (isStillValid()) {
                         runCatching {
                             val out = ByteArrayOutputStream()
                             bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-                            // Write bytes without clearing via public writeDiskBytes
-                            // stamp rules: stamp the URI after so override/source
-                            // is bound to these bytes.
                             writeDiskBytesFromUri(diskKey, out.toByteArray(), kind, uri)
                         }
                     }
                 }
+            }
             if (bitmap != null) memory.put(memKey, bitmap)
-            Handler(Looper.getMainLooper()).post { onResult(bitmap) }
+            val cbs = inFlight.remove(memKey) ?: emptyList()
+            MAIN_HANDLER.post {
+                cbs.forEach { it(bitmap) }
+            }
         }
     }
 
@@ -263,8 +296,18 @@ class ArtCache(private val dir: File) {
         evictIfOverCap()
     }
 
+    /** In-flight decode waiters keyed by memory key (coalesce bind+prefetch). */
+    private val inFlight =
+        ConcurrentHashMap<String, CopyOnWriteArrayList<(Bitmap?) -> Unit>>()
+
     companion object {
         private const val MEMORY_BYTES = 16 * 1024 * 1024
+
+        /** Min age before a disk hit rewrites lastModified (ms). */
+        internal const val LRU_TOUCH_MIN_GAP_MS = 60_000L
+
+        // Lazy: host unit tests load ArtCache without a Looper.
+        private val MAIN_HANDLER by lazy { Handler(Looper.getMainLooper()) }
 
         /** Disk cache cap; writes evict least-recently-used files
          *  (lastModified) once the directory exceeds this. */

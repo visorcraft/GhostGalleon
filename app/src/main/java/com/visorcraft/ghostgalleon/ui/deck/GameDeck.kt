@@ -74,6 +74,15 @@ class GameDeck(
     // Genre is ROM-only: when set, app interleaving is skipped.
     // Mutable so browse chips can rebuild the list without setContentView.
     private var entries: List<CarouselEntry> = emptyList()
+    /** O(1) selection index; rebuilt with [entries]. */
+    private var entryIndexByKey: Map<String, Int> = emptyMap()
+    /** Single snap helper for the carousel (never re-alloc on NAV). */
+    private val snapHelper = LinearSnapHelper()
+
+    private fun installEntries(next: List<CarouselEntry>) {
+        entries = next
+        entryIndexByKey = next.withIndex().associate { (i, e) -> e.key to i }
+    }
 
     private fun buildEntries(): List<CarouselEntry> {
         // Drop power-user modes if chrome toggles turned them off mid-session.
@@ -384,8 +393,10 @@ class GameDeck(
     private var slotMenu: SlotMenu? = null
     private var picker: AppPicker? = null
 
-    private fun selectedIndex(): Int =
-        entries.indexOfFirst { it.key == state.selectedKey }.coerceAtLeast(0)
+    private fun selectedIndex(): Int {
+        val key = state.selectedKey ?: return 0
+        return entryIndexByKey[key] ?: 0
+    }
 
     /**
      * Rebuild carousel list + filter chrome in place (browse chips).
@@ -401,18 +412,28 @@ class GameDeck(
 
         // Live settings (chrome-only updates must not keep a stale snapshot).
         settings = (activity.application as GhostGalleonApp).settings
-        entries = buildEntries()
+        installEntries(buildEntries())
         applyRootWallpaper(root)
         rebuildFilterChrome(chrome, context, ::dp)
 
-        cardSizePx = dp(settings.cardSizeDp)
-        val adapter = CardAdapter(
-            context,
-            cardSizePx.coerceAtLeast(dp(settings.cardSizeDp)),
-            cardSpacingPx.coerceAtLeast(dp(12)),
-            cellPaddingPx.coerceAtLeast(dp(8)),
-        )
-        rv.adapter = adapter
+        val nextSize = dp(settings.cardSizeDp).coerceAtLeast(1)
+        val nextSpacing = cardSpacingPx.coerceAtLeast(dp(12))
+        val nextPad = cellPaddingPx.coerceAtLeast(dp(8))
+        cardSizePx = nextSize
+        val existing = rv.adapter as? CardAdapter
+        val adapter = if (
+            existing != null &&
+            existing.cardSize == nextSize &&
+            existing.cardSpacing == nextSpacing &&
+            existing.cellPadding == nextPad
+        ) {
+            // Reuse holders so same-key recycle keeps art overlays.
+            existing.also { it.notifyDataSetChanged() }
+        } else {
+            CardAdapter(context, nextSize, nextSpacing, nextPad).also {
+                rv.adapter = it
+            }
+        }
         // Selection may be outside the new filter — keep key; scroll coerces.
         adapter.paintedSelectionKey = state.selectedKey
         adapter.paintedDockFocused = state.dockSlot != null
@@ -554,7 +575,7 @@ class GameDeck(
     override fun primaryView(context: Context): View {
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
-        entries = buildEntries()
+        installEntries(buildEntries())
         cardSizePx = dp(settings.cardSizeDp)
         cardSpacingPx = dp(12)
         cellPaddingPx = dp(8)
@@ -590,7 +611,11 @@ class GameDeck(
         val rv = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
             adapter = CardAdapter(context, cardSizePx, cardSpacingPx, cellPaddingPx)
-            LinearSnapHelper().attachToRecyclerView(this)
+            // Fixed card metrics for this paint; chrome card-size rebuilds the RV.
+            setHasFixedSize(true)
+            setItemViewCacheSize(8)
+            recycledViewPool.setMaxRecycledViews(0, 12)
+            snapHelper.attachToRecyclerView(this)
             val pad = dp(16)
             setPadding(pad, pad, pad, pad)
             clipChildren = false
@@ -643,21 +668,30 @@ class GameDeck(
     }
 
     // Centers the selected card deterministically: cancel competing
-    // scrolls, jump near the target if it is not laid out yet, then glide
-    // the residual distance to the exact snap center once layout catches up.
+    // scrolls, jump near the target if it is not laid out yet, then snap
+    // the residual distance (instant — NavRepeater must not queue smooth
+    // animators that fight the next D-pad tick).
     private fun scrollSelectionToCenter(rv: RecyclerView) {
         rv.stopScroll()
         val lm = rv.layoutManager as? LinearLayoutManager ?: return
         val index = selectedIndex()
-        if (lm.findViewByPosition(index) == null) {
-            lm.scrollToPositionWithOffset(index, rv.width / 2)
-        }
-        rv.post {
-            val view = lm.findViewByPosition(index) ?: return@post
-            val distance = LinearSnapHelper().calculateDistanceToFinalSnap(lm, view)
-            if (distance != null && (distance[0] != 0 || distance[1] != 0)) {
-                rv.smoothScrollBy(distance[0], distance[1])
+        val laidOut = lm.findViewByPosition(index)
+        if (laidOut == null) {
+            // Prefer left-edge of card near viewport center (cardSize known).
+            val offset = ((rv.width - cardSizePx) / 2).coerceAtLeast(0)
+            lm.scrollToPositionWithOffset(index, offset)
+            rv.post {
+                val view = lm.findViewByPosition(index) ?: return@post
+                val distance = snapHelper.calculateDistanceToFinalSnap(lm, view) ?: return@post
+                if (distance[0] != 0 || distance[1] != 0) {
+                    rv.scrollBy(distance[0], distance[1])
+                }
             }
+            return
+        }
+        val distance = snapHelper.calculateDistanceToFinalSnap(lm, laidOut) ?: return
+        if (distance[0] != 0 || distance[1] != 0) {
+            rv.scrollBy(distance[0], distance[1])
         }
     }
 
@@ -716,9 +750,10 @@ class GameDeck(
                 true
             }
             Action.NAV_LEFT, Action.NAV_RIGHT, Action.PAGE_PREV, Action.PAGE_NEXT -> {
+                // Select only — updateSelection → scrollSelectionToCenter once.
+                // (Was smoothScrollToPosition + center = fighting scroll systems.)
                 val newIndex = nav.move(selectedIndex(), action)
                 entries.getOrNull(newIndex)?.let { state.select(it.key) }
-                recycler?.smoothScrollToPosition(newIndex)
                 true
             }
             // NAV DOWN leaves the carousel and focuses the dock.
@@ -2615,14 +2650,21 @@ class GameDeck(
 
     private inner class CardAdapter(
         private val context: Context,
-        private val cardSize: Int,
-        private val cardSpacing: Int,
-        private val cellPadding: Int,
+        val cardSize: Int,
+        val cardSpacing: Int,
+        val cellPadding: Int,
     ) : RecyclerView.Adapter<CardAdapter.CardHolder>() {
 
         /** Last selection key/dock-focus we painted (for partial updates). */
         var paintedSelectionKey: String? = null
         var paintedDockFocused: Boolean = false
+
+        init {
+            setHasStableIds(true)
+        }
+
+        override fun getItemId(position: Int): Long =
+            entries.getOrNull(position)?.key?.hashCode()?.toLong() ?: position.toLong()
 
         inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root)
 
@@ -2665,12 +2707,10 @@ class GameDeck(
             } else if (previousKey != nextKey) {
                 val indices = LinkedHashSet<Int>(2)
                 if (previousKey != null) {
-                    val i = entries.indexOfFirst { it.key == previousKey }
-                    if (i >= 0) indices.add(i)
+                    entryIndexByKey[previousKey]?.let { indices.add(it) }
                 }
                 if (nextKey != null) {
-                    val i = entries.indexOfFirst { it.key == nextKey }
-                    if (i >= 0) indices.add(i)
+                    entryIndexByKey[nextKey]?.let { indices.add(it) }
                 }
                 indices.forEach { notifyItemChanged(it, PAYLOAD_SELECTION) }
             }
