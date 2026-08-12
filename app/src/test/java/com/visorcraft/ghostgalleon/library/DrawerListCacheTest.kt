@@ -48,6 +48,22 @@ class DrawerListCacheTest {
     }
 
     @Test
+    fun `appsFingerprint matches package-name hash and ignores order`() {
+        val apps = listOf(
+            AppEntry("com.b", "B", false),
+            AppEntry("com.a", "A", false),
+        )
+        assertTrue(
+            DrawerListCache.appsFingerprint(apps) ==
+                DrawerListCache.stableHash(listOf("com.a", "com.b")),
+        )
+        assertTrue(
+            DrawerListCache.appsFingerprint(apps) ==
+                DrawerListCache.appsFingerprint(apps.reversed()),
+        )
+    }
+
+    @Test
     fun `null cached never matches`() {
         val cur = DrawerListCache.key(0, 0, emptySet(), emptyList())
         assertFalse(DrawerListCache.matches(null, cur))

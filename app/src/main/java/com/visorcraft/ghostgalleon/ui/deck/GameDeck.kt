@@ -460,6 +460,17 @@ class GameDeck(
         val nextPad = cellPaddingPx.coerceAtLeast(dp(8))
         cardSizePx = nextSize
         val existing = rv.adapter as? CardAdapter
+        val sameCards = entries === oldEntries &&
+            existing != null &&
+            existing.cardSize == nextSize &&
+            existing.cardSpacing == nextSpacing &&
+            existing.cellPadding == nextPad
+        if (sameCards && existing != null) {
+            existing.paintedSelectionKey = state.selectedKey
+            existing.paintedDockFocused = state.dockSlot != null
+            dockBar?.updateFocus(state.dockSlot, dockMove.index)
+            return true
+        }
         val adapter = if (
             existing != null &&
             existing.cardSize == nextSize &&

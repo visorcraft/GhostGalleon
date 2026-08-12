@@ -306,6 +306,20 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    /** Catalog parse + rematch after first paint. Publish only if names move. */
+    private fun rematchArcadeLibraryOffPaint() {
+        val current = romEntries
+        val next = com.visorcraft.ghostgalleon.rom.ArcadeTitles.relabel(
+            current,
+            onlyFallbackNames = true,
+        )
+        if (next === current) return
+        romLibrary.save(next)
+        mainHandler.post {
+            if (romEntries === current) publishRomEntries(next)
+        }
+    }
+
     fun arcadeDatCount(): Int =
         com.visorcraft.ghostgalleon.rom.ArcadeTitles.overlayCount()
 
@@ -705,12 +719,12 @@ class GhostGalleonApp : Application() {
      * Rebuilds only when [DrawerListCache.key] changes.
      */
     fun drawerPickerItems(apps: List<AppEntry>): List<PickerItem> {
-        val current = DrawerListCache.key(
+        val current = DrawerListKey(
             contentEpoch = contentEpoch,
             romCount = romEntries.size,
-            hiddenPackages = settings.hiddenPackages,
-            appPackageNames = apps.map { it.packageName },
-            hiddenRomIds = settings.hiddenRomIds,
+            hiddenFingerprint = DrawerListCache.stableHash(settings.hiddenPackages),
+            appsFingerprint = DrawerListCache.appsFingerprint(apps),
+            hiddenRomsFingerprint = DrawerListCache.stableHash(settings.hiddenRomIds),
         )
         val cachedKey = drawerListKey
         val cachedItems = drawerListItems
@@ -898,8 +912,6 @@ class GhostGalleonApp : Application() {
         loadRaCacheFile()
         loadSgdbMissFile()
         loadSgdbPicksFile()
-        loadBundledArcadeTitles()
-        loadArcadeDatOverlay()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
@@ -907,12 +919,17 @@ class GhostGalleonApp : Application() {
         registerDisplayListener()
         // Disk index before any deck paints or cold-start seed.
         loadRomIndexBlocking()
-        rematchArcadeLibrary(onlyFallbackNames = true)
         // Cold-start hero seed: prefer Continue key when known, else slot 0.
         // Do not auto-launch — selection only so the companion shows the game.
         seedColdStartSelection()
         // PM query off the UI thread before decks paint.
         prewarmAppLibrary()
+        // 20k-title TSV + rematch stay off the first paint.
+        ROM_IO.execute {
+            loadBundledArcadeTitles()
+            loadArcadeDatOverlay()
+            rematchArcadeLibraryOffPaint()
+        }
         registerPackageChangeReceiver()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {

@@ -74,8 +74,21 @@ class AppLibrary(private val source: InstalledAppsSource) {
         return settings.gridSlots.mapNotNull { it?.let(byPkg::get) }
     }
 
+    private var dockVisibleRef: List<AppEntry>? = null
+    private var dockSlotsRef: List<String?>? = null
+    private var dockCached: List<AppEntry>? = null
+
     fun dock(settings: Settings): List<AppEntry> {
-        val visibleByPkg = visible(settings).associateBy { it.packageName }
-        return settings.dockSlots.filterNotNull().mapNotNull { visibleByPkg[it] }
+        val vis = visible(settings)
+        val slots = settings.dockSlots
+        dockCached?.let { hit ->
+            if (vis === dockVisibleRef && slots === dockSlotsRef) return hit
+        }
+        val visibleByPkg = vis.associateBy { it.packageName }
+        val next = slots.filterNotNull().mapNotNull { visibleByPkg[it] }
+        dockVisibleRef = vis
+        dockSlotsRef = slots
+        dockCached = next
+        return next
     }
 }

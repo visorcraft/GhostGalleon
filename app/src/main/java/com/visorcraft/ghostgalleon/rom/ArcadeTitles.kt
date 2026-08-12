@@ -76,7 +76,7 @@ object ArcadeTitles {
     /** TSV `shortname<TAB>title` lines. Host-tested. */
     fun parseTsv(text: String): Map<String, String> {
         if (text.isBlank()) return emptyMap()
-        val out = HashMap<String, String>()
+        val out = HashMap<String, String>((text.length / 40).coerceAtLeast(16))
         text.lineSequence().forEach { line ->
             val tab = line.indexOf('\t')
             if (tab <= 0) return@forEach
@@ -89,7 +89,15 @@ object ArcadeTitles {
 
     fun loadBundledGzip(stream: java.io.InputStream) {
         java.util.zip.GZIPInputStream(stream).bufferedReader().use { reader ->
-            bundled = parseTsv(reader.readText())
+            val out = HashMap<String, String>(22_000)
+            reader.forEachLine { line ->
+                val tab = line.indexOf('\t')
+                if (tab <= 0) return@forEachLine
+                val key = line.substring(0, tab).trim().lowercase()
+                val title = line.substring(tab + 1).trim()
+                if (key.isNotEmpty() && title.isNotEmpty()) out[key] = title
+            }
+            bundled = out
         }
     }
 

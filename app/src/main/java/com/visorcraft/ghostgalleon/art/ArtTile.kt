@@ -80,6 +80,7 @@ object ArtTile {
         artOverrides: Map<String, String> = emptyMap(),
     ) {
         val context = overlay.context
+        if (overlay.tag == rom.id && overlay.drawable != null) return
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
         overlay.tag = rom.id

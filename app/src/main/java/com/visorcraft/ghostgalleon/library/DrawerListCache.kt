@@ -37,10 +37,19 @@ object DrawerListCache {
     fun matches(cached: DrawerListKey?, current: DrawerListKey): Boolean =
         cached != null && cached == current
 
-    private fun stableHash(items: Collection<String>): Int {
+    /** Order-independent fingerprint — XOR, no sort or extra lists. */
+    internal fun stableHash(items: Collection<String>): Int {
         if (items.isEmpty()) return 0
-        return items.map { it.lowercase() }.sorted().fold(1) { acc, s ->
-            31 * acc + s.hashCode()
-        }
+        var hash = 0
+        for (item in items) hash = hash xor item.hashCode()
+        return hash
+    }
+
+    /** Same fingerprint as [stableHash] of each [AppEntry.packageName]. */
+    fun appsFingerprint(apps: List<AppEntry>): Int {
+        if (apps.isEmpty()) return 0
+        var hash = 0
+        for (app in apps) hash = hash xor app.packageName.hashCode()
+        return hash
     }
 }
