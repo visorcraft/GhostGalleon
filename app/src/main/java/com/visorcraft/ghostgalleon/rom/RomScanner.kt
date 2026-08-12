@@ -135,6 +135,36 @@ object RomScanner {
                     ),
                 )
             }
+            val seenVita = entries.mapNotNull { e ->
+                e.id.takeIf { e.platformId == "psvita" }
+            }.toHashSet()
+            sfoByDir.forEach folder@{ (dir, sfoDoc) ->
+                val titleId = VitaTitles.titleIdIn(dir) ?: return@folder
+                val id = "psvita:$titleId"
+                if (id in seenVita) return@folder
+                val inVita = rootPlatform?.id == "psvita" ||
+                    Platforms.platformForFolder(dir.substringBefore('/'))?.id == "psvita"
+                if (!inVita) return@folder
+                val prefix =
+                    if (rootPlatform != null) "" else sfoDoc.relativePath.substringBefore('/')
+                val info = sfoBeside(sfoDoc.relativePath)
+                val title = info?.title?.takeIf { it.isNotBlank() } ?: titleId
+                entries.add(
+                    RomEntry(
+                        id = id,
+                        name = title,
+                        platformId = "psvita",
+                        uri = sfoDoc.uri,
+                        path = StoragePaths.filesystemPath(sfoDoc.uri),
+                        artUri = LocalMedia.lookupArt(media, prefix, titleId)
+                            ?: LocalMedia.lookupArt(media, prefix, title),
+                        screenshotUri = LocalMedia.screenshotUri(media, prefix, titleId, null),
+                        logoUri = LocalMedia.lookupLogo(media, prefix, titleId),
+                        videoUri = LocalMedia.lookupVideo(videos, prefix, titleId),
+                    ),
+                )
+                seenVita.add(id)
+            }
         }
         val sorted = DiscHygiene.preferDiscMasters(
             entries.sortedWith(

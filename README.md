@@ -118,6 +118,8 @@ Scans use Storage Access Framework tree grants only — no broad storage permiss
 | Dreamcast | Flycast | package + launch plan verified; content smoke when library has discs |
 | GameCube / Wii | Dolphin | package + AutoStartFile pathOrUri plan verified |
 | Wii U | Cemu | package + VIEW EmulationActivity plan verified |
+| PlayStation Vita | Vita3K | `title_id` / `game_title` on current `Emulator`; eboot + VPK `param.sfo` scan |
+| Windows | Winlator | `shortcut_path` pathOrUri; home MainActivity fallback |
 
 Alternate players are available where the registry defines them. Windows titles
 can be pinned as Android app launches, and Winlator is also a built-in Windows ROM platform (`.exe` / `.desktop` shortcuts).

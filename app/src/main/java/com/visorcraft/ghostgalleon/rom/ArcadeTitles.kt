@@ -40,22 +40,35 @@ object ArcadeTitles {
     }
 
     /**
-     * Apply [displayName] to every arcade entry. Returns [entries]
-     * unchanged when no name would move (same instance).
+     * Apply [displayName] to arcade entries. [onlyFallbackNames] keeps
+     * gamelist / user titles: only zip-stems and the compiled fallback
+     * map are rewritten (startup rematch). Import/clear pass false.
      */
-    fun relabel(entries: List<RomEntry>): List<RomEntry> {
+    fun relabel(
+        entries: List<RomEntry>,
+        onlyFallbackNames: Boolean = false,
+    ): List<RomEntry> {
         var changed = false
         val next = entries.map { e ->
             if (e.platformId != "arcade") e
             else {
-                val titled = displayName(stemOf(e))
-                if (titled == e.name) e else {
-                    changed = true
-                    e.copy(name = titled)
+                val stem = stemOf(e)
+                if (onlyFallbackNames && !isCompiledFallback(stem, e.name)) e
+                else {
+                    val titled = displayName(stem)
+                    if (titled == e.name) e else {
+                        changed = true
+                        e.copy(name = titled)
+                    }
                 }
             }
         }
         return if (changed) next else entries
+    }
+
+    fun isCompiledFallback(stem: String, name: String): Boolean {
+        val key = stem.trim().lowercase()
+        return name.equals(stem, ignoreCase = true) || TITLES[key] == name
     }
 
     fun knownCount(): Int = (overlay.keys + bundled.keys + TITLES.keys).size

@@ -39,7 +39,7 @@ object VitaSfo {
                 val raw = bytes.copyOfRange(dataStart, dataStart + len)
                 val value = String(raw, Charsets.UTF_8).trim { it <= ' ' || it == '\u0000' }
                 when (key) {
-                    "TITLE_ID" -> titleId = value.ifBlank { null }
+                    "TITLE_ID" -> titleId = value.ifBlank { null }?.uppercase()
                     "TITLE" -> title = value.ifBlank { null }
                 }
             }

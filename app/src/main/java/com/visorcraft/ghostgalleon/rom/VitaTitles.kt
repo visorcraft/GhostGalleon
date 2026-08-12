@@ -13,7 +13,7 @@ object VitaTitles {
 
     /** First title-id path segment, if any. */
     fun titleIdIn(relativePath: String): String? =
-        relativePath.split('/').firstOrNull { isTitleId(it) }
+        relativePath.split('/').firstOrNull { isTitleId(it) }?.uppercase()
 
     fun isEboot(fileName: String): Boolean =
         fileName.equals("eboot.bin", ignoreCase = true)

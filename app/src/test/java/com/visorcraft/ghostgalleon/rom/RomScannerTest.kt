@@ -114,6 +114,19 @@ class RomScannerTest {
     }
 
     @Test
+    fun `vita param sfo without eboot still becomes a psvita entry`() {
+        val sfo = packSfo(listOf("TITLE_ID" to "PCSE00011", "TITLE" to "Gravity Rush"))
+        val sfoDoc = doc("7F7E-2949:roms/psvita/PCSE00011/sce_sys/param.sfo")
+        val entries = RomScanner.scan(
+            listOf(cardTree(listOf(sfoDoc))),
+            openStream = { if (it == sfoDoc.uri) java.io.ByteArrayInputStream(sfo) else null },
+        )
+        assertEquals(1, entries.size)
+        assertEquals("psvita:PCSE00011", entries[0].id)
+        assertEquals("Gravity Rush", entries[0].name)
+    }
+
+    @Test
     fun `vita eboot under a title-id folder becomes a psvita entry`() {
         val entries = RomScanner.scan(listOf(cardTree(listOf(
             doc("7F7E-2949:roms/psvita/PCSE00001/eboot.bin"),

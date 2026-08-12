@@ -20,6 +20,7 @@ class VitaTitlesTest {
     @Test
     fun `titleIdIn finds the first title-id segment`() {
         assertEquals("PCSE00001", VitaTitles.titleIdIn("psvita/PCSE00001/eboot.bin"))
+        assertEquals("PCSE00001", VitaTitles.titleIdIn("psvita/pcse00001/eboot.bin"))
         assertNull(VitaTitles.titleIdIn("psvita/game.vpk"))
     }
 

@@ -284,19 +284,22 @@ class GhostGalleonApp : Application() {
             parsed.forEach { (k, v) -> root.put(k, v) }
             arcadeDatFile().writeText(root.toString())
         }
-        rematchArcadeLibrary()
+        rematchArcadeLibrary(onlyFallbackNames = false)
         return parsed.size
     }
 
     fun clearArcadeDat() {
         com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(emptyMap())
         arcadeDatFile().delete()
-        rematchArcadeLibrary()
+        rematchArcadeLibrary(onlyFallbackNames = false)
     }
 
-    private fun rematchArcadeLibrary() {
+    private fun rematchArcadeLibrary(onlyFallbackNames: Boolean = false) {
         val current = if (romEntries.isEmpty()) romLibrary.load() else romEntries
-        val next = com.visorcraft.ghostgalleon.rom.ArcadeTitles.relabel(current)
+        val next = com.visorcraft.ghostgalleon.rom.ArcadeTitles.relabel(
+            current,
+            onlyFallbackNames = onlyFallbackNames,
+        )
         if (next !== current) {
             romLibrary.save(next)
             publishRomEntries(next)
@@ -904,6 +907,7 @@ class GhostGalleonApp : Application() {
         registerDisplayListener()
         // Disk index before any deck paints or cold-start seed.
         loadRomIndexBlocking()
+        rematchArcadeLibrary(onlyFallbackNames = true)
         // Cold-start hero seed: prefer Continue key when known, else slot 0.
         // Do not auto-launch — selection only so the companion shows the game.
         seedColdStartSelection()

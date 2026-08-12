@@ -120,6 +120,30 @@ class ArcadeTitlesTest {
     }
 
     @Test
+    fun `conservative relabel skips gamelist titles`() {
+        ArcadeTitles.installBundled(mapOf("mslug" to "Metal Slug - Super Vehicle-001"))
+        val custom = RomEntry(
+            id = "arcade:arcade/mslug.zip",
+            name = "Metal Slug (World)",
+            platformId = "arcade",
+            uri = "u",
+            path = "/x/mslug.zip",
+        )
+        val list = listOf(custom)
+        assertSame(list, ArcadeTitles.relabel(list, onlyFallbackNames = true))
+        val stem = custom.copy(name = "mslug")
+        assertEquals(
+            "Metal Slug - Super Vehicle-001",
+            ArcadeTitles.relabel(listOf(stem), onlyFallbackNames = true)[0].name,
+        )
+        val compiled = custom.copy(name = "Metal Slug")
+        assertEquals(
+            "Metal Slug - Super Vehicle-001",
+            ArcadeTitles.relabel(listOf(compiled), onlyFallbackNames = true)[0].name,
+        )
+    }
+
+    @Test
     fun `stemOf prefers the path filename then the id`() {
         val fromPath = RomEntry(
             id = "arcade:ignored",
