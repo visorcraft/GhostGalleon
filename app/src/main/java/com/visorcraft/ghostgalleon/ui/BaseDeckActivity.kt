@@ -85,7 +85,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             scheduleDeferredFullRender(0L, "nested-state ${deckState.lastChange}")
             return
         }
-        if (deckState.lastChange == DeckState.Change.SELECTION && ::currentDeck.isInitialized) {
+        val change = deckState.lastChange
+        if (change == DeckState.Change.SELECTION && ::currentDeck.isInitialized) {
             val role = DisplayRole.roleFor(currentDisplayId() ?: 0, deckState)
             val content = findViewById<ViewGroup>(android.R.id.content)
             // updateSelection returns false when structure must rebuild (e.g.
@@ -112,7 +113,34 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             }
             if (updated) return
         }
-        renderFromState("state ${deckState.lastChange}")
+        // Browse chips: never dual full tear-down.
+        // - Companion: selection chrome only
+        // - Primary GameDeck: in-place carousel + chip chrome (no setContentView)
+        if (change == DeckState.Change.BROWSE && ::currentDeck.isInitialized) {
+            val role = DisplayRole.roleFor(currentDisplayId() ?: 0, deckState)
+            when (role) {
+                DisplayRole.COMPANION -> {
+                    val content = findViewById<ViewGroup>(android.R.id.content)
+                    if (content != null && content.childCount > 0) {
+                        CompanionPanel.updateSelection(
+                            content, this, deckState, appLibrary, app.romEntries, settings)
+                    }
+                    return
+                }
+                DisplayRole.PRIMARY -> {
+                    if (currentDeck.applyBrowseChange()) {
+                        // Keep TOP_STRIP / hero in sync with any selection jump.
+                        val content = findViewById<ViewGroup>(android.R.id.content)
+                        if (content != null && content.childCount > 0) {
+                            CompanionPanel.updateSelection(
+                                content, this, deckState, appLibrary, app.romEntries, settings)
+                        }
+                        return
+                    }
+                }
+            }
+        }
+        renderFromState("state $change")
     }
 
     private var rendering: Boolean = false
@@ -249,6 +277,9 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         resetAxisEngagement()
         orientationController.stop()
         deckState.removeListener(stateListener)
+        // Debounced settings may still be in flight — flush before we
+        // background so process death cannot drop a favorite/dock edit.
+        app.flushSettingsNow()
         super.onPause()
     }
 
@@ -407,9 +438,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    protected val appLibrary: AppLibrary by lazy {
-        AppLibrary(PackageManagerAppsSource(packageManager, packageName))
-    }
+    protected val appLibrary: AppLibrary by lazy { app.appLibrary() }
 
     protected val appIconLoader: AppIconLoader by lazy { AppIconLoader(packageManager) }
 

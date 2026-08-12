@@ -10,6 +10,14 @@ object TileBackgrounds {
 
     private const val FALLBACK_FILL = 0xFF1C1C22.toInt()
 
+    // Selection is the hottest path (every NAV tick). Cache templates per
+    // theme/accent; return constantState copies so views never share.
+    private var cachedThemeId: String? = null
+    private var cachedAccent: Int = 0
+    private var cachedRadius: Float = -1f
+    private var cachedCard: GradientDrawable? = null
+    private var cachedSelected: GradientDrawable? = null
+
     private fun tokens(context: Context): ThemeTokens {
         val app = context.applicationContext
         return if (app is com.visorcraft.ghostgalleon.GhostGalleonApp) {
@@ -19,18 +27,41 @@ object TileBackgrounds {
         }
     }
 
-    fun card(context: Context): GradientDrawable {
+    private fun ensureCardCache(context: Context, accent: Int) {
         val t = tokens(context)
-        // Ghost keeps the classic card fill; other packs recolor via panelLift.
-        val fill = if (t.id == ThemePack.GHOST.id) FALLBACK_FILL else t.panelLift
-        return GradientDrawable().apply {
-            setColor(fill)
-            cornerRadius = UiDimens.dpF(context, t.cardRadiusDp)
+        val radius = UiDimens.dpF(context, t.cardRadiusDp)
+        if (cachedThemeId == t.id &&
+            cachedAccent == accent &&
+            cachedRadius == radius &&
+            cachedCard != null &&
+            cachedSelected != null
+        ) {
+            return
         }
+        val fill = if (t.id == ThemePack.GHOST.id) FALLBACK_FILL else t.panelLift
+        cachedCard = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = radius
+        }
+        cachedSelected = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = radius
+            setStroke(UiDimens.dpF(context, 4).toInt(), accent)
+        }
+        cachedThemeId = t.id
+        cachedAccent = accent
+        cachedRadius = radius
     }
 
-    fun selected(context: Context, accent: Int): GradientDrawable = card(context).apply {
-        setStroke(UiDimens.dpF(context, 4).toInt(), accent)
+    fun card(context: Context): GradientDrawable {
+        val t = tokens(context)
+        ensureCardCache(context, t.accentColor)
+        return cachedCard!!.constantState!!.newDrawable().mutate() as GradientDrawable
+    }
+
+    fun selected(context: Context, accent: Int): GradientDrawable {
+        ensureCardCache(context, accent)
+        return cachedSelected!!.constantState!!.newDrawable().mutate() as GradientDrawable
     }
 
     /** Idle chip fill from the active theme pack. */

@@ -45,7 +45,15 @@
     <string name="action_pin_to_dock">Pin to dock</string>
     <string name="action_player">Player…</string>
     <string name="action_remove">Remove</string>
+    <string name="action_remove_from_grid">Remove from grid</string>
     <string name="action_remove_from_collection">Remove from collection</string>
+    <!-- Slot menu section headers -->
+    <string name="menu_section_arrange">Arrange</string>
+    <string name="menu_section_dock">Dock</string>
+    <string name="menu_section_library">Library</string>
+    <string name="menu_section_customize">Customize</string>
+    <string name="menu_section_more">More</string>
+    <string name="deck_removed_from_grid">Removed from grid</string>
     <string name="action_rename">Rename</string>
     <string name="action_reset_icon">Reset icon</string>
     <string name="action_reset_name">Reset name</string>

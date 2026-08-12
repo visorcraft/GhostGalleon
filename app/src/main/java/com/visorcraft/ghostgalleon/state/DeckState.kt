@@ -10,7 +10,9 @@ class DeckState {
 
     // What kind of mutation produced the latest notification. Listeners use
     // this to pick a granular re-render (SELECTION) over a full rebuild.
-    enum class Change { SELECTION, MODE, DISPLAY, SETTINGS }
+    // BROWSE: Game Mode filter chips — primary deck rebuilds; companion only
+    // updates selection chrome (avoids dual setContentView thrash).
+    enum class Change { SELECTION, MODE, DISPLAY, SETTINGS, BROWSE }
 
     var mode: UIMode = UIMode.GRID
         private set
@@ -137,15 +139,24 @@ class DeckState {
 
     /**
      * Game Mode browse chips (All / Recent / platform / search). Tags
-     * [Change.SETTINGS] so both decks fully rebuild against the new filter.
+     * [Change.BROWSE]: primary Game deck rebuilds the carousel; companion
+     * only refreshes selection chrome — not a dual full SETTINGS paint.
      * [force] re-notifies even when the query is unchanged — required when a
      * prior paint was coalesced and the UI is still showing a stale filter.
      */
     fun setLibraryBrowse(query: LibraryBrowse.BrowseQuery, force: Boolean = false) {
         if (!force && libraryBrowse == query) return
         libraryBrowse = query
-        lastChange = Change.SETTINGS
+        lastChange = Change.BROWSE
         notifyListeners()
+    }
+
+    /**
+     * Correct [libraryBrowse] without notifying (e.g. chrome sanitize during
+     * in-place entry rebuild). Must not be used for user-visible chip taps.
+     */
+    fun adoptLibraryBrowse(query: LibraryBrowse.BrowseQuery) {
+        libraryBrowse = query
     }
 
     fun setMultiSelectEnabled(enabled: Boolean) {

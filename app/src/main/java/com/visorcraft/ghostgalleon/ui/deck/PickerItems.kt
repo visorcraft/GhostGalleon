@@ -35,11 +35,17 @@ object PickerItems {
             )
         )
 
+    /**
+     * @param preSortedRoms when non-null, used as the ROM base (already
+     *   filtered for hidden + sorted). Avoids re-sorting thousands of ROMs
+     *   on every search keystroke in AppPicker.
+     */
     fun build(
         apps: List<AppEntry>,
         roms: List<RomEntry>,
         query: String,
         hiddenRomIds: Set<String> = emptySet(),
+        preSortedRoms: List<RomEntry>? = null,
     ): List<PickerItem> {
         val q = query.trim()
         val matchedApps = if (q.isEmpty()) {
@@ -50,10 +56,11 @@ object PickerItems {
                     it.packageName.contains(q, ignoreCase = true)
             }
         }
+        val sorted = preSortedRoms ?: sortedRoms(roms, hiddenRomIds)
         val matchedRoms = if (q.isEmpty()) {
-            sortedRoms(roms, hiddenRomIds)
+            sorted
         } else {
-            sortedRoms(roms, hiddenRomIds).filter {
+            sorted.filter {
                 it.name.contains(q, ignoreCase = true) ||
                     (Platforms.byId(it.platformId)?.displayName
                         ?.contains(q, ignoreCase = true) == true)

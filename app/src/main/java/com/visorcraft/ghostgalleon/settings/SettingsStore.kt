@@ -24,7 +24,9 @@ class SettingsStore(private val file: File) {
     fun save(s: Settings) {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(toJson(s).toString(2))
+        // Compact JSON (no pretty indent): settings save on every launch/
+        // favorite/dock edit — indent doubled CPU + IO for zero UX gain.
+        tmp.writeText(toJson(s).toString())
         if (!tmp.renameTo(file)) {
             tmp.copyTo(file, overwrite = true)
             tmp.delete()

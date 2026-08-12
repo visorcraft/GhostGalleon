@@ -89,7 +89,7 @@ class SettingsActivity : AppCompatActivity() {
     private var scanning = false
 
     private val appLibrary by lazy {
-        AppLibrary(PackageManagerAppsSource(packageManager, packageName))
+        (application as GhostGalleonApp).appLibrary()
     }
 
     private var hiddenValue: TextView? = null

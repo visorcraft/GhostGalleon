@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.5.0-informational" alt="0.5.0" />
+  <img src="https://img.shields.io/badge/version-0.6.0-informational" alt="0.6.0" />
 </p>
 
 ---
@@ -62,17 +62,18 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 
 ### Highlights
 
-- **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, long-press Move/Remove, favorites, folders, pin/unpin to dock. Optional deck clock/battery (off by default).
-- **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, clock/battery, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full).
+- **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, favorites, folders, pin/unpin to dock. Long-press opens a **sectioned, scrollable** context menu with **Remove from grid** near the top (Arrange → Dock → Library → Customize → More).
+- **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Browse chips update the carousel **in place** (no dual-panel flash). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, clock/battery, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full).
 - **Portable display topology** — interactive vs companion vs launch from `DisplayManager` (no hard-coded 0/1). Profiles: Auto, One X Sugar, Generic dual, Single. Swap/Settings icons sit on the **physically larger** panel in DUAL.
-- **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin.
-- **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel.
+- **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin; also recovers a stuck pure-black secondary panel.
+- **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel. Hero uses a compact platform · play · player subline and readable action chips.
 - **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat.
 - **Swipe-up / re-HOME drawer** — all-apps + ROMs without reloading the deck.
 - **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
 - **ROM library** — 19 built-in platforms, SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
 - **Themes** — Ghost, 3DS Teal, OLED Black, Neon; optional custom theme JSON.
+- **Performance-minded** — R8-minified release APK, in-place selection/browse paths, debounced settings save, background app-catalog warm-up, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
 - **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Stats, System (topology diagnostics), About.
 - **Export/import** — full settings, layout, and ROM-library JSON.
 - **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.
@@ -150,7 +151,7 @@ Access Framework grants; the app requests no broad storage permission.
 | Down from last grid row / carousel | Focus dock |
 | A / Enter | Launch |
 | Tap | Focus; tap again to launch |
-| Long-press | Grid/dock: Move / Pin·Unpin / Remove; Game Mode: Details / collections / pin / stats |
+| Long-press | Grid: sectioned menu (Move, **Remove from grid**, pin, favorite, customize…); dock: Move/Remove; Game Mode: details / collections / pin / stats |
 | B | Back |
 | X | Swap interactive / companion |
 | Y | Toggle Grid / Game mode |
@@ -246,6 +247,7 @@ adb shell am force-stop com.visorcraft.ghostgalleon
 adb shell input keyevent HOME
 ```
 
+Release builds enable **R8 minify + resource shrink** (`app/proguard-rules.pro`).
 The One X Sugar can keep the old process alive and clear its HOME default during
 an update, so force-stop and restore HOME after every reinstall. Debug and release
 use different signing keys; switching between them requires uninstalling first.
@@ -258,7 +260,9 @@ Export settings from Settings → Library before uninstalling.
 ```
 
 Pure modules under `display/`, typed localization text, settings migrations,
-library browse/stats, and input maps are covered without a device.
+library browse/stats, dual-paint policy, and input maps are covered without a
+device. Dual-screen paint rules live in
+[`docs/dual-paint-invariants.md`](docs/dual-paint-invariants.md).
 
 ---
 
@@ -275,9 +279,26 @@ names, so migrated users must select their ROM folders again.
 
 ---
 
+## Dual-screen recovery
+
+If one or both panels go **pure black** while the process is still running
+(often after heavy HOME / SECONDARY_HOME thrash or a stuck companion surface):
+
+1. Force-stop the app (system App Info, or `adb shell am force-stop com.visorcraft.ghostgalleon`), then press HOME.
+2. Press **X** once or twice to swap interactive / companion roles.
+3. Launch any game and return to the launcher (companion panel restarts).
+4. Reboot if buffers stay stuck.
+
+After sideloading an update, always force-stop once — some devices keep the
+previous process alive across install. Paint thrash rules and agent checklist:
+[dual-paint invariants](docs/dual-paint-invariants.md).
+
+---
+
 ## Documentation
 
 - [Credits & attribution](CREDITS.md) and [third-party licenses](docs/credits-third-party.md) — also in-app under Settings → About.
+- [Dual-paint / black-screen invariants](docs/dual-paint-invariants.md) — dual-display paint thrash rules and recovery.
 - Complete [localization inventory](docs/localization-inventory.md) and translator checklist.
 - Example [platform packs](docs/platform-packs/).
 - [GitHub releases](https://github.com/visorcraft/GhostGalleon/releases)

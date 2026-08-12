@@ -1,6 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
@@ -57,9 +59,14 @@ class AppPicker(
 ) {
     private val app get() = activity.application as GhostGalleonApp
     private val hiddenRomIds get() = app.settings.hiddenRomIds
+    // Sort once for the lifetime of this picker — keystroke filters only.
+    private val sortedRoms: List<RomEntry> =
+        PickerItems.sortedRoms(roms, hiddenRomIds)
     private var emptyQueryItems: List<PickerItem> =
         prebuiltItems ?: PickerItems.build(
-            allEntries, roms, "", hiddenRomIds = app.settings.hiddenRomIds,
+            allEntries, roms, "",
+            hiddenRomIds = hiddenRomIds,
+            preSortedRoms = sortedRoms,
         )
     private var items: List<PickerItem> = emptyQueryItems
     // The highlight only ever rests on data rows, never section headers.
@@ -70,6 +77,25 @@ class AppPicker(
     private var adapter: PickerAdapter? = null
     private var overlayView: FrameLayout? = null
     private var hideMenu: HideMenu? = null
+    private val searchHandler = Handler(Looper.getMainLooper())
+    private var pendingSearch: Runnable? = null
+
+    private fun applySearch(next: String) {
+        query = next
+        items = if (query.isBlank()) {
+            emptyQueryItems
+        } else {
+            PickerItems.build(
+                allEntries, roms, query,
+                hiddenRomIds = hiddenRomIds,
+                preSortedRoms = sortedRoms,
+            )
+        }
+        highlight =
+            items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
+        adapter?.notifyDataSetChanged()
+        listView?.setSelection(0)
+    }
 
     val view: View by lazy {
         val context: Context = activity
@@ -112,21 +138,13 @@ class AppPicker(
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
-                    query = s?.toString() ?: ""
-                    items = if (query.isBlank()) {
-                        emptyQueryItems
-                    } else {
-                        PickerItems.build(
-                            allEntries, roms, query,
-                            hiddenRomIds = hiddenRomIds,
-                        )
-                    }
-                    highlight =
-                        items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
-                    // Dataset actually changed here: a full notify is correct
-                    // (and the list resets to the top of the new results).
-                    adapter?.notifyDataSetChanged()
-                    listView?.setSelection(0)
+                    // Debounce: typing in a 6k-ROM library re-filters only,
+                    // never re-sorts (see preSortedRoms).
+                    pendingSearch?.let { searchHandler.removeCallbacks(it) }
+                    val next = s?.toString().orEmpty()
+                    val run = Runnable { applySearch(next) }
+                    pendingSearch = run
+                    searchHandler.postDelayed(run, SEARCH_DEBOUNCE_MS)
                 }
             })
         }
@@ -261,6 +279,10 @@ class AppPicker(
     private fun closeHideMenu() {
         hideMenu?.let { overlayView?.removeView(it.view) }
         hideMenu = null
+    }
+
+    companion object {
+        private const val SEARCH_DEBOUNCE_MS = 60L
     }
 
     // Confirm-style modal for a picker row: "Hide app" adds the package to

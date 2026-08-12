@@ -9,6 +9,11 @@ class AppLibrary(private val source: InstalledAppsSource) {
         source.query().sortedBy { it.label.lowercase() }
     }
 
+    /** Force PackageManager query off the first UI paint when pre-warmed. */
+    fun warm() {
+        cache.size
+    }
+
     fun visible(settings: Settings): List<AppEntry> =
         cache.filter { it.packageName !in settings.hiddenPackages }
             .map { it.displayName(settings) }

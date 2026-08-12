@@ -74,11 +74,15 @@ class GameDeck(
     // then browsed ROMs via LibraryBrowse (platform / genre / search / recent /
     // top / A–Z / unplayed / fav). Ranked modes interleave apps by the same maps.
     // Genre is ROM-only: when set, app interleaving is skipped.
-    private val entries: List<CarouselEntry> by lazy {
+    // Mutable so browse chips can rebuild the list without setContentView.
+    private var entries: List<CarouselEntry> = emptyList()
+
+    private fun buildEntries(): List<CarouselEntry> {
         // Drop power-user modes if chrome toggles turned them off mid-session.
+        // Quiet adopt — never setLibraryBrowse here (would re-enter BROWSE).
         val q = settings.browseChrome.sanitize(state.libraryBrowse)
         if (q != state.libraryBrowse) {
-            state.setLibraryBrowse(q, force = true)
+            state.adoptLibraryBrowse(q)
         }
         val appsOk = q.platformId == null &&
             q.genre.isNullOrBlank() &&
@@ -352,7 +356,7 @@ class GameDeck(
             else -> browsed
         }
         // Custom sort (long-press All) reorders catalog rails after app/ROM merge.
-        LibraryBrowse.applyQuerySort(
+        return LibraryBrowse.applyQuerySort(
             built,
             q,
             keyOf = { it.key },
@@ -362,6 +366,7 @@ class GameDeck(
             playtimeMs = settings.playtimeMs,
         )
     }
+
     private val nav get() = CarouselNavigation(entries.size)
     private val dockMove = DockMoveState()
     private val dockNav get() = DockNavigation(
@@ -370,6 +375,11 @@ class GameDeck(
     private var dockBar: DockBar? = null
     private var hintView: TextView? = null
     private var rootView: FrameLayout? = null
+    /** Badges + chip bar + letter jump — rebuilt on browse without full paint. */
+    private var filterChrome: LinearLayout? = null
+    private var cardSizePx: Int = 0
+    private var cardSpacingPx: Int = 0
+    private var cellPaddingPx: Int = 0
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
     private var letterChipViews: List<Pair<Char, TextView>> = emptyList()
 
@@ -379,47 +389,73 @@ class GameDeck(
     private fun selectedIndex(): Int =
         entries.indexOfFirst { it.key == state.selectedKey }.coerceAtLeast(0)
 
-    override fun primaryView(context: Context): View {
+    /**
+     * Rebuild carousel list + filter chrome in place (browse chips).
+     * Keeps dock/root/modals — no activity setContentView.
+     */
+    override fun applyBrowseChange(): Boolean {
+        val root = rootView ?: return false
+        val chrome = filterChrome ?: return false
+        val rv = recycler ?: return false
+        val context = root.context
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
 
-        // FrameLayout root so modals (dock slot menu, app picker) can sit
-        // on top of the whole deck.
+        entries = buildEntries()
+        applyRootWallpaper(root)
+        rebuildFilterChrome(chrome, context, ::dp)
+
+        val adapter = CardAdapter(
+            context,
+            cardSizePx.coerceAtLeast(dp(settings.cardSizeDp)),
+            cardSpacingPx.coerceAtLeast(dp(12)),
+            cellPaddingPx.coerceAtLeast(dp(8)),
+        )
+        rv.adapter = adapter
+        // Selection may be outside the new filter — keep key; scroll coerces.
+        adapter.paintedSelectionKey = state.selectedKey
+        adapter.paintedDockFocused = state.dockSlot != null
+        rv.scrollToPosition(selectedIndex())
+        rv.post { scrollSelectionToCenter(rv) }
+        dockBar?.updateFocus(state.dockSlot, dockMove.index)
+        return true
+    }
+
+    private fun applyRootWallpaper(root: FrameLayout) {
         val platformFilter = state.libraryBrowse.platformId
-        val root = FrameLayout(context).apply {
-            // Per-platform visual cue when a platform chip is active.
-            setBackgroundColor(
-                platformFilter
-                    ?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
-                    ?.let { com.visorcraft.ghostgalleon.rom.PlatformLook.wallpaperTint(it) }
-                    ?: Color.BLACK,
-            )
-            clipChildren = false
-            clipToPadding = false
-        }
-        rootView = root
-        val content = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-        platformFilter?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }?.let { pid ->
-            content.addView(TextView(context).apply {
-                text = context.getString(
-                    R.string.format_platform_badge,
-                    com.visorcraft.ghostgalleon.rom.PlatformLook.filterBadge(pid),
-                )
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(com.visorcraft.ghostgalleon.rom.PlatformLook.accentColor(pid))
-                gravity = Gravity.CENTER
-                setPadding(0, dp(6), 0, 0)
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
-        state.libraryBrowse.genre?.trim()?.takeIf { it.isNotEmpty() }?.let { genre ->
-            content.addView(TextView(context).apply {
+        root.setBackgroundColor(
+            platformFilter
+                ?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
+                ?.let { com.visorcraft.ghostgalleon.rom.PlatformLook.wallpaperTint(it) }
+                ?: Color.BLACK,
+        )
+    }
+
+    private fun rebuildFilterChrome(
+        chrome: LinearLayout,
+        context: Context,
+        dp: (Int) -> Int,
+    ) {
+        chrome.removeAllViews()
+        val q = state.libraryBrowse
+        q.platformId?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
+            ?.let { pid ->
+                chrome.addView(TextView(context).apply {
+                    text = context.getString(
+                        R.string.format_platform_badge,
+                        com.visorcraft.ghostgalleon.rom.PlatformLook.filterBadge(pid),
+                    )
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextColor(com.visorcraft.ghostgalleon.rom.PlatformLook.accentColor(pid))
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(6), 0, 0)
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }
+        q.genre?.trim()?.takeIf { it.isNotEmpty() }?.let { genre ->
+            chrome.addView(TextView(context).apply {
                 text = context.getString(R.string.format_genre_badge, genre)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(settings.accentColor)
@@ -430,8 +466,8 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
         }
-        state.libraryBrowse.developer?.trim()?.takeIf { it.isNotEmpty() }?.let { dev ->
-            content.addView(TextView(context).apply {
+        q.developer?.trim()?.takeIf { it.isNotEmpty() }?.let { dev ->
+            chrome.addView(TextView(context).apply {
                 text = context.getString(R.string.format_developer_badge, dev)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(settings.accentColor)
@@ -442,8 +478,8 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
         }
-        state.libraryBrowse.yearDecade?.trim()?.takeIf { it.isNotEmpty() }?.let { decade ->
-            content.addView(TextView(context).apply {
+        q.yearDecade?.trim()?.takeIf { it.isNotEmpty() }?.let { decade ->
+            chrome.addView(TextView(context).apply {
                 text = context.getString(
                     R.string.format_year_badge,
                     context.resolveText(LibraryBrowse.decadeText(decade)),
@@ -457,16 +493,15 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
         }
-        content.addView(
-            buildBrowseBar(context, ::dp),
+        chrome.addView(
+            buildBrowseBar(context, dp),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        // A–Z / New (unplayed) rails: 3DS-style letter jump strip under chips.
-        buildLetterJumpBar(context, ::dp)?.let { letterBar ->
-            content.addView(
+        buildLetterJumpBar(context, dp)?.let { letterBar ->
+            chrome.addView(
                 letterBar,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -474,9 +509,46 @@ class GameDeck(
                 ),
             )
         }
+    }
+
+    override fun primaryView(context: Context): View {
+        val density = context.resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+        entries = buildEntries()
+        cardSizePx = dp(settings.cardSizeDp)
+        cardSpacingPx = dp(12)
+        cellPaddingPx = dp(8)
+
+        // FrameLayout root so modals (dock slot menu, app picker) can sit
+        // on top of the whole deck.
+        val root = FrameLayout(context).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        applyRootWallpaper(root)
+        rootView = root
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        val chrome = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        filterChrome = chrome
+        rebuildFilterChrome(chrome, context, ::dp)
+        content.addView(
+            chrome,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         val rv = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
-            adapter = CardAdapter(context, dp(settings.cardSizeDp), dp(12), dp(8))
+            adapter = CardAdapter(context, cardSizePx, cardSpacingPx, cellPaddingPx)
             LinearSnapHelper().attachToRecyclerView(this)
             val pad = dp(16)
             setPadding(pad, pad, pad, pad)
@@ -544,14 +616,18 @@ class GameDeck(
 
     override fun updateSelection(): Boolean {
         val rv = recycler ?: return false
-        // Rebind visible cards so ring/scale move to the new selection,
-        // then run the existing scroll-to-center alignment.
-        rv.adapter?.notifyDataSetChanged()
+        val adapter = rv.adapter as? CardAdapter ?: return false
+        // Hot path: only repaint previous + next selection (and dock-focus
+        // ring drop). Full notifyDataSetChanged() rebuilt every visible card
+        // tree + re-queued art on every D-pad tick.
+        adapter.notifySelectionChanged(
+            previousKey = adapter.paintedSelectionKey,
+            previousDockFocused = adapter.paintedDockFocused,
+            nextKey = state.selectedKey,
+            nextDockFocused = state.dockSlot != null,
+        )
         scrollSelectionToCenter(rv)
         paintLetterJumpSelection()
-        // Dock focus is a selection change too: repaint the dock ring (and
-        // the lifted tile's pulse during a dock move) and switch the hint
-        // bar between carousel and dock actions.
         dockBar?.updateFocus(state.dockSlot, dockMove.index)
         hintView?.text = if (dockMove.active) {
             HintBar.moveText(activity)
@@ -2336,7 +2412,7 @@ class GameDeck(
             }
             add(SlotMenu.Choice.CANCEL)
         }
-        val menu = SlotMenu(activity, settings.accentColor, choices) { choice ->
+        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.DETAILS -> showDetails(entry)
@@ -2392,7 +2468,7 @@ class GameDeck(
         state.focusDock(index)
         val choices = listOf(
             SlotMenu.Choice.MOVE, SlotMenu.Choice.REMOVE, SlotMenu.Choice.CANCEL)
-        val menu = SlotMenu(activity, settings.accentColor, choices) { choice ->
+        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.MOVE -> startDockMove(index)
@@ -2506,6 +2582,10 @@ class GameDeck(
         private val cellPadding: Int,
     ) : RecyclerView.Adapter<CardAdapter.CardHolder>() {
 
+        /** Last selection key/dock-focus we painted (for partial updates). */
+        var paintedSelectionKey: String? = null
+        var paintedDockFocused: Boolean = false
+
         inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
@@ -2529,9 +2609,73 @@ class GameDeck(
 
         override fun getItemCount() = entries.size
 
+        /**
+         * Selection-only: rebind just the cards whose ring/scale must move.
+         * Dock focus change needs every visible card (all rings off/on).
+         */
+        fun notifySelectionChanged(
+            previousKey: String?,
+            previousDockFocused: Boolean,
+            nextKey: String?,
+            nextDockFocused: Boolean,
+        ) {
+            // Multi-select membership can change without selectedKey moving.
+            if (state.multiSelectEnabled ||
+                previousDockFocused != nextDockFocused
+            ) {
+                notifyItemRangeChanged(0, itemCount, PAYLOAD_SELECTION)
+            } else if (previousKey != nextKey) {
+                val indices = LinkedHashSet<Int>(2)
+                if (previousKey != null) {
+                    val i = entries.indexOfFirst { it.key == previousKey }
+                    if (i >= 0) indices.add(i)
+                }
+                if (nextKey != null) {
+                    val i = entries.indexOfFirst { it.key == nextKey }
+                    if (i >= 0) indices.add(i)
+                }
+                indices.forEach { notifyItemChanged(it, PAYLOAD_SELECTION) }
+            }
+            paintedSelectionKey = nextKey
+            paintedDockFocused = nextDockFocused
+        }
+
+        override fun onBindViewHolder(
+            holder: CardHolder,
+            position: Int,
+            payloads: MutableList<Any>,
+        ) {
+            if (payloads.isNotEmpty() && payloads.all { it == PAYLOAD_SELECTION }) {
+                if (applySelectionVisuals(holder, position)) return
+            }
+            onBindViewHolder(holder, position)
+        }
+
+        /** Mutate ring/scale only; false → full rebind needed. */
+        private fun applySelectionVisuals(holder: CardHolder, position: Int): Boolean {
+            val entry = entries.getOrNull(position) ?: return false
+            val card = holder.root.getChildAt(0) as? LinearLayout ?: return false
+            val focused = entry.key == state.selectedKey && state.dockSlot == null
+            card.background = if (focused) {
+                TileBackgrounds.selected(context, settings.accentColor)
+            } else {
+                TileBackgrounds.card(context)
+            }
+            val scale = if (focused) 1.1f else 1f
+            card.scaleX = scale
+            card.scaleY = scale
+            if (state.multiSelectEnabled && entry.key in state.multiSelectKeys) {
+                card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
+            } else {
+                card.foreground = null
+            }
+            return true
+        }
+
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val entry = entries[position]
             holder.root.removeAllViews()
+            holder.root.setTag(R.id.carousel_entry_key, entry.key)
             // While the dock holds focus the carousel shows NO ring — the
             // focused dock slot carries it instead.
             val focused = entry.key == state.selectedKey && state.dockSlot == null
@@ -2549,6 +2693,8 @@ class GameDeck(
                     scaleY = 1.1f
                 }
             }
+            paintedSelectionKey = state.selectedKey
+            paintedDockFocused = state.dockSlot != null
             // ROM cards show cached artwork over the platform placeholder
             // (async fill, no decode on the UI thread); without art the
             // placeholder shows through — a cheap draw even deep in the ROM
@@ -2631,5 +2777,10 @@ class GameDeck(
                 card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
             }
         }
+    }
+
+    private companion object {
+        /** RecyclerView payload: only ring/scale/multi-select chrome. */
+        const val PAYLOAD_SELECTION = "selection"
     }
 }

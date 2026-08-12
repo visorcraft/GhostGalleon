@@ -107,7 +107,7 @@ class DeckStateTest {
         assertNull(s.libraryBrowse.platformId)
         assertEquals("", s.libraryBrowse.text)
         assertNull(s.libraryBrowse.collectionName)
-        assertEquals(DeckState.Change.SETTINGS, s.lastChange)
+        assertEquals(DeckState.Change.BROWSE, s.lastChange)
     }
 
     @Test
@@ -122,7 +122,7 @@ class DeckStateTest {
         assertEquals(1, calls) // equality early-return
         s.setLibraryBrowse(q, force = true)
         assertEquals(2, calls)
-        assertEquals(DeckState.Change.SETTINGS, s.lastChange)
+        assertEquals(DeckState.Change.BROWSE, s.lastChange)
     }
 
     @Test

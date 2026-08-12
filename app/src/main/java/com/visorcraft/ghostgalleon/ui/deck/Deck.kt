@@ -25,6 +25,13 @@ interface Deck {
     // live view state exists to update — the caller then does a full rebuild.
     fun updateSelection(): Boolean
 
+    /**
+     * Game Mode browse chip change without activity [setContentView].
+     * Recomputes carousel entries + chip chrome in place. Default false
+     * (GridDeck / unready views fall through to full rebuild).
+     */
+    fun applyBrowseChange(): Boolean = false
+
     fun handleAction(action: Action): Boolean
 }
 

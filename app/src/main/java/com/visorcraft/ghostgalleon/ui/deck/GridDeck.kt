@@ -726,7 +726,7 @@ class GridDeck(
         state.focusDock(index)
         val choices = listOf(
             SlotMenu.Choice.MOVE, SlotMenu.Choice.REMOVE, SlotMenu.Choice.CANCEL)
-        val menu = SlotMenu(activity, settings.accentColor, choices) { choice ->
+        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.MOVE -> startDockMove(index)
@@ -942,7 +942,7 @@ class GridDeck(
         state.selectSlot(slot, null)
     }
 
-    // --- Slot menu (Move / Pin to dock / Rename / Custom icon / Remove) ---
+    // --- Slot menu (sectioned: Arrange / Dock / Library / Customize / More) ---
 
     private fun openSlotMenu(slot: Int) {
         state.selectSlot(slot, settings.gridSlots.getOrNull(slot))
@@ -951,66 +951,40 @@ class GridDeck(
         val isRom = key != null && SlotKey.isRom(key)
         val isApp = key != null && !isRom && !isFolder
         val fav = key != null && key in settings.favorites
-        val choices = buildList {
-            when {
-                key == null -> {
-                    add(SlotMenu.Choice.NEW_FOLDER)
-                    add(SlotMenu.Choice.CANCEL)
-                }
-                isFolder -> {
-                    add(SlotMenu.Choice.MOVE)
-                    add(SlotMenu.Choice.RENAME)
-                    add(SlotMenu.Choice.ADD_MEMBER)
-                    add(SlotMenu.Choice.REMOVE)
-                    add(SlotMenu.Choice.CANCEL)
-                }
-                else -> {
-                    add(SlotMenu.Choice.DETAILS)
-                    add(SlotMenu.Choice.COPY_TITLE)
-                    if (isRom && gridRelatedOptions(key).isNotEmpty()) {
-                        add(SlotMenu.Choice.BROWSE_RELATED)
-                    }
-                    if (com.visorcraft.ghostgalleon.library.LibraryBrowse.isUnplayed(
-                            key,
-                            settings.lastLaunchedMs,
-                        )
-                    ) {
-                        add(SlotMenu.Choice.MARK_PLAYED)
-                    }
-                    val stats = com.visorcraft.ghostgalleon.library.PlayStats(
-                        lastLaunchedMs = settings.lastLaunchedMs,
-                        totalPlaytimeMs = settings.playtimeMs,
-                    )
-                    if (com.visorcraft.ghostgalleon.library.SessionMath.hasStats(stats, key)) {
-                        add(SlotMenu.Choice.CLEAR_PLAY_STATS)
-                    }
-                    add(SlotMenu.Choice.MOVE)
-                    if (DockSlots.containsKey(settings.dockSlots, key)) {
-                        add(SlotMenu.Choice.UNPIN_FROM_DOCK)
-                    } else {
-                        add(SlotMenu.Choice.PIN_TO_DOCK)
-                    }
-                    add(if (fav) SlotMenu.Choice.UNFAVORITE else SlotMenu.Choice.FAVORITE)
-                    add(SlotMenu.Choice.ADD_TO_COLLECTION)
-                    if (isRom) {
-                        add(SlotMenu.Choice.OPEN_WITH)
-                        add(SlotMenu.Choice.PLAYER)
-                        add(SlotMenu.Choice.SET_ART)
-                        add(SlotMenu.Choice.HIDE)
-                    }
-                    if (isApp) {
-                        add(SlotMenu.Choice.APP_INFO)
-                        add(SlotMenu.Choice.RENAME)
-                        if (key in settings.customNames) add(SlotMenu.Choice.RESET_NAME)
-                        add(SlotMenu.Choice.CUSTOM_ICON)
-                        if (key in settings.customIcons) add(SlotMenu.Choice.RESET_ICON)
-                    }
-                    add(SlotMenu.Choice.REMOVE)
-                    add(SlotMenu.Choice.CANCEL)
-                }
+        val rows: List<SlotMenu.Row> = when {
+            key == null -> listOf(
+                SlotMenu.Row.Item(SlotMenu.Choice.NEW_FOLDER),
+                SlotMenu.Row.Item(SlotMenu.Choice.CANCEL),
+            )
+            isFolder -> listOf(
+                SlotMenu.Row.Header(R.string.menu_section_arrange),
+                SlotMenu.Row.Item(SlotMenu.Choice.MOVE),
+                SlotMenu.Row.Item(SlotMenu.Choice.RENAME),
+                SlotMenu.Row.Item(SlotMenu.Choice.ADD_MEMBER),
+                SlotMenu.Row.Item(SlotMenu.Choice.REMOVE, destructive = true),
+                SlotMenu.Row.Item(SlotMenu.Choice.CANCEL),
+            )
+            else -> {
+                val stats = com.visorcraft.ghostgalleon.library.PlayStats(
+                    lastLaunchedMs = settings.lastLaunchedMs,
+                    totalPlaytimeMs = settings.playtimeMs,
+                )
+                SlotMenu.gridTileRows(
+                    isRom = isRom,
+                    isApp = isApp,
+                    fav = fav,
+                    inDock = DockSlots.containsKey(settings.dockSlots, key),
+                    hasCustomName = key in settings.customNames,
+                    hasCustomIcon = key in settings.customIcons,
+                    showRelated = isRom && gridRelatedOptions(key).isNotEmpty(),
+                    showMarkPlayed = com.visorcraft.ghostgalleon.library.LibraryBrowse
+                        .isUnplayed(key, settings.lastLaunchedMs),
+                    showClearStats = com.visorcraft.ghostgalleon.library.SessionMath
+                        .hasStats(stats, key),
+                )
             }
         }
-        val menu = SlotMenu(activity, settings.accentColor, choices) { choice ->
+        val menu = SlotMenu(activity, settings.accentColor, rows) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.DETAILS -> key?.let { k -> showGridDetails(k) }
@@ -1094,9 +1068,16 @@ class GridDeck(
                     app.updateSettings(app.settings.copy(
                         customIcons = app.settings.customIcons - pkg))
                 }
-                SlotMenu.Choice.REMOVE -> when {
+                SlotMenu.Choice.REMOVE, SlotMenu.Choice.REMOVE_FROM_GRID -> when {
                     isFolder && key != null -> removeFolderSlot(slot, key)
-                    else -> updateGridSlots(GridSlots.remove(settings.gridSlots, slot), slot)
+                    else -> {
+                        updateGridSlots(GridSlots.remove(settings.gridSlots, slot), slot)
+                        Toast.makeText(
+                            activity,
+                            R.string.deck_removed_from_grid,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 }
                 SlotMenu.Choice.CANCEL,
                 SlotMenu.Choice.ADD_TO_GRID,
@@ -1459,8 +1440,23 @@ class GridDeck(
         override fun getItemId(position: Int) = (slotOffset + position).toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val frame = FrameLayout(context)
-            populateFrame(frame, slotOffset + position)
+            val absPos = slotOffset + position
+            val key = slotPackages().getOrNull(absPos)
+            val frame = (convertView as? FrameLayout) ?: FrameLayout(context)
+            val boundKey = frame.getTag(R.id.grid_cell_key) as? String
+            // Reuse convertView when the slot key is unchanged and we are not
+            // in move mode (contents may have swapped). Selection-only path
+            // already uses applySelectionVisuals — mirror that for scroll.
+            if (convertView != null &&
+                boundKey == key &&
+                moveIndex == null &&
+                frame.childCount > 0
+            ) {
+                applySelectionVisuals(frame, absPos == selectedIndex())
+            } else {
+                populateFrame(frame, absPos)
+                frame.setTag(R.id.grid_cell_key, key)
+            }
             frame.layoutParams = AbsListView.LayoutParams(cellWidth, cellHeight)
             return frame
         }

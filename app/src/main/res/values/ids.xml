@@ -3,4 +3,8 @@
     <!-- View tag key holding the package name a pending custom-icon decode
          belongs to (CustomIcon stale-result guard). -->
     <item name="custom_icon_key" type="id" />
+    <!-- GridView recycle: slot key last bound into this frame. -->
+    <item name="grid_cell_key" type="id" />
+    <!-- GameDeck carousel: entry key bound into a card holder. -->
+    <item name="carousel_entry_key" type="id" />
 </resources>

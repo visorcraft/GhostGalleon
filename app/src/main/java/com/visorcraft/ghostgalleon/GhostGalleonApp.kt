@@ -43,9 +43,13 @@ import com.visorcraft.ghostgalleon.ui.DisplayRole
 import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
 import com.visorcraft.ghostgalleon.library.AppEntry
+import com.visorcraft.ghostgalleon.library.AppLibrary
+import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import android.hardware.display.DisplayManager
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 
 class GhostGalleonApp : Application() {
 
@@ -138,7 +142,7 @@ class GhostGalleonApp : Application() {
         val pin = DisplayTopology.pinAfterSwap(swapped)
         deckState.setPrimaryDisplayId(pin)
         settings = settings.copy(userPinnedPrimaryId = pin)
-        settingsStore.save(settings)
+        scheduleSettingsSave(settings)
         displayConfig = swapped
         return true
     }
@@ -424,8 +428,11 @@ class GhostGalleonApp : Application() {
             // Only rebuild decks when the index actually changed. Boot used
             // to always notifyChanged → second full setContentView on both
             // panels during first paint (contributed to black surfaces).
-            if (prev.size != loaded.size || prev != loaded) {
-                Handler(Looper.getMainLooper()).post {
+            Handler(Looper.getMainLooper()).post {
+                // Single load path: also seeds quiet-rescan gate (was a second
+                // main-thread romLibrary.load() on cold start).
+                if (loaded.isNotEmpty()) hadSuccessfulScan = true
+                if (prev.size != loaded.size || prev != loaded) {
                     contentEpoch++
                     invalidateDrawerListCache()
                     deckState.notifyChanged()
@@ -530,14 +537,18 @@ class GhostGalleonApp : Application() {
     fun dismissResumeChip() {
         if (settings.hideResumeChip) return
         settings = settings.copy(hideResumeChip = true)
-        settingsStore.save(settings)
-        Handler(Looper.getMainLooper()).post { deckState.notifyChanged() }
+        scheduleSettingsSave(settings)
+        // SELECTION in-place: CompanionPanel.updateSelection / full path
+        // re-reads hideResumeChip; avoid dual setContentView for one chip.
+        Handler(Looper.getMainLooper()).post { deckState.notifySelectionRefresh() }
     }
 
     /** Accrue honest active playtime when returning to a deck activity. */
     fun noteReturnToLauncher(nowMs: Long = System.currentTimeMillis()) {
         endOpenSession(nowMs)
-        Handler(Looper.getMainLooper()).post { deckState.notifyChanged() }
+        // Playtime/session chrome can update in place; full rebuild was a
+        // dual-panel thrash source when returning from games.
+        Handler(Looper.getMainLooper()).post { deckState.notifySelectionRefresh() }
     }
 
     fun onSessionLauncherFocused(nowMs: Long = System.currentTimeMillis()) {
@@ -646,10 +657,10 @@ class GhostGalleonApp : Application() {
         // Cold-start hero seed: prefer Continue key when known, else slot 0.
         // Do not auto-launch — selection only so the companion shows the game.
         seedColdStartSelection()
+        // PM query off the UI thread before decks paint.
+        prewarmAppLibrary()
         reloadRomEntries()
-        // If the on-disk index already has entries, treat as a prior successful scan
-        // so quiet resume does not thrash a healthy library.
-        hadSuccessfulScan = romLibrary.load().isNotEmpty()
+        // hadSuccessfulScan set when reloadRomEntries finishes (no second load).
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 if (activity is BaseDeckActivity) liveDeckActivities.add(activity)
@@ -757,13 +768,59 @@ class GhostGalleonApp : Application() {
                 s.orientationMode != settings.orientationMode ||
                 s.userPinnedPrimaryId != settings.userPinnedPrimaryId
         settings = s
-        settingsStore.save(s)
+        // Debounced async persist — every favorite/dock/launch used to
+        // block the main thread on pretty-printed JSON IO.
+        scheduleSettingsSave(s)
         contentEpoch++
         invalidateDrawerListCache()
         if (displayPolicyChanged) refreshDisplayConfig()
         if (notify) {
             deckState.setMode(s.defaultMode)
             deckState.notifyChanged()
+        }
+    }
+
+    /**
+     * Shared installed-app catalog (PM query is expensive). Pre-warmed on a
+     * background thread at process start; decks reuse this instance so the
+     * first paint rarely blocks on queryIntentActivities.
+     */
+    fun appLibrary(): AppLibrary {
+        sharedAppLibrary.get()?.let { return it }
+        // Race: prewarm not finished — build once under lock and publish.
+        synchronized(appLibraryLock) {
+            sharedAppLibrary.get()?.let { return it }
+            val lib = AppLibrary(PackageManagerAppsSource(packageManager, packageName))
+            lib.warm()
+            sharedAppLibrary.set(lib)
+            return lib
+        }
+    }
+
+    /** Drop app cache after install/uninstall (next [appLibrary] re-queries). */
+    fun invalidateAppLibrary() {
+        sharedAppLibrary.set(null)
+        invalidateDrawerListCache()
+    }
+
+    /** Flush any debounced settings write (call from activity onPause). */
+    fun flushSettingsNow() {
+        mainHandler.removeCallbacks(persistSettingsRunnable)
+        val snapshot = pendingSettingsSave.getAndSet(null) ?: settings
+        // Sync on caller thread when leaving foreground — process may die.
+        runCatching { settingsStore.save(snapshot) }
+    }
+
+    private fun scheduleSettingsSave(s: Settings) {
+        pendingSettingsSave.set(s)
+        mainHandler.removeCallbacks(persistSettingsRunnable)
+        mainHandler.postDelayed(persistSettingsRunnable, SETTINGS_SAVE_DEBOUNCE_MS)
+    }
+
+    private val persistSettingsRunnable = Runnable {
+        val snapshot = pendingSettingsSave.getAndSet(null) ?: return@Runnable
+        SETTINGS_IO.execute {
+            runCatching { settingsStore.save(snapshot) }
         }
     }
 
@@ -781,8 +838,26 @@ class GhostGalleonApp : Application() {
     fun liveDeckActivities(): List<BaseDeckActivity> =
         liveDeckActivities.filter { !it.isFinishing }
 
+    private fun prewarmAppLibrary() {
+        APP_IO.execute {
+            runCatching {
+                val lib = AppLibrary(PackageManagerAppsSource(packageManager, packageName))
+                lib.warm()
+                sharedAppLibrary.compareAndSet(null, lib)
+            }
+        }
+    }
+
+    private val sharedAppLibrary = AtomicReference<AppLibrary?>(null)
+    private val appLibraryLock = Any()
+    private val pendingSettingsSave = AtomicReference<Settings?>(null)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private companion object {
-        val ROM_IO = java.util.concurrent.Executors.newSingleThreadExecutor()
-        val RA_IO = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val ROM_IO = Executors.newSingleThreadExecutor()
+        val RA_IO = Executors.newSingleThreadExecutor()
+        val APP_IO = Executors.newSingleThreadExecutor()
+        val SETTINGS_IO = Executors.newSingleThreadExecutor()
+        const val SETTINGS_SAVE_DEBOUNCE_MS = 120L
     }
 }

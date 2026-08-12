@@ -45,6 +45,7 @@
     <string name="action_pin_to_dock">ปักหมุดลงด็อก</string>
     <string name="action_player">โปรแกรมเล่น…</string>
     <string name="action_remove">ลบออก</string>
+    <string name="action_remove_from_grid">ลบออกจากกริด</string>
     <string name="action_remove_from_collection">ลบออกจากคอลเลกชัน</string>
     <string name="action_rename">เปลี่ยนชื่อ</string>
     <string name="action_reset_icon">รีเซ็ตไอคอน</string>
@@ -545,4 +546,10 @@
     <string name="about_runtime_emulators">แอปอีมูเลเตอร์ (เปิด ไม่รวม)</string>
     <string name="about_service_terms">ข้อกำหนดบริการ</string>
     <string name="about_various">ต่างๆ</string>
+<string name="menu_section_arrange">จัดเรียง</string>
+    <string name="menu_section_dock">ด็อก</string>
+    <string name="menu_section_library">ไลบรารี</string>
+    <string name="menu_section_customize">ปรับแต่ง</string>
+    <string name="menu_section_more">เพิ่มเติม</string>
+    <string name="deck_removed_from_grid">ลบออกจากกริดแล้ว</string>
 </resources>

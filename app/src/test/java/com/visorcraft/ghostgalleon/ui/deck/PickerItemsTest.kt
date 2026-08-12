@@ -62,6 +62,19 @@ class PickerItemsTest {
     }
 
     @Test
+    fun `preSortedRoms skips re-sort and filters correctly`() {
+        val sorted = PickerItems.sortedRoms(roms)
+        val items = PickerItems.build(
+            apps, roms, "mario",
+            preSortedRoms = sorted,
+        )
+        assertEquals(
+            listOf("Mario 3D Land", "Super Mario World"),
+            items.filterIsInstance<PickerItem.Rom>().map { it.entry.name },
+        )
+    }
+
+    @Test
     fun `query matches app labels and package names`() {
         val byLabel = PickerItems.build(apps, roms, "brave")
         assertEquals(

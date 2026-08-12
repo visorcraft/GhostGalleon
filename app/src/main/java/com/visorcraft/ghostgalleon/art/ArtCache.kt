@@ -69,9 +69,16 @@ class ArtCache(private val dir: File) {
      * re-decodes the new effective URI instead of serving stale bytes.
      */
     fun invalidate(romId: String) {
+        // Mem keys may be plain romId, romId.hero, or romId|src:… / .hero|src:…
+        // Snapshot keys then remove — LruCache has no prefix API.
         runCatching {
-            memory.remove(romId)
-            memory.remove(romId + ".hero")
+            val doomed = memory.snapshot().keys.filter {
+                it == romId ||
+                    it == "$romId.hero" ||
+                    it.startsWith("$romId|") ||
+                    it.startsWith("$romId.hero|")
+            }
+            doomed.forEach { memory.remove(it) }
         }
         fileFor(romId, ArtKind.GRID).delete()
         fileFor(romId, ArtKind.HERO).delete()
@@ -288,13 +295,11 @@ class ArtCache(private val dir: File) {
         const val GRID_SCRAPE_TARGET_PX = 512
         const val HERO_SCRAPE_TARGET_WIDTH_PX = 1600
 
-        // Serializes decodes. Queued tasks re-check staleness BEFORE
-        // decoding (the caller's isStillValid seam), so work obsoleted by a
-        // fling costs one lambda call instead of a full decode; the
-        // post-decode tag guard still drops anything that goes stale
-        // mid-decode. Separate from RomLibrary's SCAN_EXECUTOR so art never
-        // waits on a card scan.
-        private val DECODE_EXECUTOR = Executors.newSingleThreadExecutor()
+        // Bounded decode pool: carousel flings queue many tiles; 1 thread
+        // serializes multi-second backlogs. isStillValid still drops stale
+        // work before I/O. Cap=2 keeps GC/memory calm on dual-display.
+        // Separate from RomLibrary's SCAN_EXECUTOR so art never waits on scan.
+        private val DECODE_EXECUTOR = Executors.newFixedThreadPool(2)
 
         /**
          * Stable cache key for a RomEntry id: SHA-256 hex (ids contain

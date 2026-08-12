@@ -70,6 +70,7 @@ object CompanionPanel {
     private const val TAG_HERO_SHOT = "hero_shot"
     private const val TAG_HERO_VIDEO = "hero_video"
     private const val TAG_HERO_BANNER = "hero_banner"
+    private const val TAG_RESUME_CHIP = "resume_chip"
     /** Visible so PRIMARY TOP_STRIP paths can detect a hero panel in the tree. */
     const val TAG_PANEL_ROOT = "panel_root"
     /**
@@ -161,6 +162,12 @@ object CompanionPanel {
         // Compact TOP_STRIP path: always selection-context, never full dual roles.
         if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
             return updateTopStrip(view, context, state, library, roms, settings)
+        }
+        // Resume chip can be dismissed without a full dual rebuild.
+        view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
+            if (settings.hideResumeChip) {
+                chip.visibility = View.GONE
+            }
         }
         val rom = selectedRom(state.selectedKey, roms)
         if (rom != null) {
@@ -988,6 +995,7 @@ object CompanionPanel {
             // Filled accent pill + white text (dark card + black text was
             // unreadable on the secondary OLED).
             hero.addView(TextView(context).apply {
+                tag = TAG_RESUME_CHIP
                 text = context.getString(R.string.format_resume, contName)
                 contentDescription = context.getString(
                     R.string.format_resume_accessibility,

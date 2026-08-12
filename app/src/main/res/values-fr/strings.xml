@@ -45,6 +45,7 @@
     <string name="action_pin_to_dock">Épingler au dock</string>
     <string name="action_player">Lecteur…</string>
     <string name="action_remove">Retirer</string>
+    <string name="action_remove_from_grid">Retirer de la grille</string>
     <string name="action_remove_from_collection">Retirer de la collection</string>
     <string name="action_rename">Renommer</string>
     <string name="action_reset_icon">Réinitialiser l\'icône</string>
@@ -545,4 +546,10 @@
     <string name="about_runtime_emulators">Applications émulateur (lancées, jamais intégrées)</string>
     <string name="about_service_terms">conditions du service</string>
     <string name="about_various">divers</string>
+<string name="menu_section_arrange">Organiser</string>
+    <string name="menu_section_dock">Dock</string>
+    <string name="menu_section_library">Bibliothèque</string>
+    <string name="menu_section_customize">Personnaliser</string>
+    <string name="menu_section_more">Plus</string>
+    <string name="deck_removed_from_grid">Retiré de la grille</string>
 </resources>
