@@ -3,7 +3,6 @@ package com.visorcraft.ghostgalleon.rom
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import com.visorcraft.ghostgalleon.R
@@ -147,12 +146,7 @@ object RomLauncher {
     }
 
     private fun isInstalled(activity: Activity, packageName: String): Boolean =
-        try {
-            activity.packageManager.getPackageInfo(packageName, 0)
-            true
-        } catch (e: PackageManager.NameNotFoundException) {
-            false
-        }
+        activity.packageManager.isInstalled(packageName)
 
     private fun toast(activity: Activity, messageRes: Int, vararg args: Any) {
         Toast.makeText(

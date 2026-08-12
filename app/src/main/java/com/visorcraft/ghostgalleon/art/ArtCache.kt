@@ -123,6 +123,7 @@ class ArtCache(private val dir: File) {
         sourceStampFile(romId, ArtKind.GRID).delete()
         sourceStampFile(romId, ArtKind.HERO).delete()
         sourceStampFile(romId, ArtKind.LOGO).delete()
+        bumpArtGeneration(romId)
     }
 
     /** Atomic write (tmp + rename), like RomLibrary/SettingsStore. Triggers
@@ -139,6 +140,7 @@ class ArtCache(private val dir: File) {
             tmp.delete()
         }
         sourceStampFile(romId, kind).delete()
+        bumpArtGeneration(romId)
         // Scrape / non-URI writers own the bytes without a URI stamp.
         runCatching { memory.remove(romId) }
         if (kind == ArtKind.HERO) runCatching { memory.remove(romId + ".hero") }
@@ -273,14 +275,15 @@ class ArtCache(private val dir: File) {
 
         val appContext = context.applicationContext
         DECODE_EXECUTOR.execute {
-            // Drop only when every waiter is already stale *and* we would
-            // still pay for URI decode/compress. Disk hits stay cheap and
-            // warm memory for the next bind of the same key.
-            val diskHit = decodeCached(diskKey, kind, expectedSourceUri = uriString)
+            // Sole waiter already scrolled away: skip disk decode too.
+            // Coalesced bind+prefetch (waiters > 1) still warms memory.
+            val onlyStale = waiters.size == 1 && !isStillValid()
+            val diskHit = if (onlyStale) {
+                null
+            } else {
+                decodeCached(diskKey, kind, expectedSourceUri = uriString)
+            }
             val bitmap = diskHit ?: uriString?.let { uri ->
-                // Bail before openInputStream + PNG encode when the sole
-                // waiter scrolled away (typical fling backlog).
-                val onlyStale = waiters.size == 1 && !isStillValid()
                 if (onlyStale) return@let null
                 decodeDownscaled(appContext, uri, maxDimension)?.also { bmp ->
                     // Skip disk write when the view already moved on — still
@@ -312,10 +315,16 @@ class ArtCache(private val dir: File) {
         kind: ArtKind = ArtKind.GRID,
         expectedSourceUri: String? = null,
     ): Bitmap? {
-        val bytes = readDiskBytes(romId, kind) ?: return null
-        val stampText = sourceStampFile(romId, kind).takeIf { it.isFile }?.readText()
-        if (!sourceStampMatches(stampText, expectedSourceUri)) return null
-        return decodeBytes(bytes, sample = 1, rgb565 = kind == ArtKind.GRID)
+        val file = fileFor(romId, kind)
+        if (!file.isFile) return null
+        // Stamp first: a SET_ART mismatch must not pay for a full read.
+        // Scraped / no-URI loads have no expected source — skip the sidecar.
+        if (expectedSourceUri != null) {
+            val stampText = sourceStampFile(romId, kind).takeIf { it.isFile }?.readText()
+            if (!sourceStampMatches(stampText, expectedSourceUri)) return null
+        }
+        touchLruIfStale(file)
+        return decodeFile(file, sample = 1, rgb565 = kind == ArtKind.GRID)
     }
 
     /** Persist URI-sourced art and stamp the source so a later different
@@ -346,6 +355,16 @@ class ArtCache(private val dir: File) {
     /** In-flight decode waiters keyed by memory key (coalesce bind+prefetch). */
     private val inFlight =
         ConcurrentHashMap<String, CopyOnWriteArrayList<(Bitmap?) -> Unit>>()
+
+    /** Bumped on scrape write / SET_ART invalidate so same-ROM hero skips refresh. */
+    private val artGenerations = ConcurrentHashMap<String, Int>()
+
+    /** Write generation for [romId]; 0 when this process has not written it. */
+    fun artGeneration(romId: String): Int = artGenerations[romId] ?: 0
+
+    private fun bumpArtGeneration(romId: String) {
+        artGenerations.merge(romId, 1, Int::plus)
+    }
 
     companion object {
         private const val MEMORY_BYTES = 16 * 1024 * 1024
@@ -483,6 +502,20 @@ class ArtCache(private val dir: File) {
             }.getOrNull()
         }
 
+        /** Disk-cache decode without a heap copy of the encoded bytes. */
+        private fun decodeFile(file: File, sample: Int, rgb565: Boolean): Bitmap? {
+            val path = file.path
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            val step = sample.coerceAtLeast(1)
+            val opts = decodeOptions(bounds.outWidth, bounds.outHeight, step, rgb565)
+            val hit = runCatching { BitmapFactory.decodeFile(path, opts) }.getOrNull()
+            if (hit != null) return hit
+            opts.inBitmap = null
+            return runCatching { BitmapFactory.decodeFile(path, opts) }.getOrNull()
+        }
+
         private fun decodeOptions(
             srcW: Int,
             srcH: Int,
@@ -563,14 +596,28 @@ class ArtCache(private val dir: File) {
         // GC on Sugar. Separate from RomLibrary's SCAN_EXECUTOR.
         private val DECODE_EXECUTOR = Executors.newFixedThreadPool(3)
 
+        private val KEY_HEX = "0123456789abcdef".toCharArray()
+        private val keyCache = ConcurrentHashMap<String, String>(256)
+
         /**
          * Stable cache key for a RomEntry id: SHA-256 hex (ids contain
          * ':'/'/', unusable in a filename). Pure — pinned by host tests.
+         * Results are memoized: carousel flings hashed the same ids twice
+         * per tile (file + stamp) on every disk hit.
          */
-        fun keyFor(romId: String): String {
+        fun keyFor(romId: String): String = keyCache.getOrPut(romId) { sha256Hex(romId) }
+
+        internal fun sha256Hex(value: String): String {
             val digest = MessageDigest.getInstance("SHA-256")
-                .digest(romId.toByteArray(Charsets.UTF_8))
-            return digest.joinToString("") { "%02x".format(it) }
+                .digest(value.toByteArray(Charsets.UTF_8))
+            val out = CharArray(digest.size * 2)
+            var i = 0
+            for (b in digest) {
+                val v = b.toInt() and 0xFF
+                out[i++] = KEY_HEX[v ushr 4]
+                out[i++] = KEY_HEX[v and 0x0F]
+            }
+            return String(out)
         }
 
         /**

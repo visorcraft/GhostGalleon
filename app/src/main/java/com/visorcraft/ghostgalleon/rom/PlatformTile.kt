@@ -8,6 +8,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.widget.TextView
 import androidx.core.widget.TextViewCompat
+import com.visorcraft.ghostgalleon.R
 import kotlin.math.abs
 
 /**
@@ -55,15 +56,25 @@ object PlatformTile {
             gravity = Gravity.CENTER
             maxLines = 1
             background = background(context, platformId, cornerRadiusDp)
+            setTag(R.id.platform_tile_id, platformId)
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
                 this, 8, 28, 2, TypedValue.COMPLEX_UNIT_SP)
         }
 
     /** Re-text/re-color an existing tile created by [view] (in-place hero
-     *  updates). */
-    fun restyle(tile: TextView, context: Context, platformId: String) {
+     *  updates). Same [platformId] is a no-op so NAV does not allocate a
+     *  new GradientDrawable. Uses a keyed tag so findViewWithTag identities
+     *  (hero icon) stay intact. */
+    fun restyle(
+        tile: TextView,
+        context: Context,
+        platformId: String,
+        cornerRadiusDp: Int = 24,
+    ) {
+        if (tile.getTag(R.id.platform_tile_id) == platformId) return
+        tile.setTag(R.id.platform_tile_id, platformId)
         tile.text = shortText(platformId)
-        tile.background = background(context, platformId)
+        tile.background = background(context, platformId, cornerRadiusDp)
     }
 
     // Integer HSV->RGB (h in [0,360)); implemented by hand instead of

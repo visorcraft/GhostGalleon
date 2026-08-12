@@ -995,7 +995,8 @@ class GhostGalleonApp : Application() {
     /** Flush any debounced settings write (call from activity onPause). */
     fun flushSettingsNow() {
         mainHandler.removeCallbacks(persistSettingsRunnable)
-        val snapshot = pendingSettingsSave.getAndSet(null) ?: settings
+        // Nothing dirty: skip a full JSON rewrite on every pause / launch.
+        val snapshot = pendingSettingsSave.getAndSet(null) ?: return
         // Sync on caller thread when leaving foreground — process may die.
         runCatching { settingsStore.save(snapshot) }
     }

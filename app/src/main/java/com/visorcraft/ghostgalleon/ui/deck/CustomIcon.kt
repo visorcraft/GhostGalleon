@@ -40,13 +40,11 @@ object CustomIcon {
             maxDimension = targetPx,
             isStillValid = { image.getTag(R.id.custom_icon_key) == packageName },
         ) { bitmap ->
-            image.post {
-                if (bitmap != null &&
-                    image.getTag(R.id.custom_icon_key) == packageName &&
-                    image.isAttachedToWindow
-                ) {
-                    ArtCache.showDisplayed(image, bitmap)
-                }
+            if (bitmap != null &&
+                image.getTag(R.id.custom_icon_key) == packageName &&
+                image.isAttachedToWindow
+            ) {
+                ArtCache.showDisplayed(image, bitmap)
             }
         }
     }

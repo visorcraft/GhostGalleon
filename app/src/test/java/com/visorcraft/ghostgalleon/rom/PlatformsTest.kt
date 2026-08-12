@@ -34,6 +34,41 @@ class PlatformsTest {
     }
 
     @Test
+    fun `byId cache follows pack overlay install and clear`() {
+        Platforms.clearPackOverlay()
+        assertNull(Platforms.byId("pcengine"))
+        val parsed = PlatformPack.parse(
+            """
+            {
+              "schemaVersion": 1,
+              "platforms": [{
+                "id": "pcengine",
+                "displayName": "PC Engine",
+                "shortName": "PCE",
+                "folderNames": ["pce"],
+                "extensions": ["pce"],
+                "players": [{
+                  "id": "ra-pce",
+                  "displayName": "RA",
+                  "component": "com.example/.P",
+                  "uriStyle": "URI",
+                  "extras": { "ROM": "{file.uri}" }
+                }]
+              }]
+            }
+            """.trimIndent(),
+        )!!
+        try {
+            Platforms.setPackOverlay(parsed.platforms)
+            assertEquals("PC Engine", Platforms.byId("pcengine")?.displayName)
+            assertEquals(Platforms.ALL.first { it.id == "snes" }, Platforms.byId("snes"))
+        } finally {
+            Platforms.clearPackOverlay()
+        }
+        assertNull(Platforms.byId("pcengine"))
+    }
+
+    @Test
     fun `retroarch cores use the exact installed so names`() {
         fun core(p: Platform) = p.player.extras.getValue("LIBRETRO")
         val dir = "/data/data/com.retroarch.aarch64/cores"

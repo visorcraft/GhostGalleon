@@ -74,6 +74,7 @@ object CompanionPanel {
     private const val TAG_HERO_DESC = "hero_desc"
     private const val TAG_HERO_SHOT = "hero_shot"
     private const val TAG_HERO_VIDEO = "hero_video"
+    private const val TAG_HERO_VIDEO_HOST = "hero_video_host"
     private const val TAG_HERO_BANNER = "hero_banner"
     private const val TAG_HERO_LOGO = "hero_logo"
     private const val TAG_RESUME_CHIP = "resume_chip"
@@ -90,14 +91,43 @@ object CompanionPanel {
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
 
+    /**
+     * Skip hero media rebind when this ROM is already painted and the
+     * art cache has not received a new scrape / SET_ART write.
+     */
+    internal fun sameHeroBinding(
+        boundId: Any?,
+        boundGeneration: Any?,
+        romId: String,
+        generation: Int,
+    ): Boolean = boundId == romId && boundGeneration == generation
+
     // Layered depth background: a vertical gradient lifting to #FF202028 in
     // the center band, plus a huge soft radial glow behind the hero icon
     // tinted with the glow color at ~18% alpha.
+    private var cachedPanelGlow = 0
+    private var cachedPanelLift = 0
+    private var cachedPanelW = 0
+    private var cachedPanelH = 0
+    private var cachedPanelBg: Drawable? = null
+
     private fun panelBackground(context: Context, glowColor: Int): Drawable {
         val lift = com.visorcraft.ghostgalleon.settings.ThemePack.resolve(
             (context.applicationContext as? GhostGalleonApp)?.settings
                 ?: com.visorcraft.ghostgalleon.settings.Settings.DEFAULT,
         ).panelLift
+        val metrics = context.resources.displayMetrics
+        val w = metrics.widthPixels
+        val h = metrics.heightPixels
+        val hit = cachedPanelBg
+        if (hit != null &&
+            cachedPanelGlow == glowColor &&
+            cachedPanelLift == lift &&
+            cachedPanelW == w &&
+            cachedPanelH == h
+        ) {
+            return hit
+        }
         val gradient = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(
@@ -106,7 +136,6 @@ object CompanionPanel {
                 0xFF000000.toInt(),
             ),
         )
-        val metrics = context.resources.displayMetrics
         val glow = GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
             colors = intArrayOf(
@@ -114,10 +143,15 @@ object CompanionPanel {
                 Color.TRANSPARENT,
             )
             setGradientCenter(0.5f, 0.45f)
-            gradientRadius =
-                maxOf(metrics.widthPixels, metrics.heightPixels) * 0.8f
+            gradientRadius = maxOf(w, h) * 0.8f
         }
-        return LayerDrawable(arrayOf(gradient, glow))
+        return LayerDrawable(arrayOf(gradient, glow)).also {
+            cachedPanelGlow = glowColor
+            cachedPanelLift = lift
+            cachedPanelW = w
+            cachedPanelH = h
+            cachedPanelBg = it
+        }
     }
 
     // Cheap Palette stand-in: draw the icon at 16x16 and average the opaque
@@ -144,6 +178,19 @@ object CompanionPanel {
 
     // Glow tint cache: PM icon + 16×16 average is too heavy for every NAV.
     private val glowColorByPackage = HashMap<String, Int>(32)
+
+    private var cachedIconLoader: AppIconLoader? = null
+    private var cachedIconPm: android.content.pm.PackageManager? = null
+
+    private fun iconLoader(context: Context): AppIconLoader {
+        val pm = context.packageManager
+        val hit = cachedIconLoader
+        if (hit != null && cachedIconPm === pm) return hit
+        return AppIconLoader(pm).also {
+            cachedIconLoader = it
+            cachedIconPm = pm
+        }
+    }
 
     // Glow tint: dominant color of the selected app's icon when available,
     // otherwise the accent color.
@@ -224,28 +271,44 @@ object CompanionPanel {
             val banner = view.findViewWithTag<View>(TAG_HERO_BANNER) as? FrameLayout
                 ?: return false
             val tileFrame = tile.parent as? FrameLayout ?: return false
-            PlatformTile.restyle(tile, context, rom.platformId)
-            // Rebind the art chain: stale art clears immediately, HERO
-            // banner / grid art fill in async, placeholder shows on a miss.
-            val dens = context.resources.displayMetrics.density
-            val hDp = context.resources.displayMetrics.heightPixels / dens
-            val artPx = (
-                CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens
-                ).toInt()
-            bindRomHeroArt(
-                banner,
-                tileFrame,
-                (context.applicationContext as GhostGalleonApp).artCache,
-                rom,
-                settings.artOverrides,
-                artPx,
+            val cache = (context.applicationContext as GhostGalleonApp).artCache
+            val artGen = cache.artGeneration(rom.id)
+            val alreadyBound = sameHeroBinding(
+                name.getTag(R.id.hero_bound_id),
+                name.getTag(R.id.hero_art_gen),
+                rom.id,
+                artGen,
             )
-            bindHeroLogo(
-                view.findViewWithTag(TAG_HERO_LOGO),
-                (context.applicationContext as GhostGalleonApp).artCache,
-                rom,
+            if (!alreadyBound) {
+                PlatformTile.restyle(tile, context, rom.platformId)
+            }
+            // Rebind the art chain only when the ROM or cache generation
+            // changed (NAV same-title skip; scrape / SET_ART still refresh).
+            if (!alreadyBound) {
+                val dens = context.resources.displayMetrics.density
+                val hDp = context.resources.displayMetrics.heightPixels / dens
+                val artPx = (
+                    CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens
+                    ).toInt()
+                bindRomHeroArt(
+                    banner,
+                    tileFrame,
+                    cache,
+                    rom,
+                    settings.artOverrides,
+                    artPx,
+                )
+                bindHeroLogo(
+                    view.findViewWithTag(TAG_HERO_LOGO),
+                    cache,
+                    rom,
+                )
+            }
+            name.setTag(R.id.hero_bound_id, rom.id)
+            name.setTag(R.id.hero_art_gen, artGen)
+            name.text = com.visorcraft.ghostgalleon.settings.RomNames.display(
+                rom, settings.romNames,
             )
-            name.text = rom.name
             val platform = Platforms.byId(rom.platformId)
             val installed = { pkg: String -> context.packageManager.isInstalled(pkg) }
             val preferred = RomProfiles.preferredPlayerId(
@@ -278,16 +341,19 @@ object CompanionPanel {
                     tv.text = ""
                 }
             }
-            bindScreenshot(
-                view.findViewWithTag(TAG_HERO_SHOT),
-                appCtx.artCache,
-                rom,
-            )
-            bindHeroVideo(view.findViewWithTag(TAG_HERO_VIDEO), rom)
-            // Platform-tinted glow (stronger atmosphere via PlatformLook accent).
-            view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
-                panelBackground(context, PlatformLook.accentColor(rom.platformId))
-            appCtx.requestRaProgress(rom.id, rom.name)
+            if (!alreadyBound) {
+                bindScreenshot(
+                    view.findViewWithTag(TAG_HERO_SHOT),
+                    appCtx.artCache,
+                    rom,
+                )
+                bindHeroVideo(view.findViewWithTag(TAG_HERO_VIDEO_HOST), rom)
+            }
+            if (!alreadyBound) {
+                view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
+                    panelBackground(context, PlatformLook.accentColor(rom.platformId))
+                appCtx.requestRaProgress(rom.id, rom.name)
+            }
             return true
         }
         val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
@@ -306,10 +372,13 @@ object CompanionPanel {
         if (name == null) return false
         val targetPx = (240 * context.resources.displayMetrics.density).toInt()
         val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
-        CustomIcon.bind(
-            icon, AppIconLoader(context.packageManager),
-            appCtx.artCache,
-            settings, entry.packageName, targetPx)
+        if (name.getTag(R.id.hero_bound_id) != entry.packageName) {
+            CustomIcon.bind(
+                icon, iconLoader(context),
+                appCtx.artCache,
+                settings, entry.packageName, targetPx)
+        }
+        name.setTag(R.id.hero_bound_id, entry.packageName)
         name.text = entry.label
         // Cached glow (no PM + 16×16 average every NAV).
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
@@ -492,11 +561,11 @@ object CompanionPanel {
             image.visibility = View.GONE
             ArtCache.dropDisplayed(image)
             image.setImageDrawable(null)
-            image.tag = null
+            image.setTag(R.id.media_bind_uri, null)
             return
         }
         image.visibility = View.VISIBLE
-        image.tag = uri
+        image.setTag(R.id.media_bind_uri, uri)
         ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
         val targetPx = (200 * image.resources.displayMetrics.density).toInt()
@@ -505,9 +574,11 @@ object CompanionPanel {
             key = "${rom.id}.logo",
             uriString = uri,
             maxDimension = targetPx,
-            isStillValid = { image.tag == uri },
+            isStillValid = { image.getTag(R.id.media_bind_uri) == uri },
         ) { bmp ->
-            if (bmp != null && image.tag == uri && image.isAttachedToWindow) {
+            if (bmp != null && image.getTag(R.id.media_bind_uri) == uri &&
+                image.isAttachedToWindow
+            ) {
                 ArtCache.showDisplayed(image, bmp)
             }
         }
@@ -525,11 +596,11 @@ object CompanionPanel {
             image.visibility = View.GONE
             ArtCache.dropDisplayed(image)
             image.setImageDrawable(null)
-            image.tag = null
+            image.setTag(R.id.media_bind_uri, null)
             return
         }
         image.visibility = View.VISIBLE
-        image.tag = uri
+        image.setTag(R.id.media_bind_uri, uri)
         ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
         val targetPx = (320 * image.resources.displayMetrics.density).toInt()
@@ -538,12 +609,12 @@ object CompanionPanel {
             key = "shot:${rom.id}",
             uriString = uri,
             maxDimension = targetPx,
-            isStillValid = { image.tag == uri },
+            isStillValid = { image.getTag(R.id.media_bind_uri) == uri },
         ) { bmp ->
-            image.post {
-                if (bmp != null && image.tag == uri && image.isAttachedToWindow) {
-                    ArtCache.showDisplayed(image, bmp)
-                }
+            if (bmp != null && image.getTag(R.id.media_bind_uri) == uri &&
+                image.isAttachedToWindow
+            ) {
+                ArtCache.showDisplayed(image, bmp)
             }
         }
     }
@@ -551,48 +622,79 @@ object CompanionPanel {
     /**
      * Muted looping VideoView for [RomEntry.videoUri]. Starts after 300ms;
      * hides silently on error; stops/releases on detach or rebind.
-     * [VideoView.tag] holds the bound URI string (same pattern as screenshot).
+     * [host] is a cheap FrameLayout; the SurfaceView is created only when
+     * this ROM actually has a video URI.
      */
-    private fun bindHeroVideo(video: VideoView?, rom: RomEntry) {
-        if (video == null) return
-        // Cancel any pending delayed start from a previous bind.
-        (video.getTag(android.R.id.message) as? Runnable)?.let { video.removeCallbacks(it) }
-        runCatching { video.stopPlayback() }
+    private fun bindHeroVideo(host: FrameLayout?, rom: RomEntry) {
+        if (host == null) return
         val uri = HeroDetail.videoUri(rom)
         if (uri == null) {
-            video.visibility = View.GONE
-            video.tag = null
+            releaseHostVideo(host)
+            host.visibility = View.GONE
             return
         }
-        video.tag = uri
+        host.visibility = View.VISIBLE
+        var video = host.getChildAt(0) as? VideoView
+        if (video != null &&
+            video.getTag(R.id.media_bind_uri) == uri &&
+            video.visibility == View.VISIBLE
+        ) {
+            return
+        }
+        if (video == null) {
+            val radius = 12 * host.resources.displayMetrics.density
+            video = VideoView(host.context).apply {
+                tag = TAG_HERO_VIDEO
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, radius)
+                    }
+                }
+            }
+            host.addView(
+                video,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        } else {
+            (video.getTag(android.R.id.message) as? Runnable)?.let {
+                video.removeCallbacks(it)
+            }
+            runCatching { video.stopPlayback() }
+        }
+        video.setTag(R.id.media_bind_uri, uri)
         video.visibility = View.VISIBLE
+        val bound = video
         val startRunnable = Runnable {
-            if (!video.isAttachedToWindow) return@Runnable
-            if (video.tag != uri) return@Runnable
+            if (!bound.isAttachedToWindow) return@Runnable
+            if (bound.getTag(R.id.media_bind_uri) != uri) return@Runnable
             runCatching {
-                video.setVideoURI(Uri.parse(uri))
-                video.setOnPreparedListener { mp: MediaPlayer ->
+                bound.setVideoURI(Uri.parse(uri))
+                bound.setOnPreparedListener { mp: MediaPlayer ->
                     runCatching {
                         mp.isLooping = true
                         mp.setVolume(0f, 0f)
                     }
-                    if (video.isAttachedToWindow && video.tag == uri) {
-                        video.start()
+                    if (bound.isAttachedToWindow &&
+                        bound.getTag(R.id.media_bind_uri) == uri
+                    ) {
+                        bound.start()
                     }
                 }
-                video.setOnErrorListener { _, _, _ ->
-                    video.visibility = View.GONE
+                bound.setOnErrorListener { _, _, _ ->
+                    bound.visibility = View.GONE
                     true
                 }
             }.onFailure {
-                video.visibility = View.GONE
+                bound.visibility = View.GONE
             }
         }
-        // Stash the runnable so a rebind can cancel it.
-        video.setTag(android.R.id.message, startRunnable)
-        video.postDelayed(startRunnable, 300L)
-        // Ensure cleanup when the view leaves the window (selection rebuild).
-        if (video.getTag(android.R.id.background) == null) {
+        bound.setTag(android.R.id.message, startRunnable)
+        bound.postDelayed(startRunnable, 300L)
+        if (bound.getTag(android.R.id.background) == null) {
             val listener = object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) {}
                 override fun onViewDetachedFromWindow(v: View) {
@@ -604,9 +706,18 @@ object CompanionPanel {
                     }
                 }
             }
-            video.addOnAttachStateChangeListener(listener)
-            video.setTag(android.R.id.background, listener)
+            bound.addOnAttachStateChangeListener(listener)
+            bound.setTag(android.R.id.background, listener)
         }
+    }
+
+    private fun releaseHostVideo(host: FrameLayout) {
+        val video = host.getChildAt(0) as? VideoView ?: return
+        (video.getTag(android.R.id.message) as? Runnable)?.let {
+            video.removeCallbacks(it)
+        }
+        runCatching { video.stopPlayback() }
+        host.removeAllViews()
     }
 
     // ROM hero art chain: wide cached HERO art wins and swaps the square
@@ -712,6 +823,12 @@ object CompanionPanel {
         }
         texts.addView(TextView(context).apply {
             tag = TAG_HERO_NAME
+            val stripRom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
+            setTag(R.id.hero_bound_id, stripRom?.id ?: state.selectedKey)
+            setTag(
+                R.id.hero_art_gen,
+                stripRom?.let { app.artCache.artGeneration(it.id) } ?: 0,
+            )
             text = context.resolveText(model.title)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(Color.WHITE)
@@ -853,7 +970,7 @@ object CompanionPanel {
         if (entry != null) {
             CustomIcon.bind(
                 image,
-                AppIconLoader(context.packageManager),
+                iconLoader(context),
                 app.artCache,
                 settings,
                 entry.packageName,
@@ -889,13 +1006,24 @@ object CompanionPanel {
             context,
             model.platformId?.let { PlatformLook.accentColor(it) } ?: settings.accentColor,
         )
-        val density = context.resources.displayMetrics.density
-        val artSize = (SelectionStrip.ART_SIZE_DP * density).toInt()
-        bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
-        if (model.isRom) {
-            val rom = selectedRom(state.selectedKey, roms, app)
+        val rom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
+        val bindId = rom?.id ?: state.selectedKey
+        val artGen = rom?.let { app.artCache.artGeneration(it.id) } ?: 0
+        val alreadyBound = bindId != null &&
+            sameHeroBinding(
+                name.getTag(R.id.hero_bound_id),
+                name.getTag(R.id.hero_art_gen),
+                bindId,
+                artGen,
+            )
+        if (!alreadyBound) {
+            val density = context.resources.displayMetrics.density
+            val artSize = (SelectionStrip.ART_SIZE_DP * density).toInt()
+            bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
+        name.setTag(R.id.hero_bound_id, bindId)
+        name.setTag(R.id.hero_art_gen, artGen)
         return true
     }
 
@@ -1156,6 +1284,8 @@ object CompanionPanel {
             // Title must fit above actions on short secondary panels.
             hero.addView(TextView(context).apply {
                 tag = TAG_HERO_NAME
+                setTag(R.id.hero_bound_id, selectedRom.id)
+                setTag(R.id.hero_art_gen, cache.artGeneration(selectedRom.id))
                 text = selectedRom.name
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
                 setTextColor(Color.WHITE)
@@ -1278,22 +1408,15 @@ object CompanionPanel {
                     gravity = Gravity.CENTER_HORIZONTAL
                 })
                 bindScreenshot(shot, cache, selectedRom)
-                val video = VideoView(context).apply {
-                    tag = TAG_HERO_VIDEO
+                val videoHost = FrameLayout(context).apply {
+                    tag = TAG_HERO_VIDEO_HOST
                     visibility = View.GONE
-                    clipToOutline = true
-                    outlineProvider = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) {
-                            outline.setRoundRect(
-                                0, 0, view.width, view.height, dp(12).toFloat())
-                        }
-                    }
                 }
-                hero.addView(video, LinearLayout.LayoutParams(dp(280), dp(140)).apply {
+                hero.addView(videoHost, LinearLayout.LayoutParams(dp(280), dp(140)).apply {
                     topMargin = dp(6)
                     gravity = Gravity.CENTER_HORIZONTAL
                 })
-                bindHeroVideo(video, selectedRom)
+                bindHeroVideo(videoHost, selectedRom)
             }
             // Hero quick actions — same dark rounded idle chips as Hero/Now/
             // Perf/Pin (not solid accent bricks). Fixed height + baseline off
@@ -1404,12 +1527,13 @@ object CompanionPanel {
             val icon = ImageView(context)
             icon.tag = TAG_HERO_ICON
             CustomIcon.bind(
-                icon, AppIconLoader(context.packageManager),
+                icon, iconLoader(context),
                 (activity.application as GhostGalleonApp).artCache,
                 settings, selectedEntry.packageName, artPx)
             hero.addView(icon, LinearLayout.LayoutParams(artPx, artPx))
             hero.addView(TextView(context).apply {
                 tag = TAG_HERO_NAME
+                setTag(R.id.hero_bound_id, selectedEntry.packageName)
                 text = selectedEntry.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
                 setTextColor(Color.WHITE)

@@ -433,22 +433,36 @@ object Platforms {
     @Volatile
     private var packOverlay: List<Platform> = emptyList()
 
+    @Volatile
+    private var allCached: List<Platform> = BUILTIN
+
+    @Volatile
+    private var byIdCache: Map<String, Platform> = BUILTIN.associateBy { it.id }
+
     /** Built-ins merged with any installed platform pack. */
     val ALL: List<Platform>
-        get() = PlatformPack.merge(BUILTIN, packOverlay)
+        get() = allCached
 
     /** Install (or replace) the imported pack overlay. Empty clears it. */
     fun setPackOverlay(platforms: List<Platform>) {
         packOverlay = platforms
+        refreshCaches()
     }
 
     fun clearPackOverlay() {
         packOverlay = emptyList()
+        refreshCaches()
     }
 
     fun packOverlay(): List<Platform> = packOverlay
 
-    fun byId(id: String): Platform? = ALL.firstOrNull { it.id == id }
+    fun byId(id: String): Platform? = byIdCache[id]
+
+    private fun refreshCaches() {
+        val merged = PlatformPack.merge(BUILTIN, packOverlay)
+        allCached = merged
+        byIdCache = merged.associateBy { it.id }
+    }
 
     /** The platform owning a folder name (tree root or first path segment). */
     fun platformForFolder(name: String): Platform? =

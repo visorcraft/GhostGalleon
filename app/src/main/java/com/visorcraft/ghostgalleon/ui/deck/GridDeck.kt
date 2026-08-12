@@ -272,9 +272,15 @@ class GridDeck(
         val currentPage = (selectedIndex() / geometry.cellsPerPage) + 1
         for (i in 0 until dots.childCount) {
             val page = i + 1
-            dots.getChildAt(i).background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(if (page == currentPage) settings.accentColor else 0x4DFFFFFF)
+            val color = if (page == currentPage) settings.accentColor else 0x4DFFFFFF
+            val existing = dots.getChildAt(i).background as? GradientDrawable
+            if (existing != null) {
+                existing.setColor(color)
+            } else {
+                dots.getChildAt(i).background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(color)
+                }
             }
         }
     }
@@ -335,7 +341,7 @@ class GridDeck(
         val app = activity.application as GhostGalleonApp
         val px = (96 * activity.resources.displayMetrics.density).toInt()
         SlotKey.romId(key)?.let { id ->
-            val rom = roms.firstOrNull { it.id == id } ?: return
+            val rom = app.romEntry(id) ?: return
             app.artCache.load(
                 activity, rom, px,
                 artOverrides = app.settings.artOverrides,
@@ -356,7 +362,7 @@ class GridDeck(
 
     private fun memberLabel(key: String): String {
         SlotKey.romId(key)?.let { id ->
-            return roms.firstOrNull { it.id == id }?.name ?: key
+            return (activity.application as GhostGalleonApp).romEntry(id)?.name ?: key
         }
         if (SlotKey.isFolder(key)) {
             val fid = SlotKey.folderId(key)

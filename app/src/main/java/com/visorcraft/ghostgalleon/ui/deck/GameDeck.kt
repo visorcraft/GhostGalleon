@@ -1862,7 +1862,7 @@ class GameDeck(
     /** Human label for a continue/slot key (ROM name or app label). */
     private fun continueLabel(key: String, live: Settings): String {
         SlotKey.romId(key)?.let { id ->
-            roms.firstOrNull { it.id == id }?.name?.let { return it }
+            app().romEntry(id)?.name?.let { return it }
         }
         library.curated(live).firstOrNull { it.packageName == key }?.label?.let { return it }
         return key.substringAfterLast(':').ifBlank { key }

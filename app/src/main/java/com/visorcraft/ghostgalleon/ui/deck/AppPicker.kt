@@ -73,6 +73,8 @@ class AppPicker(
     private var highlight: Int =
         items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
     private var query = ""
+    private var lastFilterQuery = ""
+    private var lastFilterItems: List<PickerItem>? = null
     private var listView: ListView? = null
     private var adapter: PickerAdapter? = null
     private var overlayView: FrameLayout? = null
@@ -89,8 +91,12 @@ class AppPicker(
                 allEntries, roms, query,
                 hiddenRomIds = hiddenRomIds,
                 preSortedRoms = sortedRoms,
+                previousQuery = lastFilterQuery,
+                previousItems = lastFilterItems,
             )
         }
+        lastFilterQuery = query
+        lastFilterItems = items
         highlight =
             items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
         adapter?.notifyDataSetChanged()
@@ -457,14 +463,21 @@ class AppPicker(
                     ViewGroup.LayoutParams.WRAP_CONTENT)
             }
 
-            holder.thumb.removeAllViews()
             when (item) {
                 is PickerItem.App -> {
-                    holder.thumb.addView(ImageView(context).apply {
+                    val bindKey = "a:${item.entry.packageName}"
+                    val existing = holder.thumb.getChildAt(0) as? ImageView
+                    if (existing == null || holder.thumb.tag != bindKey) {
+                        holder.thumb.removeAllViews()
+                        val icon = ImageView(context)
+                        holder.thumb.addView(
+                            icon, FrameLayout.LayoutParams(iconSize, iconSize),
+                        )
                         CustomIcon.bind(
-                            this, iconLoader, app.artCache, app.settings,
+                            icon, iconLoader, app.artCache, app.settings,
                             item.entry.packageName, iconSize)
-                    }, FrameLayout.LayoutParams(iconSize, iconSize))
+                        holder.thumb.tag = bindKey
+                    }
                     holder.name.text = item.entry.label
                     holder.tag.text = ""
                     row.setOnClickListener {
@@ -483,13 +496,22 @@ class AppPicker(
                     }
                 }
                 is PickerItem.Rom -> {
-                    holder.thumb.addView(
-                        PlatformTile.view(context, item.entry.platformId,
-                            cornerRadiusDp = 12),
-                        FrameLayout.LayoutParams(iconSize, iconSize))
+                    val pid = item.entry.platformId
+                    val existing = holder.thumb.getChildAt(0) as? TextView
+                    if (existing != null && holder.thumb.childCount == 1) {
+                        PlatformTile.restyle(
+                            existing, context, pid, cornerRadiusDp = 12,
+                        )
+                    } else {
+                        holder.thumb.removeAllViews()
+                        holder.thumb.addView(
+                            PlatformTile.view(context, pid, cornerRadiusDp = 12),
+                            FrameLayout.LayoutParams(iconSize, iconSize),
+                        )
+                    }
+                    holder.thumb.tag = "r:$pid"
                     holder.name.text = item.entry.name
-                    holder.tag.text = Platforms.byId(item.entry.platformId)
-                        ?.displayName ?: item.entry.platformId
+                    holder.tag.text = Platforms.byId(pid)?.displayName ?: pid
                     row.setOnClickListener { onPick(SlotKey.rom(item.entry.id)) }
                     row.setOnLongClickListener(null)
                 }

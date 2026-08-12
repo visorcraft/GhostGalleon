@@ -36,9 +36,22 @@ object PickerItems {
         )
 
     /**
+     * True when [nextQuery] is a longer prefix of [previousQuery], so a
+     * previous match list can be filtered instead of the full library.
+     */
+    fun canNarrow(previousQuery: String, nextQuery: String): Boolean {
+        val prev = previousQuery.trim()
+        val next = nextQuery.trim()
+        if (prev.isEmpty() || next.isEmpty()) return false
+        return next.startsWith(prev, ignoreCase = true)
+    }
+
+    /**
      * @param preSortedRoms when non-null, used as the ROM base (already
      *   filtered for hidden + sorted). Avoids re-sorting thousands of ROMs
      *   on every search keystroke in AppPicker.
+     * @param previousQuery / [previousItems] let a longer prefix query
+     *   filter the last hit list instead of walking the whole library.
      */
     fun build(
         apps: List<AppEntry>,
@@ -46,25 +59,34 @@ object PickerItems {
         query: String,
         hiddenRomIds: Set<String> = emptySet(),
         preSortedRoms: List<RomEntry>? = null,
+        previousQuery: String = "",
+        previousItems: List<PickerItem>? = null,
     ): List<PickerItem> {
         val q = query.trim()
+        val reuse = previousItems != null && canNarrow(previousQuery, q)
+        val appSrc = if (reuse) {
+            previousItems!!.mapNotNull { (it as? PickerItem.App)?.entry }
+        } else {
+            apps
+        }
         val matchedApps = if (q.isEmpty()) {
             apps
         } else {
-            apps.filter {
+            appSrc.filter {
                 it.label.contains(q, ignoreCase = true) ||
                     it.packageName.contains(q, ignoreCase = true)
             }
         }
         val sorted = preSortedRoms ?: sortedRoms(roms, hiddenRomIds)
+        val romSrc = if (reuse) {
+            previousItems!!.mapNotNull { (it as? PickerItem.Rom)?.entry }
+        } else {
+            sorted
+        }
         val matchedRoms = if (q.isEmpty()) {
             sorted
         } else {
-            sorted.filter {
-                it.name.contains(q, ignoreCase = true) ||
-                    (Platforms.byId(it.platformId)?.displayName
-                        ?.contains(q, ignoreCase = true) == true)
-            }
+            romSrc.filter { romMatches(it, q) }
         }
         val items = mutableListOf<PickerItem>()
         if (matchedApps.isNotEmpty()) {
@@ -76,5 +98,11 @@ object PickerItems {
             matchedRoms.forEach { items += PickerItem.Rom(it) }
         }
         return items
+    }
+
+    internal fun romMatches(rom: RomEntry, query: String): Boolean {
+        if (rom.name.contains(query, ignoreCase = true)) return true
+        val platform = Platforms.byId(rom.platformId)?.displayName ?: return false
+        return platform.contains(query, ignoreCase = true)
     }
 }

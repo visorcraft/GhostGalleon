@@ -7,4 +7,12 @@
     <item name="grid_cell_key" type="id" />
     <!-- GameDeck carousel: entry key bound into a card holder. -->
     <item name="carousel_entry_key" type="id" />
+    <!-- Companion hero: ArtCache write generation last bound for this ROM. -->
+    <item name="hero_art_gen" type="id" />
+    <!-- Companion hero: ROM id / package last bound (do not overwrite find-tags). -->
+    <item name="hero_bound_id" type="id" />
+    <!-- Companion media: URI last bound on screenshot / logo / video. -->
+    <item name="media_bind_uri" type="id" />
+    <!-- PlatformTile: last restyled platform id (keep default tag for find). -->
+    <item name="platform_tile_id" type="id" />
 </resources>

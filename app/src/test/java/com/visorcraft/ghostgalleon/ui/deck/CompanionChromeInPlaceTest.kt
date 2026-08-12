@@ -12,6 +12,14 @@ import org.junit.Test
 class CompanionChromeInPlaceTest {
 
     @Test
+    fun `sameHeroBinding skips only matching id and generation`() {
+        assertTrue(CompanionPanel.sameHeroBinding("rom:1", 2, "rom:1", 2))
+        assertFalse(CompanionPanel.sameHeroBinding("rom:1", 2, "rom:1", 3))
+        assertFalse(CompanionPanel.sameHeroBinding("rom:1", 2, "rom:2", 2))
+        assertFalse(CompanionPanel.sameHeroBinding(null, null, "rom:1", 0))
+    }
+
+    @Test
     fun `resume already on with chip absent is content omit - in-place OK`() {
         val chrome = BrowseChrome.MINIMAL.copy(resumeChip = true)
         assertTrue(

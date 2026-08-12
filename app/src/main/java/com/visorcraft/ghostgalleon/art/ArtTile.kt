@@ -88,40 +88,37 @@ object ArtTile {
             context, rom, targetPx,
             artOverrides = artOverrides,
             isStillValid = { overlay.tag == rom.id },
-        ) { bitmap ->
+        ) onGrid@{ bitmap ->
             // onResult is already main-thread; skip an extra post frame.
-            if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@load
+            if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@onGrid
             if (bitmap != null) {
                 applyRounded(overlay, context, bitmap, radiusPx)
-                return@load
+                return@onGrid
             }
-            if (cache.diskHas(rom.id, ArtCache.ArtKind.LOGO)) {
-                cache.load(
-                    context, rom, targetPx,
-                    kind = ArtCache.ArtKind.LOGO,
+            // Logo fallback on the decode thread (no main-thread disk stat).
+            cache.load(
+                context, rom, targetPx,
+                kind = ArtCache.ArtKind.LOGO,
+                isStillValid = { overlay.tag == rom.id },
+            ) onLogo@{ logoBmp ->
+                if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@onLogo
+                if (logoBmp != null) {
+                    applyRounded(overlay, context, logoBmp, radiusPx)
+                    return@onLogo
+                }
+                val logo = HeroDetail.logoUri(rom) ?: return@onLogo
+                cache.loadUri(
+                    context,
+                    key = "${rom.id}.logo",
+                    uriString = logo,
+                    maxDimension = targetPx,
                     isStillValid = { overlay.tag == rom.id },
-                ) { logoBmp ->
-                    if (logoBmp != null && overlay.tag == rom.id &&
+                ) { local ->
+                    if (local != null && overlay.tag == rom.id &&
                         overlay.isAttachedToWindow
                     ) {
-                        applyRounded(overlay, context, logoBmp, radiusPx)
+                        applyRounded(overlay, context, local, radiusPx)
                     }
-                }
-                return@load
-            }
-            // Local logo/wheel when box art is missing (already scanned).
-            val logo = HeroDetail.logoUri(rom) ?: return@load
-            cache.loadUri(
-                context,
-                key = "${rom.id}.logo",
-                uriString = logo,
-                maxDimension = targetPx,
-                isStillValid = { overlay.tag == rom.id },
-            ) { logoBmp ->
-                if (logoBmp != null && overlay.tag == rom.id &&
-                    overlay.isAttachedToWindow
-                ) {
-                    applyRounded(overlay, context, logoBmp, radiusPx)
                 }
             }
         }

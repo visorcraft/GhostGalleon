@@ -61,6 +61,20 @@ class ArtCacheTest {
     }
 
     @Test
+    fun `artGeneration bumps on write and invalidate so hero skip can refresh`() {
+        val cache = ArtCache(tmp.root.resolve("art-gen"))
+        val id = "snes:snes/smw.smc"
+        assertEquals(0, cache.artGeneration(id))
+        cache.writeDiskBytes(id, byteArrayOf(1, 2, 3))
+        assertEquals(1, cache.artGeneration(id))
+        cache.writeDiskBytes(id, byteArrayOf(4, 5), ArtCache.ArtKind.HERO)
+        assertEquals(2, cache.artGeneration(id))
+        cache.invalidate(id)
+        assertEquals(3, cache.artGeneration(id))
+        assertEquals(0, cache.artGeneration("snes:other.smc"))
+    }
+
+    @Test
     fun `sourceStampMatches rejects mismatched override sources`() {
         // No expected URI (scrape path): any stamp is acceptable.
         assertTrue(ArtCache.sourceStampMatches(null, null))

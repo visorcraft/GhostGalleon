@@ -54,6 +54,9 @@ class DockBar(
     private var contentView: LinearLayout? = null
     private var pulseAnimator: ObjectAnimator? = null
     private var slotSize: Int = 0
+    private var paintedFocus: Int? = null
+    private var paintedMoving: Int? = null
+    private var focusPainted = false
 
     // Dock tiles resolve like grid slots: apps through the FULL cache (a
     // hidden app stays docked and launchable), ROMs through the library
@@ -191,14 +194,21 @@ class DockBar(
     // working copy) without rebuilding the bar.
     fun rebind() {
         slotFrames.forEachIndexed { index, frame -> populate(frame, index) }
+        focusPainted = false
     }
 
     // Moves the accent ring to [focused] (null = no dock focus, ring
     // returns to the deck content) and pulses the [moving] slot's alpha
     // while a dock move has it lifted.
     fun updateFocus(focused: Int?, moving: Int? = null) {
+        if (focusPainted && paintedFocus == focused && paintedMoving == moving) {
+            return
+        }
         pulseAnimator?.cancel()
         pulseAnimator = null
+        paintedFocus = focused
+        paintedMoving = moving
+        focusPainted = true
         slotFrames.forEachIndexed { index, frame ->
             frame.alpha = 1f
             frame.background = if (index == focused) {

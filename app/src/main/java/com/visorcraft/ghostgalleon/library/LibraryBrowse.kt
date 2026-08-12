@@ -23,6 +23,8 @@ object LibraryBrowse {
     /** Default rolling window for [Mode.PLAYED_THIS_MONTH] (30 days). */
     const val MONTH_WINDOW_MS: Long = 30L * 24L * 60L * 60L * 1000L
 
+    private val YEAR_TOKEN = Regex("""(\d{4})""")
+
     enum class Mode {
         ALL,
         RECENT,
@@ -410,7 +412,7 @@ object LibraryBrowse {
      */
     fun parseYear(raw: String?): Int? {
         if (raw.isNullOrBlank()) return null
-        val m = Regex("""(\d{4})""").find(raw.trim()) ?: return null
+        val m = YEAR_TOKEN.find(raw.trim()) ?: return null
         val y = m.groupValues[1].toIntOrNull() ?: return null
         return if (y in 1970..2099) y else null
     }
@@ -571,7 +573,7 @@ object LibraryBrowse {
     fun romMatchesSearch(rom: RomEntry, needle: String): Boolean {
         if (needle.isEmpty()) return true
         fun hit(raw: String?): Boolean =
-            !raw.isNullOrBlank() && raw.lowercase().contains(needle)
+            !raw.isNullOrBlank() && raw.contains(needle, ignoreCase = true)
         return hit(rom.name) ||
             hit(rom.id) ||
             hit(rom.platformId) ||

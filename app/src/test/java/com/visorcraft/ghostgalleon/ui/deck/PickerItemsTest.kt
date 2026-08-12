@@ -3,6 +3,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -109,6 +110,30 @@ class PickerItemsTest {
         assertEquals(PickerItem.Header(PickerItem.Header.Section.ROMS), noApps.first())
 
         assertTrue(PickerItems.build(apps, roms, "nothing matches this").isEmpty())
+    }
+
+    @Test
+    fun `canNarrow only when next is a longer prefix`() {
+        assertTrue(PickerItems.canNarrow("mar", "mario"))
+        assertTrue(PickerItems.canNarrow("MAR", "mario"))
+        assertFalse(PickerItems.canNarrow("", "mario"))
+        assertFalse(PickerItems.canNarrow("mario", "zelda"))
+        assertFalse(PickerItems.canNarrow("mario", "mar"))
+    }
+
+    @Test
+    fun `longer prefix query filters previous hits instead of the full list`() {
+        val first = PickerItems.build(apps, roms, "m")
+        val narrowed = PickerItems.build(
+            apps, roms, "mar",
+            previousQuery = "m",
+            previousItems = first,
+        )
+        assertEquals(
+            listOf("Mario 3D Land", "Super Mario World"),
+            narrowed.filterIsInstance<PickerItem.Rom>().map { it.entry.name },
+        )
+        assertTrue(narrowed.none { it is PickerItem.App })
     }
 
     @Test

@@ -172,7 +172,7 @@ private fun pickSgdbMatchThenStart(
     rom: RomEntry,
     apiKey: String,
 ) {
-    Thread {
+    ART_SEARCH_EXECUTOR.execute {
         val query = com.visorcraft.ghostgalleon.art.Sgdb.normalizeName(rom.name)
         val json = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
             .get(com.visorcraft.ghostgalleon.art.Sgdb.searchUrl(query), apiKey)
@@ -199,8 +199,10 @@ private fun pickSgdbMatchThenStart(
                 .setNegativeButton(R.string.action_cancel, null)
                 .show()
         }
-    }.start()
+    }
 }
+
+private val ART_SEARCH_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()
 
 private fun startArtworkJob(
     activity: AppCompatActivity,
