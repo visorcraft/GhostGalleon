@@ -282,6 +282,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (isFinishing || isDestroyed) return
         hideStatusBar(window)
         deckState.addListener(stateListener)
         // Rebuild when: never painted, library/settings epoch changed, OR we

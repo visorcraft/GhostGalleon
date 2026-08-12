@@ -151,6 +151,8 @@ class CompanionActivity : BaseDeckActivity() {
     override fun onResume() {
         if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
             closeQuietly()
+            super.onResume()
+            return
         }
         super.onResume()
     }
