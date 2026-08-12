@@ -1,8 +1,11 @@
 package com.visorcraft.ghostgalleon.settings
 
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompanionRoleTest {
@@ -194,5 +197,45 @@ class CompanionRoleTest {
         )
         assertNotEquals(CompanionRoleResolve.PinHonesty.DUAL_CLAIM, honesty)
         assertEquals(CompanionRoleResolve.PinHonesty.READY, honesty)
+    }
+
+    @Test
+    fun `pinConflictsWithSession is false when surface or pin is missing`() {
+        val surface = SessionSurface.forLaunch(
+            "rom:snes:x.smc",
+            "ra-snes9x",
+            "com.retroarch.aarch64",
+            0,
+        )
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession(null, surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("", surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("   ", surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.retroarch.aarch64", null))
+    }
+
+    @Test
+    fun `pinConflictsWithSession when pin matches KEEP session package`() {
+        val keep = SessionSurface.forLaunch(
+            "rom:snes:x.smc",
+            "ra-snes9x",
+            "com.retroarch.aarch64",
+            0,
+        )
+        assertEquals(SessionPolicy.KEEP_COMPANION, keep.policy)
+        assertTrue(CompanionRoleResolve.pinConflictsWithSession("com.retroarch.aarch64", keep))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.other.app", keep))
+    }
+
+    @Test
+    fun `pinConflictsWithSession when pin matches YIELD session package`() {
+        val yield = SessionSurface.forLaunch(
+            "rom:nds:mario.nds",
+            "melondualds",
+            "me.magnum.melondualds",
+            0,
+        )
+        assertEquals(SessionPolicy.YIELD_BOTH, yield.policy)
+        assertTrue(CompanionRoleResolve.pinConflictsWithSession("me.magnum.melondualds", yield))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.other.app", yield))
     }
 }

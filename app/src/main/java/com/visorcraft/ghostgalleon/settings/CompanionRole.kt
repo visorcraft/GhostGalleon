@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.settings
 
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 
 /**
  * Companion (non-interactive) panel presentation mode. Pure; host-tested.
@@ -53,6 +54,15 @@ object CompanionRoleResolve {
         if (ctx.pinnedPackage.isNullOrBlank()) return PinHonesty.EMPTY
         if (!ctx.pinnedPackageInstalled) return PinHonesty.MISSING
         return PinHonesty.READY
+    }
+
+    /**
+     * True when the companion pin is the same package as the open session.
+     * KEEP must not ActivityEmbed that game over itself on the companion.
+     */
+    fun pinConflictsWithSession(pinnedPackage: String?, surface: SessionSurface?): Boolean {
+        if (surface == null || pinnedPackage.isNullOrBlank()) return false
+        return pinnedPackage == surface.packageName
     }
 
     /**

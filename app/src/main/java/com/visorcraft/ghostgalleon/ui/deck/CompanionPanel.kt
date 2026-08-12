@@ -1093,19 +1093,22 @@ object CompanionPanel {
                 return root
             }
             CompanionRole.PINNED_APP -> {
-                content.addView(
-                    buildPinnedAppPanel(activity, settings, pinPkg, pinInstalled, toDp),
-                    LinearLayout.LayoutParams(
+                if (!CompanionRoleResolve.pinConflictsWithSession(pinPkg, app.sessionSurface)) {
+                    content.addView(
+                        buildPinnedAppPanel(activity, settings, pinPkg, pinInstalled, toDp),
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    content.background = panelBackground(context, settings.accentColor)
+                    root.addView(content, FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                    ),
-                )
-                content.background = panelBackground(context, settings.accentColor)
-                root.addView(content, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ))
-                return root
+                    ))
+                    return root
+                }
+                // Pin is the open KEEP game — pause pin, show Now Playing / hero.
             }
             CompanionRole.NOW_PLAYING -> {
                 // Full Now Playing as primary content when role is set.
