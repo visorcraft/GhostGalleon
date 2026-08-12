@@ -129,17 +129,20 @@ can be pinned as Android app launches, and Winlator is also a built-in Windows R
 Offline-first. Tiles, carousel cards, and hero use box art when available.
 
 - **Local:** `images/` / `media/` / `art/` next to ROMs (romm layout), cached privately. Logos/wheels fill tiles when box art is missing and show on the hero.
-- **SteamGridDB (optional):** Settings → Library → API key → “Download missing artwork”, or per-title **Download missing art** from a ROM’s menu. Pause below a battery floor (0 = off).
+- **SteamGridDB (optional):** Settings → Library → API key → “Download missing artwork”, or per-title **Download missing art** from a ROM’s menu. Pause below a battery floor (0 = off). Per-title match pick can show thumbnails for grid/hero/logo.
+- **Arcade titles:** a bundled FBNeo + MAME 2010/2003-Plus + HBMAME/Neo Geo name catalog is shipped in the APK. Settings → Library → Import arcade DAT overlays a user XML or ClrMame Pro DAT on top; long-press the row to clear. A small compiled fallback remains if the catalog is missing.
 - **RetroAchievements (optional):** username + API key for hero progress when configured.
 
 ---
 
 ## Permissions & data access
 
-Ghost Galleon requests only Android's `INTERNET` permission, used by the optional
-SteamGridDB and RetroAchievements integrations. All other launcher behavior is
-offline. ROM folders and custom artwork use user-selected, persistent Storage
-Access Framework grants; the app requests no broad storage permission.
+Ghost Galleon requests Android's `INTERNET` permission (optional SteamGridDB
+and RetroAchievements) and `SET_WALLPAPER` (one-shot solid-black system
+wallpaper so the Quickstep HOME gesture does not flash stock art). All other
+launcher behavior is offline. ROM folders and custom artwork use user-selected,
+persistent Storage Access Framework grants; the app requests no broad storage
+permission.
 
 ---
 

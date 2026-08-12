@@ -25,6 +25,10 @@ class MainActivity : BaseDeckActivity() {
         // Capture before super clears the flag at end of BaseDeckActivity.onResume.
         val returningFromElsewhere = leftHomeSinceResume()
         super.onResume()
+        if (isHomeRole()) {
+            com.visorcraft.ghostgalleon.ui.deck.HomeWallpaper.applyWindowFallback(this)
+            app.maybeSealHomeWallpaper()
+        }
         app.refreshDisplayConfig(debounce = true)
         if (returningFromElsewhere) {
             val pinReady = app.settings.companionRole ==

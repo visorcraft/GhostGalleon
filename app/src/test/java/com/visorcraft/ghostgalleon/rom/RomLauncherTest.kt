@@ -15,6 +15,19 @@ class RomLauncherTest {
         path: String? = "/storage/7F7E-2949/roms/snes/x.smc",
     ) = RomEntry(id = "$platformId:roms/snes/x.smc", name = "x", platformId = platformId, uri = uri, path = path)
 
+    private fun entryFor(platformId: String): RomEntry =
+        if (platformId == "psvita") {
+            RomEntry(
+                id = "psvita:PCSE00001",
+                name = "x",
+                platformId = "psvita",
+                uri = "content://x/eboot.bin",
+                path = "/storage/x/PCSE00001/eboot.bin",
+            )
+        } else {
+            entry(platformId)
+        }
+
     @Test
     fun `uri style sets data and substitutes no extras`() {
         val plan = LaunchPlanBuilder.build(Platforms.N3DS.player, entry("3ds"))!!
@@ -121,9 +134,35 @@ class RomLauncherTest {
     }
 
     @Test
+    fun `vita emulator extras use title_id and game_title`() {
+        val e = RomEntry(
+            id = "psvita:PCSE00001",
+            name = "Uncharted Golden Abyss",
+            platformId = "psvita",
+            uri = "content://x/eboot.bin",
+            path = "/storage/x/PCSE00001/eboot.bin",
+        )
+        val plan = LaunchPlanBuilder.build(Platforms.PSVITA.player, e)!!
+        assertEquals("org.vita3k.emulator.Emulator", plan.className)
+        assertEquals("PCSE00001", plan.extras["title_id"])
+        assertEquals("Uncharted Golden Abyss", plan.extras["game_title"])
+    }
+
+    @Test
+    fun `vita vpk without a title id fails current player so legacy can run`() {
+        assertNull(LaunchPlanBuilder.build(Platforms.PSVITA.player, entry("psvita")))
+        val legacy = Platforms.PSVITA.players.first { it.id == "vita3k-legacy" }
+        val plan = LaunchPlanBuilder.build(legacy, entry("psvita"))!!
+        assertFalse(plan.extras.containsKey("titleId"))
+        assertTrue(plan.extras["bootPath"]!!.isNotBlank())
+        assertEquals(plan.extras["bootPath"], plan.extras["gamePath"])
+    }
+
+    @Test
     fun `every registry template builds for an entry with uri and path`() {
         Platforms.ALL.forEach { p ->
-            val plan = LaunchPlanBuilder.build(p.player, entry(p.id))
+            val e = entryFor(p.id)
+            val plan = LaunchPlanBuilder.build(p.player, e)
             assertTrue("platform ${p.id}", plan != null)
             assertFalse(plan!!.packageName.isEmpty())
             assertFalse(plan.className.isEmpty())
@@ -136,7 +175,7 @@ class RomLauncherTest {
     @Test
     fun `every plan carries NEW_TASK`() {
         Platforms.ALL.forEach { p ->
-            val plan = LaunchPlanBuilder.build(p.player, entry(p.id))!!
+            val plan = LaunchPlanBuilder.build(p.player, entryFor(p.id))!!
             assertTrue(
                 "platform ${p.id} missing NEW_TASK",
                 plan.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0,
@@ -163,7 +202,7 @@ class RomLauncherTest {
         )
         assertEquals(clearing.size + plain.size, Platforms.ALL.size)
         clearing.forEach { p ->
-            val plan = LaunchPlanBuilder.build(p.player, entry(p.id))!!
+            val plan = LaunchPlanBuilder.build(p.player, entryFor(p.id))!!
             assertEquals(
                 "platform ${p.id}",
                 Intent.FLAG_ACTIVITY_NEW_TASK or clearFlags,
@@ -171,7 +210,7 @@ class RomLauncherTest {
             )
         }
         plain.forEach { p ->
-            val plan = LaunchPlanBuilder.build(p.player, entry(p.id))!!
+            val plan = LaunchPlanBuilder.build(p.player, entryFor(p.id))!!
             assertEquals("platform ${p.id}", Intent.FLAG_ACTIVITY_NEW_TASK, plan.flags)
         }
     }

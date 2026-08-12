@@ -28,7 +28,7 @@ Services et applications externes :
   fournisseur selon ses propres conditions ; aucun code ni aucune donnée
   SteamGridDB ne sont inclus.
 - Applications d'émulateurs (RetroArch, Azahar, Eden, melonDualDS, Dolphin,
-  NetherSX2, PPSSPP, Flycast, Cemu, Winlator)
+  NetherSX2, PPSSPP, Flycast, Cemu, Winlator, Vita3K)
   Installées et mises à jour séparément par l'utilisateur, chacune sous
   sa propre licence. Ghost Galleon leur envoie uniquement des intents de
   lancement.

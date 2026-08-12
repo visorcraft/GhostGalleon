@@ -23,7 +23,7 @@ Source Project - https://source.android.com):
   การค้นหาผลงานศิลปะเพิ่มเติม ต้องการคีย์ API ที่ผู้ใช้ให้มา บริการดำเนินการโดย
   ผู้ให้บริการของตัวเองภายใต้เงื่อนไขของตัวเอง ไม่มีโค้ดหรือข้อมูลของ SteamGridDB ถูกรวม
 - แอปตัวจำลอง (RetroArch, Azahar, Eden, melonDualDS, Dolphin,
-  NetherSX2, PPSSPP, Flycast, Cemu, Winlator)
+  NetherSX2, PPSSPP, Flycast, Cemu, Winlator, Vita3K)
   ผู้ใช้ติดตั้งและอัปเดตแยกต่างหาก แต่ละแอปมีใบอนุญาตของตัวเอง Ghost Galleon เพียงส่ง
   launch intents ไปยังแอปเหล่านั้น
 

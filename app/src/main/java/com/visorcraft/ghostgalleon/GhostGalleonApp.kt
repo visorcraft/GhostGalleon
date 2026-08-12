@@ -250,6 +250,70 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    private fun loadBundledArcadeTitles() {
+        runCatching {
+            assets.open("arcade_titles.tsv.gz").use {
+                com.visorcraft.ghostgalleon.rom.ArcadeTitles.loadBundledGzip(it)
+            }
+        }
+    }
+
+    private fun arcadeDatFile() = File(filesDir, "arcade_dat.json")
+
+    private fun loadArcadeDatOverlay() {
+        val file = arcadeDatFile()
+        if (!file.isFile) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            val map = mutableMapOf<String, String>()
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val id = keys.next()
+                val title = root.optString(id, "")
+                if (title.isNotBlank()) map[id] = title
+            }
+            com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(map)
+        }
+    }
+
+    fun importArcadeDat(xml: String): Int {
+        val parsed = com.visorcraft.ghostgalleon.rom.ArcadeDat.parse(xml)
+        com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(parsed)
+        runCatching {
+            val root = JSONObject()
+            parsed.forEach { (k, v) -> root.put(k, v) }
+            arcadeDatFile().writeText(root.toString())
+        }
+        rematchArcadeLibrary()
+        return parsed.size
+    }
+
+    fun clearArcadeDat() {
+        com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(emptyMap())
+        arcadeDatFile().delete()
+        rematchArcadeLibrary()
+    }
+
+    private fun rematchArcadeLibrary() {
+        val current = if (romEntries.isEmpty()) romLibrary.load() else romEntries
+        val next = com.visorcraft.ghostgalleon.rom.ArcadeTitles.relabel(current)
+        if (next !== current) {
+            romLibrary.save(next)
+            publishRomEntries(next)
+        }
+    }
+
+    fun arcadeDatCount(): Int =
+        com.visorcraft.ghostgalleon.rom.ArcadeTitles.overlayCount()
+
+    fun maybeSealHomeWallpaper() {
+        val flag = File(filesDir, "home_wallpaper_sealed")
+        if (flag.isFile) return
+        if (com.visorcraft.ghostgalleon.ui.deck.HomeWallpaper.seal(this)) {
+            runCatching { flag.writeText("1") }
+        }
+    }
+
     fun persistSgdbPicks() {
         SETTINGS_IO.execute {
             runCatching {
@@ -831,6 +895,8 @@ class GhostGalleonApp : Application() {
         loadRaCacheFile()
         loadSgdbMissFile()
         loadSgdbPicksFile()
+        loadBundledArcadeTitles()
+        loadArcadeDatOverlay()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.

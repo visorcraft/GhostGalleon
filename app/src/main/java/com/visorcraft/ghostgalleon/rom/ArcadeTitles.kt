@@ -1,18 +1,84 @@
 package com.visorcraft.ghostgalleon.rom
 
 /**
- * Slim FBNeo / MAME short-name → display title map so arcade zips are not
- * shown as stems (`mslug`). Not a full DAT. Pure; host-tested.
+ * Arcade zip short-name → display title. Lookup order: imported DAT
+ * overlay, bundled FBNeo/MAME 2003-Plus catalog, then this compiled
+ * fallback map. Pure; host-tested.
  */
 object ArcadeTitles {
+
+    @Volatile
+    private var overlay: Map<String, String> = emptyMap()
+
+    @Volatile
+    private var bundled: Map<String, String> = emptyMap()
+
+    fun installOverlay(titles: Map<String, String>) {
+        overlay = titles
+    }
+
+    fun installBundled(titles: Map<String, String>) {
+        bundled = titles
+    }
+
+    fun overlayCount(): Int = overlay.size
+
+    fun bundledCount(): Int = bundled.size
 
     fun displayName(stem: String): String {
         val key = stem.trim().lowercase()
         if (key.isEmpty()) return stem
-        return TITLES[key] ?: stem
+        return overlay[key] ?: bundled[key] ?: TITLES[key] ?: stem
     }
 
-    fun knownCount(): Int = TITLES.size
+    /** Filename stem from a library entry id or reconstructed path. */
+    fun stemOf(entry: RomEntry): String {
+        val file = entry.path?.substringAfterLast('/')
+            ?: entry.id.substringAfter(':', entry.name).substringAfterLast('/')
+        val dot = file.lastIndexOf('.')
+        return if (dot > 0) file.substring(0, dot) else file
+    }
+
+    /**
+     * Apply [displayName] to every arcade entry. Returns [entries]
+     * unchanged when no name would move (same instance).
+     */
+    fun relabel(entries: List<RomEntry>): List<RomEntry> {
+        var changed = false
+        val next = entries.map { e ->
+            if (e.platformId != "arcade") e
+            else {
+                val titled = displayName(stemOf(e))
+                if (titled == e.name) e else {
+                    changed = true
+                    e.copy(name = titled)
+                }
+            }
+        }
+        return if (changed) next else entries
+    }
+
+    fun knownCount(): Int = (overlay.keys + bundled.keys + TITLES.keys).size
+
+    /** TSV `shortname<TAB>title` lines. Host-tested. */
+    fun parseTsv(text: String): Map<String, String> {
+        if (text.isBlank()) return emptyMap()
+        val out = HashMap<String, String>()
+        text.lineSequence().forEach { line ->
+            val tab = line.indexOf('\t')
+            if (tab <= 0) return@forEach
+            val key = line.substring(0, tab).trim().lowercase()
+            val title = line.substring(tab + 1).trim()
+            if (key.isNotEmpty() && title.isNotEmpty()) out[key] = title
+        }
+        return out
+    }
+
+    fun loadBundledGzip(stream: java.io.InputStream) {
+        java.util.zip.GZIPInputStream(stream).bufferedReader().use { reader ->
+            bundled = parseTsv(reader.readText())
+        }
+    }
 
     private val TITLES: Map<String, String> = mapOf(
         "mslug" to "Metal Slug",

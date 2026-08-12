@@ -447,6 +447,12 @@
     <string name="settings_no_rom_selected">ไม่ได้เลือก ROM</string>
     <string name="settings_ra_sample_loaded">โหลดตัวอย่าง RA แล้ว</string>
     <string name="settings_sgdb_api_key">คีย์ API SteamGridDB</string>
+    <string name="settings_import_arcade_dat">นำเข้า DAT อาร์เคด</string>
+    <string name="settings_arcade_dat_imported">นำเข้าชื่อเกมอาร์เคด %1$d รายการ</string>
+    <string name="settings_arcade_dat_empty">ไม่พบชื่อเกมใน DAT นั้น</string>
+    <string name="settings_arcade_dat_failed">อ่าน DAT อาร์เคดไม่สำเร็จ</string>
+    <string name="settings_arcade_dat_cleared">ล้างโอเวอร์เลย์ DAT อาร์เคดแล้ว</string>
+    <string name="settings_arcade_dat_bundled">มาพร้อมเครื่อง %1$d</string>
     <string name="settings_api_key_hint">วางคีย์ API</string>
     <string name="settings_api_key_cleared">ล้างคีย์ API แล้ว</string>
     <string name="settings_download_artwork">ดาวน์โหลดอาร์ตเวิร์คที่หายไป</string>

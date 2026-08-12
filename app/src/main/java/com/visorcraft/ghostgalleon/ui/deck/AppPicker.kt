@@ -11,15 +11,15 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
-import android.widget.AbsListView
-import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.library.AppEntry
@@ -75,14 +75,17 @@ class AppPicker(
     private var query = ""
     private var lastFilterQuery = ""
     private var lastFilterItems: List<PickerItem>? = null
-    private var listView: ListView? = null
+    private var recycler: RecyclerView? = null
+    private var layoutManager: LinearLayoutManager? = null
     private var adapter: PickerAdapter? = null
+    private var emptyView: TextView? = null
     private var overlayView: FrameLayout? = null
     private var hideMenu: HideMenu? = null
     private val searchHandler = Handler(Looper.getMainLooper())
     private var pendingSearch: Runnable? = null
 
     private fun applySearch(next: String) {
+        val prevKey = items.getOrNull(highlight)?.let { PickerItems.rowKey(it) }
         query = next
         items = if (query.isBlank()) {
             emptyQueryItems
@@ -97,10 +100,17 @@ class AppPicker(
         }
         lastFilterQuery = query
         lastFilterItems = items
-        highlight =
+        val kept = prevKey?.let { key ->
+            items.indexOfFirst { PickerItems.rowKey(it) == key }
+        } ?: -1
+        highlight = if (kept >= 0) {
+            kept
+        } else {
             items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
-        adapter?.notifyDataSetChanged()
-        listView?.setSelection(0)
+        }
+        adapter?.submit(items)
+        refreshEmpty()
+        recycler?.scrollToPosition(if (kept >= 0) highlight else 0)
     }
 
     val view: View by lazy {
@@ -159,17 +169,16 @@ class AppPicker(
             bottomMargin = dp(12)
         })
 
-        val list = ListView(context).apply {
-            divider = null
-            dividerHeight = dp(6)
-            selector = android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.TRANSPARENT)
-        }
         val pickerAdapter = PickerAdapter(context, dp(40), dp(12), dp(10))
-        list.adapter = pickerAdapter
+        val list = RecyclerView(context).apply {
+            val lm = LinearLayoutManager(context)
+            layoutManager = lm
+            adapter = pickerAdapter
+            itemAnimator = null
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         // Row taps are handled by each row's own OnClickListener: the
-        // long-press listener (hide menu) makes rows consume touches,
-        // which would suppress an AdapterView-level OnItemClickListener.
+        // long-press listener (hide menu) makes rows consume touches.
         val empty = TextView(context).apply {
             setText(R.string.browse_no_matches_short)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -178,12 +187,15 @@ class AppPicker(
         }
         card.addView(list, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        list.emptyView = empty
         card.addView(empty, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        listView = list
+        recycler = list
+        layoutManager = list.layoutManager as LinearLayoutManager
         adapter = pickerAdapter
+        emptyView = empty
+        pickerAdapter.submit(items)
+        refreshEmpty()
         overlayView = overlay
         val metrics = context.resources.displayMetrics
         // Top-anchored. Slot pickers stay short so the IME does not cover
@@ -247,9 +259,12 @@ class AppPicker(
         }
         if (next == highlight || items[next] is PickerItem.Header) return
         highlight = next
-        rebindVisibleHighlight()
-        val list = listView ?: return
-        if (next < list.firstVisiblePosition || next > list.lastVisiblePosition) {
+        adapter?.notifyItemRangeChanged(0, items.size, PAYLOAD_HIGHLIGHT)
+        val list = recycler ?: return
+        val lm = layoutManager
+        val first = lm?.findFirstVisibleItemPosition() ?: 0
+        val last = lm?.findLastVisibleItemPosition() ?: 0
+        if (next < first || next > last) {
             list.smoothScrollToPosition(next)
         }
     }
@@ -257,17 +272,10 @@ class AppPicker(
     // Moves the accent ring to the highlighted row by updating the visible
     // rows in place; rows (re)attached while scrolling are bound with the
     // current highlight by getView.
-    private fun rebindVisibleHighlight() {
-        val list = listView ?: return
-        val first = list.firstVisiblePosition
-        for (i in 0 until list.childCount) {
-            val row = list.getChildAt(i) ?: continue
-            row.background = if (first + i == highlight) {
-                TileBackgrounds.selected(list.context, accentColor)
-            } else {
-                null
-            }
-        }
+    private fun refreshEmpty() {
+        val none = items.isEmpty()
+        emptyView?.visibility = if (none) View.VISIBLE else View.GONE
+        recycler?.visibility = if (none) View.GONE else View.VISIBLE
     }
 
     // Long-press an app row opens the confirm menu ("Hide app" / "Cancel")
@@ -289,6 +297,7 @@ class AppPicker(
 
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 110L
+        private const val PAYLOAD_HIGHLIGHT = "highlight"
     }
 
     // Confirm-style modal for a picker row: "Hide app" adds the package to
@@ -388,101 +397,128 @@ class AppPicker(
         val tag: TextView,
     )
 
+    private inner class HeaderVH(val text: TextView) : RecyclerView.ViewHolder(text)
+
+    private inner class RowVH(
+        val row: LinearLayout,
+        val cells: RowHolder,
+    ) : RecyclerView.ViewHolder(row)
+
     private inner class PickerAdapter(
         private val context: Context,
         private val iconSize: Int,
         private val rowPadH: Int,
         private val rowPadV: Int,
-    ) : BaseAdapter() {
-        override fun getCount() = items.size
-        override fun getItem(position: Int) = items[position]
-        override fun getItemId(position: Int) = position.toLong()
-        override fun getViewTypeCount() = 2
-        override fun getItemViewType(position: Int) =
-            if (items[position] is PickerItem.Header) 0 else 1
-        override fun isEnabled(position: Int) = items[position] !is PickerItem.Header
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        private var rows: List<PickerItem> = emptyList()
 
-        @Suppress("DEPRECATION") // Picker haptics intentionally override OS touch feedback.
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+        init {
+            setHasStableIds(true)
+        }
+
+        fun submit(next: List<PickerItem>) {
+            val old = rows
+            val diff = DiffUtil.calculateDiff(PickerDiff(old, next), false)
+            rows = next
+            diff.dispatchUpdatesTo(this)
+        }
+
+        override fun getItemCount(): Int = rows.size
+
+        override fun getItemId(position: Int): Long =
+            PickerItems.itemId(rows[position]).hashCode().toLong()
+
+        override fun getItemViewType(position: Int): Int =
+            if (rows[position] is PickerItem.Header) 0 else 1
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val density = context.resources.displayMetrics.density
             fun dp(value: Int) = (value * density).toInt()
-
-            val item = items[position]
-            if (item is PickerItem.Header) {
-                val header = (convertView as? TextView) ?: TextView(context).apply {
+            if (viewType == 0) {
+                val header = TextView(context).apply {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                     setTextColor(0x66FFFFFF)
                     setPadding(rowPadH, dp(10), rowPadH, dp(2))
-                    layoutParams = AbsListView.LayoutParams(
+                    layoutParams = RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT)
                 }
-                header.setText(
-                    if (item.section == PickerItem.Header.Section.APPS) R.string.label_apps
-                    else R.string.label_roms,
-                )
-                header.background = null
-                return header
+                return HeaderVH(header)
             }
-
-            val row: LinearLayout
-            val holder: RowHolder
-            val recycled = convertView?.tag as? RowHolder
-            if (recycled != null) {
-                row = convertView as LinearLayout
-                holder = recycled
-            } else {
-                row = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
-                }
-                val thumb = FrameLayout(context)
-                row.addView(thumb, LinearLayout.LayoutParams(iconSize, iconSize))
-                val name = TextView(context).apply {
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                    setTextColor(0xFFFFFFFF.toInt())
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(dp(12), 0, dp(8), 0)
-                }
-                row.addView(name, LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                val tag = TextView(context).apply {
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(0x66FFFFFF)
-                    maxLines = 1
-                }
-                row.addView(tag, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT))
-                holder = RowHolder(thumb, name, tag)
-                row.tag = holder
-                row.layoutParams = AbsListView.LayoutParams(
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
+                layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT)
             }
+            val thumb = FrameLayout(context)
+            row.addView(thumb, LinearLayout.LayoutParams(iconSize, iconSize))
+            val name = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTextColor(0xFFFFFFFF.toInt())
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(12), 0, dp(8), 0)
+            }
+            row.addView(name, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val tag = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(0x66FFFFFF)
+                maxLines = 1
+            }
+            row.addView(tag, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT))
+            return RowVH(row, RowHolder(thumb, name, tag))
+        }
 
+        override fun onBindViewHolder(
+            holder: RecyclerView.ViewHolder,
+            position: Int,
+            payloads: MutableList<Any>,
+        ) {
+            if (payloads.isNotEmpty() && payloads.all { it == PAYLOAD_HIGHLIGHT }) {
+                if (holder is RowVH) paintHighlight(holder.row, position)
+                return
+            }
+            onBindViewHolder(holder, position)
+        }
+
+        @Suppress("DEPRECATION") // Picker haptics intentionally override OS touch feedback.
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            val item = rows[position]
+            if (holder is HeaderVH && item is PickerItem.Header) {
+                holder.text.setText(
+                    if (item.section == PickerItem.Header.Section.APPS) R.string.label_apps
+                    else R.string.label_roms,
+                )
+                holder.text.background = null
+                return
+            }
+            if (holder !is RowVH) return
+            val row = holder.row
+            val cells = holder.cells
             when (item) {
                 is PickerItem.App -> {
                     val bindKey = "a:${item.entry.packageName}"
-                    val existing = holder.thumb.getChildAt(0) as? ImageView
-                    if (existing == null || holder.thumb.tag != bindKey) {
-                        holder.thumb.removeAllViews()
+                    val existing = cells.thumb.getChildAt(0) as? ImageView
+                    if (existing == null || cells.thumb.tag != bindKey) {
+                        cells.thumb.removeAllViews()
                         val icon = ImageView(context)
-                        holder.thumb.addView(
+                        cells.thumb.addView(
                             icon, FrameLayout.LayoutParams(iconSize, iconSize),
                         )
                         CustomIcon.bind(
                             icon, iconLoader, app.artCache, app.settings,
                             item.entry.packageName, iconSize)
-                        holder.thumb.tag = bindKey
+                        cells.thumb.tag = bindKey
                     }
-                    holder.name.text = item.entry.label
-                    holder.tag.text = ""
+                    cells.name.text = item.entry.label
+                    cells.tag.text = ""
                     row.setOnClickListener {
-                        // VIRTUAL_KEY for touch picks; the gamepad A-pick
-                        // path already taps via the central CONFIRM hook.
                         if (app.settings.haptics) {
                             row.performHapticFeedback(
                                 HapticFeedbackConstants.VIRTUAL_KEY,
@@ -494,36 +530,52 @@ class AppPicker(
                         openHideMenu(item.entry)
                         true
                     }
+                    row.isLongClickable = true
                 }
                 is PickerItem.Rom -> {
                     val pid = item.entry.platformId
-                    val existing = holder.thumb.getChildAt(0) as? TextView
-                    if (existing != null && holder.thumb.childCount == 1) {
+                    val existing = cells.thumb.getChildAt(0) as? TextView
+                    if (existing != null && cells.thumb.childCount == 1) {
                         PlatformTile.restyle(
                             existing, context, pid, cornerRadiusDp = 12,
                         )
                     } else {
-                        holder.thumb.removeAllViews()
-                        holder.thumb.addView(
+                        cells.thumb.removeAllViews()
+                        cells.thumb.addView(
                             PlatformTile.view(context, pid, cornerRadiusDp = 12),
                             FrameLayout.LayoutParams(iconSize, iconSize),
                         )
                     }
-                    holder.thumb.tag = "r:$pid"
-                    holder.name.text = item.entry.name
-                    holder.tag.text = Platforms.byId(pid)?.displayName ?: pid
+                    cells.thumb.tag = "r:$pid"
+                    cells.name.text = item.entry.name
+                    cells.tag.text = Platforms.byId(pid)?.displayName ?: pid
                     row.setOnClickListener { onPick(SlotKey.rom(item.entry.id)) }
                     row.setOnLongClickListener(null)
+                    row.isLongClickable = false
                 }
                 is PickerItem.Header -> {}
             }
-            row.isLongClickable = item is PickerItem.App
+            paintHighlight(row, position)
+        }
+
+        private fun paintHighlight(row: View, position: Int) {
             row.background = if (position == highlight) {
                 TileBackgrounds.selected(context, accentColor)
             } else {
                 null
             }
-            return row
         }
+    }
+
+    private class PickerDiff(
+        private val old: List<PickerItem>,
+        private val next: List<PickerItem>,
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize(): Int = old.size
+        override fun getNewListSize(): Int = next.size
+        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            PickerItems.itemId(old[oldItemPosition]) == PickerItems.itemId(next[newItemPosition])
+        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+            old[oldItemPosition] == next[newItemPosition]
     }
 }

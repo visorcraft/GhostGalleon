@@ -4,6 +4,8 @@
     <!-- Stage 3 artwork scraping (SteamGridDB gap-filler). Local card
          artwork and every other feature work fully offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Solid black system wallpaper so Quickstep HOME does not flash stock art. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
 
     <queries>
         <intent>

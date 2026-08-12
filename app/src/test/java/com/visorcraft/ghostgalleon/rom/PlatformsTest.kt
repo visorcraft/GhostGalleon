@@ -25,7 +25,9 @@ class PlatformsTest {
     @Test
     fun `vita and winlator are built-in launchable platforms`() {
         assertEquals("psvita", Platforms.PSVITA.id)
-        assertEquals("org.vita3k.emulator/.EmulationActivity", Platforms.PSVITA.player.component)
+        assertEquals("org.vita3k.emulator/.Emulator", Platforms.PSVITA.player.component)
+        assertTrue(Platforms.PSVITA.players.any { it.id == "vita3k-legacy" })
+        assertTrue(Platforms.PSVITA.players.any { it.id == "vita3k-home" })
         assertEquals("windows", Platforms.WINDOWS.id)
         assertTrue(Platforms.WINDOWS.players.any { it.component.startsWith("com.winlator") })
         assertEquals(Platforms.WINDOWS, Platforms.byId("windows"))

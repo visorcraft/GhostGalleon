@@ -447,6 +447,12 @@
     <string name="settings_no_rom_selected">Ninguna ROM seleccionada</string>
     <string name="settings_ra_sample_loaded">Muestra RA cargada</string>
     <string name="settings_sgdb_api_key">Clave API de SteamGridDB</string>
+    <string name="settings_import_arcade_dat">Importar DAT de arcade</string>
+    <string name="settings_arcade_dat_imported">Se importaron %1$d títulos de arcade</string>
+    <string name="settings_arcade_dat_empty">No se encontraron títulos en ese DAT</string>
+    <string name="settings_arcade_dat_failed">No se pudo leer el DAT de arcade</string>
+    <string name="settings_arcade_dat_cleared">Superposición DAT de arcade borrada</string>
+    <string name="settings_arcade_dat_bundled">Incluidos %1$d</string>
     <string name="settings_api_key_hint">Pegar clave API</string>
     <string name="settings_api_key_cleared">Clave API borrada</string>
     <string name="settings_download_artwork">Descargar arte faltante</string>

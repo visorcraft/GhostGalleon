@@ -448,6 +448,12 @@
     <string name="settings_no_rom_selected">Kein ROM ausgewählt</string>
     <string name="settings_ra_sample_loaded">RA-Beispiel geladen</string>
     <string name="settings_sgdb_api_key">SteamGridDB-API-Schlüssel</string>
+    <string name="settings_import_arcade_dat">Arcade-DAT importieren</string>
+    <string name="settings_arcade_dat_imported">%1$d Arcade-Titel importiert</string>
+    <string name="settings_arcade_dat_empty">Keine Titel in dieser DAT gefunden</string>
+    <string name="settings_arcade_dat_failed">Arcade-DAT konnte nicht gelesen werden</string>
+    <string name="settings_arcade_dat_cleared">Arcade-DAT-Overlay gelöscht</string>
+    <string name="settings_arcade_dat_bundled">Mitgeliefert %1$d</string>
     <string name="settings_api_key_hint">API-Schlüssel einfügen</string>
     <string name="settings_api_key_cleared">API-Schlüssel gelöscht</string>
     <string name="settings_download_artwork">Fehlende Artworks herunterladen</string>

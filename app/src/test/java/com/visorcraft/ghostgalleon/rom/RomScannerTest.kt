@@ -69,6 +69,62 @@ class RomScannerTest {
     }
 
     @Test
+    fun `arcade zip uses the title map for display names`() {
+        ArcadeTitles.installOverlay(emptyMap())
+        ArcadeTitles.installBundled(emptyMap())
+        val entries = RomScanner.scan(listOf(cardTree(listOf(
+            doc("7F7E-2949:roms/arcade/mslug.zip"),
+        ))))
+        assertEquals(1, entries.size)
+        assertEquals("arcade", entries[0].platformId)
+        assertEquals("Metal Slug", entries[0].name)
+    }
+
+    @Test
+    fun `arcade DAT overlay remaps scan names`() {
+        ArcadeTitles.installOverlay(mapOf("mslug" to "METAL SLUG (DAT)"))
+        try {
+            val entries = RomScanner.scan(listOf(cardTree(listOf(
+                doc("7F7E-2949:roms/arcade/mslug.zip"),
+            ))))
+            assertEquals("METAL SLUG (DAT)", entries[0].name)
+        } finally {
+            ArcadeTitles.installOverlay(emptyMap())
+        }
+    }
+
+    @Test
+    fun `vita vpk param sfo becomes title id and display name`() {
+        val sfo = packSfo(listOf("TITLE_ID" to "PCSE00099", "TITLE" to "Tearaway"))
+        val zip = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(zip).use { zos ->
+            zos.putNextEntry(java.util.zip.ZipEntry("sce_sys/param.sfo"))
+            zos.write(sfo)
+            zos.closeEntry()
+        }
+        val vpk = doc("7F7E-2949:roms/psvita/tearaway.vpk")
+        val entries = RomScanner.scan(
+            listOf(cardTree(listOf(vpk))),
+            openStream = { if (it == vpk.uri) java.io.ByteArrayInputStream(zip.toByteArray()) else null },
+        )
+        assertEquals(1, entries.size)
+        assertEquals("psvita", entries[0].platformId)
+        assertEquals("psvita:PCSE00099", entries[0].id)
+        assertEquals("Tearaway", entries[0].name)
+    }
+
+    @Test
+    fun `vita eboot under a title-id folder becomes a psvita entry`() {
+        val entries = RomScanner.scan(listOf(cardTree(listOf(
+            doc("7F7E-2949:roms/psvita/PCSE00001/eboot.bin"),
+        ))))
+        assertEquals(1, entries.size)
+        assertEquals("psvita", entries[0].platformId)
+        assertEquals("PCSE00001", entries[0].name)
+        assertEquals("psvita:PCSE00001", entries[0].id)
+    }
+
+    @Test
     fun `bios folders and sibling bins are dropped`() {
         val entries = RomScanner.scan(listOf(cardTree(listOf(
             doc("7F7E-2949:roms/ps1/bios/scph5501.bin"),
@@ -332,5 +388,47 @@ class RomScannerTest {
         assertEquals(1, entries.size)
         assertEquals("Chrono Trigger", entries[0].name)
         assertNull(entries[0].description)
+    }
+
+    private fun packSfo(fields: List<Pair<String, String>>): ByteArray {
+        val keys = fields.map { (k, _) -> (k + '\u0000').toByteArray(Charsets.UTF_8) }
+        val values = fields.map { (_, v) -> (v + '\u0000').toByteArray(Charsets.UTF_8) }
+        val keyTable = keys.fold(ByteArray(0)) { acc, b -> acc + b }
+        val dataTable = values.fold(ByteArray(0)) { acc, b -> acc + b }
+        val keyOff = 20 + 16 * fields.size
+        val dataOff = keyOff + keyTable.size
+        val out = ByteArray(dataOff + dataTable.size)
+        out[1] = 'P'.code.toByte()
+        out[2] = 'S'.code.toByte()
+        out[3] = 'F'.code.toByte()
+        fun put16(off: Int, v: Int) {
+            out[off] = (v and 0xFF).toByte()
+            out[off + 1] = ((v ushr 8) and 0xFF).toByte()
+        }
+        fun put32(off: Int, v: Int) {
+            out[off] = (v and 0xFF).toByte()
+            out[off + 1] = ((v ushr 8) and 0xFF).toByte()
+            out[off + 2] = ((v ushr 16) and 0xFF).toByte()
+            out[off + 3] = ((v ushr 24) and 0xFF).toByte()
+        }
+        put32(4, 0x00000101)
+        put32(8, keyOff)
+        put32(12, dataOff)
+        put32(16, fields.size)
+        var kRel = 0
+        var dRel = 0
+        fields.indices.forEach { i ->
+            val base = 20 + i * 16
+            put16(base, kRel)
+            put16(base + 2, 0x0204)
+            put32(base + 4, values[i].size)
+            put32(base + 8, values[i].size)
+            put32(base + 12, dRel)
+            kRel += keys[i].size
+            dRel += values[i].size
+        }
+        System.arraycopy(keyTable, 0, out, keyOff, keyTable.size)
+        System.arraycopy(dataTable, 0, out, dataOff, dataTable.size)
+        return out
     }
 }

@@ -258,15 +258,81 @@ private fun pickImageKind(
         onPicked(urls.firstOrNull())
         return
     }
-    val labels = urls.mapIndexed { i, u ->
-        "${i + 1}. ${u.substringAfterLast('/').take(48)}"
-    }.toTypedArray()
-    android.app.AlertDialog.Builder(activity)
-        .setTitle(titleRes)
-        .setItems(labels) { _, which -> onPicked(urls.getOrNull(which)) }
-        .setNeutralButton(R.string.artwork_use_first) { _, _ -> onPicked(urls.first()) }
-        .setNegativeButton(R.string.action_cancel, null)
-        .show()
+    ART_SEARCH_EXECUTOR.execute {
+        val transport = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
+        val shown = urls.take(12)
+        val thumbs = shown.map { url ->
+            val bmp = runCatching {
+                val bytes = transport.download(url) ?: return@runCatching null
+                decodeThumb(bytes, 144)
+            }.getOrNull()
+            url to bmp
+        }
+        activity.runOnUiThread {
+            if (activity.isFinishing) return@runOnUiThread
+            val density = activity.resources.displayMetrics.density
+            fun dp(v: Int) = (v * density).toInt()
+            val col = android.widget.LinearLayout(activity).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+            }
+            val builder = android.app.AlertDialog.Builder(activity)
+                .setTitle(titleRes)
+                .setNeutralButton(R.string.artwork_use_first) { _, _ ->
+                    onPicked(urls.first())
+                }
+                .setNegativeButton(R.string.action_cancel, null)
+            val dialog = builder.create()
+            thumbs.forEachIndexed { i, (url, bmp) ->
+                val row = android.widget.LinearLayout(activity).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(6), 0, dp(6))
+                    isClickable = true
+                    setOnClickListener {
+                        dialog.dismiss()
+                        onPicked(url)
+                    }
+                }
+                val thumb = android.widget.ImageView(activity).apply {
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    if (bmp != null) setImageBitmap(bmp)
+                    else setBackgroundColor(0xFF2A2A32.toInt())
+                }
+                row.addView(thumb, android.widget.LinearLayout.LayoutParams(dp(72), dp(40)))
+                row.addView(
+                    android.widget.TextView(activity).apply {
+                        text = (i + 1).toString() + ". " + url.substringAfterLast('/').take(36)
+                        setTextColor(0xFFFFFFFF.toInt())
+                        setPadding(dp(10), 0, 0, 0)
+                    },
+                    android.widget.LinearLayout.LayoutParams(
+                        0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f,
+                    ),
+                )
+                col.addView(row)
+            }
+            dialog.setView(android.widget.ScrollView(activity).apply { addView(col) })
+            dialog.show()
+        }
+    }
+}
+
+private fun decodeThumb(bytes: ByteArray, maxDimension: Int): android.graphics.Bitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= maxDimension &&
+        bounds.outHeight / (sample * 2) >= maxDimension
+    ) {
+        sample *= 2
+    }
+    val opts = android.graphics.BitmapFactory.Options().apply {
+        inSampleSize = sample
+        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+    }
+    return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
 }
 
 private val ART_SEARCH_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()

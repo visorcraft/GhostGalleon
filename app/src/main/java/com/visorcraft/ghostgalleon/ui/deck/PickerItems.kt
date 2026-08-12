@@ -39,6 +39,20 @@ object PickerItems {
      * True when [nextQuery] is a longer prefix of [previousQuery], so a
      * previous match list can be filtered instead of the full library.
      */
+    /** Stable row identity for highlight keep-across-filter. */
+    fun rowKey(item: PickerItem): String? = when (item) {
+        is PickerItem.Header -> null
+        is PickerItem.App -> item.entry.packageName
+        is PickerItem.Rom -> item.entry.id
+    }
+
+    /** Stable DiffUtil identity, including headers. */
+    fun itemId(item: PickerItem): String = when (item) {
+        is PickerItem.Header -> "h:${item.section.name}"
+        is PickerItem.App -> "a:${item.entry.packageName}"
+        is PickerItem.Rom -> "r:${item.entry.id}"
+    }
+
     fun canNarrow(previousQuery: String, nextQuery: String): Boolean {
         val prev = previousQuery.trim()
         val next = nextQuery.trim()

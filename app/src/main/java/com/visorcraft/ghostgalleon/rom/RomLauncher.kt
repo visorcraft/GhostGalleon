@@ -43,6 +43,9 @@ object LaunchPlanBuilder {
         val rawClass = template.component.substringAfter('/')
         val cls = if (rawClass.startsWith(".")) pkg + rawClass else rawClass
         val extras = template.extras.mapValues { (_, v) -> substitute(v, entry) }
+            .filterNot { (k, v) ->
+                v.isBlank() && k.equals("titleId", ignoreCase = true)
+            }
         // Refuse empty boot/start extras (silent emulator no-ops).
         if (extras.values.any { it.isBlank() }) return null
         return LaunchPlan(
@@ -58,7 +61,13 @@ object LaunchPlanBuilder {
 
     private fun substitute(value: String, entry: RomEntry): String {
         val pathOrUri = entry.path?.takeIf { it.isNotBlank() } ?: entry.uri
+        val titleId = VitaTitles.titleIdIn(entry.id.substringAfter(':'))
+            ?: VitaTitles.titleIdIn(entry.path.orEmpty())
+            ?: VitaTitles.titleIdIn(entry.name)
+            ?: ""
         return value
+            .replace("{file.titleId}", titleId)
+            .replace("{file.name}", entry.name)
             .replace("{file.pathOrUri}", pathOrUri)
             .replace("{file.uri}", entry.uri)
             .replace("{file.path}", entry.path ?: "")

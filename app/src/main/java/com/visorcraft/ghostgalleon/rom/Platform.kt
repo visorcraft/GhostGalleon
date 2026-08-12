@@ -430,11 +430,39 @@ object Platforms {
         folderNames = listOf("psvita", "vita", "psv"),
         extensions = listOf("vpk", "zip"),
         players = listOf(
+            // Current Vita3K Android: Emulator SDL activity reads title_id
+            // / game_title and boots with `-r <titleId>`.
             PlayerTemplate(
                 id = "vita3k",
                 displayName = "Vita3K",
+                component = "org.vita3k.emulator/.Emulator",
+                action = "android.intent.action.MAIN",
+                uriStyle = UriStyle.URI,
+                extras = mapOf(
+                    "title_id" to "{file.titleId}",
+                    "game_title" to "{file.name}",
+                ),
+                grantRead = true,
+            ),
+            // Older Vita3K-Android APKs exposed EmulationActivity.
+            PlayerTemplate(
+                id = "vita3k-legacy",
+                displayName = "Vita3K (legacy)",
                 component = "org.vita3k.emulator/.EmulationActivity",
                 action = "android.intent.action.VIEW",
+                uriStyle = UriStyle.URI,
+                extras = mapOf(
+                    "titleId" to "{file.titleId}",
+                    "bootPath" to "{file.pathOrUri}",
+                    "gamePath" to "{file.pathOrUri}",
+                ),
+                grantRead = true,
+            ),
+            PlayerTemplate(
+                id = "vita3k-home",
+                displayName = "Vita3K (home)",
+                component = "org.vita3k.emulator/.MainActivity",
+                action = "android.intent.action.MAIN",
                 uriStyle = UriStyle.URI,
                 grantRead = true,
             ),

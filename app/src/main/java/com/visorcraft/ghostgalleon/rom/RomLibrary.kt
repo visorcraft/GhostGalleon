@@ -168,6 +168,11 @@ class RomLibrary(private val file: File) {
                                 ?.use { it.readText() }
                         }.getOrNull()
                     },
+                    openStream = { uriString ->
+                        runCatching {
+                            appContext.contentResolver.openInputStream(Uri.parse(uriString))
+                        }.getOrNull()
+                    },
                     onTreeProcessed = {
                         done++
                         val d = done
@@ -270,10 +275,12 @@ class RomLibrary(private val file: File) {
             force: Boolean = true,
             readText: ((String) -> String?)? = null,
             fingerprintOf: (List<DocFile>) -> String = { TreeFingerprint.ofCombined(it) },
+            openStream: ((String) -> java.io.InputStream?)? = null,
         ): RescanResult {
             return rescanBlockingWithFingerprints(
                 treeUris, prior, isReadable, treeFor,
                 priorFingerprints, force, readText, fingerprintOf,
+                openStream = openStream,
             ).first
         }
 
@@ -293,6 +300,7 @@ class RomLibrary(private val file: File) {
             force: Boolean = true,
             readText: ((String) -> String?)? = null,
             fingerprintOf: (List<DocFile>) -> String = { TreeFingerprint.ofCombined(it) },
+            openStream: ((String) -> java.io.InputStream?)? = null,
             quickMeta: ((String) -> String?)? = null,
             /**
              * When true, skip the full [treeFor] walk and keep prior
@@ -362,7 +370,7 @@ class RomLibrary(private val file: File) {
             val fresh = if (freshTrees.isEmpty()) {
                 emptyList()
             } else {
-                RomScanner.scan(freshTrees, readText = readText)
+                RomScanner.scan(freshTrees, readText = readText, openStream = openStream)
             }
             val retainedUris = skippedUnreadable + cleanTrees
             val retained = prior.filter { entry ->

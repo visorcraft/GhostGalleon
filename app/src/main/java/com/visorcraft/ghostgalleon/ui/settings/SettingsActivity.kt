@@ -535,6 +535,26 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+    private val arcadeDatPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            val text = runCatching {
+                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+            if (text.isNullOrBlank()) {
+                Toast.makeText(this, R.string.settings_arcade_dat_failed, Toast.LENGTH_SHORT).show()
+                return@registerForActivityResult
+            }
+            val n = app.importArcadeDat(text)
+            Toast.makeText(
+                this,
+                if (n > 0) getString(R.string.settings_arcade_dat_imported, n)
+                else getString(R.string.settings_arcade_dat_empty),
+                Toast.LENGTH_LONG,
+            ).show()
+            refreshSettingsUi()
+        }
+
     private val wallpaperPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
@@ -2322,6 +2342,39 @@ class SettingsActivity : AppCompatActivity() {
         sgdbKeyValue = keyValue
         keyRow.addView(keyValue)
         artCard.addView(keyRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val datRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                arcadeDatPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "*/*"))
+            }
+            setOnLongClickListener {
+                app.clearArcadeDat()
+                Toast.makeText(
+                    this@SettingsActivity,
+                    R.string.settings_arcade_dat_cleared,
+                    Toast.LENGTH_SHORT,
+                ).show()
+                refreshSettingsUi()
+                true
+            }
+        }
+        datRow.addView(rowLabel(getString(R.string.settings_import_arcade_dat)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        datRow.addView(TextView(this).apply {
+            val n = app.arcadeDatCount()
+            val bundled = com.visorcraft.ghostgalleon.rom.ArcadeTitles.bundledCount()
+            text = when {
+                n > 0 -> n.toString()
+                bundled > 0 -> getString(R.string.settings_arcade_dat_bundled, bundled)
+                else -> getString(R.string.action_none)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        artCard.addView(datRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val downloadRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

@@ -32,7 +32,7 @@ Settings → About → Licenses → "Runtime components".
 | Storage Access Framework (SAF / DocumentsUI) | Apache-2.0 | https://source.android.com |
 | System media codecs (animated WebP / GIF) | Apache-2.0 | https://source.android.com |
 | SteamGridDB Web API (optional, user-supplied key) | service terms | https://www.steamgriddb.com |
-| Emulator apps (RetroArch, Azahar, Eden, melonDualDS, Dolphin, NetherSX2, PPSSPP, Flycast, Cemu, Winlator) | various - separate installs, never bundled | their respective projects |
+| Emulator apps (RetroArch, Azahar, Eden, melonDualDS, Dolphin, NetherSX2, PPSSPP, Flycast, Cemu, Winlator, Vita3K) | various - separate installs, never bundled | their respective projects |
 
 ## Gradle dependencies
 
@@ -52,6 +52,14 @@ versions is bundled in-app (Settings → About → Licenses →
 
 Test-only dependencies (JUnit 4.13.2, org.json 20240303) are never
 bundled in the app.
+
+## Bundled arcade titles
+
+`app/src/main/assets/arcade_titles.tsv.gz` is a compact short-name →
+description map derived from public FinalBurn Neo, MAME 2010, MAME
+2003-Plus, HBMAME, and SNK Neo Geo DAT description fields. Only titles
+are shipped (not ROM hashes or the DAT XML). Regenerate with
+`scripts/generate_arcade_titles.py`.
 
 ## License compatibility
 

@@ -113,6 +113,39 @@ class PickerItemsTest {
     }
 
     @Test
+    fun `itemId is stable for headers apps and roms`() {
+        val built = PickerItems.build(apps, roms, "")
+        assertEquals(
+            "h:APPS",
+            PickerItems.itemId(built.filterIsInstance<PickerItem.Header>().first()),
+        )
+        assertEquals(
+            "a:com.brave.browser",
+            PickerItems.itemId(built.filterIsInstance<PickerItem.App>().first()),
+        )
+        assertTrue(
+            PickerItems.itemId(built.filterIsInstance<PickerItem.Rom>().first()).startsWith("r:"),
+        )
+    }
+
+    @Test
+    fun `rowKey is package or rom id and null for headers`() {
+        val built = PickerItems.build(apps, roms, "")
+        assertEquals(
+            null,
+            PickerItems.rowKey(built.filterIsInstance<PickerItem.Header>().first()),
+        )
+        assertEquals(
+            "com.brave.browser",
+            PickerItems.rowKey(built.filterIsInstance<PickerItem.App>().first()),
+        )
+        assertTrue(
+            PickerItems.rowKey(built.filterIsInstance<PickerItem.Rom>().first())!!
+                .contains(':'),
+        )
+    }
+
+    @Test
     fun `canNarrow only when next is a longer prefix`() {
         assertTrue(PickerItems.canNarrow("mar", "mario"))
         assertTrue(PickerItems.canNarrow("MAR", "mario"))
