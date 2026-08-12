@@ -467,6 +467,7 @@
     <string name="settings_pin_favorites">Pin favorites to empty grid slots</string>
     <string name="settings_default_players">Default players</string>
     <string name="settings_system_defaults">System defaults</string>
+    <string name="settings_player_uses_both_screens">Uses both screens</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>
     <string name="settings_ra_username_cleared">RA username cleared</string>

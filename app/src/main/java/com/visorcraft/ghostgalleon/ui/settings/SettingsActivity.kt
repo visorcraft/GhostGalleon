@@ -36,8 +36,10 @@ import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.PlayerTemplate
 import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.TreeLabels
+import com.visorcraft.ghostgalleon.rom.playerSettingsLabel
 import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.CompanionRole
@@ -772,18 +774,18 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showDefaultPlayersDialog() {
-        val platforms = com.visorcraft.ghostgalleon.rom.Platforms.ALL
+        val platforms = Platforms.ALL
         val labels = platforms.map { p ->
             val defId = app.settings.defaultPlayers[p.id]
             val def = defId?.let { id -> p.players.firstOrNull { it.id == id } }
                 ?: p.player
-            getString(R.string.format_label_value, p.displayName, def.displayName)
+            getString(R.string.format_label_value, p.displayName, playerListLabel(def))
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle(R.string.settings_default_players)
             .setItems(labels) { _, which ->
                 val platform = platforms[which]
-                val playerLabels = platform.players.map { it.displayName }.toTypedArray()
+                val playerLabels = platform.players.map { playerListLabel(it) }.toTypedArray()
                 AlertDialog.Builder(this)
                     .setTitle(platform.displayName)
                     .setItems(playerLabels) { _, pWhich ->
@@ -802,6 +804,13 @@ class SettingsActivity : AppCompatActivity() {
             .setNegativeButton(R.string.action_close, null)
             .show()
     }
+
+    private fun playerListLabel(player: PlayerTemplate): String =
+        playerSettingsLabel(
+            player.displayName,
+            player.sessionPolicy,
+            getString(R.string.settings_player_uses_both_screens),
+        )
 
     private fun showSgdbKeyDialog() {
         val input = EditText(this).apply {

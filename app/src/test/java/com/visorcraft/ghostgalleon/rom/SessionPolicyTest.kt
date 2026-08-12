@@ -40,4 +40,16 @@ class SessionPolicyTest {
             SessionPolicy.resolve("melondualds"),
         )
     }
+
+    @Test
+    fun `settings label appends yield hint only for YIELD_BOTH`() {
+        assertEquals(
+            "melonDualDS · Uses both screens",
+            playerSettingsLabel("melonDualDS", SessionPolicy.YIELD_BOTH, "Uses both screens"),
+        )
+        assertEquals(
+            "DraStic",
+            playerSettingsLabel("DraStic", SessionPolicy.KEEP_COMPANION, "Uses both screens"),
+        )
+    }
 }

@@ -439,6 +439,7 @@
     <string name="settings_pin_favorites">Favoriten an leere Rasterplätze anheften</string>
     <string name="settings_default_players">Standard-Player</string>
     <string name="settings_system_defaults">Systemstandards</string>
+    <string name="settings_player_uses_both_screens">Nutzt beide Bildschirme</string>
     <string name="settings_ra_username">RetroAchievements-Benutzername</string>
     <string name="settings_ra_username_hint">RA-Benutzername</string>
     <string name="settings_ra_username_cleared">RA-Benutzername gelöscht</string>

@@ -27,3 +27,9 @@ enum class SessionPolicy {
         }
     }
 }
+
+/** Settings player-row label: append [yieldHint] only for [SessionPolicy.YIELD_BOTH]. */
+fun playerSettingsLabel(displayName: String, policy: SessionPolicy, yieldHint: String): String {
+    if (policy != SessionPolicy.YIELD_BOTH) return displayName
+    return "$displayName · $yieldHint"
+}
