@@ -8,6 +8,7 @@ import androidx.lifecycle.Lifecycle
 import com.visorcraft.ghostgalleon.display.AndroidDisplayProbe
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 
 /**
  * Secondary panel (Sugar bottom by default). SECONDARY_HOME redelivery must
@@ -24,7 +25,8 @@ class CompanionActivity : BaseDeckActivity() {
 
     override fun skipExitCascade(): Boolean = true
 
-    override fun shouldRenderOnCreate(): Boolean = !absorbDuplicate
+    override fun shouldRenderOnCreate(): Boolean =
+        !absorbDuplicate && app.sessionSurface?.policy != SessionPolicy.YIELD_BOTH
 
     fun closeQuietly() {
         selfClosing = true
@@ -95,6 +97,12 @@ class CompanionActivity : BaseDeckActivity() {
             return
         }
 
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+            super.onCreate(savedInstanceState)
+            closeQuietly()
+            return
+        }
+
         super.onCreate(savedInstanceState)
 
         val currentDisplay = currentDisplayId()
@@ -138,6 +146,13 @@ class CompanionActivity : BaseDeckActivity() {
     override fun onDestroy() {
         releaseSeat()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) {
+            closeQuietly()
+        }
+        super.onResume()
     }
 
     override fun onNewIntent(intent: Intent?) {

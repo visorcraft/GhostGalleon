@@ -157,6 +157,8 @@ class MainActivity : BaseDeckActivity() {
     }
 
     private fun launchCompanionIfPresent() {
+        // YIELD owns both panels; starting Companion here would steal one.
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) return
         val topo = app.refreshDisplayConfig()
         if (topo.mode != SurfaceMode.DUAL) return
         val secondaryHomeId = topo.secondaryHomeDisplayId

@@ -33,6 +33,7 @@ import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
 import com.visorcraft.ghostgalleon.rom.isInstalled
@@ -836,6 +837,9 @@ class GhostGalleonApp : Application() {
 
     fun beginSession(surface: SessionSurface) {
         sessionSurface = surface
+        if (surface.policy == SessionPolicy.YIELD_BOTH) {
+            liveCompanions().forEach { it.closeQuietly() }
+        }
     }
 
     fun markSessionGreedy() {
