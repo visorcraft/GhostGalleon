@@ -1192,13 +1192,7 @@ object CompanionPanel {
             if (!settings.browseChrome.resumeChip) return@run
             if (app.openSession != null) return@run
             if (settings.hideResumeChip) return@run
-            val available = buildList {
-                addAll(settings.gridSlots.filterNotNull())
-                addAll(settings.dockSlots.filterNotNull())
-                addAll(roms.filter { it.visibleInUi }.map { SlotKey.rom(it.id) })
-                addAll(library.visible(settings).map { it.packageName })
-                addAll(settings.lastLaunchedMs.keys)
-            }
+            val available = settings.lastLaunchedMs.keys.toList()
             val candidates = LibraryBrowse.continueCandidates(
                 availableKeys = available,
                 lastLaunchedMs = settings.lastLaunchedMs,

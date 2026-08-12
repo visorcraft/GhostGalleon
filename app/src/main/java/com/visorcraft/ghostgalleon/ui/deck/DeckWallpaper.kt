@@ -18,6 +18,22 @@ object DeckWallpaper {
 
     private val EXECUTOR = Executors.newSingleThreadExecutor()
 
+    @Volatile
+    private var cachedUri: String? = null
+
+    @Volatile
+    private var cachedBitmap: android.graphics.Bitmap? = null
+
+    /** Drop the process cache (wallpaper cleared or URI changed). */
+    fun dropCache() {
+        cachedUri = null
+        cachedBitmap = null
+    }
+
+    /** True when a cached decode may be applied without I/O. Pure. */
+    internal fun cacheSatisfies(cachedUri: String?, wantUri: String): Boolean =
+        !wantUri.isBlank() && cachedUri == wantUri
+
     /**
      * Insert a dimmed wallpaper ImageView behind deck content when [uriString]
      * is non-null. No-op when null/blank (caller keeps solid black / tint).
@@ -46,8 +62,15 @@ object DeckWallpaper {
     }
 
     fun loadAsync(context: Context, uriString: String, target: ImageView) {
+        val hit = cachedBitmap?.takeIf { cacheSatisfies(cachedUri, uriString) }
+        if (hit != null) {
+            target.setImageBitmap(hit)
+            return
+        }
         EXECUTOR.execute {
             val bitmap = decode(context, uriString) ?: return@execute
+            cachedUri = uriString
+            cachedBitmap = bitmap
             target.post {
                 val app = context.applicationContext as? GhostGalleonApp
                 val current = app?.settings?.wallpaperUri
@@ -73,7 +96,10 @@ object DeckWallpaper {
             ) {
                 sample *= 2
             }
-            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            val opts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+            }
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, opts)
             }

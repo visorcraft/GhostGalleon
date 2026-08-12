@@ -1847,17 +1847,13 @@ class GameDeck(
         )
     }
 
-    /** Keys that may appear in Continue / history (ROMs, apps, grid, dock). */
-    private fun availableContinueKeys(live: Settings): List<String> = buildList {
-        addAll(
-            HiddenRoms.listed(roms, live.hiddenRomIds)
-                .map { SlotKey.rom(it.id) },
-        )
-        addAll(library.curated(live).map { it.packageName })
-        addAll(live.gridSlots.filterNotNull())
-        addAll(live.dockSlots.filterNotNull())
-        addAll(live.lastLaunchedMs.keys)
-    }
+    /**
+     * Continue / history membership. Callers also add last-launched keys
+     * to the available set, so intersecting with lastLaunched is the whole
+     * map — do not allocate `rom:` strings for the entire library.
+     */
+    private fun availableContinueKeys(live: Settings): List<String> =
+        live.lastLaunchedMs.keys.toList()
 
     /** Human label for a continue/slot key (ROM name or app label). */
     private fun continueLabel(key: String, live: Settings): String {

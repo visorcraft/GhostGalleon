@@ -241,15 +241,7 @@ class QuickPanel(
     }
 
     private fun launchContinue(app: GhostGalleonApp) {
-        val keys = buildList {
-            addAll(app.settings.gridSlots.filterNotNull())
-            addAll(app.settings.dockSlots.filterNotNull())
-            addAll(
-                HiddenRoms.listed(roms, app.settings.hiddenRomIds)
-                    .map { SlotKey.rom(it.id) },
-            )
-            addAll(app.settings.lastLaunchedMs.keys)
-        }
+        val keys = app.settings.lastLaunchedMs.keys.toList()
         val cont = LibraryBrowse.continueKey(keys, app.settings.lastLaunchedMs)
         if (cont == null) {
             Toast.makeText(

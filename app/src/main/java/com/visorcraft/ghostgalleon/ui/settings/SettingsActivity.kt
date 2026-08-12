@@ -48,6 +48,7 @@ import com.visorcraft.ghostgalleon.settings.SettingsStore
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.label
+import com.visorcraft.ghostgalleon.ui.deck.DeckWallpaper
 import com.visorcraft.ghostgalleon.state.UIMode
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
@@ -541,6 +542,7 @@ class SettingsActivity : AppCompatActivity() {
                     contentResolver.takePersistableUriPermission(
                         uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
+                DeckWallpaper.dropCache()
                 app.updateSettings(app.settings.copy(wallpaperUri = uri.toString()))
                 refreshWallpaperRow()
             }
@@ -572,6 +574,8 @@ class SettingsActivity : AppCompatActivity() {
 
     private var wallpaperValue: TextView? = null
     private var wallpaperClear: View? = null
+    private var raUserValue: TextView? = null
+    private var raKeyValue: TextView? = null
 
     private var sgdbKeyValue: TextView? = null
     private var scrapeLabel: TextView? = null
@@ -827,7 +831,7 @@ class SettingsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.action_save) { _, _ ->
                 val name = input.text.toString().trim().ifEmpty { null }
                 app.updateSettings(app.settings.copy(raUsername = name))
-                recreate()
+                refreshRaRows()
             }
             .setNegativeButton(R.string.action_cancel, null)
             .show()
@@ -854,7 +858,7 @@ class SettingsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.action_save) { _, _ ->
                 val key = input.text.toString().trim().ifEmpty { null }
                 app.updateSettings(app.settings.copy(raApiKey = key))
-                recreate()
+                refreshRaRows()
             }
             .setNegativeButton(R.string.action_cancel, null)
             .show()
@@ -987,6 +991,18 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.action_none)
         }
         wallpaperClear?.visibility = if (uri != null) View.VISIBLE else View.GONE
+    }
+
+    private fun refreshRaRows() {
+        raUserValue?.text = app.settings.raUsername?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.label_not_set)
+        raKeyValue?.setText(
+            if (!app.settings.raApiKey.isNullOrBlank()) {
+                R.string.label_set
+            } else {
+                R.string.label_not_set
+            },
+        )
     }
 
     private val accent get() = app.settings.accentColor
@@ -1910,6 +1926,7 @@ class SettingsActivity : AppCompatActivity() {
             val hp = dp(12); val vp = dp(6)
             setPadding(hp, vp, hp, vp)
             setOnClickListener {
+                DeckWallpaper.dropCache()
                 app.updateSettings(app.settings.copy(wallpaperUri = null))
                 refreshWallpaperRow()
             }
@@ -2220,15 +2237,14 @@ class SettingsActivity : AppCompatActivity() {
                 app.updateSettings(app.settings.copy(raUsername = null))
                 Toast.makeText(this@SettingsActivity,
                     R.string.settings_ra_username_cleared, Toast.LENGTH_SHORT).show()
-                recreate()
+                refreshRaRows()
                 true
             }
         }
         raUserRow.addView(rowLabel(getString(R.string.settings_ra_username)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         raUserRow.addView(TextView(this).apply {
-            text = app.settings.raUsername?.takeIf { it.isNotBlank() }
-                ?: getString(R.string.label_not_set)
+            raUserValue = this
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accent)
         })
@@ -2243,23 +2259,20 @@ class SettingsActivity : AppCompatActivity() {
                 app.updateSettings(app.settings.copy(raApiKey = null))
                 Toast.makeText(this@SettingsActivity,
                     R.string.settings_ra_api_key_cleared, Toast.LENGTH_SHORT).show()
-                recreate()
+                refreshRaRows()
                 true
             }
         }
         raKeyRow.addView(rowLabel(getString(R.string.settings_ra_api_key)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         raKeyRow.addView(TextView(this).apply {
-            setText(if (!app.settings.raApiKey.isNullOrBlank()) {
-                R.string.label_set
-            } else {
-                R.string.label_not_set
-            })
+            raKeyValue = this
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accent)
         })
         artCard.addView(raKeyRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        refreshRaRows()
         if (BuildConfig.DEBUG) {
             val raSampleRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
