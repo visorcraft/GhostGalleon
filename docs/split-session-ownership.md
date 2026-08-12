@@ -17,11 +17,16 @@ does not cover the game).
 The work is an honest **per-player session policy**, not “always keep a
 launcher panel” and not “never allow dual-screen apps.”
 
-Authoritative code (today): `settings/CompanionRole.kt`
-(`DUAL_CLAIM_PLATFORMS`), `ui/deck/Deck.kt` (`launchOnOtherDisplay`),
-`rom/RomLauncher.kt`, `GhostGalleonApp.noteLaunch`,
+Authoritative code (shipped): `rom/SessionPolicy.kt`, `rom/SessionSurface.kt`,
+`GhostGalleonApp` (`noteLaunch` then `beginSession`), `ui/DualPaintPolicy.kt`,
 `ui/MainActivity.kt` (return / heal / `restartCompanionPanel`),
-`ui/deck/ActivityEmbed.kt`, `docs/dual-paint-invariants.md`.
+`ui/CompanionActivity.kt`, `ui/BaseDeckActivity.kt` (SWAP / yield toast),
+`settings/CompanionRole.kt` (`pinConflictsWithSession`, `pinHonesty`),
+`ui/deck/Deck.kt`, `rom/RomLauncher.kt`, `ui/deck/ActivityEmbed.kt`,
+`docs/dual-paint-invariants.md`.
+
+Diagnostics: `adb logcat -s GGSession` (greedy mark). Paint thrash stays on
+`adb logcat -s GGPaint`.
 
 ## Terms
 
@@ -30,7 +35,8 @@ Authoritative code (today): `settings/CompanionRole.kt`
 | **Interactive display** | Input target. Grid or Game Mode. Default Sugar: bottom. |
 | **Launch display** | Where `launchOnOtherDisplay` sends the game (`displayConfig.launchDisplayId`). Default Sugar: top. |
 | **Companion** | `CompanionActivity` on the non-interactive panel (hero / Now Playing / Perf / pin). |
-| **Open session** | `GhostGalleonApp.openSession` after a successful `noteLaunch`. |
+| **Open session** | `GhostGalleonApp.openSession` after a successful `noteLaunch`. Playtime only. |
+| **Session surface** | `GhostGalleonApp.sessionSurface` — the session-policy record (`SessionSurface`). |
 | **Player** | One `PlayerTemplate.id` (e.g. `melondualds`, `azahar`, `ra-snes9x`). Not a platform. |
 | **Yield** | Ghost Galleon gives **both** panels to the session. Companion does not fight. |
 | **Keep** | Game stays on the launch display. Companion stays Ghost Galleon. |
@@ -63,17 +69,18 @@ enum class SessionPolicy {
 }
 ```
 
-Resolution, in order:
+Resolution, in order (`SessionPolicy.resolve`):
 
-1. Per-ROM override in `romProfiles` (optional, later).
-2. `PlayerTemplate.sessionPolicy` on the launched player.
-3. Default: `KEEP_COMPANION`.
+1. Per-ROM override in `romProfiles` (optional, later; resolver accepts
+   `romOverride`).
+2. Package yield (`packageYield`; Settings UI later).
+3. `SessionPolicy.forPlayerId` on the launched `PlayerTemplate.id`.
+4. Default: `KEEP_COMPANION`.
 
 Unknown players stay `KEEP_COMPANION`. If the game then covers both
 panels anyway, treat that run as a **greedy keep** (see below). Do not
-guess YIELD from the platform id. Today’s
-`CompanionRoleResolve.DUAL_CLAIM_PLATFORMS = {nds, 3ds}` is too coarse
-and is replaced by this table.
+guess YIELD from the platform id. `DUAL_CLAIM_PLATFORMS` is gone; pin
+honesty follows this table.
 
 ### Built-in player table (Sugar-verified intent)
 
@@ -103,13 +110,25 @@ displays) is **greedy**. Ghost Galleon:
 3. On return (interactive `onResume` after `leftHomeSinceResume`),
    **reclaims** as if the session had yielded.
 
-Do not flip the stored policy to YIELD from one greedy run. Log it
-(`GGSession`) so the table can be updated after device proof.
+Do not flip the stored policy to YIELD from one greedy run. Greedy is
+**process-only** (`SessionSurface.greedy`; `markSessionGreedy()`). Log
+it so the table can be updated after device proof:
+
+```text
+adb logcat -s GGSession
+# greedy package=<packageName> player=<playerId>
+```
+
+v1 detection (no `PixelCopy`): KEEP + returning + companion missing or
+not STARTED-healthy on the secondary target (`shouldMarkGreedy`). Sugar
+device matrix has not been run; greedy packages: **none observed**. Do
+not invent a YIELD from that gap.
 
 ## Session record
 
-Extend the open session (or a sibling `SessionSurface` on the app object)
-with:
+`SessionSurface` lives on `GhostGalleonApp` beside playtime.
+`OpenSession` / `noteLaunch` stay playtime-only. Launch success calls
+`noteLaunch` then `beginSession`.
 
 | Field | Source |
 |---|---|
@@ -118,12 +137,12 @@ with:
 | `packageName` | Template package |
 | `policy` | Resolved `SessionPolicy` |
 | `launchDisplayId` | Topology launch id at fire time |
-| `startedAtMs` | Existing session tracker |
+| `greedy` | Process-only; default false. Set on stolen KEEP return. |
 
-`noteLaunch` today stamps playtime only. The launch path
-(`RomLauncher.launch` / `launchSlotKey`) already knows the winning
-template — record `playerId` + `policy` there. Clearing the session
-stays as it is (return / accrue / end).
+`SessionSurface.forLaunch` resolves policy via `SessionPolicy.resolve`.
+`beginSession` assigns the surface; on `YIELD_BOTH` it
+`closeQuietly()`s live companions. `clearSessionSurface` pairs with
+HOME return (after the resume action) and with `endOpenSession`.
 
 ## Lifecycle
 
@@ -131,17 +150,19 @@ stays as it is (return / accrue / end).
 
 1. User confirms a KEEP title on the interactive deck.
 2. `launchOnOtherDisplay` starts the player on the launch display.
-3. `noteLaunch` opens a KEEP session.
+3. `noteLaunch` then `beginSession` opens a KEEP session.
 4. Interactive deck stays put (already true).
 5. Companion **stays the existing `CompanionActivity`**. Do not
    `restartCompanionPanel` on the way out.
 6. Companion role: Now Playing if that is the user preference or an
    open session requires it; otherwise the user’s companion role.
    PINNED_APP is allowed only when the pin package is **not** the
-   game package and the pin target is not the launch display.
-7. Heal is **disabled** while a KEEP session is open (the launch
-   display is supposed to be the game). Interactive HOME may still
-   paint.
+   game package (`pinConflictsWithSession`) and the pin target is not
+   the launch display.
+7. Heal from HOME resume is **disabled** while a KEEP session is open
+   (`resumeCompanionAction` → `NONE`). `keepHealBlocked` also refuses
+   to spawn Companion on the recorded launch display. Interactive HOME
+   may still paint.
 8. User returns (HOME / back / force-stop of the game): interactive
    `onResume` with `leftHomeSinceResume`. Accrue playtime. If the
    companion is missing or black, `restartCompanionPanel` — same
@@ -152,9 +173,10 @@ stays as it is (return / accrue / end).
 1. User confirms a YIELD title (melonDualDS, Azahar, …).
 2. Launch as today (`setLaunchDisplayId` still allowed; the player is
    free to occupy the other panel).
-3. `noteLaunch` opens a YIELD session.
+3. `noteLaunch` then `beginSession` opens a YIELD session; live
+   companions `closeQuietly()`.
 4. Ghost Galleon **does not fight for the companion display**:
-   - Do not launch or recreate `CompanionActivity` on that display.
+   - `launchCompanionIfPresent` no-ops (`sessionOwnsCompanionDisplay`).
    - Do not ActivityView-embed.
    - Do not show PINNED_APP on that display.
    - Absorb `SECONDARY_HOME` silently (already required by dual-paint).
@@ -180,16 +202,25 @@ display.” The game is supposed to take both.
 | X (swap) during KEEP | Swap interactive/companion; game stays on its display if the OS kept it | No-op or toast: session owns both panels |
 | X during YIELD | Must not spawn companion on a live DS/3DS panel | |
 
-`MainActivity.onResume` today restarts companion on every
-`leftHomeSinceResume` unless a pin is ready. After this spec it
-branches on **session policy**, not only pin:
+`MainActivity` branches on **session policy** via
+`DualPaintPolicy.resumeCompanionAction`:
 
-- Open YIELD session (user still in the game, rare resume): do nothing.
-- Return from YIELD: restart companion.
-- Return from KEEP: heal if missing; do not cover the launch display.
-- Return from greedy KEEP: restart companion (same as YIELD return).
-- Pin ready + KEEP: do not recreate companion over the pin (today’s pin
-  guard), and do not recreate over the **game** either.
+- `onNewIntent` heals only when the action is `HEAL_IF_MISSING` (HOME
+  redelivery to an already-resumed Main). `RESTART` / `NONE` wait for
+  `onResume`.
+- `onResume` applies the action, then `clearSessionSurface` when
+  `returningFromElsewhere`.
+- Open YIELD session (user still in the game, rare resume): `NONE`.
+- Return from YIELD: `RESTART` (`return-from-yield`).
+- Return from KEEP: `HEAL_IF_MISSING` (`pinReady` ignored); do not
+  cover the launch display.
+- Return from greedy KEEP: `RESTART` (same as YIELD return).
+- Pin package == game package: `pinConflictsWithSession` — do not
+  embed or pin the KEEP game over itself.
+
+SWAP / `SECONDARY_HOME` during YIELD (or greedy KEEP): no companion
+restart (`allowCompanionRestartDuringSwap`); toast
+`session_yields_both_screens` (“This game uses both screens”).
 
 ## Companion UI while a session is open
 
@@ -199,12 +230,18 @@ branches on **session policy**, not only pin:
 | YIELD | No companion surface. If a `CompanionActivity` instance still exists, it `finish()`es without cascade (`skipExitCascade`) so it does not kill Main. |
 | KEEP + user preference HERO | Hero of the open title is allowed; it is not a second game window. |
 
-Resume chip on KEEP companion: launch the same slot key again (existing
-launcher). Do not invent a new intent.
+Resume chip on KEEP companion: launch `sessionSurface.key` (else
+selected) through existing `launchSlotKey`. Do not invent a new intent.
 
-Dual-claim CTA copy (today: pin honesty `DUAL_CLAIM`) stays for **pin
+Dual-claim CTA copy (pin honesty `DUAL_CLAIM`) stays for **pin
 settings**, not as a substitute for yielding. Wording: this player uses
-both screens; the pin pauses until you return.
+both screens; the pin pauses until you return. `pinHonesty` is
+`DUAL_CLAIM` when policy is `YIELD_BOTH` **or** the session is greedy.
+`sessionOwnsCompanionDisplay` is `YIELD_BOTH || greedy`.
+
+Settings player-default rows show a read-only “Uses both screens”
+(`settings_player_uses_both_screens`) when the template policy is
+`YIELD_BOTH`.
 
 ## Input
 
@@ -220,11 +257,13 @@ both screens; the pin pauses until you return.
 All rules in [`dual-paint-invariants.md`](dual-paint-invariants.md) stay
 in force.
 
-Additions:
+Additions (shipped):
 
 - Do not `setContentView` on a companion that is about to yield.
 - Do not heal onto a display that the open YIELD (or greedy KEEP)
-  session owns.
+  session owns (`sessionOwnsCompanionDisplay`).
+- KEEP must not spawn Companion on the recorded launch display
+  (`keepHealBlocked`).
 - `SECONDARY_HOME` during YIELD: absorb, no All-apps, no newest-wins.
 - Reclaim after YIELD is one restart, heal-debounced, not a paint storm.
 
@@ -242,41 +281,47 @@ Do not persist “greedy” as a user setting from one run.
 Task-by-task implementation plan (all four phases):
 [`superpowers/plans/2026-08-12-split-session-ownership.md`](superpowers/plans/2026-08-12-split-session-ownership.md).
 
-## Implementation sketch
+## Implementation (shipped)
 
-Pure first, then Android edges.
-
-1. `rom/SessionPolicy.kt` — enum, `resolve(player, romProfile, yieldPackages)`,
+1. `rom/SessionPolicy.kt` — enum, `resolve(playerId, romOverride, packageYield)`,
    built-in map keyed by `PlayerTemplate.id`. Host tests: NDS players
    disagree; 3DS Azahar yields; SNES keeps; missing pack field keeps.
 2. `PlayerTemplate.sessionPolicy` + pack JSON + `PlatformsTest` /
-   `PlatformPack` parse.
-3. Launch path records `playerId` + policy on the open session.
-4. `CompanionRoleResolve` reads **session policy**, not
-   `DUAL_CLAIM_PLATFORMS`. Delete the platform set once tests move.
-5. `MainActivity` return/heal/restart branches on policy (table above).
-6. `CompanionActivity` self-finishes without cascade when a YIELD
-   session opens; does not relaunch until reclaim.
-7. Settings → player default / Open with: show “Uses both screens” from
-   the template (read-only in v1).
-8. `adb logcat -s GGSession` for resolve + greedy + reclaim.
+   `PlatformPack` parse. Built-in YIELD: `melondualds`, `azahar`.
+3. Launch path records `playerId` + policy on `SessionSurface`
+   (`noteLaunch` then `beginSession`).
+4. `CompanionRoleResolve` reads **session policy**, not platform.
+   `DUAL_CLAIM_PLATFORMS` is gone.
+5. `MainActivity` return/heal/restart branches on
+   `resumeCompanionAction` (table above).
+6. `CompanionActivity` self-finishes without cascade when
+   `sessionOwnsCompanionDisplay`; does not relaunch until reclaim.
+7. Settings → player default: read-only “Uses both screens” from the
+   template (`settings_player_uses_both_screens`).
+8. `adb logcat -s GGSession` for greedy (`greedy package=… player=…`).
 
 Do not put Android `Display` types in `SessionPolicy`.
 
 ## Phases
 
-| Phase | Ships | Done when |
+| Phase | Ships | Status |
 |---|---|---|
-| **1 — Policy** | Enum, registry table, pack field, session record, pin honesty from player | Host tests green; NDS + DraStic keep; melonDualDS + Azahar yield |
-| **2 — Yield** | Companion does not relaunch during melonDualDS/Azahar; reclaim on HOME | Device: both DS/3DS panels are the game; HOME restores both Ghost Galleon surfaces |
-| **3 — Keep** | RetroArch/PPSSPP/Eden session leaves companion up (Now Playing); heal off on launch display | Device: game on top, Ghost Galleon on bottom, no black companion |
-| **4 — Greedy** | Heal off + reclaim on return for KEEP titles that stole both | Device: one known greedy package documented in GGSession |
+| **1 — Policy** | Enum, registry table, pack field, session record, pin honesty from player | **Implemented** (host tests: NDS + DraStic keep; melonDualDS + Azahar yield) |
+| **2 — Yield** | Companion does not relaunch during melonDualDS/Azahar; reclaim on HOME | **Implemented** (host). Sugar device matrix **not run**. |
+| **3 — Keep** | RetroArch/PPSSPP/Eden session leaves companion up (Now Playing); heal off on launch display | **Implemented** (host). Sugar device matrix **not run**. |
+| **4 — Greedy** | Heal off + reclaim on return for KEEP titles that stole both | **Implemented** (host). Device: **none observed**. |
 
 Phase 2 before 3: yielding wrong is more harmful than keeping companion
 on a single-surface game. Dual-screen correctness is the product
 constraint.
 
+Code for all four phases is on `feat/split-session-ownership`. Host
+tests are not device proof. Do not claim the Sugar matrix from this
+doc.
+
 ## Device matrix (Sugar)
+
+**Not run.** Rows below are the intended checks, not observed proof.
 
 | Launch | Must see |
 |---|---|
@@ -289,6 +334,11 @@ constraint.
 | X during melonDualDS | Does not spawn Ghost Galleon on a DS panel. |
 | SECONDARY_HOME during melonDualDS | Absorbed; DS stays. |
 
+Phase 4 device gate (when a Sugar is available): pick one greedy KEEP
+package if any exists; confirm no companion spawn mid-game; HOME
+restores both panels; `adb logcat -s GGSession` shows one greedy line.
+If none is greedy, leave **none observed** — do not invent a YIELD.
+
 `am force-stop me.magnum.melondualds` remains the documented escape when
 the emulator captures both displays and ignores injected HOME.
 
@@ -297,19 +347,21 @@ the emulator captures both displays and ignores injected HOME.
 - `SessionPolicyTest`: table above; pack omit = KEEP; rom override wins
   when implemented.
 - `CompanionRoleTest`: dual-claim honesty follows **player**, not
-  `platformId == nds`.
+  `platformId == nds`. Greedy KEEP is `DUAL_CLAIM` like YIELD.
 - `RomLauncherTest` / session record: successful melonDualDS plan stores
   `YIELD_BOTH`.
-- Dual-paint tests unchanged; add a case that heal is denied while a
-  YIELD session is open (pure clock + flags, no Display).
+- Dual-paint tests: heal denied while a YIELD session is open; greedy
+  KEEP owns the companion display the same way (pure clock + flags, no
+  Display).
 
 ## Verification (agents)
 
 ```text
 verify: rg -n "SessionPolicy|YIELD_BOTH|KEEP_COMPANION" app/src/main/java/com/visorcraft/ghostgalleon
-verify: rg -n "DUAL_CLAIM_PLATFORMS" app/src/main/java  # must be gone after phase 1
-verify: ./gradlew :app:testDebugUnitTest --offline --tests '*SessionPolicy*' --tests '*CompanionRole*'
+verify: rg -n "DUAL_CLAIM_PLATFORMS" app/src/main/java  # must stay gone
+verify: rg -n "GGSession" app/src/main/java
+verify: ./gradlew :app:testDebugUnitTest --offline --tests '*SessionPolicy*' --tests '*CompanionRole*' --tests '*DualPaintPolicy*'
 ```
 
-Device: run the matrix; do not claim phase 2/3 done from unit tests
-alone.
+Device: run the matrix; do not claim phase 2/3/4 device gates from unit
+tests alone.

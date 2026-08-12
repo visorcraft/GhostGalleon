@@ -7,7 +7,8 @@ alive — the GPU never presents a new buffer.
 Authoritative code: `ui/DualPaintPolicy.kt`, `ui/BaseDeckActivity.kt`,
 `library/RaProgressGate.kt`, `ui/deck/CompanionHeroMetrics.kt`.
 Agent checklist: root `AGENTS.md` (dual-paint section). Diagnostics:
-`adb logcat -s GGPaint` (`FULL` / `DEFER`).
+`adb logcat -s GGPaint` (`FULL` / `DEFER`). Session ownership:
+`adb logcat -s GGSession` (greedy mark).
 
 How a launched game shares the two panels (yield DS/3DS, keep companion
 for single-surface players):
@@ -67,6 +68,12 @@ for single-surface players):
 10. **Companion hero title must fit.** `CompanionHeroMetrics` scales art
     and name on short secondary panels; never fixed 240dp art + 32sp
     title that clips mid-glyph above actions.
+
+11. **Heal stays off a yielded or greedy companion display.** Do not
+    launch or restart Companion while an open YIELD (or greedy KEEP)
+    session owns that panel (`sessionOwnsCompanionDisplay`). Reclaim
+    happens on HOME return after `clearSessionSurface`. See
+    [`split-session-ownership.md`](split-session-ownership.md).
 
 ## Granular re-render map
 
