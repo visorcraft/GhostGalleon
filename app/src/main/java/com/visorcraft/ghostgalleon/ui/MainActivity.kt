@@ -67,22 +67,27 @@ class MainActivity : BaseDeckActivity() {
         val anyPeerClaiming = live.any {
             it.currentDisplayId() == target || it.isHealthyCompanion(target)
         } || seat != null
-        if (anyPeerClaiming && !healthyOnTarget) {
-            // Peer exists but never reached STARTED on target — recreate.
-            // (Inline: restartCompanionPanel would re-check heal debounce we
-            // just consumed.)
-            Log.i(PAINT_TAG, "restartCompanion reason=heal-unhealthy")
-            live.forEach { it.closeQuietly() }
-            seat?.takeIf { !it.isFinishing }?.closeQuietly()
-            mainHandler.postDelayed({
-                if (!isFinishing && !isDestroyed) launchCompanionIfPresent()
-            }, 180L)
-            return
+        when (
+            DualPaintPolicy.companionHealAction(
+                dualMode = true,
+                anyPeerClaiming = anyPeerClaiming,
+                healthyOnTarget = healthyOnTarget,
+            )
+        ) {
+            DualPaintPolicy.HealAction.NONE -> return
+            DualPaintPolicy.HealAction.LAUNCH -> launchCompanionIfPresent()
+            DualPaintPolicy.HealAction.RESTART -> {
+                // Peer exists but never reached STARTED on target — recreate.
+                // (Inline: restartCompanionPanel would re-check heal debounce we
+                // just consumed.)
+                Log.i(PAINT_TAG, "restartCompanion reason=heal-unhealthy")
+                live.forEach { it.closeQuietly() }
+                seat?.takeIf { !it.isFinishing }?.closeQuietly()
+                mainHandler.postDelayed({
+                    if (!isFinishing && !isDestroyed) launchCompanionIfPresent()
+                }, 180L)
+            }
         }
-        if (!DualPaintPolicy.shouldLaunchCompanion(anyPeerOnTarget = anyPeerClaiming)) {
-            return
-        }
-        launchCompanionIfPresent()
     }
 
     /**

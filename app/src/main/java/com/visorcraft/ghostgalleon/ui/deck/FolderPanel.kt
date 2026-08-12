@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.graphics.Color
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -25,6 +26,8 @@ class FolderPanel(
     private val onLaunch: (String) -> Unit,
     private val onClose: () -> Unit,
     private val onRemoveMember: ((String) -> Unit)? = null,
+    /** Mirror folder members into a same-named Game Mode collection. */
+    private val onMirrorToCollection: (() -> Unit)? = null,
 ) {
     private var selection = 0
     private val rows = mutableListOf<TextView>()
@@ -97,6 +100,20 @@ class FolderPanel(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 context.dp(280),
             ))
+        }
+        if (onMirrorToCollection != null && memberKeys.isNotEmpty()) {
+            card.addView(TextView(context).apply {
+                setText(R.string.action_mirror_to_collection)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                background = TileBackgrounds.selected(context, accentColor)
+                setPadding(context.dp(12), context.dp(10), context.dp(12), context.dp(10))
+                setOnClickListener { onMirrorToCollection.invoke() }
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(8) })
         }
         card.addView(TextView(context).apply {
             setText(

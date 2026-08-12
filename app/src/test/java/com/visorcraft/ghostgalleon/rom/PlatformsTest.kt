@@ -123,14 +123,17 @@ class PlatformsTest {
 
     @Test
     fun `extra-style players carry their launch extras`() {
-        assertEquals("{file.uri}",
+        // Prefer reconstructed path, fall back to content URI (pathOrUri).
+        assertEquals("{file.pathOrUri}",
             Platforms.GAMECUBE.player.extras.getValue("AutoStartFile"))
-        assertEquals("{file.uri}",
+        assertEquals("{file.pathOrUri}",
             Platforms.WII.player.extras.getValue("AutoStartFile"))
-        assertEquals("{file.uri}",
+        assertEquals("{file.pathOrUri}",
             Platforms.PS2.player.extras.getValue("bootPath"))
         assertEquals("android.intent.action.MAIN", Platforms.WII.player.action)
         assertEquals("android.intent.action.VIEW", Platforms.GAMECUBE.player.action)
+        assertEquals("android.intent.action.VIEW", Platforms.WIIU.player.action)
+        assertEquals("com.flycast.emulator/.MainActivity", Platforms.DREAMCAST.player.component)
     }
 
     @Test

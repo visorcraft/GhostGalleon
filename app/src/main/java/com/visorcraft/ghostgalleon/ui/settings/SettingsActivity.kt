@@ -616,32 +616,45 @@ class SettingsActivity : AppCompatActivity() {
                             count,
                             count,
                         ))
-                        .setPositiveButton(R.string.action_rename) { _, _ ->
-                            val input = EditText(this).apply {
-                                setText(name)
-                                setTextColor(Color.WHITE)
-                            }
-                            AlertDialog.Builder(this)
-                                .setTitle(R.string.action_rename)
-                                .setView(input)
-                                .setPositiveButton(R.string.action_save) { _, _ ->
+                        .setItems(
+                            arrayOf(
+                                getString(R.string.action_mirror_to_folder),
+                                getString(R.string.action_rename),
+                                getString(R.string.action_delete),
+                            ),
+                        ) { _, action ->
+                            when (action) {
+                                0 -> mirrorCollectionToGridFolder(name)
+                                1 -> {
+                                    val input = EditText(this).apply {
+                                        setText(name)
+                                        setTextColor(Color.WHITE)
+                                    }
+                                    AlertDialog.Builder(this)
+                                        .setTitle(R.string.action_rename)
+                                        .setView(input)
+                                        .setPositiveButton(R.string.action_save) { _, _ ->
+                                            val next = com.visorcraft.ghostgalleon.library
+                                                .CollectionsOps.renameCollection(
+                                                    app.settings.collections,
+                                                    name,
+                                                    input.text?.toString().orEmpty(),
+                                                )
+                                            app.updateSettings(
+                                                app.settings.copy(collections = next),
+                                            )
+                                            recreate()
+                                        }
+                                        .setNegativeButton(R.string.action_cancel, null)
+                                        .show()
+                                }
+                                2 -> {
                                     val next = com.visorcraft.ghostgalleon.library.CollectionsOps
-                                        .renameCollection(
-                                            app.settings.collections,
-                                            name,
-                                            input.text?.toString().orEmpty(),
-                                        )
+                                        .deleteCollection(app.settings.collections, name)
                                     app.updateSettings(app.settings.copy(collections = next))
                                     recreate()
                                 }
-                                .setNegativeButton(R.string.action_cancel, null)
-                                .show()
-                        }
-                        .setNeutralButton(R.string.action_delete) { _, _ ->
-                            val next = com.visorcraft.ghostgalleon.library.CollectionsOps
-                                .deleteCollection(app.settings.collections, name)
-                            app.updateSettings(app.settings.copy(collections = next))
-                            recreate()
+                            }
                         }
                         .setNegativeButton(R.string.action_close, null)
                         .show()
@@ -649,6 +662,33 @@ class SettingsActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.action_close, null)
             .show()
+    }
+
+    /** Collection → grid folder mirror (symmetric with folder → collection). */
+    private fun mirrorCollectionToGridFolder(collectionName: String) {
+        val live = app.settings
+        val members = live.collections[collectionName].orEmpty()
+        if (members.isEmpty()) {
+            Toast.makeText(this, R.string.deck_empty_collection, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val fid = com.visorcraft.ghostgalleon.settings.Folders.nextId(live.folders)
+        val folders = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
+            .mirrorCollectionToFolder(
+                live.collections,
+                collectionName,
+                live.folders,
+                folderId = fid,
+                folderDisplayName = collectionName,
+            )
+        val folderKey = com.visorcraft.ghostgalleon.settings.Folders.key(fid)
+        val slots = com.visorcraft.ghostgalleon.library.CollectionsOps.bulkFillSlots(
+            live.gridSlots,
+            listOf(folderKey),
+        )
+        app.updateSettings(live.copy(folders = folders, gridSlots = slots))
+        Toast.makeText(this, R.string.deck_mirrored_to_folder, Toast.LENGTH_SHORT).show()
+        recreate()
     }
 
     private fun showDefaultPlayersDialog() {
@@ -777,13 +817,12 @@ class SettingsActivity : AppCompatActivity() {
         val sample = """
             {"ID":1,"Title":"Sample","NumAwardedToUser":3,"NumAchievements":10,"HardcoreMode":0}
         """.trimIndent()
-        if (app.settings.raApiKey.isNullOrBlank()) {
-            app.updateSettings(app.settings.copy(raApiKey = "sample"), notify = false)
-        }
+        // Never persist a fake API key — demo only injects progress for the
+        // current selection so hero RA line can be verified offline.
         app.setRaProgress(romId, sample)
         val line = RetroAchievements.heroLine(
             app.raProgressFor(romId),
-            !app.settings.raApiKey.isNullOrBlank(),
+            hasCredentials = true, // sample preview only — key not persisted
         )
         Toast.makeText(
             this,
@@ -800,6 +839,24 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         val key = app.settings.sgdbApiKey ?: return
+        when (
+            val decision = com.visorcraft.ghostgalleon.art.ScrapeEnvironment.decision(
+                this,
+                app.settings,
+            )
+        ) {
+            is com.visorcraft.ghostgalleon.art.ScrapePolicy.Decision.Block -> {
+                Toast.makeText(
+                    this,
+                    resolveText(
+                        com.visorcraft.ghostgalleon.art.ScrapePolicy.blockMessage(decision.reason),
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
+            com.visorcraft.ghostgalleon.art.ScrapePolicy.Decision.Allow -> Unit
+        }
         if (job.start(key, app.romEntries)) {
             scrapeLabel?.setText(R.string.action_cancel)
             scrapeValue?.setText(R.string.glyph_ellipsis)
@@ -1402,17 +1459,39 @@ class SettingsActivity : AppCompatActivity() {
 
         val chrome = s.browseChrome
         val chromeCard = sectionCard()
-        fun chromePresetId(c: com.visorcraft.ghostgalleon.settings.BrowseChrome): String = when {
-            c.isFull() -> "full"
-            c.isMinimal() -> "minimal"
-            else -> "custom"
-        }
+        fun chromePresetId(c: com.visorcraft.ghostgalleon.settings.BrowseChrome): String =
+            c.presetId()
         val presetOptions = listOf(
-            "minimal" to getString(R.string.label_minimal),
-            "custom" to getString(R.string.label_custom),
-            "full" to getString(R.string.label_full),
+            com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_MINIMAL to
+                getString(R.string.label_minimal),
+            com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_CUSTOM to
+                getString(R.string.label_custom),
+            com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_FULL to
+                getString(R.string.label_full),
         )
         var rebindChromePreset: ((String) -> Unit)? = null
+        // Programmatic switch rebind must not fire updateSettings (would thrash
+        // and write partial flags from stale isChecked after Minimal/Full).
+        var suppressChromeSwitchCallbacks = false
+        val chromeSwitchRebinds =
+            mutableListOf<(com.visorcraft.ghostgalleon.settings.BrowseChrome) -> Unit>()
+        val powerHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        fun rebindChromeUi(c: com.visorcraft.ghostgalleon.settings.BrowseChrome) {
+            rebindChromePreset?.invoke(chromePresetId(c))
+            suppressChromeSwitchCallbacks = true
+            try {
+                chromeSwitchRebinds.forEach { it(c) }
+            } finally {
+                suppressChromeSwitchCallbacks = false
+            }
+            powerHost.visibility = if (c.powerRailsPanelVisible()) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        }
         chromeCard.addView(controlRow(
             getString(R.string.settings_chrome_preset),
             segmented(
@@ -1421,73 +1500,178 @@ class SettingsActivity : AppCompatActivity() {
                 bindSelected = { set -> rebindChromePreset = set },
             ) { id ->
                 when (id) {
-                    "full" -> {
+                    com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_FULL -> {
+                        val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL
+                        val prev = app.settings.browseChrome
                         app.updateSettings(
-                            app.settings.copy(
-                                browseChrome = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL,
-                            ),
+                            app.settings.copy(browseChrome = next),
+                            chromeOnly = next.allowsInPlaceChromeUpdate(prev),
                         )
-                        recreate()
+                        rebindChromeUi(next)
                     }
-                    "minimal" -> {
+                    com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_MINIMAL -> {
+                        val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL
+                        val prev = app.settings.browseChrome
                         app.updateSettings(
-                            app.settings.copy(
-                                browseChrome = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL,
-                            ),
+                            app.settings.copy(browseChrome = next),
+                            chromeOnly = next.allowsInPlaceChromeUpdate(prev),
                         )
-                        recreate()
+                        rebindChromeUi(next)
                     }
                     else -> {
-                        rebindChromePreset?.invoke(
-                            chromePresetId(app.settings.browseChrome),
-                        )
+                        // Custom is sticky when flags already differ; selecting
+                        // Custom while Minimal/Full is a no-op on flags (user
+                        // toggles power rails below to leave preset).
+                        rebindChromePreset?.invoke(chromePresetId(app.settings.browseChrome))
                     }
                 }
             },
         ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        chromeCard.addView(TextView(this).apply {
+            setText(R.string.settings_chrome_custom_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+            setPadding(0, 0, 0, dp(4))
+        })
+        // Core always-visible toggles + power rails: keep Switch refs so
+        // Minimal/Full rebind isChecked without a full Settings recreate.
         fun chromeFlag(
+            host: LinearLayout,
             label: String,
-            checked: Boolean,
+            get: (com.visorcraft.ghostgalleon.settings.BrowseChrome) -> Boolean,
             set: (com.visorcraft.ghostgalleon.settings.BrowseChrome, Boolean) ->
                 com.visorcraft.ghostgalleon.settings.BrowseChrome,
         ) {
-            toggle(chromeCard, label, checked) { on ->
-                val next = set(app.settings.browseChrome, on)
-                app.updateSettings(app.settings.copy(browseChrome = next))
+            val sw = accentSwitch(get(chrome)) { on ->
+                if (suppressChromeSwitchCallbacks) return@accentSwitch
+                val prev = app.settings.browseChrome
+                val next = set(prev, on)
+                // Status pill / Resume chip need full dual paint; rails stay CHROME.
+                app.updateSettings(
+                    app.settings.copy(browseChrome = next),
+                    chromeOnly = next.allowsInPlaceChromeUpdate(prev),
+                )
                 rebindChromePreset?.invoke(chromePresetId(next))
+                powerHost.visibility = if (next.powerRailsPanelVisible()) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
+            }
+            host.addView(
+                controlRow(label, sw),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(64),
+                ),
+            )
+            chromeSwitchRebinds.add { c ->
+                val want = get(c)
+                if (sw.isChecked != want) sw.isChecked = want
             }
         }
-        chromeFlag(getString(R.string.settings_installed_rail), chrome.installedRail) { c, v -> c.copy(installedRail = v) }
-        chromeFlag(getString(R.string.settings_games_rail), chrome.gamesRail) { c, v -> c.copy(gamesRail = v) }
-        chromeFlag(getString(R.string.settings_top_rail), chrome.topRail) { c, v -> c.copy(topRail = v) }
-        chromeFlag(getString(R.string.settings_today_rail), chrome.todayRail) { c, v -> c.copy(todayRail = v) }
-        chromeFlag(getString(R.string.settings_week_rail), chrome.weekRail) { c, v -> c.copy(weekRail = v) }
-        chromeFlag(getString(R.string.settings_month_rail), chrome.monthRail) { c, v -> c.copy(monthRail = v) }
-        chromeFlag(getString(R.string.settings_alpha_rail), chrome.alphaRail) { c, v -> c.copy(alphaRail = v) }
-        chromeFlag(getString(R.string.settings_unplayed_rail), chrome.unplayedRail) { c, v -> c.copy(unplayedRail = v) }
-        chromeFlag(getString(R.string.settings_random_chip), chrome.randomChip) { c, v -> c.copy(randomChip = v) }
-        chromeFlag(getString(R.string.settings_genre_chips), chrome.genreChips) { c, v -> c.copy(genreChips = v) }
-        chromeFlag(getString(R.string.settings_developer_chips), chrome.developerChips) { c, v -> c.copy(developerChips = v) }
-        chromeFlag(getString(R.string.settings_year_chips), chrome.yearChips) { c, v -> c.copy(yearChips = v) }
         chromeFlag(
-            getString(R.string.settings_launchable_only),
-            chrome.launchableOnly,
-        ) { c, v -> c.copy(launchableOnly = v) }
-        chromeFlag(getString(R.string.settings_platform_chips), chrome.platformChips) { c, v -> c.copy(platformChips = v) }
-        chromeFlag(getString(R.string.settings_collection_rails), chrome.collectionRails) { c, v -> c.copy(collectionRails = v) }
+            chromeCard,
+            getString(R.string.settings_platform_chips),
+            get = { it.platformChips },
+            set = { c, v -> c.copy(platformChips = v) },
+        )
         chromeFlag(
-            getString(R.string.settings_status_pill),
-            chrome.deckStatusPill,
-        ) { c, v -> c.copy(deckStatusPill = v) }
+            chromeCard,
+            getString(R.string.settings_collection_rails),
+            get = { it.collectionRails },
+            set = { c, v -> c.copy(collectionRails = v) },
+        )
+        // Power rails expander — collapsed when currently minimal.
+        powerHost.visibility = if (chrome.powerRailsPanelVisible()) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        val expander = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                powerHost.visibility =
+                    if (powerHost.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            }
+        }
+        expander.addView(rowLabel(getString(R.string.settings_chrome_power_rails)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        expander.addView(TextView(this).apply {
+            text = getString(R.string.settings_chrome_expand)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(accent)
+        })
+        chromeCard.addView(expander, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         chromeFlag(
-            getString(R.string.settings_resume_chip),
-            chrome.resumeChip,
-        ) { c, v -> c.copy(resumeChip = v) }
+            powerHost, getString(R.string.settings_installed_rail),
+            get = { it.installedRail }, set = { c, v -> c.copy(installedRail = v) },
+        )
         chromeFlag(
-            getString(R.string.settings_quick_browse),
-            chrome.quickPanelBrowse,
-        ) { c, v -> c.copy(quickPanelBrowse = v) }
+            powerHost, getString(R.string.settings_games_rail),
+            get = { it.gamesRail }, set = { c, v -> c.copy(gamesRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_top_rail),
+            get = { it.topRail }, set = { c, v -> c.copy(topRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_today_rail),
+            get = { it.todayRail }, set = { c, v -> c.copy(todayRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_week_rail),
+            get = { it.weekRail }, set = { c, v -> c.copy(weekRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_month_rail),
+            get = { it.monthRail }, set = { c, v -> c.copy(monthRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_alpha_rail),
+            get = { it.alphaRail }, set = { c, v -> c.copy(alphaRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_unplayed_rail),
+            get = { it.unplayedRail }, set = { c, v -> c.copy(unplayedRail = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_random_chip),
+            get = { it.randomChip }, set = { c, v -> c.copy(randomChip = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_genre_chips),
+            get = { it.genreChips }, set = { c, v -> c.copy(genreChips = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_developer_chips),
+            get = { it.developerChips }, set = { c, v -> c.copy(developerChips = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_year_chips),
+            get = { it.yearChips }, set = { c, v -> c.copy(yearChips = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_launchable_only),
+            get = { it.launchableOnly }, set = { c, v -> c.copy(launchableOnly = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_status_pill),
+            get = { it.deckStatusPill }, set = { c, v -> c.copy(deckStatusPill = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_resume_chip),
+            get = { it.resumeChip }, set = { c, v -> c.copy(resumeChip = v) },
+        )
+        chromeFlag(
+            powerHost, getString(R.string.settings_quick_browse),
+            get = { it.quickPanelBrowse }, set = { c, v -> c.copy(quickPanelBrowse = v) },
+        )
+        chromeCard.addView(powerHost, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addSection(
             SettingsPage.DISPLAY_GRID,
             getString(R.string.settings_chrome_section),
@@ -1561,6 +1745,12 @@ class SettingsActivity : AppCompatActivity() {
         }
         seek(gridCard, getString(R.string.settings_icon_size), s.iconSizeDp, 48, 128) {
             app.updateSettings(app.settings.copy(iconSizeDp = it))
+        }
+        seek(gridCard, getString(R.string.settings_card_size), s.cardSizeDp, 120, 320) {
+            app.updateSettings(
+                app.settings.copy(cardSizeDp = it),
+                chromeOnly = true,
+            )
         }
         toggle(gridCard, getString(R.string.settings_show_app_names), s.showLabels) {
             app.updateSettings(app.settings.copy(showLabels = it))
@@ -1760,6 +1950,14 @@ class SettingsActivity : AppCompatActivity() {
                 this@SettingsActivity,
                 app.settings,
                 force = force,
+                onProgress = progress@{ done, total ->
+                    if (isFinishing || isDestroyed) return@progress
+                    rescanLabel.text = resolveText(
+                        com.visorcraft.ghostgalleon.rom.RescanFeedback.progressLabel(
+                            done, total, force,
+                        ),
+                    )
+                },
             ) { result ->
                 scanning = false
                 rescanLabel.setText(R.string.settings_rescan_library)
@@ -1770,21 +1968,14 @@ class SettingsActivity : AppCompatActivity() {
                 if (isFinishing || isDestroyed) return@rescan
                 when (result) {
                     is RomLibrary.RescanResult.Success -> {
-                        val skip = result.skippedCleanTrees
-                        val msg = if (skip > 0) {
-                            resources.getQuantityString(
-                                R.plurals.count_roms_trees_unchanged,
-                                skip,
-                                result.entries.size,
-                                skip,
-                            )
-                        } else {
-                            resources.getQuantityString(
-                                R.plurals.count_roms_found,
-                                result.entries.size,
-                                result.entries.size,
-                            )
-                        }
+                        val msg = resolveText(
+                            com.visorcraft.ghostgalleon.rom.RescanFeedback.successMessage(
+                                entryCount = result.entries.size,
+                                skippedCleanTrees = result.skippedCleanTrees,
+                                scannedTrees = result.scannedTrees,
+                                retainedUnreadableTrees = result.retainedUnreadableTrees,
+                            ),
+                        )
                         Toast.makeText(this@SettingsActivity, msg, Toast.LENGTH_LONG).show()
                     }
                     RomLibrary.RescanResult.Unreadable ->
@@ -1986,6 +2177,13 @@ class SettingsActivity : AppCompatActivity() {
         scrapeRow = downloadRow
         libraryCard.addView(downloadRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        toggle(
+            libraryCard,
+            getString(R.string.settings_scrape_wifi_only),
+            s.scrapeWifiOnly,
+        ) { on ->
+            app.updateSettings(app.settings.copy(scrapeWifiOnly = on), notify = false)
+        }
         refreshSgdbRows()
 
         val exportRow = LinearLayout(this).apply {
@@ -2196,6 +2394,50 @@ class SettingsActivity : AppCompatActivity() {
         refreshSys.addView(rowLabel(getString(R.string.settings_refresh_readings)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         systemCard.addView(refreshSys, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+
+        // Dual-black recovery guidance + in-app companion restart (no App Info).
+        systemCard.addView(TextView(this).apply {
+            setText(R.string.settings_dual_recovery_title)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(0xCCFFFFFF.toInt())
+            setPadding(0, dp(12), 0, dp(4))
+        })
+        systemCard.addView(TextView(this).apply {
+            setText(R.string.settings_dual_recovery_body)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(0x99FFFFFF.toInt())
+            setPadding(0, 0, 0, dp(8))
+        })
+        val restartCompanion = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                val main = app.liveDeckActivities()
+                    .filterIsInstance<com.visorcraft.ghostgalleon.ui.MainActivity>()
+                    .firstOrNull()
+                if (main != null) {
+                    main.restartCompanionPanel("settings-system")
+                    Toast.makeText(
+                        this@SettingsActivity,
+                        R.string.deck_restart_bottom_panel,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this@SettingsActivity,
+                        R.string.settings_dual_recovery_no_main,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+        restartCompanion.addView(
+            rowLabel(getString(R.string.settings_restart_companion)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        systemCard.addView(restartCompanion, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         addSection(SettingsPage.SYSTEM, getString(R.string.settings_page_system), systemCard)
         pageBodies.getValue(SettingsPage.ABOUT).addView(

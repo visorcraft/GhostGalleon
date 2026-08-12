@@ -270,7 +270,7 @@
     <string name="deck_status">Status</string>
     <string name="deck_clock">Clock</string>
     <string name="deck_select_game_or_app">Select a game or app</string>
-    <string name="deck_set_pin_help">Set pin in Settings → Companion</string>
+    <string name="deck_set_pin_help">No pin yet — choose an app</string>
     <string name="deck_pinned_app_missing">Pinned app not installed</string>
     <string name="deck_rom_missing">ROM no longer in library</string>
     <string name="deck_app_hidden">App hidden</string>
@@ -583,4 +583,44 @@
     <string name="about_runtime_emulators">Emulator apps (launched, never bundled)</string>
     <string name="about_service_terms">service terms</string>
     <string name="about_various">various</string>
+
+    <!-- Dual-paint recovery + library bridge (0.7) -->
+    <string name="settings_dual_recovery_title">Dual-screen black panels</string>
+    <string name="settings_dual_recovery_body">If one or both panels go pure black: (1) Restart companion panel below, or press X once or twice; (2) Launch any game and return; (3) Force-stop Ghost Galleon then HOME; (4) Reboot if still stuck.</string>
+    <string name="settings_restart_companion">Restart companion panel</string>
+    <string name="settings_dual_recovery_no_main">Open the home deck first, then retry</string>
+    <string name="settings_chrome_custom_hint">Custom is automatic when any power-rail toggle differs from Minimal or Full.</string>
+    <string name="settings_chrome_power_rails">Power rails &amp; extras</string>
+    <string name="settings_chrome_expand">Show / hide</string>
+    <string name="action_open_in_game_mode">Open in Game Mode</string>
+    <string name="action_search_library">Search library</string>
+    <string name="action_mirror_to_collection">Mirror to collection</string>
+    <string name="action_choose_pin">Choose app to pin</string>
+    <string name="action_change_pin">Change pin</string>
+    <string name="deck_mirrored_to_collection">Mirrored folder to collection</string>
+    <string name="deck_perf_live_hint">Live readings · refreshes every few seconds</string>
+    <string name="deck_pin_cta_subtitle">Launch on companion · not a live embedded app</string>
+    <string name="deck_pin_dual_claim">Pin paused while a dual-screen game (NDS/3DS) is active</string>
+
+
+    <string name="settings_card_size">Game Mode card size (dp)</string>
+    <string name="settings_rescan_progress">Scanning… %1$d / %2$d folders</string>
+    <string name="settings_rescan_progress_full">Full scan… %1$d / %2$d folders</string>
+    <string name="settings_rescan_done_mixed">%1$d ROMs · scanned %2$d folder(s) · %3$d unchanged</string>
+    <string name="settings_rescan_done_partial">%1$d ROMs · %2$d folder(s) unreadable (kept prior)</string>
+
+
+    <string name="setup_chrome_title">Companion chrome</string>
+    <string name="setup_chrome_intro">Turn on Resume and the clock/battery pill so the other panel is more useful. You can change this later under Browse chrome.</string>
+    <string name="setup_check_resume_chip">Resume chip (last played)</string>
+    <string name="setup_check_status_pill">Clock / battery on deck</string>
+    <string name="setup_enable_companion_chrome">Enable Resume + clock</string>
+    <string name="scrape_blocked_no_network">No network — artwork download paused</string>
+    <string name="scrape_blocked_wifi_only">Connect to Wi‑Fi to download artwork (Wi‑Fi only is on)</string>
+    <string name="scrape_blocked_low_battery">Battery low — charge or raise the scrape battery floor in Settings</string>
+    <string name="settings_scrape_wifi_only">Artwork download: Wi‑Fi only</string>
+    <string name="action_mirror_to_folder">Mirror to grid folder</string>
+    <string name="deck_mirrored_to_folder">Mirrored collection to grid folder</string>
+    <string name="deck_empty_collection">Collection is empty</string>
+
 </resources>

@@ -10,6 +10,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * SteamGridDB gap-filler. For every library entry with no
@@ -19,17 +20,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Entries whose grid slot is already cached but whose HERO slot is empty
  * are still scraped — a hero-only backfill that skips the grid download.
  *
+ * Work is **heroes-first** ([SgdbQueue.prioritize]) and may use up to
+ * [SgdbQueue.MAX_WORKERS] parallel workers, each still polite (~200ms
+ * between HTTP calls). Cancel is cooperative between ROMs/requests.
+ *
  * Downloaded CDN bytes are downscaled and re-encoded as PNG at the cache
  * target ([ArtCache.downscaledPngBytes]: grid ~512px max dimension, hero
- * ~1600px wide) BEFORE the disk write, so the disk cache and the memory
- * LRU only ever hold small images. Undecodable bytes count as a failure
- * and are never cached.
- *
- * The job runs on its OWN single-thread executor (never RomLibrary's
- * SCAN_EXECUTOR), is cancelable between ROMs and between requests, and is
- * polite: ~200ms between HTTP requests. Every failure is logged and
- * counted; the job never crashes. Pure URL/JSON/accounting logic is
- * host-tested through the [SgdbTransport] and `shrink` seams.
+ * ~1600px wide) BEFORE the disk write. Undecodable bytes count as a failure
+ * and are never cached. Host-tested via [SgdbTransport] / `shrink` seams.
  */
 object Sgdb {
     const val BASE = "https://www.steamgriddb.com/api/v2"
@@ -180,9 +178,13 @@ class SgdbScraper(
         cancelled = false
         val handler = Handler(Looper.getMainLooper())
         EXECUTOR.execute {
-            val summary = runBlocking(apiKey, entries, { Thread.sleep(it) }) { done, total ->
-                handler.post { onProgress(done, total) }
-            }
+            val summary = runBlocking(
+                apiKey,
+                entries,
+                sleep = { Thread.sleep(it) },
+                onProgress = { done, total -> handler.post { onProgress(done, total) } },
+                parallelWorkers = SgdbQueue.MAX_WORKERS,
+            )
             running.set(false)
             handler.post { onDone(summary) }
         }
@@ -191,38 +193,83 @@ class SgdbScraper(
 
     /**
      * The whole job, synchronously, over injected seams — host-tested.
-     * Entries that already have art (local artUri, or BOTH cache slots
-     * filled) are skipped without any network traffic; an entry whose grid
-     * slot is cached but whose HERO slot is empty stays in the job as a
-     * hero-only backfill.
+     * Heroes-first ordering via [SgdbQueue]; optional bounded parallelism
+     * ([parallelWorkers], default [SgdbQueue.MAX_WORKERS]).
      */
     internal fun runBlocking(
         apiKey: String,
         entries: List<RomEntry>,
         sleep: (Long) -> Unit,
         onProgress: (done: Int, total: Int) -> Unit,
+        /** Production uses [SgdbQueue.MAX_WORKERS]; host tests default to 1. */
+        parallelWorkers: Int = 1,
     ): Summary {
-        val missing = entries.filter {
-            it.artUri == null &&
-                (!cache.diskHas(it.id) || !cache.diskHas(it.id, ArtCache.ArtKind.HERO))
+        val queue = SgdbQueue.prioritize(
+            entries,
+            hasGrid = { id -> cache.diskHas(id) },
+            hasHero = { id -> cache.diskHas(id, ArtCache.ArtKind.HERO) },
+        )
+        val skipped = entries.size - queue.size
+        if (queue.isEmpty()) {
+            onProgress(0, 0)
+            return Summary(0, skipped, 0, cancelled = false)
         }
-        val skipped = entries.size - missing.size
-        var downloaded = 0
-        var failed = 0
-        missing.forEachIndexed { index, rom ->
-            if (cancelled) {
-                return Summary(downloaded, skipped, failed, cancelled = true)
+        val workers = SgdbQueue.workerCount(queue.size, parallelWorkers.coerceAtLeast(1))
+        val downloaded = AtomicInteger(0)
+        val failed = AtomicInteger(0)
+        val doneCount = AtomicInteger(0)
+        val total = queue.size
+        if (workers <= 1) {
+            for (need in queue) {
+                if (cancelled) {
+                    return Summary(downloaded.get(), skipped, failed.get(), cancelled = true)
+                }
+                if (scrapeOne(apiKey, need, sleep)) downloaded.incrementAndGet()
+                else failed.incrementAndGet()
+                onProgress(doneCount.incrementAndGet(), total)
             }
-            if (scrapeOne(apiKey, rom, sleep)) downloaded++ else failed++
-            onProgress(index + 1, missing.size)
+            return Summary(downloaded.get(), skipped, failed.get(), cancelled = false)
         }
-        return Summary(downloaded, skipped, failed, cancelled = false)
+        // Bounded parallel: each worker pulls the next Need under a lock.
+        val lock = Any()
+        var nextIndex = 0
+        fun takeNext(): SgdbQueue.Need? = synchronized(lock) {
+            if (nextIndex >= queue.size) null
+            else queue[nextIndex++]
+        }
+        val pool = Executors.newFixedThreadPool(workers)
+        val latch = java.util.concurrent.CountDownLatch(workers)
+        repeat(workers) {
+            pool.execute {
+                try {
+                    while (!cancelled) {
+                        val need = takeNext() ?: break
+                        if (scrapeOne(apiKey, need, sleep)) downloaded.incrementAndGet()
+                        else failed.incrementAndGet()
+                        onProgress(doneCount.incrementAndGet(), total)
+                    }
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await()
+        pool.shutdownNow()
+        return Summary(
+            downloaded.get(),
+            skipped,
+            failed.get(),
+            cancelled = cancelled,
+        )
     }
 
-    /** One ROM: search → first grid (unless already cached) + first hero
-     *  (unless already cached). True when the grid slot ends up filled or
-     *  a hero landed. Never throws. */
-    private fun scrapeOne(apiKey: String, rom: RomEntry, sleep: (Long) -> Unit): Boolean {
+    /** One ROM need: search → grid (if needed) + hero (if needed). Never throws. */
+    private fun scrapeOne(
+        apiKey: String,
+        need: SgdbQueue.Need,
+        sleep: (Long) -> Unit,
+    ): Boolean {
+        val rom = need.entry
         return runCatching {
             val query = Sgdb.normalizeName(rom.name)
             if (query.isEmpty()) return false
@@ -231,10 +278,8 @@ class SgdbScraper(
             if (cancelled) return false
             val gameId = Sgdb.parseSearchFirstId(searchJson) ?: return false
 
-            // Grid slot already cached → this run is a hero backfill: count
-            // as success without re-downloading or overwriting the tile art.
-            var stored = cache.diskHas(rom.id)
-            if (!stored) {
+            var stored = false
+            if (need.needGrid) {
                 val gridUrl = request(sleep) { transport.get(Sgdb.gridsUrl(gameId), apiKey) }
                     ?.let(Sgdb::parseFirstImageUrl)
                 if (cancelled) return false
@@ -246,10 +291,13 @@ class SgdbScraper(
                         }
                     }
                 }
+            } else {
+                // Hero-only backfill still counts as success if hero lands.
+                stored = cache.diskHas(rom.id) || rom.artUri != null
             }
             if (cancelled) return false
 
-            if (!cache.diskHas(rom.id, ArtCache.ArtKind.HERO)) {
+            if (need.needHero) {
                 val heroUrl = request(sleep) { transport.get(Sgdb.heroesUrl(gameId), apiKey) }
                     ?.let(Sgdb::parseFirstImageUrl)
                 if (cancelled) return false
@@ -276,8 +324,8 @@ class SgdbScraper(
     companion object {
         const val DELAY_MS = 200L
 
-        // The scraper's own single thread — never RomLibrary's
-        // SCAN_EXECUTOR, so artwork never waits on a card scan.
+        // Coordinator thread only — workers for parallel scrape are ephemeral
+        // pools inside runBlocking (never RomLibrary's SCAN_EXECUTOR).
         private val EXECUTOR = Executors.newSingleThreadExecutor()
     }
 }

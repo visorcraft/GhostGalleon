@@ -249,7 +249,7 @@
     <string name="deck_status">สถานะ</string>
     <string name="deck_clock">นาฬิกา</string>
     <string name="deck_select_game_or_app">เลือกเกมหรือแอป</string>
-    <string name="deck_set_pin_help">ตั้งค่าแอปที่ปักหมุดได้ที่ การตั้งค่า → หน้าจอเสริม</string>
+    <string name="deck_set_pin_help">ยังไม่มีพิน — เลือกแอป</string>
     <string name="deck_pinned_app_missing">แอปที่ปักหมุดไม่ได้ติดตั้ง</string>
     <string name="deck_rom_missing">ROM ไม่อยู่ในไลบรารีแล้ว</string>
     <string name="deck_app_hidden">แอปถูกซ่อน</string>
@@ -552,4 +552,40 @@
     <string name="menu_section_customize">ปรับแต่ง</string>
     <string name="menu_section_more">เพิ่มเติม</string>
     <string name="deck_removed_from_grid">ลบออกจากกริดแล้ว</string>
+
+    <string name="settings_dual_recovery_title">หน้าจอคู่เป็นสีดำ</string>
+    <string name="settings_dual_recovery_body">ถ้าหน้าจอด้านหนึ่งหรือทั้งสองดำ: (1) รีสตาร์ทแผงคู่ด้านล่าง หรือกด X หนึ่งถึงสองครั้ง (2) เปิดเกมแล้วกลับมา (3) บังคับหยุด Ghost Galleon แล้วกด HOME (4) รีบูตถ้ายังค้าง</string>
+    <string name="settings_restart_companion">รีสตาร์ทแผงคู่</string>
+    <string name="settings_dual_recovery_no_main">เปิดหน้าโฮมก่อน แล้วลองใหม่</string>
+    <string name="settings_chrome_custom_hint">กำหนดเองจะถูกเลือกเมื่อสวิตช์เรลขั้นสูงต่างจากแบบน้อยหรือเต็ม</string>
+    <string name="settings_chrome_power_rails">เรลขั้นสูงและส่วนเสริม</string>
+    <string name="settings_chrome_expand">แสดง / ซ่อน</string>
+    <string name="action_open_in_game_mode">เปิดในโหมดเกม</string>
+    <string name="action_search_library">ค้นหาไลบรารี</string>
+    <string name="action_mirror_to_collection">สะท้อนไปยังคอลเลกชัน</string>
+    <string name="action_choose_pin">เลือกแอปที่จะปักหมุด</string>
+    <string name="action_change_pin">เปลี่ยนพิน</string>
+    <string name="deck_mirrored_to_collection">สะท้อนโฟลเดอร์ไปยังคอลเลกชันแล้ว</string>
+    <string name="deck_perf_live_hint">ค่าแบบสด · รีเฟรชทุกไม่กี่วินาที</string>
+    <string name="deck_pin_cta_subtitle">เปิดบนแผงคู่ · ไม่ใช่แอปฝังตัว</string>
+    <string name="deck_pin_dual_claim">พินหยุดชั่วคราวเมื่อเกมสองจอ (NDS/3DS) ทำงาน</string>
+
+    <string name="settings_card_size">ขนาดการ์ดโหมดเกม (dp)</string>
+    <string name="settings_rescan_progress">กำลังสแกน… %1$d / %2$d โฟลเดอร์</string>
+    <string name="settings_rescan_progress_full">สแกนเต็ม… %1$d / %2$d โฟลเดอร์</string>
+    <string name="settings_rescan_done_mixed">ROM %1$d · สแกน %2$d โฟลเดอร์ · ไม่เปลี่ยน %3$d</string>
+    <string name="settings_rescan_done_partial">ROM %1$d · %2$d โฟลเดอร์อ่านไม่ได้ (เก็บของเดิม)</string>
+
+    <string name="setup_chrome_title">โครมแผงคู่</string>
+    <string name="setup_chrome_intro">เปิด Resume และนาฬิกา/แบตเตอรี่เพื่อให้แผงอื่นมีประโยชน์ เปลี่ยนทีหลังได้ใน Browse chrome</string>
+    <string name="setup_check_resume_chip">ชิป Resume (เล่นล่าสุด)</string>
+    <string name="setup_check_status_pill">นาฬิกา / แบตเตอรี่บนเด็ค</string>
+    <string name="setup_enable_companion_chrome">เปิด Resume + นาฬิกา</string>
+    <string name="scrape_blocked_no_network">ไม่มีเครือข่าย — หยุดดาวน์โหลดอาร์ต</string>
+    <string name="scrape_blocked_wifi_only">เชื่อมต่อ Wi‑Fi เพื่อดาวน์โหลดอาร์ต (โหมด Wi‑Fi เท่านั้น)</string>
+    <string name="scrape_blocked_low_battery">แบตต่ำ — ชาร์จหรือเพิ่มเกณฑ์ในตั้งค่า</string>
+    <string name="settings_scrape_wifi_only">ดาวน์โหลดอาร์ต: Wi‑Fi เท่านั้น</string>
+    <string name="action_mirror_to_folder">สะท้อนไปโฟลเดอร์กริด</string>
+    <string name="deck_mirrored_to_folder">สะท้อนคอลเลกชันไปโฟลเดอร์กริดแล้ว</string>
+    <string name="deck_empty_collection">คอลเลกชันว่าง</string>
 </resources>

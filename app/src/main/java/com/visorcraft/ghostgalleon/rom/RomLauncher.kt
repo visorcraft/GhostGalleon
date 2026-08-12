@@ -35,23 +35,35 @@ object LaunchPlanBuilder {
     fun build(template: PlayerTemplate, entry: RomEntry): LaunchPlan? {
         val path = entry.path
         if (template.uriStyle == UriStyle.PATH && path == null) return null
+        // Templates that embed {file.path} (without pathOrUri fallback) need a path.
+        val needsPath = template.extras.values.any {
+            it.contains("{file.path}") && !it.contains("{file.pathOrUri}")
+        }
+        if (needsPath && path.isNullOrBlank()) return null
         val pkg = template.component.substringBefore('/')
         val rawClass = template.component.substringAfter('/')
         val cls = if (rawClass.startsWith(".")) pkg + rawClass else rawClass
+        val extras = template.extras.mapValues { (_, v) -> substitute(v, entry) }
+        // Refuse empty boot/start extras (silent emulator no-ops).
+        if (extras.values.any { it.isBlank() }) return null
         return LaunchPlan(
             action = template.action,
             packageName = pkg,
             className = cls,
             dataString = if (template.uriStyle == UriStyle.URI) entry.uri else null,
-            extras = template.extras.mapValues { (_, v) -> substitute(v, entry) },
+            extras = extras,
             grantRead = template.grantRead,
             flags = template.flags,
         )
     }
 
-    private fun substitute(value: String, entry: RomEntry): String = value
-        .replace("{file.uri}", entry.uri)
-        .replace("{file.path}", entry.path ?: "")
+    private fun substitute(value: String, entry: RomEntry): String {
+        val pathOrUri = entry.path?.takeIf { it.isNotBlank() } ?: entry.uri
+        return value
+            .replace("{file.pathOrUri}", pathOrUri)
+            .replace("{file.uri}", entry.uri)
+            .replace("{file.path}", entry.path ?: "")
+    }
 }
 
 /** Fires launch intents for ROM entries through the platform templates. */
@@ -120,6 +132,9 @@ object RomLauncher {
             launchOnOtherDisplay(activity, state, intent)
             true
         } catch (e: ActivityNotFoundException) {
+            toast(activity, R.string.rom_emulator_not_installed, template.displayName)
+            false
+        } catch (e: SecurityException) {
             toast(activity, R.string.rom_emulator_not_installed, template.displayName)
             false
         }

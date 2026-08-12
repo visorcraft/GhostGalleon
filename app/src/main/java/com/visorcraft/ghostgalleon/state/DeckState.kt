@@ -12,7 +12,19 @@ class DeckState {
     // this to pick a granular re-render (SELECTION) over a full rebuild.
     // BROWSE: Game Mode filter chips — primary deck rebuilds; companion only
     // updates selection chrome (avoids dual setContentView thrash).
-    enum class Change { SELECTION, MODE, DISPLAY, SETTINGS, BROWSE }
+    enum class Change {
+        SELECTION,
+        MODE,
+        DISPLAY,
+        SETTINGS,
+        BROWSE,
+        /**
+         * Non-structural chrome (browse flags, card size, accent-only theme
+         * tweaks). Decks may rebind in place; fall through to full SETTINGS
+         * rebuild when in-place fails.
+         */
+        CHROME,
+    }
 
     var mode: UIMode = UIMode.GRID
         private set
@@ -207,6 +219,15 @@ class DeckState {
      */
     fun notifyChanged() {
         lastChange = Change.SETTINGS
+        notifyListeners()
+    }
+
+    /**
+     * Browse chrome / card size / light theme tweaks — listeners may rebind
+     * in place ([Change.CHROME]) instead of dual full SETTINGS rebuild.
+     */
+    fun notifyChromeRefresh() {
+        lastChange = Change.CHROME
         notifyListeners()
     }
 

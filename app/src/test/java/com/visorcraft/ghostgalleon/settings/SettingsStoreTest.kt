@@ -37,7 +37,6 @@ class SettingsStoreTest {
             gridColumns = 7,
             iconSizeDp = 96,
             cardSizeDp = 240,
-            animationMs = 120,
             defaultMode = UIMode.GAME,
             primaryDisplay = 1,
             gyroEnabled = false,

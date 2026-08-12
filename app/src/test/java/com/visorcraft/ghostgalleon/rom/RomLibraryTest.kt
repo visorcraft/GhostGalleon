@@ -180,7 +180,10 @@ class RomLibraryTest {
             isReadable = { true },
             treeFor = { FakeTree(emptyList<DocFile>()) to "roms" },
         )
-        assertEquals(RomLibrary.RescanResult.Success(emptyList()), result)
+        val success = result as RomLibrary.RescanResult.Success
+        assertTrue(success.entries.isEmpty())
+        assertEquals(1, success.scannedTrees)
+        assertEquals(1, success.totalTrees)
     }
 
     @Test
@@ -191,7 +194,9 @@ class RomLibraryTest {
             isReadable = { error("no trees to check") },
             treeFor = { error("no trees to scan") },
         )
-        assertEquals(RomLibrary.RescanResult.Success(emptyList()), result)
+        val success = result as RomLibrary.RescanResult.Success
+        assertTrue(success.entries.isEmpty())
+        assertEquals(0, success.totalTrees)
     }
 
     @Test

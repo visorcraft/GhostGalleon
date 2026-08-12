@@ -12,6 +12,8 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -22,7 +24,9 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import android.widget.VideoView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.children
 import kotlin.math.abs
@@ -53,6 +57,7 @@ import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
+import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
@@ -81,6 +86,8 @@ object CompanionPanel {
     private const val TAG_ROLE_CHIPS = "role_chips"
     private const val TAG_STRIP_ART_HOST = "strip_art_host"
     private const val TAG_STRIP_DETAIL = "strip_detail"
+    private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
+    private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
 
     // Layered depth background: a vertical gradient lifting to #FF202028 in
     // the center band, plus a huge soft radial glow behind the hero icon
@@ -146,11 +153,39 @@ object CompanionPanel {
         return settings.accentColor
     }
 
+    /**
+     * Pure structural-chrome gate for the **CHROME** path only (not SELECTION).
+     *
+     * Resume chip is often omitted even when [BrowseChrome.resumeChip] is on
+     * (no continue key, hideResumeChip, open session). That content omission
+     * must NOT force a dual full rebuild on every NAV — only a flag toggle
+     * that requires creating a missing view fails in-place rebind.
+     *
+     * Host-tested; no Android View types.
+     */
+    fun canApplyChromeInPlace(
+        hasStatusPill: Boolean,
+        hasResumeChip: Boolean,
+        previous: com.visorcraft.ghostgalleon.settings.BrowseChrome,
+        next: com.visorcraft.ghostgalleon.settings.BrowseChrome,
+    ): Boolean {
+        // Status pill is always built when the flag is on at paint time.
+        if (next.deckStatusPill != hasStatusPill) return false
+        // Resume just turned ON and no chip exists → need full rebuild to create it.
+        if (next.resumeChip && !previous.resumeChip && !hasResumeChip) return false
+        // Resume already on, chip absent → content omit (no continue target); OK.
+        // Resume off → GONE existing chip in place; OK.
+        return true
+    }
+
     // Selection-only update on an already-built panel: swap the hero icon
     // and name in place. Returns false when the current hero structure does
     // not match the new selection (wordmark shown but an entry selected, or
     // an app hero showing while a ROM is now selected — the hero views
     // differ) so the caller falls back to a full rebuild.
+    //
+    // Does **not** gate on resumeChip flag vs chip presence — that thrash path
+    // is CHROME-only via [canApplyChromeInPlace] + Settings chromeOnly split.
     fun updateSelection(
         view: View,
         context: Context,
@@ -163,11 +198,11 @@ object CompanionPanel {
         if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
             return updateTopStrip(view, context, state, library, roms, settings)
         }
-        // Resume chip can be dismissed without a full dual rebuild.
+        // Resume chip: only touch an existing view (GONE/show). Never require
+        // the chip to exist when resumeChip is on — content may omit it.
         view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
-            if (settings.hideResumeChip) {
-                chip.visibility = View.GONE
-            }
+            val show = settings.browseChrome.resumeChip && !settings.hideResumeChip
+            chip.visibility = if (show) View.VISIBLE else View.GONE
         }
         val rom = selectedRom(state.selectedKey, roms)
         if (rom != null) {
@@ -1477,6 +1512,7 @@ object CompanionPanel {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(8), dp(16), dp(8), dp(16))
+            tag = TAG_PERF_HUD_ROOT
         }
         col.addView(TextView(context).apply {
             setText(R.string.label_perf_hud)
@@ -1485,19 +1521,56 @@ object CompanionPanel {
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
-        val readings = SystemInfoCollector.collect(context)
-        SystemInfoFormat.rows(readings).forEach { (label, value) ->
-            col.addView(TextView(context).apply {
-                text = context.resolveText(label)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(0x88FFFFFF.toInt())
-                setPadding(0, dp(10), 0, 0)
-            })
-            col.addView(TextView(context).apply {
-                text = context.resolveText(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setTextColor(Color.WHITE)
-            })
+        col.addView(TextView(context).apply {
+            setText(R.string.deck_perf_live_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextColor(0x66FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+        })
+        fun paintRows() {
+            // Drop previous value/label pairs (keep title + hint = first 2 kids).
+            while (col.childCount > 2) {
+                col.removeViewAt(col.childCount - 1)
+            }
+            val readings = SystemInfoCollector.collect(context)
+            SystemInfoFormat.rows(readings).forEachIndexed { index, (label, value) ->
+                col.addView(TextView(context).apply {
+                    text = context.resolveText(label)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(0x88FFFFFF.toInt())
+                    setPadding(0, dp(10), 0, 0)
+                })
+                col.addView(TextView(context).apply {
+                    tag = TAG_PERF_VALUE_PREFIX + index
+                    text = context.resolveText(value)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(Color.WHITE)
+                })
+            }
+        }
+        paintRows()
+        // Live refresh without SETTINGS / setContentView thrash.
+        val handler = Handler(Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                if (!col.isAttachedToWindow) return
+                paintRows()
+                handler.postDelayed(this, DualPaintPolicy.PERF_HUD_REFRESH_MS)
+            }
+        }
+        col.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                handler.removeCallbacks(tick)
+                handler.postDelayed(tick, DualPaintPolicy.PERF_HUD_REFRESH_MS)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                handler.removeCallbacks(tick)
+            }
+        })
+        if (col.isAttachedToWindow) {
+            handler.postDelayed(tick, DualPaintPolicy.PERF_HUD_REFRESH_MS)
         }
         return col
     }
@@ -1521,48 +1594,133 @@ object CompanionPanel {
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
-        if (pinPkg.isNullOrBlank() || !installed) {
-            col.addView(TextView(activity).apply {
-                setText(
-                    if (pinPkg.isNullOrBlank()) R.string.deck_set_pin_help
-                    else R.string.deck_pinned_app_missing,
-                )
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setTextColor(0x99FFFFFF.toInt())
-                gravity = Gravity.CENTER
-                setPadding(0, dp(16), 0, 0)
-            })
-        } else {
-            val label = runCatching {
-                val pm = activity.packageManager
-                pm.getApplicationLabel(pm.getApplicationInfo(pinPkg, 0)).toString()
-            }.getOrDefault(pinPkg)
-            col.addView(TextView(activity).apply {
-                text = label
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(12), 0, dp(16))
-            })
-            col.addView(TextView(activity).apply {
-                setText(R.string.action_launch_pin)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(Color.BLACK)
-                background = TileBackgrounds.selected(activity, settings.accentColor)
-                setPadding(dp(20), dp(12), dp(20), dp(12))
-                gravity = Gravity.CENTER
-                setOnClickListener {
+        col.addView(TextView(activity).apply {
+            setText(R.string.deck_pin_cta_subtitle)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x88FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(8))
+        })
+        val app = activity.application as GhostGalleonApp
+        val honesty = CompanionRoleResolve.pinHonesty(
+            CompanionRoleResolve.Context(
+                preferred = CompanionRole.PINNED_APP,
+                openSessionKey = app.openSession?.key,
+                pinnedPackage = pinPkg,
+                openSessionPlatformId = app.openSession?.key?.let { SlotKey.platformIdOf(it) },
+                pinnedPackageInstalled = installed,
+            ),
+        )
+        when (honesty) {
+            CompanionRoleResolve.PinHonesty.EMPTY -> {
+                col.addView(TextView(activity).apply {
+                    setText(R.string.deck_set_pin_help)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(0x99FFFFFF.toInt())
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(12), 0, dp(12))
+                })
+                col.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin) {
+                    showCompanionPinPicker(activity)
+                })
+            }
+            CompanionRoleResolve.PinHonesty.MISSING -> {
+                col.addView(TextView(activity).apply {
+                    setText(R.string.deck_pinned_app_missing)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(0x99FFFFFF.toInt())
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(12), 0, dp(8))
+                })
+                col.addView(TextView(activity).apply {
+                    text = pinPkg.orEmpty()
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(0x66FFFFFF.toInt())
+                    gravity = Gravity.CENTER
+                })
+                col.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin) {
+                    showCompanionPinPicker(activity)
+                })
+            }
+            CompanionRoleResolve.PinHonesty.DUAL_CLAIM -> {
+                col.addView(TextView(activity).apply {
+                    setText(R.string.deck_pin_dual_claim)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTextColor(0x99FFFFFF.toInt())
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(12), 0, 0)
+                })
+            }
+            CompanionRoleResolve.PinHonesty.READY -> {
+                val label = runCatching {
+                    val pm = activity.packageManager
+                    pm.getApplicationLabel(pm.getApplicationInfo(pinPkg!!, 0)).toString()
+                }.getOrDefault(pinPkg!!)
+                col.addView(TextView(activity).apply {
+                    text = label
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(12), 0, dp(16))
+                })
+                col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
                     val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
-                        ?: return@setOnClickListener
+                        ?: return@pinActionChip
                     val displayId = activity.currentDisplayId() ?: 0
                     val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
                     runCatching {
                         activity.startActivity(intent, options.toBundle())
                     }
-                }
-            })
+                })
+                col.addView(pinActionChip(activity, settings, dp, R.string.action_change_pin) {
+                    showCompanionPinPicker(activity)
+                })
+            }
         }
         return col
+    }
+
+    private fun pinActionChip(
+        activity: AppCompatActivity,
+        settings: Settings,
+        dp: (Int) -> Int,
+        labelRes: Int,
+        onClick: () -> Unit,
+    ): TextView = TextView(activity).apply {
+        setText(labelRes)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setTextColor(Color.BLACK)
+        background = TileBackgrounds.selected(activity, settings.accentColor)
+        setPadding(dp(20), dp(12), dp(20), dp(12))
+        gravity = Gravity.CENTER
+        setOnClickListener { onClick() }
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) }
+        layoutParams = lp
+    }
+
+    private fun showCompanionPinPicker(activity: AppCompatActivity) {
+        val app = activity.application as GhostGalleonApp
+        val apps = app.appLibrary().visible(app.settings)
+            .sortedBy { it.label.lowercase() }
+        if (apps.isEmpty()) {
+            Toast.makeText(activity, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = apps.map { it.label }.toTypedArray()
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_pinned_companion)
+            .setItems(labels) { _, which ->
+                val pkg = apps[which].packageName
+                app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                app.updateSettings(app.settings.copy(companionPinnedPackage = null))
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
     }
 
     private fun buildNowPlayingCard(

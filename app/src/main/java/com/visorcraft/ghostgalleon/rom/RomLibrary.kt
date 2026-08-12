@@ -31,6 +31,10 @@ class RomLibrary(private val file: File) {
             val skippedCleanTrees: Int = 0,
             /** Granted trees that were unreadable this pass (prior entries retained). */
             val retainedUnreadableTrees: Int = 0,
+            /** Trees fully walked / re-matched this pass. */
+            val scannedTrees: Int = 0,
+            /** Granted tree count at start of this pass. */
+            val totalTrees: Int = 0,
         ) : RescanResult()
 
         /** Every granted tree was unreadable (card ejected, provider
@@ -52,7 +56,9 @@ class RomLibrary(private val file: File) {
     fun save(entries: List<RomEntry>) {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(entriesToJson(entries).toString(2))
+        // Compact JSON (no pretty indent): multi-k libraries rewrite often
+        // after rescan — indent doubled CPU + IO for zero UX gain.
+        tmp.writeText(entriesToJson(entries).toString())
         if (!tmp.renameTo(file)) {
             tmp.copyTo(file, overwrite = true)
             tmp.delete()
@@ -74,7 +80,7 @@ class RomLibrary(private val file: File) {
         val tmp = File(fingerprintFile.parentFile, fingerprintFile.name + ".tmp")
         val o = JSONObject()
         map.forEach { (k, v) -> o.put(k, v) }
-        tmp.writeText(o.toString(2))
+        tmp.writeText(o.toString())
         if (!tmp.renameTo(fingerprintFile)) {
             tmp.copyTo(fingerprintFile, overwrite = true)
             tmp.delete()
@@ -92,12 +98,17 @@ class RomLibrary(private val file: File) {
         context: Context,
         settings: Settings,
         force: Boolean = false,
+        onProgress: ((doneTrees: Int, totalTrees: Int) -> Unit)? = null,
         onDone: (RescanResult) -> Unit,
     ) {
         val appContext = context.applicationContext
         SCAN_EXECUTOR.execute {
             val result = try {
                 val priorFp = loadFingerprints()
+                val total = settings.romTreeUris.size
+                val main = Handler(Looper.getMainLooper())
+                var done = 0
+                main.post { onProgress?.invoke(0, total) }
                 val (scanResult, newFp) = rescanBlockingWithFingerprints(
                     treeUris = settings.romTreeUris,
                     prior = load(),
@@ -119,6 +130,11 @@ class RomLibrary(private val file: File) {
                                 ?.bufferedReader()
                                 ?.use { it.readText() }
                         }.getOrNull()
+                    },
+                    onTreeProcessed = {
+                        done++
+                        val d = done
+                        main.post { onProgress?.invoke(d, total) }
                     },
                 )
                 if (scanResult is RescanResult.Success) {
@@ -240,8 +256,11 @@ class RomLibrary(private val file: File) {
             readText: ((String) -> String?)? = null,
             fingerprintOf: (List<DocFile>) -> String = { TreeFingerprint.ofCombined(it) },
             quickMeta: ((String) -> String?)? = null,
+            /** Invoked once per granted tree after it is classified (clean/dirty/unreadable). */
+            onTreeProcessed: (() -> Unit)? = null,
         ): Pair<RescanResult, Map<String, String>> {
             if (treeUris.isNotEmpty() && treeUris.none(isReadable)) {
+                treeUris.forEach { onTreeProcessed?.invoke() }
                 return RescanResult.Unreadable to priorFingerprints
             }
             val skippedUnreadable = treeUris.filterNot(isReadable)
@@ -252,7 +271,10 @@ class RomLibrary(private val file: File) {
             // Drop fingerprints for trees no longer granted.
             val granted = treeUris.toSet()
             newFingerprints.keys.filter { it !in granted }.forEach { newFingerprints.remove(it) }
-            skippedUnreadable.forEach { /* keep prior fp for when card returns */ }
+            skippedUnreadable.forEach {
+                // keep prior fp for when card returns
+                onTreeProcessed?.invoke()
+            }
 
             for (uri in readable) {
                 // Cheap meta-only short-circuit: pure `m…` prior matches probe.
@@ -265,6 +287,7 @@ class RomLibrary(private val file: File) {
                     ) {
                         cleanTrees.add(uri)
                         newFingerprints[uri] = probe
+                        onTreeProcessed?.invoke()
                         continue
                     }
                 }
@@ -274,6 +297,7 @@ class RomLibrary(private val file: File) {
                 if (!TreeFingerprint.isDirty(uri, fp, priorFingerprints, force)) {
                     cleanTrees.add(uri)
                     newFingerprints[uri] = fp
+                    onTreeProcessed?.invoke()
                     continue
                 }
                 // Re-wrap the already-walked listing so scan does not walk again.
@@ -282,6 +306,7 @@ class RomLibrary(private val file: File) {
                 }
                 freshTrees.add(frozen to rootName)
                 newFingerprints[uri] = fp
+                onTreeProcessed?.invoke()
             }
 
             val fresh = if (freshTrees.isEmpty()) {
@@ -300,6 +325,8 @@ class RomLibrary(private val file: File) {
                 entries = SwitchDedupe.apply(merged),
                 skippedCleanTrees = cleanTrees.size,
                 retainedUnreadableTrees = skippedUnreadable.size,
+                scannedTrees = freshTrees.size,
+                totalTrees = treeUris.size,
             )
             return success to newFingerprints
         }

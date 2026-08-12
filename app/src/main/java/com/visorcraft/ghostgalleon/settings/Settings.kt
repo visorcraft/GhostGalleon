@@ -8,8 +8,8 @@ data class Settings(
     val background: String = "solid",
     val gridColumns: Int = 5,
     val iconSizeDp: Int = 72,
+    /** Game Mode carousel card size (dp). User-adjustable in Settings. */
     val cardSizeDp: Int = 200,
-    val animationMs: Int = 200,
     val defaultMode: UIMode = UIMode.GRID,
     val primaryDisplay: Int = 1,
     val gyroEnabled: Boolean = true,
@@ -72,6 +72,18 @@ data class Settings(
     val collections: Map<String, List<String>> = emptyMap(),
     // First-run / empty-library setup card dismissed (within schema v6).
     val setupDismissed: Boolean = false,
+    /**
+     * One-time Resume + status-pill discover card dismissed (within schema v8,
+     * optional; no bump).
+     */
+    val chromeDiscoverDismissed: Boolean = false,
+    /** SteamGridDB scrape: Wi‑Fi only (refuse metered/cellular). Default on. */
+    val scrapeWifiOnly: Boolean = true,
+    /**
+     * Pause SGDB scrape at or below this battery percent when not charging.
+     * 0 disables. Default 15.
+     */
+    val scrapePauseBelowBattery: Int = 15,
     // --- schema v7: companion roles, profiles, folders, themes, RA ---
     // Companion panel role: HERO | NOW_PLAYING | PERF_HUD | PINNED_APP
     val companionRole: String = CompanionRole.HERO.name,

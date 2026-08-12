@@ -3,8 +3,8 @@ package com.visorcraft.ghostgalleon.settings
 /**
  * Companion (non-interactive) panel presentation mode. Pure; host-tested.
  *
- * [PINNED_APP] degrades when dual-screen emulators claim both displays
- * (nds/3ds) or when no pin package is set.
+ * Preferred [PINNED_APP] stays [PINNED_APP]; [pinHonesty] drives empty /
+ * missing / dual-claim (NDS/3DS) CTAs in the companion panel.
  */
 enum class CompanionRole {
     HERO,
@@ -38,24 +38,45 @@ object CompanionRoleResolve {
     )
 
     /**
-     * Effective role to render. Never returns [CompanionRole.PINNED_APP] when
-     * the pin is unusable or a dual-claim platform owns the session.
+     * Why [PINNED_APP] cannot show a live pin surface (honest CTA / dual-claim).
+     * Pure; host-tested. Null when pin is ready to show launch chrome.
+     */
+    enum class PinHonesty {
+        /** No package chosen yet — show picker CTA. */
+        EMPTY,
+        /** Package set but not installed. */
+        MISSING,
+        /** NDS/3DS (etc.) session owns both displays — do not fight them. */
+        DUAL_CLAIM,
+        /** Pin package is set and installed. */
+        READY,
+    }
+
+    fun pinHonesty(ctx: Context): PinHonesty {
+        val dualClaim = ctx.openSessionPlatformId?.lowercase() in DUAL_CLAIM_PLATFORMS
+        if (dualClaim && ctx.openSessionKey != null) return PinHonesty.DUAL_CLAIM
+        if (dualClaim) return PinHonesty.DUAL_CLAIM
+        if (ctx.pinnedPackage.isNullOrBlank()) return PinHonesty.EMPTY
+        if (!ctx.pinnedPackageInstalled) return PinHonesty.MISSING
+        return PinHonesty.READY
+    }
+
+    /**
+     * Effective role to render.
+     * Preferred [PINNED_APP] always stays [PINNED_APP] (including empty,
+     * missing, and dual-claim) so the companion panel can show an honest CTA
+     * — picker, missing package, or dual-claim pause — never a silent HERO swap.
+     * Dual-claim emulators are not launched from the pin surface; the panel
+     * explains the pause instead of fighting for the secondary display.
      */
     fun effective(ctx: Context): CompanionRole {
-        val dualClaim = ctx.openSessionPlatformId?.lowercase() in DUAL_CLAIM_PLATFORMS
         return when (ctx.preferred) {
             CompanionRole.HERO -> CompanionRole.HERO
             CompanionRole.NOW_PLAYING ->
                 if (ctx.openSessionKey != null) CompanionRole.NOW_PLAYING
                 else CompanionRole.HERO
             CompanionRole.PERF_HUD -> CompanionRole.PERF_HUD
-            CompanionRole.PINNED_APP -> when {
-                dualClaim && ctx.openSessionKey != null -> CompanionRole.NOW_PLAYING
-                dualClaim -> CompanionRole.HERO
-                ctx.pinnedPackage.isNullOrBlank() -> CompanionRole.HERO
-                !ctx.pinnedPackageInstalled -> CompanionRole.HERO
-                else -> CompanionRole.PINNED_APP
-            }
+            CompanionRole.PINNED_APP -> CompanionRole.PINNED_APP
         }
     }
 }

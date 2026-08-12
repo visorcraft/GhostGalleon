@@ -249,7 +249,7 @@
     <string name="deck_status">Estado</string>
     <string name="deck_clock">Reloj</string>
     <string name="deck_select_game_or_app">Selecciona un juego o app</string>
-    <string name="deck_set_pin_help">Configura el anclaje en Ajustes → Pantalla complementaria</string>
+    <string name="deck_set_pin_help">Sin pin — elige una app</string>
     <string name="deck_pinned_app_missing">App fijada no instalada</string>
     <string name="deck_rom_missing">ROM ya no está en biblioteca</string>
     <string name="deck_app_hidden">App oculta</string>
@@ -552,4 +552,40 @@
     <string name="menu_section_customize">Personalizar</string>
     <string name="menu_section_more">Más</string>
     <string name="deck_removed_from_grid">Quitado de la cuadrícula</string>
+
+    <string name="settings_dual_recovery_title">Paneles duales en negro</string>
+    <string name="settings_dual_recovery_body">Si uno o ambos paneles se ponen negros: (1) Reinicia el panel compañero abajo, o pulsa X una o dos veces; (2) Abre un juego y vuelve; (3) Forzar detención de Ghost Galleon y HOME; (4) Reinicia el dispositivo si sigue fallando.</string>
+    <string name="settings_restart_companion">Reiniciar panel compañero</string>
+    <string name="settings_dual_recovery_no_main">Abre primero la pantalla de inicio y reintenta</string>
+    <string name="settings_chrome_custom_hint">Personalizado se aplica cuando algún interruptor de potencias difiere de Mínimo o Completo.</string>
+    <string name="settings_chrome_power_rails">Rails y extras avanzados</string>
+    <string name="settings_chrome_expand">Mostrar / ocultar</string>
+    <string name="action_open_in_game_mode">Abrir en modo Juego</string>
+    <string name="action_search_library">Buscar en biblioteca</string>
+    <string name="action_mirror_to_collection">Copiar a colección</string>
+    <string name="action_choose_pin">Elegir app para fijar</string>
+    <string name="action_change_pin">Cambiar pin</string>
+    <string name="deck_mirrored_to_collection">Carpeta copiada a la colección</string>
+    <string name="deck_perf_live_hint">Lecturas en vivo · se actualizan cada pocos segundos</string>
+    <string name="deck_pin_cta_subtitle">Lanzar en el compañero · no es una app incrustada</string>
+    <string name="deck_pin_dual_claim">Pin en pausa mientras un juego de doble pantalla (NDS/3DS) está activo</string>
+
+    <string name="settings_card_size">Tamaño de tarjeta en modo Juego (dp)</string>
+    <string name="settings_rescan_progress">Escaneando… %1$d / %2$d carpetas</string>
+    <string name="settings_rescan_progress_full">Escaneo completo… %1$d / %2$d carpetas</string>
+    <string name="settings_rescan_done_mixed">%1$d ROMs · escaneadas %2$d carpeta(s) · %3$d sin cambios</string>
+    <string name="settings_rescan_done_partial">%1$d ROMs · %2$d carpeta(s) ilegible(s) (se conserva lo anterior)</string>
+
+    <string name="setup_chrome_title">Chrome del compañero</string>
+    <string name="setup_chrome_intro">Activa Resume y el reloj/batería para aprovechar el otro panel. Puedes cambiarlo en Chrome de navegación.</string>
+    <string name="setup_check_resume_chip">Chip Resume (último jugado)</string>
+    <string name="setup_check_status_pill">Reloj / batería en el mazo</string>
+    <string name="setup_enable_companion_chrome">Activar Resume + reloj</string>
+    <string name="scrape_blocked_no_network">Sin red — descarga de arte en pausa</string>
+    <string name="scrape_blocked_wifi_only">Conéctate a Wi‑Fi para descargar arte (solo Wi‑Fi activo)</string>
+    <string name="scrape_blocked_low_battery">Batería baja — carga o sube el umbral en Ajustes</string>
+    <string name="settings_scrape_wifi_only">Descarga de arte: solo Wi‑Fi</string>
+    <string name="action_mirror_to_folder">Copiar a carpeta de la cuadrícula</string>
+    <string name="deck_mirrored_to_folder">Colección copiada a carpeta de la cuadrícula</string>
+    <string name="deck_empty_collection">La colección está vacía</string>
 </resources>

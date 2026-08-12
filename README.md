@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.6.0-informational" alt="0.6.0" />
+  <img src="https://img.shields.io/badge/version-0.7.1-informational" alt="0.7.1" />
 </p>
 
 ---
@@ -113,11 +113,11 @@ Scans use Storage Access Framework tree grants only — no broad storage permiss
 | Nintendo DS | melonDualDS | verified |
 | Nintendo 3DS | Azahar | verified |
 | Nintendo Switch | Eden | verified |
-| PSP | PPSSPP | template registered |
-| PlayStation 2 | NetherSX2 | template registered |
-| Dreamcast | Flycast | template registered |
-| GameCube / Wii | Dolphin | templates registered |
-| Wii U | Cemu | template registered |
+| PSP | PPSSPP | package + launch plan verified; ROM content smoke when library has ISOs |
+| PlayStation 2 | NetherSX2 | package + pathOrUri bootPath plan verified; content smoke optional |
+| Dreamcast | Flycast | package + launch plan verified; content smoke when library has discs |
+| GameCube / Wii | Dolphin | package + AutoStartFile pathOrUri plan verified |
+| Wii U | Cemu | package + VIEW EmulationActivity plan verified |
 
 Alternate players are available where the registry defines them. Windows titles
 can be pinned as Android app launches, but Winlator is not a built-in ROM platform.

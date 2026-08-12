@@ -66,9 +66,11 @@ class CompanionRoleTest {
     }
 
     @Test
-    fun `effective PINNED_APP dual-claim nds degrades to NOW_PLAYING or HERO`() {
+    fun `effective PINNED_APP dual-claim stays PINNED_APP for honesty CTA`() {
+        // Must not silently demote to HERO/NOW_PLAYING — CompanionPanel shows
+        // deck_pin_dual_claim only when effective role is still PINNED_APP.
         assertEquals(
-            CompanionRole.NOW_PLAYING,
+            CompanionRole.PINNED_APP,
             CompanionRoleResolve.effective(
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
@@ -79,7 +81,7 @@ class CompanionRoleTest {
             ),
         )
         assertEquals(
-            CompanionRole.HERO,
+            CompanionRole.PINNED_APP,
             CompanionRoleResolve.effective(
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
@@ -89,12 +91,24 @@ class CompanionRoleTest {
                 ),
             ),
         )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.DUAL_CLAIM,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    openSessionKey = "rom:nds:mario.nds",
+                    openSessionPlatformId = "nds",
+                ),
+            ),
+        )
     }
 
     @Test
-    fun `effective PINNED_APP missing pin package falls to HERO`() {
+    fun `effective PINNED_APP empty or missing stays PINNED_APP for honest CTA`() {
         assertEquals(
-            CompanionRole.HERO,
+            CompanionRole.PINNED_APP,
             CompanionRoleResolve.effective(
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
@@ -103,7 +117,7 @@ class CompanionRoleTest {
             ),
         )
         assertEquals(
-            CompanionRole.HERO,
+            CompanionRole.PINNED_APP,
             CompanionRoleResolve.effective(
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
@@ -111,17 +125,55 @@ class CompanionRoleTest {
                 ),
             ),
         )
-    }
-
-    @Test
-    fun `effective PINNED_APP uninstalled pin falls to HERO`() {
         assertEquals(
-            CompanionRole.HERO,
+            CompanionRole.PINNED_APP,
             CompanionRoleResolve.effective(
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.gone",
                     pinnedPackageInstalled = false,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `pinHonesty reports empty missing ready and dual-claim`() {
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.EMPTY,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(preferred = CompanionRole.PINNED_APP),
+            ),
+        )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.MISSING,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.gone",
+                    pinnedPackageInstalled = false,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.READY,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.DUAL_CLAIM,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    openSessionPlatformId = "nds",
+                    openSessionKey = "rom:nds:x.nds",
                 ),
             ),
         )

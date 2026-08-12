@@ -23,8 +23,10 @@
 # org.json is platform; no reflection on our Settings data class fields
 # (SettingsStore uses explicit JSONObject put/get).
 
-# Strip log noise in release (optional speed micro-gain)
+# Strip log noise in release (optional speed micro-gain).
+# Keep w/e for real problems; drop v/d/i chatter on dual-display thrash paths.
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);
+    public static int i(...);
 }

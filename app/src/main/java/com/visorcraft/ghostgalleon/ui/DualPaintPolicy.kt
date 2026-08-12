@@ -140,4 +140,34 @@ object DualPaintPolicy {
     fun shouldLaunchCompanion(
         anyPeerOnTarget: Boolean,
     ): Boolean = !anyPeerOnTarget
+
+    /**
+     * Pure heal decision for dual-screen companion recovery.
+     * - [HealAction.NONE] — healthy peer already on target (or not dual).
+     * - [HealAction.LAUNCH] — no peer claims target; start Companion.
+     * - [HealAction.RESTART] — peer claims target but is not healthy (e.g.
+     *   never reached STARTED / stuck pure-black surface); close + relaunch.
+     */
+    enum class HealAction { NONE, LAUNCH, RESTART }
+
+    fun companionHealAction(
+        dualMode: Boolean,
+        anyPeerClaiming: Boolean,
+        healthyOnTarget: Boolean,
+    ): HealAction {
+        if (!dualMode) return HealAction.NONE
+        if (anyPeerClaiming && !healthyOnTarget) return HealAction.RESTART
+        if (!anyPeerClaiming) return HealAction.LAUNCH
+        return HealAction.NONE
+    }
+
+    /**
+     * After an interactive/companion role swap, always recreate Companion so
+     * a pure-black secondary buffer is cleared without system Force Stop.
+     * (Topology swap alone does not guarantee a new GPU present.)
+     */
+    fun shouldRestartCompanionAfterSwap(dualMode: Boolean): Boolean = dualMode
+
+    /** Interval for live PERF_HUD reading refresh (ms). No full SETTINGS paint. */
+    const val PERF_HUD_REFRESH_MS = 1_500L
 }

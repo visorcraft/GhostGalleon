@@ -169,6 +169,27 @@ class ArtCache(private val dir: File) {
         onResult: (Bitmap?) -> Unit,
     ) = enqueue(context, key, key, ArtKind.GRID, uriString, maxDimension, isStillValid, onResult)
 
+    /**
+     * Warm memory/disk for [rom] without a UI callback. Used to prefetch
+     * carousel neighbors during idle so flings hit cache more often.
+     * Still honors [isStillValid] so work drops if the user scrolled away.
+     */
+    fun prefetch(
+        context: Context,
+        rom: RomEntry,
+        maxDimension: Int,
+        artOverrides: Map<String, String> = emptyMap(),
+        isStillValid: () -> Boolean = { true },
+    ) {
+        load(
+            context, rom, maxDimension,
+            kind = ArtKind.GRID,
+            isStillValid = isStillValid,
+            artOverrides = artOverrides,
+            onResult = { /* warm only */ },
+        )
+    }
+
     private fun enqueue(
         context: Context,
         memKey: String,
@@ -297,9 +318,9 @@ class ArtCache(private val dir: File) {
 
         // Bounded decode pool: carousel flings queue many tiles; 1 thread
         // serializes multi-second backlogs. isStillValid still drops stale
-        // work before I/O. Cap=2 keeps GC/memory calm on dual-display.
-        // Separate from RomLibrary's SCAN_EXECUTOR so art never waits on scan.
-        private val DECODE_EXECUTOR = Executors.newFixedThreadPool(2)
+        // work before I/O. Cap=3: dual-display + prefetch without flooding
+        // GC on Sugar. Separate from RomLibrary's SCAN_EXECUTOR.
+        private val DECODE_EXECUTOR = Executors.newFixedThreadPool(3)
 
         /**
          * Stable cache key for a RomEntry id: SHA-256 hex (ids contain

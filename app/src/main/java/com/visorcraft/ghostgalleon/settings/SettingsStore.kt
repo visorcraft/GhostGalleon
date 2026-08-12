@@ -54,7 +54,6 @@ class SettingsStore(private val file: File) {
             gridColumns = o.optInt("gridColumns", 5),
             iconSizeDp = o.optInt("iconSizeDp", 72),
             cardSizeDp = o.optInt("cardSizeDp", 200),
-            animationMs = o.optInt("animationMs", 200),
             defaultMode = UIMode.valueOf(o.optString("defaultMode", "GRID")),
             primaryDisplay = if (schemaVersion < 2) 1 else o.optInt("primaryDisplay", 1),
             gyroEnabled = o.optBoolean("gyroEnabled", true),
@@ -117,6 +116,11 @@ class SettingsStore(private val file: File) {
             collections = o.optJSONObject("collections").toStringListMap(),
             // Within schema v6: absent = show setup when library empty.
             setupDismissed = o.optBoolean("setupDismissed", false),
+            // Within v8 optional: chrome discover nudge + scrape policy.
+            chromeDiscoverDismissed = o.optBoolean("chromeDiscoverDismissed", false),
+            scrapeWifiOnly = o.optBoolean("scrapeWifiOnly", true),
+            scrapePauseBelowBattery = o.optInt("scrapePauseBelowBattery", 15)
+                .coerceIn(0, 100),
             // Schema v7 fields (absent = defaults).
             companionRole = o.optString("companionRole", CompanionRole.HERO.name)
                 .ifBlank { CompanionRole.HERO.name },
@@ -200,7 +204,6 @@ class SettingsStore(private val file: File) {
             .put("gridColumns", s.gridColumns)
             .put("iconSizeDp", s.iconSizeDp)
             .put("cardSizeDp", s.cardSizeDp)
-            .put("animationMs", s.animationMs)
             .put("defaultMode", s.defaultMode.name)
             .put("primaryDisplay", s.primaryDisplay)
             .put("gyroEnabled", s.gyroEnabled)
@@ -247,6 +250,9 @@ class SettingsStore(private val file: File) {
                 }
             })
             .put("setupDismissed", s.setupDismissed)
+            .put("chromeDiscoverDismissed", s.chromeDiscoverDismissed)
+            .put("scrapeWifiOnly", s.scrapeWifiOnly)
+            .put("scrapePauseBelowBattery", s.scrapePauseBelowBattery)
             .put("companionRole", s.companionRole)
             .put("companionPinnedPackage", s.companionPinnedPackage ?: JSONObject.NULL)
             .put("romProfiles", JSONObject().apply {

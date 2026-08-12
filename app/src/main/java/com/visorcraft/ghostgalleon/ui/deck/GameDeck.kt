@@ -33,10 +33,8 @@ import com.visorcraft.ghostgalleon.library.SearchHistory
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlatformTile
-import com.visorcraft.ghostgalleon.rom.PlayerResolver
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLauncher
-import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.GridSlots
@@ -48,7 +46,7 @@ import com.visorcraft.ghostgalleon.ui.resolveText
 class GameDeck(
     private val activity: AppCompatActivity,
     private val state: DeckState,
-    private val settings: Settings,
+    private var settings: Settings,
     private val library: AppLibrary,
     private val iconLoader: AppIconLoader,
     private val roms: List<RomEntry>,
@@ -401,10 +399,13 @@ class GameDeck(
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
 
+        // Live settings (chrome-only updates must not keep a stale snapshot).
+        settings = (activity.application as GhostGalleonApp).settings
         entries = buildEntries()
         applyRootWallpaper(root)
         rebuildFilterChrome(chrome, context, ::dp)
 
+        cardSizePx = dp(settings.cardSizeDp)
         val adapter = CardAdapter(
             context,
             cardSizePx.coerceAtLeast(dp(settings.cardSizeDp)),
@@ -421,6 +422,24 @@ class GameDeck(
         return true
     }
 
+    /**
+     * In-place chrome rebind. Returns false when structural chrome changed
+     * (status pill / resume chip) so the activity does a full SETTINGS paint.
+     */
+    override fun applyChromeChange(): Boolean {
+        val live = (activity.application as GhostGalleonApp).settings
+        if (!live.browseChrome.allowsInPlaceChromeUpdate(settings.browseChrome)) {
+            return false
+        }
+        val root = rootView ?: return false
+        val wantsPill = live.browseChrome.deckStatusPill
+        val hasPill = root.findViewWithTag<View>(
+            com.visorcraft.ghostgalleon.ui.deck.StatusPill.TAG,
+        ) != null
+        if (wantsPill != hasPill) return false
+        return applyBrowseChange()
+    }
+
     private fun applyRootWallpaper(root: FrameLayout) {
         val platformFilter = state.libraryBrowse.platformId
         root.setBackgroundColor(
@@ -429,6 +448,27 @@ class GameDeck(
                 ?.let { com.visorcraft.ghostgalleon.rom.PlatformLook.wallpaperTint(it) }
                 ?: Color.BLACK,
         )
+        // Same SAF wallpaper as Grid when configured (dimmed behind cards).
+        if (root.findViewWithTag<View>(TAG_GAME_WALLPAPER) == null) {
+            val uri = settings.wallpaperUri
+            if (!uri.isNullOrBlank()) {
+                val wallpaperView = ImageView(root.context).apply {
+                    tag = TAG_GAME_WALLPAPER
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    alpha = 0.35f
+                    setBackgroundColor(Color.BLACK)
+                }
+                root.addView(
+                    wallpaperView,
+                    0,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+                DeckWallpaper.loadAsync(root.context, uri, wallpaperView)
+            }
+        }
     }
 
     private fun rebuildFilterChrome(
@@ -524,9 +564,10 @@ class GameDeck(
         val root = FrameLayout(context).apply {
             clipChildren = false
             clipToPadding = false
+            setBackgroundColor(Color.BLACK)
         }
-        applyRootWallpaper(root)
         rootView = root
+        applyRootWallpaper(root)
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             clipChildren = false
@@ -583,6 +624,12 @@ class GameDeck(
                 StatusPill.build(context, compact = true),
                 StatusPill.overlayLayoutParams(context),
             )
+        }
+        // Grid → Game library bridge may request search once after mode switch.
+        val appBridge = activity.application as GhostGalleonApp
+        if (appBridge.pendingLibrarySearch) {
+            appBridge.pendingLibrarySearch = false
+            root.post { openSearchDialog() }
         }
         // Larger panel only (or single): Swap bottom-left, Settings bottom-right.
         if (shouldHostSystemChromeIcons(activity)) {
@@ -1782,20 +1829,11 @@ class GameDeck(
     /**
      * Platforms that have at least one installed player. Null when
      * launchableOnly is off (no filter). Empty set when on and nothing installed.
+     * Cached on the app for PM query reuse across browse rebuilds.
      */
     private fun resolveLaunchablePlatformIds(
         live: Settings = settings,
-    ): Set<String>? {
-        if (!live.browseChrome.launchableOnly) return null
-        val pm = activity.packageManager
-        val byPlatform = Platforms.ALL.associate { platform ->
-            platform.id to platform.players.map { PlayerResolver.packageName(it) }
-        }
-        val installedPkgs = byPlatform.values.flatten()
-            .filter { pm.isInstalled(it) }
-            .toSet()
-        return LibraryBrowse.launchablePlatformIds(byPlatform, installedPkgs)
-    }
+    ): Set<String>? = app().launchablePlatformIds(live.browseChrome.launchableOnly)
 
     private fun markAsPlayed(key: String) {
         EntryActions.markAsPlayed(activity, key)
@@ -2674,6 +2712,15 @@ class GameDeck(
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val entry = entries[position]
+            val prevKey = holder.root.getTag(R.id.carousel_entry_key) as? String
+            // Same key + existing hierarchy: skip art rebuild (biggest fling cost).
+            if (prevKey == entry.key && holder.root.childCount > 0) {
+                applySelectionVisuals(holder, position)
+                rebindCardMeta(holder, entry)
+                wireCardClicks(holder, entry)
+                scheduleNeighborPrefetch(position)
+                return
+            }
             holder.root.removeAllViews()
             holder.root.setTag(R.id.carousel_entry_key, entry.key)
             // While the dock holds focus the carousel shows NO ring — the
@@ -2726,14 +2773,16 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
             // Playtime / last-played + Fav/Dock status (no extra chrome chips).
+            val nowMs = System.currentTimeMillis()
             val meta = SessionMath.cardMetaLine(
                 settings.lastLaunchedMs[entry.key],
                 settings.playtimeMs[entry.key] ?: 0L,
-                System.currentTimeMillis(),
+                nowMs,
                 favorite = entry.key in settings.favorites,
                 inDock = DockSlots.containsKey(settings.dockSlots, entry.key),
             )
             card.addView(TextView(context).apply {
+                tag = "card_meta"
                 text = context.resolveText(meta)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(0x99FFFFFF.toInt())
@@ -2748,9 +2797,29 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-            // Multi-select: tap toggles membership. Otherwise tap-to-focus /
-            // second tap launches. Long-press opens the entry menu (or
-            // enters multi-select with this key).
+            wireCardClicks(holder, entry)
+            scheduleNeighborPrefetch(position)
+            // Selection ring for multi-select.
+            if (state.multiSelectEnabled && entry.key in state.multiSelectKeys) {
+                card.alpha = 1f
+                card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
+            }
+        }
+
+        private fun rebindCardMeta(holder: CardHolder, entry: CarouselEntry) {
+            val card = holder.root.getChildAt(0) as? LinearLayout ?: return
+            val metaView = card.findViewWithTag<TextView>("card_meta") ?: return
+            val meta = SessionMath.cardMetaLine(
+                settings.lastLaunchedMs[entry.key],
+                settings.playtimeMs[entry.key] ?: 0L,
+                System.currentTimeMillis(),
+                favorite = entry.key in settings.favorites,
+                inDock = DockSlots.containsKey(settings.dockSlots, entry.key),
+            )
+            metaView.text = context.resolveText(meta)
+        }
+
+        private fun wireCardClicks(holder: CardHolder, entry: CarouselEntry) {
             holder.root.setOnClickListener {
                 if (state.multiSelectEnabled) {
                     state.toggleMultiSelectKey(entry.key)
@@ -2771,10 +2840,29 @@ class GameDeck(
                 }
                 true
             }
-            // Selection ring for multi-select.
-            if (state.multiSelectEnabled && entry.key in state.multiSelectKeys) {
-                card.alpha = 1f
-                card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
+        }
+
+        /** Prefetch art for ±2 neighbors so flings hit memory/disk more often. */
+        private fun scheduleNeighborPrefetch(center: Int) {
+            val cache = (activity.application as GhostGalleonApp).artCache
+            val overrides = settings.artOverrides
+            val epoch = entries.size
+            for (delta in listOf(-2, -1, 1, 2)) {
+                val i = center + delta
+                if (i !in entries.indices) continue
+                val rom = entries[i].rom ?: continue
+                cache.prefetch(
+                    context,
+                    rom,
+                    maxDimension = cardSize,
+                    artOverrides = overrides,
+                    isStillValid = {
+                        // Drop if list rebuilt or position scrolled far away.
+                        entries.size == epoch &&
+                            i in entries.indices &&
+                            entries[i].rom?.id == rom.id
+                    },
+                )
             }
         }
     }
@@ -2782,5 +2870,6 @@ class GameDeck(
     private companion object {
         /** RecyclerView payload: only ring/scale/multi-select chrome. */
         const val PAYLOAD_SELECTION = "selection"
+        const val TAG_GAME_WALLPAPER = "game_wallpaper"
     }
 }

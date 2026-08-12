@@ -140,6 +140,32 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 }
             }
         }
+        // Chrome-only settings (browse flags, card size): prefer in-place.
+        // Structural status-pill / resume toggles already use full SETTINGS
+        // notify from Settings (allowsInPlaceChromeUpdate). SELECTION must
+        // never require a resume chip to exist — content often omits it.
+        if (change == DeckState.Change.CHROME && ::currentDeck.isInitialized) {
+            val role = DisplayRole.roleFor(currentDisplayId() ?: 0, deckState)
+            when (role) {
+                DisplayRole.COMPANION -> {
+                    val content = findViewById<ViewGroup>(android.R.id.content)
+                    if (content != null && content.childCount > 0 &&
+                        CompanionPanel.updateSelection(
+                            content, this, deckState, appLibrary, app.romEntries, settings,
+                        )
+                    ) {
+                        return
+                    }
+                    // Hero shape mismatch → full rebuild below.
+                }
+                DisplayRole.PRIMARY -> {
+                    if (currentDeck.applyChromeChange()) {
+                        return
+                    }
+                    // Structural failure (pill mismatch / etc.) → full rebuild.
+                }
+            }
+        }
         renderFromState("state $change")
     }
 
@@ -675,8 +701,36 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 launchOnOtherDisplay(
                     this, deckState, Intent(this, SettingsActivity::class.java))
             },
+            onEnableCompanionChrome = {
+                val live = app.settings
+                val chrome = live.browseChrome.copy(
+                    resumeChip = true,
+                    deckStatusPill = true,
+                )
+                app.updateSettings(
+                    live.copy(
+                        browseChrome = chrome,
+                        chromeDiscoverDismissed = true,
+                        // Keep library setup dismissed when enabling chrome mid-setup.
+                        setupDismissed = live.setupDismissed ||
+                            live.romTreeUris.isNotEmpty() ||
+                            app.romEntries.isNotEmpty(),
+                    ),
+                    chromeOnly = false,
+                )
+                dismissSetup()
+            },
             onDismiss = {
-                app.updateSettings(settings.copy(setupDismissed = true), notify = false)
+                val live = app.settings
+                val chromeOnly = SetupNeeds.isChromeDiscoverOnly(snap)
+                app.updateSettings(
+                    if (chromeOnly) {
+                        live.copy(chromeDiscoverDismissed = true)
+                    } else {
+                        live.copy(setupDismissed = true)
+                    },
+                    notify = false,
+                )
                 dismissSetup()
             },
         )
@@ -748,7 +802,16 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         // First-run setup: primary hosts the card; input may land elsewhere.
         if (setupOverlay != null || app.setupBlockingInput) {
             if (action == Action.BACK) {
-                app.updateSettings(settings.copy(setupDismissed = true), notify = false)
+                val snap = setupSnapshot()
+                val live = app.settings
+                app.updateSettings(
+                    if (SetupNeeds.isChromeDiscoverOnly(snap)) {
+                        live.copy(chromeDiscoverDismissed = true)
+                    } else {
+                        live.copy(setupDismissed = true)
+                    },
+                    notify = false,
+                )
                 // Dismiss on the host activity if we own the overlay.
                 dismissSetup()
                 // If companion received BACK, ask primary to drop the card.
@@ -931,25 +994,34 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         Action.SWAP_SCREENS -> {
             if (repeatCount == 0) {
                 haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-                // Prefer topology swap (rebuilds both roles). If single-display
-                // or swap fails, still try companion recreate — recovers a pure
-                // black secondary without system Force Stop.
+                // Prefer topology swap (rebuilds both roles). Always recreate
+                // Companion after a dual swap so a pure-black secondary buffer
+                // clears without system Force Stop (policy + dual-paint docs).
                 val swapped = app.swapInteractiveDisplay()
-                if (!swapped) {
-                    val main = this as? MainActivity
-                        ?: app.liveDeckActivities().filterIsInstance<MainActivity>()
-                            .firstOrNull()
-                    if (main != null) {
-                        main.restartCompanionPanel("swap-recover")
-                        Toast.makeText(this, R.string.deck_restart_bottom_panel, Toast.LENGTH_SHORT)
-                            .show()
-                    } else {
+                val main = this as? MainActivity
+                    ?: app.liveDeckActivities().filterIsInstance<MainActivity>()
+                        .firstOrNull()
+                val dual = DualPaintPolicy.shouldRestartCompanionAfterSwap(
+                    dualMode = app.displayConfig.mode ==
+                        com.visorcraft.ghostgalleon.display.SurfaceMode.DUAL,
+                )
+                if (dual && main != null) {
+                    main.restartCompanionPanel(
+                        if (swapped) "swap-recover" else "swap-recover-fallback",
+                    )
+                    if (!swapped) {
                         Toast.makeText(
                             this,
-                            getString(R.string.deck_only_one_display),
+                            R.string.deck_restart_bottom_panel,
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                } else if (!swapped) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.deck_only_one_display),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
             }
             true

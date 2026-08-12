@@ -71,6 +71,36 @@ class RomLauncherTest {
         val plan = LaunchPlanBuilder.build(Platforms.PS2.player, e)!!
         assertEquals("xyz.aethersx2.android", plan.packageName)
         assertEquals("xyz.aethersx2.android.EmulationActivity", plan.className)
+        // NetherSX2 prefers reconstructed path in bootPath (pathOrUri).
+        assertEquals(e.path, plan.extras.getValue("bootPath"))
+    }
+
+    @Test
+    fun `psp flycast dolphin cemu templates build honest plans`() {
+        val psp = LaunchPlanBuilder.build(Platforms.PSP.player, entry("psp"))!!
+        assertEquals("org.ppsspp.ppsspp", psp.packageName)
+        assertEquals("org.ppsspp.ppsspp.PpssppActivity", psp.className)
+        assertTrue(psp.grantRead)
+
+        val fly = LaunchPlanBuilder.build(Platforms.DREAMCAST.player, entry("dreamcast"))!!
+        assertEquals("com.flycast.emulator", fly.packageName)
+        assertEquals("com.flycast.emulator.MainActivity", fly.className)
+        assertTrue(fly.grantRead)
+
+        val gc = LaunchPlanBuilder.build(Platforms.GAMECUBE.player, entry("gamecube"))!!
+        assertEquals("org.dolphinemu.dolphinemu", gc.packageName)
+        assertEquals(entry("gamecube").path, gc.extras.getValue("AutoStartFile"))
+
+        val cemu = LaunchPlanBuilder.build(Platforms.WIIU.player, entry("wiiu"))!!
+        assertEquals("info.cemu.cemu", cemu.packageName)
+        assertEquals("info.cemu.cemu.emulation.EmulationActivity", cemu.className)
+        assertEquals("android.intent.action.VIEW", cemu.action)
+    }
+
+    @Test
+    fun `pathOrUri falls back to content uri when path missing`() {
+        val e = entry("ps2", path = null)
+        val plan = LaunchPlanBuilder.build(Platforms.PS2.player, e)!!
         assertEquals(e.uri, plan.extras.getValue("bootPath"))
     }
 

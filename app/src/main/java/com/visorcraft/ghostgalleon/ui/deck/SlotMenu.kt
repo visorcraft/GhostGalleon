@@ -59,6 +59,12 @@ class SlotMenu(
         REMOVE(R.string.action_remove),
         /** Clear this grid slot (app or ROM leaves a blank "+"). */
         REMOVE_FROM_GRID(R.string.action_remove_from_grid),
+        /** Switch to Game Mode with this key selected (library power bridge). */
+        OPEN_IN_GAME_MODE(R.string.action_open_in_game_mode),
+        /** Switch to Game Mode and open library search. */
+        SEARCH_LIBRARY(R.string.action_search_library),
+        /** Copy folder members into a same-named collection (or vice versa). */
+        MIRROR_TO_COLLECTION(R.string.action_mirror_to_collection),
         CANCEL(R.string.action_cancel),
     }
 
@@ -296,6 +302,8 @@ class SlotMenu(
             }
 
             add(Row.Header(R.string.menu_section_more))
+            add(Row.Item(Choice.OPEN_IN_GAME_MODE))
+            add(Row.Item(Choice.SEARCH_LIBRARY))
             add(Row.Item(Choice.DETAILS))
             add(Row.Item(Choice.COPY_TITLE))
             if (showRelated) add(Row.Item(Choice.BROWSE_RELATED))

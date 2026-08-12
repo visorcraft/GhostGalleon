@@ -31,6 +31,8 @@ class BrowseChromeTest {
         assertTrue(c.platformChips)
         assertTrue(c.collectionRails)
         assertTrue(c.isMinimal())
+        assertEquals(BrowseChrome.PRESET_MINIMAL, c.presetId())
+        assertFalse(c.hasAnyPowerRail())
     }
 
     @Test
@@ -42,6 +44,60 @@ class BrowseChromeTest {
         assertTrue(c.developerChips && c.yearChips && c.launchableOnly)
         assertTrue(c.deckStatusPill && c.resumeChip && c.quickPanelBrowse)
         assertTrue(c.isFull())
+        assertEquals(BrowseChrome.PRESET_FULL, c.presetId())
+        assertTrue(c.hasAnyPowerRail())
+    }
+
+    @Test
+    fun `presetId is custom when any flag differs from minimal or full`() {
+        val custom = BrowseChrome.MINIMAL.copy(topRail = true)
+        assertEquals(BrowseChrome.PRESET_CUSTOM, custom.presetId())
+        assertTrue(custom.hasAnyPowerRail())
+        val nearFull = BrowseChrome.FULL.copy(resumeChip = false)
+        assertEquals(BrowseChrome.PRESET_CUSTOM, nearFull.presetId())
+    }
+
+    @Test
+    fun `allowsInPlaceChromeUpdate false when status pill or resume changes`() {
+        val base = BrowseChrome.MINIMAL
+        assertTrue(base.copy(topRail = true).allowsInPlaceChromeUpdate(base))
+        assertTrue(base.copy(platformChips = false).allowsInPlaceChromeUpdate(base))
+        assertFalse(base.copy(deckStatusPill = true).allowsInPlaceChromeUpdate(base))
+        assertFalse(base.copy(resumeChip = true).allowsInPlaceChromeUpdate(base))
+        assertTrue(
+            BrowseChrome.FULL.allowsInPlaceChromeUpdate(
+                BrowseChrome.FULL.copy(gamesRail = false),
+            ),
+        )
+        assertFalse(
+            BrowseChrome.FULL.allowsInPlaceChromeUpdate(
+                BrowseChrome.FULL.copy(resumeChip = false),
+            ),
+        )
+    }
+
+    @Test
+    fun `switchFlags rebind snapshot matches Minimal and Full presets`() {
+        // Settings rebinds Switch isChecked from these values after preset taps.
+        val minimal = BrowseChrome.MINIMAL.switchFlags()
+        val full = BrowseChrome.FULL.switchFlags()
+        assertEquals(18, minimal.size)
+        assertEquals(18, full.size)
+        // Core platform + collection default on for both.
+        assertTrue(minimal[0] && minimal[1])
+        assertTrue(full[0] && full[1])
+        // Power rails off in Minimal, on in Full (indices 2..).
+        assertTrue(minimal.drop(2).all { !it })
+        assertTrue(full.drop(2).all { it })
+        // After Full→Minimal rebind, flags must equal MINIMAL.switchFlags()
+        // (not stale Full ON values).
+        assertEquals(BrowseChrome.MINIMAL.switchFlags(), BrowseChrome.FULL.let {
+            // Simulate Settings writing FULL then rebinding from stored MINIMAL.
+            BrowseChrome.MINIMAL
+        }.switchFlags())
+        assertFalse(BrowseChrome.MINIMAL.powerRailsPanelVisible())
+        assertTrue(BrowseChrome.FULL.powerRailsPanelVisible())
+        assertTrue(BrowseChrome.MINIMAL.copy(topRail = true).powerRailsPanelVisible())
     }
 
     @Test

@@ -126,6 +126,68 @@ data class BrowseChrome(
     fun isMinimal(): Boolean = this == MINIMAL
     fun isFull(): Boolean = this == FULL
 
+    /**
+     * Sticky preset id for Settings segmented control.
+     * - [PRESET_MINIMAL] / [PRESET_FULL] only when every flag matches.
+     * - [PRESET_CUSTOM] whenever any flag differs (toggling a rail while on
+     *   Minimal/Full flips the label to Custom without a no-op).
+     */
+    fun presetId(): String = when {
+        isFull() -> PRESET_FULL
+        isMinimal() -> PRESET_MINIMAL
+        else -> PRESET_CUSTOM
+    }
+
+    /**
+     * Power-user rails (beyond core All/Recent/Continue/Fav + platforms +
+     * search). Used to group Settings toggles under an expander.
+     */
+    fun hasAnyPowerRail(): Boolean =
+        installedRail || gamesRail || topRail || todayRail || weekRail ||
+            monthRail || alphaRail || unplayedRail || randomChip ||
+            genreChips || developerChips || yearChips || launchableOnly ||
+            deckStatusPill || resumeChip || quickPanelBrowse
+
+    /**
+     * Whether the Settings power-rails expander should start expanded /
+     * stay visible after a Minimal↔Full rebind. Pure; host-tested.
+     */
+    fun powerRailsPanelVisible(): Boolean = hasAnyPowerRail() || !isMinimal()
+
+    /**
+     * True when going from [from] to [this] can use [DeckState.Change.CHROME]
+     * in-place rebind (no add/remove of StatusPill or Resume chip views).
+     * Toggling [deckStatusPill] or [resumeChip] requires a full SETTINGS paint.
+     */
+    fun allowsInPlaceChromeUpdate(from: BrowseChrome): Boolean =
+        deckStatusPill == from.deckStatusPill && resumeChip == from.resumeChip
+
+    /**
+     * Ordered flag snapshot for Settings chrome switches (core first, then
+     * power rails). Used to rebind Switch isChecked after Minimal/Full without
+     * recreating the activity — must match [chromeFlag] get order in Settings.
+     */
+    fun switchFlags(): List<Boolean> = listOf(
+        platformChips,
+        collectionRails,
+        installedRail,
+        gamesRail,
+        topRail,
+        todayRail,
+        weekRail,
+        monthRail,
+        alphaRail,
+        unplayedRail,
+        randomChip,
+        genreChips,
+        developerChips,
+        yearChips,
+        launchableOnly,
+        deckStatusPill,
+        resumeChip,
+        quickPanelBrowse,
+    )
+
     fun toJson(): JSONObject = JSONObject()
         .put("installedRail", installedRail)
         .put("gamesRail", gamesRail)
@@ -147,6 +209,10 @@ data class BrowseChrome(
         .put("quickPanelBrowse", quickPanelBrowse)
 
     companion object {
+        const val PRESET_MINIMAL = "minimal"
+        const val PRESET_CUSTOM = "custom"
+        const val PRESET_FULL = "full"
+
         /** Default: uncluttered deck for most users. */
         val MINIMAL = BrowseChrome()
 

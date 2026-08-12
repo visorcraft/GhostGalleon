@@ -249,7 +249,7 @@
     <string name="deck_status">État</string>
     <string name="deck_clock">Horloge</string>
     <string name="deck_select_game_or_app">Sélectionnez un jeu ou une application</string>
-    <string name="deck_set_pin_help">Définissez l’épinglage dans Paramètres → Écran compagnon</string>
+    <string name="deck_set_pin_help">Pas d’épingle — choisissez une appli</string>
     <string name="deck_pinned_app_missing">Application épinglée non installée</string>
     <string name="deck_rom_missing">ROM absente de la bibliothèque</string>
     <string name="deck_app_hidden">Application masquée</string>
@@ -552,4 +552,40 @@
     <string name="menu_section_customize">Personnaliser</string>
     <string name="menu_section_more">Plus</string>
     <string name="deck_removed_from_grid">Retiré de la grille</string>
+
+    <string name="settings_dual_recovery_title">Écrans duals noirs</string>
+    <string name="settings_dual_recovery_body">Si un ou les deux panneaux deviennent noirs : (1) Redémarrer le panneau compagnon ci-dessous, ou appuyer sur X une ou deux fois ; (2) Lancer un jeu puis revenir ; (3) Forcer l’arrêt de Ghost Galleon puis HOME ; (4) Redémarrer si besoin.</string>
+    <string name="settings_restart_companion">Redémarrer le panneau compagnon</string>
+    <string name="settings_dual_recovery_no_main">Ouvrez d’abord l’écran d’accueil, puis réessayez</string>
+    <string name="settings_chrome_custom_hint">Personnalisé s’applique dès qu’un rail avancé diffère de Minimal ou Complet.</string>
+    <string name="settings_chrome_power_rails">Rails avancés et extras</string>
+    <string name="settings_chrome_expand">Afficher / masquer</string>
+    <string name="action_open_in_game_mode">Ouvrir en mode Jeu</string>
+    <string name="action_search_library">Rechercher dans la bibliothèque</string>
+    <string name="action_mirror_to_collection">Miroir vers collection</string>
+    <string name="action_choose_pin">Choisir l’appli à épingler</string>
+    <string name="action_change_pin">Changer l’épingle</string>
+    <string name="deck_mirrored_to_collection">Dossier copié vers la collection</string>
+    <string name="deck_perf_live_hint">Mesures en direct · actualisées toutes les quelques secondes</string>
+    <string name="deck_pin_cta_subtitle">Lancer sur le compagnon · pas une appli embarquée</string>
+    <string name="deck_pin_dual_claim">Épingle en pause pendant un jeu double écran (NDS/3DS)</string>
+
+    <string name="settings_card_size">Taille des cartes mode Jeu (dp)</string>
+    <string name="settings_rescan_progress">Analyse… %1$d / %2$d dossiers</string>
+    <string name="settings_rescan_progress_full">Analyse complète… %1$d / %2$d dossiers</string>
+    <string name="settings_rescan_done_mixed">%1$d ROMs · %2$d dossier(s) analysé(s) · %3$d inchangé(s)</string>
+    <string name="settings_rescan_done_partial">%1$d ROMs · %2$d dossier(s) illisible(s) (conservé)</string>
+
+    <string name="setup_chrome_title">Chrome compagnon</string>
+    <string name="setup_chrome_intro">Activez Resume et l’horloge/batterie pour le second panneau. Modifiable plus tard dans Chrome de navigation.</string>
+    <string name="setup_check_resume_chip">Puce Resume (dernier joué)</string>
+    <string name="setup_check_status_pill">Horloge / batterie sur le deck</string>
+    <string name="setup_enable_companion_chrome">Activer Resume + horloge</string>
+    <string name="scrape_blocked_no_network">Pas de réseau — téléchargement d’art en pause</string>
+    <string name="scrape_blocked_wifi_only">Connectez-vous au Wi‑Fi (Wi‑Fi uniquement activé)</string>
+    <string name="scrape_blocked_low_battery">Batterie faible — chargez ou relevez le seuil dans Réglages</string>
+    <string name="settings_scrape_wifi_only">Téléchargement d’art : Wi‑Fi uniquement</string>
+    <string name="action_mirror_to_folder">Miroir vers dossier grille</string>
+    <string name="deck_mirrored_to_folder">Collection copiée vers un dossier grille</string>
+    <string name="deck_empty_collection">La collection est vide</string>
 </resources>

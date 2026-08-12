@@ -122,10 +122,21 @@ These reduce how often full paints fire or how expensive they are:
 
 ## Recovery (pure-black panels)
 
-1. `adb shell am force-stop com.visorcraft.ghostgalleon` then HOME.
-2. Press **X** once or twice (DISPLAY rebuild / swap).
-3. Launch and return from an emulator (`restartCompanionPanel`).
+In-app: **Settings → System** shows the dual-black checklist and a
+**Restart companion panel** action (calls `MainActivity.restartCompanionPanel`
+without App Info Force Stop).
+
+1. Settings → System → Restart companion panel, or press **X** once or twice
+   (swap always recreates Companion in dual mode — see
+   `shouldRestartCompanionAfterSwap`).
+2. Launch any game and return (`restartCompanionPanel("return-from-app")`).
+3. `adb shell am force-stop com.visorcraft.ghostgalleon` then HOME (or system
+   Force Stop if no adb).
 4. Reboot if buffers stay stuck.
+
+Heal policy: `companionHealAction` restarts peers that claim the secondary
+target but are not STARTED-healthy; launches when empty. PERF_HUD live
+refresh uses `PERF_HUD_REFRESH_MS` in-place only — never SETTINGS thrash.
 
 Then fix the policy violation that caused thrash — do not paper over with
 more full rebuilds. After every `adb install -r`, force-stop: this ROM can

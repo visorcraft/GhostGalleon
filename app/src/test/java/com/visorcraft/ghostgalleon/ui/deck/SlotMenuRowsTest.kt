@@ -25,6 +25,8 @@ class SlotMenuRowsTest {
         assertTrue(actions.contains(SlotMenu.Choice.PIN_TO_DOCK))
         assertTrue(actions.contains(SlotMenu.Choice.RENAME))
         assertTrue(actions.contains(SlotMenu.Choice.APP_INFO))
+        assertTrue(actions.contains(SlotMenu.Choice.OPEN_IN_GAME_MODE))
+        assertTrue(actions.contains(SlotMenu.Choice.SEARCH_LIBRARY))
         assertEquals(SlotMenu.Choice.CANCEL, actions.last())
     }
 

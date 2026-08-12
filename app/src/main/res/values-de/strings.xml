@@ -249,7 +249,7 @@
     <string name="deck_status">Status</string>
     <string name="deck_clock">Uhr</string>
     <string name="deck_select_game_or_app">Spiel oder App auswählen</string>
-    <string name="deck_set_pin_help">Pin unter Einstellungen → Begleitdisplay festlegen</string>
+    <string name="deck_set_pin_help">Kein Pin — App wählen</string>
     <string name="deck_pinned_app_missing">Angeheftete App nicht installiert</string>
     <string name="deck_rom_missing">ROM nicht mehr in der Bibliothek</string>
     <string name="deck_app_hidden">App ausgeblendet</string>
@@ -552,4 +552,40 @@
     <string name="menu_section_customize">Anpassen</string>
     <string name="menu_section_more">Mehr</string>
     <string name="deck_removed_from_grid">Vom Grid entfernt</string>
+
+    <string name="settings_dual_recovery_title">Dual-Bildschirm schwarz</string>
+    <string name="settings_dual_recovery_body">Wenn ein oder beide Panels schwarz sind: (1) Companion unten neu starten oder X ein- bis zweimal drücken; (2) Spiel starten und zurück; (3) Ghost Galleon beenden, dann HOME; (4) Neu starten falls nötig.</string>
+    <string name="settings_restart_companion">Companion-Panel neu starten</string>
+    <string name="settings_dual_recovery_no_main">Zuerst den Home-Deck öffnen, dann erneut versuchen</string>
+    <string name="settings_chrome_custom_hint">Benutzerdefiniert gilt, sobald ein Power-Rail-Schalter von Minimal oder Voll abweicht.</string>
+    <string name="settings_chrome_power_rails">Power-Rails &amp; Extras</string>
+    <string name="settings_chrome_expand">Ein- / ausblenden</string>
+    <string name="action_open_in_game_mode">Im Spielmodus öffnen</string>
+    <string name="action_search_library">Bibliothek durchsuchen</string>
+    <string name="action_mirror_to_collection">In Sammlung spiegeln</string>
+    <string name="action_choose_pin">App zum Anheften wählen</string>
+    <string name="action_change_pin">Pin ändern</string>
+    <string name="deck_mirrored_to_collection">Ordner in Sammlung gespiegelt</string>
+    <string name="deck_perf_live_hint">Live-Werte · alle paar Sekunden</string>
+    <string name="deck_pin_cta_subtitle">Start auf Companion · keine eingebettete App</string>
+    <string name="deck_pin_dual_claim">Pin pausiert, solange ein Dual-Screen-Spiel (NDS/3DS) läuft</string>
+
+    <string name="settings_card_size">Spielmodus-Kartengröße (dp)</string>
+    <string name="settings_rescan_progress">Scanne… %1$d / %2$d Ordner</string>
+    <string name="settings_rescan_progress_full">Vollscan… %1$d / %2$d Ordner</string>
+    <string name="settings_rescan_done_mixed">%1$d ROMs · %2$d Ordner gescannt · %3$d unverändert</string>
+    <string name="settings_rescan_done_partial">%1$d ROMs · %2$d Ordner unlesbar (Vorheriges behalten)</string>
+
+    <string name="setup_chrome_title">Begleit-Chrome</string>
+    <string name="setup_chrome_intro">Resume und Uhr/Akku einschalten, damit das zweite Panel nützlicher ist. Später unter Browse-Chrome änderbar.</string>
+    <string name="setup_check_resume_chip">Resume-Chip (zuletzt gespielt)</string>
+    <string name="setup_check_status_pill">Uhr / Akku auf dem Deck</string>
+    <string name="setup_enable_companion_chrome">Resume + Uhr aktivieren</string>
+    <string name="scrape_blocked_no_network">Kein Netz — Artwork-Download pausiert</string>
+    <string name="scrape_blocked_wifi_only">Mit WLAN verbinden (nur WLAN ist an)</string>
+    <string name="scrape_blocked_low_battery">Akku schwach — laden oder Schwelle in Einstellungen anheben</string>
+    <string name="settings_scrape_wifi_only">Artwork-Download: nur WLAN</string>
+    <string name="action_mirror_to_folder">In Grid-Ordner spiegeln</string>
+    <string name="deck_mirrored_to_folder">Sammlung in Grid-Ordner gespiegelt</string>
+    <string name="deck_empty_collection">Sammlung ist leer</string>
 </resources>

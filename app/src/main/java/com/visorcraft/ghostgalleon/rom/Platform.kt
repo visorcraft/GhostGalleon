@@ -281,6 +281,7 @@ object Platforms {
         shortName = "PSP",
         folderNames = listOf("psp"),
         extensions = listOf("iso", "cso", "pbp", "chd"),
+        // Device-verified package org.ppsspp.ppsspp (PpssppActivity VIEW).
         players = listOf(
             PlayerTemplate(
                 id = "ppsspp",
@@ -300,7 +301,9 @@ object Platforms {
         shortName = "PS2",
         folderNames = listOf("ps2"),
         extensions = listOf("iso", "bin", "chd", "cso", "gz"),
-        // NetherSX2: game reference in the `bootPath` extra, not intent data.
+        // NetherSX2 keeps AetherSX2 package id. bootPath historically wants a
+        // filesystem path; prefer {file.path}, fall back to content URI.
+        // EmulationActivity is startable via explicit component (device-checked).
         players = listOf(
             PlayerTemplate(
                 id = "nethersx2",
@@ -308,7 +311,7 @@ object Platforms {
                 component = "xyz.aethersx2.android/.EmulationActivity",
                 action = "android.intent.action.MAIN",
                 uriStyle = UriStyle.URI,
-                extras = mapOf("bootPath" to "{file.uri}"),
+                extras = mapOf("bootPath" to "{file.pathOrUri}"),
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or CLEAR_FLAGS,
             ),
         ),
@@ -330,15 +333,17 @@ object Platforms {
         id = "dreamcast",
         displayName = "Dreamcast",
         shortName = "DC",
-        folderNames = listOf("dreamcast"),
+        folderNames = listOf("dreamcast", "dc"),
         extensions = listOf("gdi", "cdi", "chd", "cue"),
+        // Device-verified package com.flycast.emulator (.MainActivity VIEW).
         players = listOf(
             PlayerTemplate(
                 id = "flycast",
                 displayName = "Flycast",
-                component = "com.flycast.emulator/com.flycast.emulator.MainActivity",
+                component = "com.flycast.emulator/.MainActivity",
                 action = "android.intent.action.VIEW",
                 uriStyle = UriStyle.URI,
+                grantRead = true,
             ),
             retroArch("ra-flycast", "RetroArch (Flycast)", "flycast"),
         ),
@@ -360,9 +365,10 @@ object Platforms {
         id = "gamecube",
         displayName = "GameCube",
         shortName = "GC",
-        folderNames = listOf("gamecube"),
+        folderNames = listOf("gamecube", "gc"),
         extensions = listOf("iso", "gcm", "rvz", "wbfs", "wad", "dol", "elf"),
-        // Dolphin: game reference in the `AutoStartFile` extra on MAIN.
+        // Dolphin: AutoStartFile extra on MainActivity (device package verified).
+        // Prefer path when reconstructed (more reliable than content URI).
         players = listOf(
             PlayerTemplate(
                 id = "dolphin",
@@ -370,7 +376,8 @@ object Platforms {
                 component = "org.dolphinemu.dolphinemu/.ui.main.MainActivity",
                 action = "android.intent.action.VIEW",
                 uriStyle = UriStyle.URI,
-                extras = mapOf("AutoStartFile" to "{file.uri}"),
+                extras = mapOf("AutoStartFile" to "{file.pathOrUri}"),
+                grantRead = true,
             ),
         ),
     )
@@ -381,8 +388,7 @@ object Platforms {
         shortName = "Wii",
         folderNames = listOf("wii"),
         extensions = listOf("iso", "gcm", "rvz", "wbfs", "wad", "dol", "elf"),
-        // Same Dolphin entry as GameCube, but the Wii player uses MAIN
-        // instead of VIEW.
+        // Same Dolphin entry as GameCube; Wii registry used MAIN historically.
         players = listOf(
             PlayerTemplate(
                 id = "dolphin",
@@ -390,7 +396,8 @@ object Platforms {
                 component = "org.dolphinemu.dolphinemu/.ui.main.MainActivity",
                 action = "android.intent.action.MAIN",
                 uriStyle = UriStyle.URI,
-                extras = mapOf("AutoStartFile" to "{file.uri}"),
+                extras = mapOf("AutoStartFile" to "{file.pathOrUri}"),
+                grantRead = true,
             ),
         ),
     )
@@ -401,15 +408,17 @@ object Platforms {
         shortName = "Wii U",
         folderNames = listOf("wiiu"),
         extensions = listOf("wua", "wux", "wud", "rpx"),
-        // Cemu (Sugar source build): URI data, default MAIN action.
+        // Cemu (Sugar): EmulationActivity accepts VIEW + content URI (device-
+        // verified activity filter).
         players = listOf(
             PlayerTemplate(
                 id = "cemu",
                 displayName = "Cemu",
                 component = "info.cemu.cemu/.emulation.EmulationActivity",
-                action = "android.intent.action.MAIN",
+                action = "android.intent.action.VIEW",
                 uriStyle = UriStyle.URI,
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or CLEAR_FLAGS,
+                grantRead = true,
             ),
         ),
     )

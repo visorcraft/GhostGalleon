@@ -370,6 +370,21 @@ class GridDeck(
                     Toast.LENGTH_SHORT,
                 ).show()
             },
+            onMirrorToCollection = {
+                val app = activity.application as GhostGalleonApp
+                val next = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
+                    .mirrorFolderToCollection(
+                        app.settings.folders,
+                        fid,
+                        app.settings.collections,
+                    )
+                app.updateSettings(app.settings.copy(collections = next))
+                Toast.makeText(
+                    activity,
+                    R.string.deck_mirrored_to_collection,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
         )
         folderPanel = panel
         rootView?.addView(panel.view, FrameLayout.LayoutParams(
@@ -391,18 +406,7 @@ class GridDeck(
             clipToPadding = false
         }
         rootView = root
-        settings.wallpaperUri?.let { uri ->
-            // The ImageView goes in immediately (black behind the grid);
-            // decode+downscale runs off the UI thread and fills it in.
-            val wallpaperView = ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                alpha = 0.35f
-            }
-            root.addView(wallpaperView, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT))
-            loadWallpaperAsync(context, uri, wallpaperView)
-        }
+        DeckWallpaper.attachIfConfigured(root, context, settings.wallpaperUri)
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             clipChildren = false
@@ -961,6 +965,7 @@ class GridDeck(
                 SlotMenu.Row.Item(SlotMenu.Choice.MOVE),
                 SlotMenu.Row.Item(SlotMenu.Choice.RENAME),
                 SlotMenu.Row.Item(SlotMenu.Choice.ADD_MEMBER),
+                SlotMenu.Row.Item(SlotMenu.Choice.MIRROR_TO_COLLECTION),
                 SlotMenu.Row.Item(SlotMenu.Choice.REMOVE, destructive = true),
                 SlotMenu.Row.Item(SlotMenu.Choice.CANCEL),
             )
@@ -1078,6 +1083,31 @@ class GridDeck(
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                }
+                SlotMenu.Choice.OPEN_IN_GAME_MODE -> {
+                    key?.let { state.select(it, force = true) }
+                    state.setMode(com.visorcraft.ghostgalleon.state.UIMode.GAME)
+                }
+                SlotMenu.Choice.SEARCH_LIBRARY -> {
+                    val app = activity.application as GhostGalleonApp
+                    app.pendingLibrarySearch = true
+                    state.setMode(com.visorcraft.ghostgalleon.state.UIMode.GAME)
+                }
+                SlotMenu.Choice.MIRROR_TO_COLLECTION -> key?.let { k ->
+                    val fid = SlotKey.folderId(k) ?: return@let
+                    val app = activity.application as GhostGalleonApp
+                    val next = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
+                        .mirrorFolderToCollection(
+                            app.settings.folders,
+                            fid,
+                            app.settings.collections,
+                        )
+                    app.updateSettings(app.settings.copy(collections = next))
+                    Toast.makeText(
+                        activity,
+                        R.string.deck_mirrored_to_collection,
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
                 SlotMenu.Choice.CANCEL,
                 SlotMenu.Choice.ADD_TO_GRID,

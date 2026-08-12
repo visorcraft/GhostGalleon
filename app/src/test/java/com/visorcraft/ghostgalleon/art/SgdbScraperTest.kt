@@ -128,14 +128,16 @@ class SgdbScraperTest {
         )
         val scraper = scraper(cache, transport)
         val summary = scraper.runBlocking("KEY", listOf(cached, local, target), {}, { _, _ -> })
+        // Fully cached skipped; local has artUri but no hero → hero-only attempt
+        // (fails without search fixture); target downloads grid+hero.
         assertEquals(1, summary.downloaded)
-        assertEquals(2, summary.skipped)
-        assertEquals(0, summary.failed)
+        assertEquals(1, summary.skipped)
+        assertEquals(1, summary.failed)
         assertFalse(summary.cancelled)
         // Grid lands in the tile slot, hero in the separate hero slot.
         assertTrue(cache.diskHas(target.id))
         assertTrue(cache.diskHas(target.id, ArtCache.ArtKind.HERO))
-        // The skipped entries produced no traffic; the bearer key went out.
+        // Fully-cached entry produced no traffic; the bearer key went out.
         assertFalse(transport.requested.any { it.contains("Cached") })
         assertEquals("KEY", transport.lastApiKey)
     }

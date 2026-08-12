@@ -185,4 +185,43 @@ class DualPaintPolicyTest {
         assertFalse(DualPaintPolicy.shouldLaunchCompanion(anyPeerOnTarget = true))
         assertTrue(DualPaintPolicy.shouldLaunchCompanion(anyPeerOnTarget = false))
     }
+
+    @Test
+    fun `companionHealAction restarts unhealthy peers and launches when empty`() {
+        assertEquals(
+            DualPaintPolicy.HealAction.NONE,
+            DualPaintPolicy.companionHealAction(
+                dualMode = false,
+                anyPeerClaiming = false,
+                healthyOnTarget = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.HealAction.NONE,
+            DualPaintPolicy.companionHealAction(
+                dualMode = true,
+                anyPeerClaiming = true,
+                healthyOnTarget = true,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.HealAction.LAUNCH,
+            DualPaintPolicy.companionHealAction(
+                dualMode = true,
+                anyPeerClaiming = false,
+                healthyOnTarget = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.HealAction.RESTART,
+            DualPaintPolicy.companionHealAction(
+                dualMode = true,
+                anyPeerClaiming = true,
+                healthyOnTarget = false,
+            ),
+        )
+        assertTrue(DualPaintPolicy.shouldRestartCompanionAfterSwap(dualMode = true))
+        assertFalse(DualPaintPolicy.shouldRestartCompanionAfterSwap(dualMode = false))
+        assertTrue(DualPaintPolicy.PERF_HUD_REFRESH_MS in 500L..5_000L)
+    }
 }

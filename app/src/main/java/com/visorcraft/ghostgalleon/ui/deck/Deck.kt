@@ -32,6 +32,12 @@ interface Deck {
      */
     fun applyBrowseChange(): Boolean = false
 
+    /**
+     * Settings chrome-only change (card size, browse chrome flags) without
+     * full activity rebuild. Default false → SETTINGS full paint.
+     */
+    fun applyChromeChange(): Boolean = false
+
     fun handleAction(action: Action): Boolean
 }
 

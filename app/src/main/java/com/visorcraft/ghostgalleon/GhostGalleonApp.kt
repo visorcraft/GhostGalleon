@@ -29,9 +29,12 @@ import com.visorcraft.ghostgalleon.display.DisplayTopology
 import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
+import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
+import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.DataMigrator
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SettingsStore
@@ -456,6 +459,13 @@ class GhostGalleonApp : Application() {
     @Volatile
     var setupBlockingInput: Boolean = false
 
+    /**
+     * Grid → Game Mode library bridge: when true, next GameDeck primaryView
+     * opens the search dialog once (then clears the flag).
+     */
+    @Volatile
+    var pendingLibrarySearch: Boolean = false
+
     // All-apps drawer list reuse: avoid rebuilding thousands of PickerItems
     // on every swipe when contentEpoch + apps/hidden sets are unchanged.
     @Volatile
@@ -647,7 +657,12 @@ class GhostGalleonApp : Application() {
         }
         settings = settingsStore.load()
         // Install any persisted platform pack before ROM scans / launches.
-        runCatching { platformPackStore.loadIntoRegistry() }
+        runCatching {
+            if (platformPackStore.loadIntoRegistry()) {
+                launchablePlatformIdsCache = null
+                clearInstalledPackageCache()
+            }
+        }
         loadRaCacheFile()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
@@ -761,24 +776,51 @@ class GhostGalleonApp : Application() {
             .forEach { it.finish() }
     }
 
-    fun updateSettings(s: Settings, notify: Boolean = true) {
+    /**
+     * @param notify when true, notifies decks. [chromeOnly] uses
+     * [DeckState.notifyChromeRefresh] (in-place rebind) instead of a full
+     * SETTINGS dual rebuild — for browse chrome, card size, accent-only.
+     */
+    fun updateSettings(s: Settings, notify: Boolean = true, chromeOnly: Boolean = false) {
         val displayPolicyChanged =
             s.deviceProfileId != settings.deviceProfileId ||
                 s.interactiveDisplayMode != settings.interactiveDisplayMode ||
                 s.orientationMode != settings.orientationMode ||
                 s.userPinnedPrimaryId != settings.userPinnedPrimaryId
+        val modeChanged = s.defaultMode != settings.defaultMode
+        val drawerRelevant = drawerRelevantSettingsChanged(settings, s)
         settings = s
         // Debounced async persist — every favorite/dock/launch used to
         // block the main thread on pretty-printed JSON IO.
         scheduleSettingsSave(s)
-        contentEpoch++
-        invalidateDrawerListCache()
+        // contentEpoch + drawer cache only when app/ROM listing inputs change
+        // (not on every chrome-only or favorite-adjacent write that doesn't
+        // affect the all-apps drawer rows).
+        if (drawerRelevant || (!chromeOnly && notify)) {
+            contentEpoch++
+            if (drawerRelevant) invalidateDrawerListCache()
+        }
         if (displayPolicyChanged) refreshDisplayConfig()
         if (notify) {
-            deckState.setMode(s.defaultMode)
-            deckState.notifyChanged()
+            if (chromeOnly && !modeChanged && !displayPolicyChanged) {
+                deckState.notifyChromeRefresh()
+            } else {
+                deckState.setMode(s.defaultMode)
+                deckState.notifyChanged()
+            }
         }
     }
+
+    /**
+     * Fields that change all-apps drawer row membership or labels.
+     * Pure relative compare — avoids thrashing DrawerListCache on chrome.
+     */
+    private fun drawerRelevantSettingsChanged(prev: Settings, next: Settings): Boolean =
+        prev.hiddenPackages != next.hiddenPackages ||
+            prev.hiddenRomIds != next.hiddenRomIds ||
+            prev.customNames != next.customNames ||
+            prev.customIcons != next.customIcons ||
+            prev.romTreeUris != next.romTreeUris
 
     /**
      * Shared installed-app catalog (PM query is expensive). Pre-warmed on a
@@ -800,7 +842,41 @@ class GhostGalleonApp : Application() {
     /** Drop app cache after install/uninstall (next [appLibrary] re-queries). */
     fun invalidateAppLibrary() {
         sharedAppLibrary.set(null)
+        com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache()
+        launchablePlatformIdsCache = null
         invalidateDrawerListCache()
+    }
+
+    /**
+     * Cached result of launchable-only platform filter (package installs).
+     * Cleared on [invalidateAppLibrary] / pack overlay change.
+     */
+    @Volatile
+    private var launchablePlatformIdsCache: Set<String>? = null
+
+    /** Platforms with at least one installed player; null when filter off. */
+    fun launchablePlatformIds(launchableOnly: Boolean): Set<String>? {
+        if (!launchableOnly) return null
+        launchablePlatformIdsCache?.let { return it }
+        val byPlatform = playerPackagesByPlatform()
+        val installed = byPlatform.values.flatten()
+            .filter { packageManager.isInstalled(it) }
+            .toSet()
+        val ids = com.visorcraft.ghostgalleon.library.LibraryBrowse.launchablePlatformIds(
+            byPlatform,
+            installed,
+        )
+        launchablePlatformIdsCache = ids
+        return ids
+    }
+
+    private fun playerPackagesByPlatform(): Map<String, List<String>> {
+        // Rebuild when pack overlay may have changed (cheap vs PM queries).
+        return Platforms.ALL.associate { platform ->
+            platform.id to platform.players.map {
+                com.visorcraft.ghostgalleon.rom.PlayerResolver.packageName(it)
+            }
+        }
     }
 
     /** Flush any debounced settings write (call from activity onPause). */
@@ -858,6 +934,8 @@ class GhostGalleonApp : Application() {
         val RA_IO = Executors.newSingleThreadExecutor()
         val APP_IO = Executors.newSingleThreadExecutor()
         val SETTINGS_IO = Executors.newSingleThreadExecutor()
-        const val SETTINGS_SAVE_DEBOUNCE_MS = 120L
+        // Slightly longer debounce: bulk multi-select / favorite storms
+        // coalesce into fewer disk writes without feeling laggy on pause flush.
+        const val SETTINGS_SAVE_DEBOUNCE_MS = 180L
     }
 }
