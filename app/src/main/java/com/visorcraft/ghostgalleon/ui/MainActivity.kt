@@ -10,6 +10,8 @@ import android.util.Log
 import com.visorcraft.ghostgalleon.display.AndroidDisplayProbe
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.settings.CompanionRole
 
 class MainActivity : BaseDeckActivity() {
 
@@ -30,35 +32,49 @@ class MainActivity : BaseDeckActivity() {
             app.maybeSealHomeWallpaper()
         }
         app.refreshDisplayConfig(debounce = true)
+        val surface = app.sessionSurface
+        val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
+            !app.settings.companionPinnedPackage.isNullOrBlank()
+        val action = DualPaintPolicy.resumeCompanionAction(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            returningFromElsewhere = returningFromElsewhere,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            pinReady = pinReady,
+        )
+        when (action) {
+            DualPaintPolicy.ResumeCompanionAction.NONE -> { }
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING ->
+                healCompanionIfMissing(returningFromElsewhere)
+            DualPaintPolicy.ResumeCompanionAction.RESTART ->
+                restartCompanionPanel(
+                    if (surface?.policy == SessionPolicy.YIELD_BOTH) "return-from-yield"
+                    else "return-from-app",
+                )
+        }
         if (returningFromElsewhere) {
-            val pinReady = app.settings.companionRole ==
-                com.visorcraft.ghostgalleon.settings.CompanionRole.PINNED_APP.name &&
-                !app.settings.companionPinnedPackage.isNullOrBlank()
-            if (pinReady) {
-                // A pinned app on the companion display is the intended
-                // surface — recreating Companion would cover it.
-                healCompanionIfMissing()
-            } else {
-                // Emulators (Eden/Azahar/…) often leave the secondary panel pure
-                // black after return. Recreate Companion — does not require the
-                // system Force Stop UI.
-                restartCompanionPanel("return-from-app")
-            }
-        } else {
-            healCompanionIfMissing()
+            // After the action so YIELD return still sees the policy.
+            // Playtime stays on endOpenSession / noteReturnToLauncher.
+            app.clearSessionSurface()
         }
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        healCompanionIfMissing()
+        healCompanionIfMissing(leftHomeSinceResume())
         // Still on home (never onStop'd): swipe-up / re-HOME opens all-apps.
         if (!leftHomeSinceResume()) {
             requestAppDrawer(allowToggle = true)
         }
     }
 
-    private fun healCompanionIfMissing() {
+    private fun healCompanionIfMissing(returningFromElsewhere: Boolean) {
+        // YIELD owns both panels until HOME return; do not spawn onto a live DS.
+        if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH &&
+            !returningFromElsewhere
+        ) {
+            return
+        }
         if (!isHomeRole()) return
         val now = SystemClock.uptimeMillis()
         if (!DualPaintPolicy.allowHeal(now, lastHealUptimeMs)) return
