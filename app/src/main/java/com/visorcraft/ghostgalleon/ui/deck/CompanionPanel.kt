@@ -46,6 +46,7 @@ import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -90,6 +91,24 @@ object CompanionPanel {
     private const val TAG_STRIP_DETAIL = "strip_detail"
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
+
+    /**
+     * Slot key companion Resume launches through [launchSlotKey].
+     * KEEP prefers [sessionSurfaceKey] (then [selectedKey]) so a navigated
+     * hero does not steal Resume. Otherwise the browse continue key.
+     * No new intent extras.
+     */
+    internal fun resumeLaunchKey(
+        continueKey: String?,
+        sessionSurfaceKey: String?,
+        selectedKey: String?,
+        sessionPolicy: SessionPolicy?,
+    ): String? =
+        if (sessionPolicy == SessionPolicy.KEEP_COMPANION) {
+            sessionSurfaceKey ?: selectedKey
+        } else {
+            continueKey
+        }
 
     /**
      * Skip hero media rebind when this ROM is already painted and the
@@ -429,9 +448,15 @@ object CompanionPanel {
         var downY = 0f
         var tracking = false
         view.setOnClickListener {
-            val idx = app.settings.gridSlots.indexOf(cont)
-            if (idx >= 0) state.selectSlot(idx, cont) else state.select(cont)
-            launchSlotKey(activity, state, roms, cont)
+            val key = resumeLaunchKey(
+                continueKey = cont,
+                sessionSurfaceKey = app.sessionSurface?.key,
+                selectedKey = state.selectedKey,
+                sessionPolicy = app.sessionSurface?.policy,
+            ) ?: return@setOnClickListener
+            val idx = app.settings.gridSlots.indexOf(key)
+            if (idx >= 0) state.selectSlot(idx, key) else state.select(key)
+            launchSlotKey(activity, state, roms, key)
         }
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -1187,7 +1212,8 @@ object CompanionPanel {
         // Browse chrome [resumeChip]. Never show for the already-selected key,
         // open session, or after user swipe-dismiss ([Settings.hideResumeChip]
         // until the next real launch). Horizontal swipe dismisses the pill;
-        // tap still launches.
+        // tap launches via launchSlotKey. KEEP click prefers sessionSurface.key
+        // (resumeLaunchKey) so a navigated hero does not steal the session.
         run {
             if (!settings.browseChrome.resumeChip) return@run
             if (app.openSession != null) return@run
