@@ -35,7 +35,7 @@ class ArtCache(private val dir: File) {
 
     /** Cache slot: GRID = tile art (also what [load] serves), HERO = wide
      *  hero-panel art keyed separately (scraped alongside grids). */
-    enum class ArtKind { GRID, HERO }
+    enum class ArtKind { GRID, HERO, LOGO }
 
     private val memory by lazy {
         object : LruCache<String, Bitmap>(MEMORY_BYTES) {
@@ -55,7 +55,11 @@ class ArtCache(private val dir: File) {
     }
 
     private fun fileFor(romId: String, kind: ArtKind = ArtKind.GRID): File {
-        val suffix = if (kind == ArtKind.HERO) ".hero.png" else ".png"
+        val suffix = when (kind) {
+            ArtKind.HERO -> ".hero.png"
+            ArtKind.LOGO -> ".logo.png"
+            ArtKind.GRID -> ".png"
+        }
         return File(dir, keyFor(romId) + suffix)
     }
 
@@ -64,7 +68,11 @@ class ArtCache(private val dir: File) {
      *  scanner art), a stamp mismatch forces a re-decode so stale cache
      *  never wins over [ArtOverride]. */
     private fun sourceStampFile(romId: String, kind: ArtKind = ArtKind.GRID): File {
-        val suffix = if (kind == ArtKind.HERO) ".hero.src" else ".src"
+        val suffix = when (kind) {
+            ArtKind.HERO -> ".hero.src"
+            ArtKind.LOGO -> ".logo.src"
+            ArtKind.GRID -> ".src"
+        }
         return File(dir, keyFor(romId) + suffix)
     }
 
@@ -103,14 +111,18 @@ class ArtCache(private val dir: File) {
                 it == romId ||
                     it == "$romId.hero" ||
                     it.startsWith("$romId|") ||
-                    it.startsWith("$romId.hero|")
+                    it.startsWith("$romId.hero|") ||
+                    it == "$romId.logo" ||
+                    it.startsWith("$romId.logo|")
             }
             doomed.forEach { memory.remove(it) }
         }
         fileFor(romId, ArtKind.GRID).delete()
         fileFor(romId, ArtKind.HERO).delete()
+        fileFor(romId, ArtKind.LOGO).delete()
         sourceStampFile(romId, ArtKind.GRID).delete()
         sourceStampFile(romId, ArtKind.HERO).delete()
+        sourceStampFile(romId, ArtKind.LOGO).delete()
     }
 
     /** Atomic write (tmp + rename), like RomLibrary/SettingsStore. Triggers
@@ -501,7 +513,11 @@ class ArtCache(private val dir: File) {
          * SET_ART cannot hit a prior entry for a different source.
          */
         internal fun memKeyFor(romId: String, kind: ArtKind, sourceUri: String?): String {
-            val base = if (kind == ArtKind.HERO) "$romId.hero" else romId
+            val base = when (kind) {
+                ArtKind.HERO -> "$romId.hero"
+                ArtKind.LOGO -> "$romId.logo"
+                ArtKind.GRID -> romId
+            }
             if (sourceUri.isNullOrBlank()) return base
             return "$base|src:${keyFor(sourceUri).take(16)}"
         }

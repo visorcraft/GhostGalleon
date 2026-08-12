@@ -931,6 +931,7 @@ class GhostGalleonApp : Application() {
         prev.hiddenPackages != next.hiddenPackages ||
             prev.hiddenRomIds != next.hiddenRomIds ||
             prev.customNames != next.customNames ||
+            prev.romNames != next.romNames ||
             prev.customIcons != next.customIcons ||
             prev.romTreeUris != next.romTreeUris
 

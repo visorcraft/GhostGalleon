@@ -231,14 +231,15 @@ class SgdbScraperTest {
                 Sgdb.searchUrl("Chrono Trigger") to searchJson(42),
                 Sgdb.gridsUrl(42) to imagesJson("https://cdn/grid.png"),
                 Sgdb.heroesUrl(42) to """{"success":true,"data":[]}""",
+                Sgdb.logosUrl(42) to """{"success":true,"data":[]}""",
             ),
             downloads = mapOf("https://cdn/grid.png" to byteArrayOf(9)),
         )
         val delays = mutableListOf<Long>()
         val scraper = scraper(cache, transport, delayMs = 200)
         scraper.runBlocking("KEY", listOf(target), { delays += it }, { _, _ -> })
-        // search + grids + grid download + heroes = 4 requests, 4 delays.
-        assertEquals(4, transport.requested.size)
-        assertEquals(List(4) { 200L }, delays)
+        // search + grids + grid download + heroes + logos = 5 requests.
+        assertEquals(5, transport.requested.size)
+        assertEquals(List(5) { 200L }, delays)
     }
 }

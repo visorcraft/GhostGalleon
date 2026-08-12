@@ -16,6 +16,8 @@ object DiscHygiene {
         "scph5000", "scph5500", "scph5501", "scph5502", "scph7000", "scph7001",
         "scph7502", "scph9002", "kick", "kickstart", "erom", "osrom",
         "dc_boot", "dc_flash", "naomi", "awbios",
+        "neogeo", "ngbios", "cpzn1", "cpzn2", "qsound", "sfix", "sm1", "sp01",
+        "sp02", "sp-s2", "sp-s3", "uni-bios", "vs-bios", "pgm",
     )
 
     /** True when [relativePath] is under a BIOS folder or a known BIOS stem. */
@@ -44,6 +46,7 @@ object DiscHygiene {
             val master = when {
                 "m3u" in byExt -> byExt.getValue("m3u")
                 "cue" in byExt -> byExt.getValue("cue")
+                "ccd" in byExt -> byExt.getValue("ccd")
                 "gdi" in byExt -> byExt.getValue("gdi")
                 else -> null
             } ?: continue
@@ -57,7 +60,7 @@ object DiscHygiene {
         return entries.filter { it.id !in drop }
     }
 
-    private val REDUNDANT = setOf("bin", "img", "iso", "raw", "cue", "gdi")
+    private val REDUNDANT = setOf("bin", "img", "iso", "raw", "cue", "gdi", "chd", "ccd")
 
     private fun folderStemKey(entry: RomEntry): String {
         val rel = relativePathOf(entry)

@@ -89,15 +89,21 @@ object RomLauncher {
             return false
         }
         val installed = { pkg: String -> isInstalled(activity, pkg) }
+        val fileExists = { path: String -> java.io.File(path).isFile }
         val template = if (playerId != null) {
             PlayerResolver.byId(platform, playerId)?.takeIf {
-                installed(PlayerResolver.packageName(it))
+                PlayerReadiness.isReady(it, installed, fileExists)
             }
         } else {
-            PlayerResolver.resolve(platform, preferredPlayerId, installed)
+            PlayerReadiness.resolveReady(platform, preferredPlayerId, installed, fileExists)
         }
         if (template == null) {
-            toast(activity, R.string.rom_player_not_installed, platform.displayName)
+            val anyPkg = PlayerResolver.resolve(platform, preferredPlayerId, installed)
+            if (anyPkg != null && PlayerReadiness.libretroCorePath(anyPkg) != null) {
+                toast(activity, R.string.rom_core_missing, anyPkg.displayName)
+            } else {
+                toast(activity, R.string.rom_player_not_installed, platform.displayName)
+            }
             return false
         }
         val plan = LaunchPlanBuilder.build(template, entry)

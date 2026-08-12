@@ -47,6 +47,7 @@ class SlotMenuRowsTest {
         assertEquals(SlotMenu.Choice.REMOVE_FROM_GRID, actions[1])
         assertTrue(actions.contains(SlotMenu.Choice.UNPIN_FROM_DOCK))
         assertTrue(actions.contains(SlotMenu.Choice.UNFAVORITE))
+        assertTrue(actions.contains(SlotMenu.Choice.RENAME))
         assertTrue(actions.contains(SlotMenu.Choice.OPEN_WITH))
         assertTrue(actions.contains(SlotMenu.Choice.DOWNLOAD_ART))
         assertTrue(actions.contains(SlotMenu.Choice.HIDE))

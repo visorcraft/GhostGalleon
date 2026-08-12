@@ -22,6 +22,15 @@ class DiscHygieneTest {
         assertTrue(DiscHygiene.skipPath("ps1/scph1001.bin"))
         assertFalse(DiscHygiene.skipPath("ps1/Final Fantasy VII.cue"))
         assertFalse(DiscHygiene.skipPath("snes/Chrono Trigger.smc"))
+        assertTrue(DiscHygiene.skipPath("arcade/neogeo.zip"))
+    }
+
+    @Test
+    fun `cue wins over sibling chd`() {
+        val kept = DiscHygiene.preferDiscMasters(
+            listOf(rom("ps1/Game.chd"), rom("ps1/Game.cue")),
+        )
+        assertEquals(listOf("ps1/Game.cue"), kept.map { DiscHygiene.relativePathOf(it) })
     }
 
     @Test

@@ -16,6 +16,8 @@ object SetupNeeds {
         val romTreeCount: Int,
         val romEntryCount: Int,
         val installedPlayerCount: Int,
+        /** Distinct primary players still missing (Get-an-emulator stays useful). */
+        val missingPrimaryCount: Int = 0,
         val hasSgdbKey: Boolean,
         /** Browse chrome: companion Resume chip enabled. */
         val resumeChip: Boolean = false,

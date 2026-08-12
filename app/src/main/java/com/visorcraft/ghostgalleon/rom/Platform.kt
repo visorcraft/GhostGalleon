@@ -324,8 +324,8 @@ object Platforms {
         folderNames = listOf("saturn"),
         extensions = listOf("cue", "chd", "iso", "bin", "m3u", "ccd"),
         players = listOf(
-            retroArch("ra-yabause", "RetroArch (Yabause)", "yabause"),
             retroArch("ra-beetle-saturn", "RetroArch (Beetle Saturn)", "mednafen_saturn"),
+            retroArch("ra-yabause", "RetroArch (Yabause)", "yabause"),
         ),
     )
 

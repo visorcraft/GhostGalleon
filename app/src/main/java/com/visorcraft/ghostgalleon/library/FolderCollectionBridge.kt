@@ -69,4 +69,37 @@ object FolderCollectionBridge {
         name: String,
         key: String,
     ): Boolean = key in CollectionsOps.members(collections, name)
+
+    /**
+     * Keep the same-named collection in lockstep with [folderId] members.
+     * Creates the collection when missing. Pure.
+     */
+    fun syncCollectionFromFolder(
+        folders: Map<String, FolderSpec>,
+        folderId: String,
+        collections: Map<String, List<String>>,
+    ): Map<String, List<String>> {
+        val folder = folders[folderId] ?: return collections
+        val name = collectionNameForFolder(folder)
+        if (name.isEmpty()) return collections
+        return collections + (name to folder.members.toList())
+    }
+
+    /**
+     * Keep the folder whose display name equals [collectionName] in lockstep
+     * with that collection's members. No folder → unchanged. Pure.
+     */
+    fun syncFolderFromCollection(
+        collections: Map<String, List<String>>,
+        collectionName: String,
+        folders: Map<String, FolderSpec>,
+    ): Map<String, FolderSpec> {
+        val name = collectionName.trim()
+        if (name.isEmpty()) return folders
+        val folder = folders.values.firstOrNull {
+            collectionNameForFolder(it).equals(name, ignoreCase = true)
+        } ?: return folders
+        val members = CollectionsOps.members(collections, name)
+        return folders + (folder.id to folder.copy(members = members))
+    }
 }

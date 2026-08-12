@@ -30,6 +30,12 @@ class RaFetcherTest {
     fun `consoleIdForPlatform maps common systems`() {
         assertEquals(3, RaFetcher.consoleIdForPlatform("snes"))
         assertEquals(5, RaFetcher.consoleIdForPlatform("gba"))
+        assertEquals(62, RaFetcher.consoleIdForPlatform("3ds"))
+        assertEquals(16, RaFetcher.consoleIdForPlatform("gamecube"))
+        assertEquals(21, RaFetcher.consoleIdForPlatform("ps2"))
+        assertEquals(19, RaFetcher.consoleIdForPlatform("wii"))
+        assertEquals(20, RaFetcher.consoleIdForPlatform("wiiu"))
+        assertNull(RaFetcher.consoleIdForPlatform("switch"))
         assertNull(RaFetcher.consoleIdForPlatform("unknown-plat"))
     }
 

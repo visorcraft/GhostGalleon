@@ -49,6 +49,11 @@ data class Settings(
     // package icon. Both added within schema v3, no bump.
     val customNames: Map<String, String> = emptyMap(),
     val customIcons: Map<String, String> = emptyMap(),
+    /**
+     * Per-ROM display names keyed by [com.visorcraft.ghostgalleon.rom.RomEntry.id].
+     * Within schema v8; absent on disk → empty.
+     */
+    val romNames: Map<String, String> = emptyMap(),
     // Android KeyEvent keyCode -> Action
     val keyMap: Map<Int, Action> = DEFAULT_KEY_MAP,
     // --- schema v5: library browse / play / collections / players / art ---
@@ -123,6 +128,11 @@ data class Settings(
      * Within schema v8; absent on disk → 50 (legacy 0.50 / 0.70).
      */
     val stickDeadzone: Int = 50,
+    /**
+     * True after first-run layout seeding (or dual-display skip). Within
+     * schema v8; absent on disk → false.
+     */
+    val layoutSeeded: Boolean = false,
     val schemaVersion: Int = 8,
 ) {
     companion object {
@@ -142,6 +152,9 @@ data class Settings(
             102 to Action.PAGE_PREV,   // KEYCODE_BUTTON_L1
             103 to Action.PAGE_NEXT,   // KEYCODE_BUTTON_R1
             109 to Action.OPEN_QUICK_PANEL, // KEYCODE_BUTTON_SELECT
+            104 to Action.SEARCH_LIBRARY, // KEYCODE_BUTTON_L2
+            105 to Action.TOGGLE_FAVORITE, // KEYCODE_BUTTON_R2
+            106 to Action.SHOW_DETAILS, // KEYCODE_BUTTON_THUMBL
         )
         val DEFAULT = Settings()
     }

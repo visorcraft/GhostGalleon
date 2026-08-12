@@ -38,6 +38,8 @@
     <string name="action_open">Open</string>
     <string name="action_open_quick_panel">Quick panel</string>
     <string name="action_open_settings">Open settings</string>
+    <string name="action_toggle_favorite">Favorite</string>
+    <string name="action_show_details">Details</string>
     <string name="action_open_with">Open with…</string>
     <string name="action_page_left">Page left (L1)</string>
     <string name="action_page_right">Page right (R1)</string>
@@ -255,6 +257,7 @@
     <!-- ROM launch errors -->
     <string name="rom_unknown_platform">Unknown platform: %1$s</string>
     <string name="rom_player_not_installed">%1$s player not installed</string>
+    <string name="rom_core_missing">%1$s core not installed</string>
     <string name="rom_path_unavailable">ROM path unavailable</string>
     <string name="rom_storage_unmounted">Storage unmounted or file missing</string>
     <string name="rom_file_unreadable">ROM file not readable</string>
@@ -386,6 +389,9 @@
     <string name="settings_page_apps">Apps</string>
     <string name="settings_page_controls">Controls</string>
     <string name="settings_page_library">Library</string>
+    <string name="settings_page_art">Artwork &amp; backup</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_reset_chrome_discover">Show Resume tip again</string>
     <string name="settings_page_stats">Stats</string>
     <string name="settings_page_system">System</string>
     <string name="settings_page_about">About</string>

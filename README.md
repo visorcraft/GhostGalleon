@@ -10,7 +10,7 @@
   <br />
   Grid Mode (3DS/Wii-style icon grid + dock) and Game Mode (card carousel) across one or two displays,
   <br />
-  with portable display topology, live screen swap, gyro-aware orientation, remappable gamepad input, and a SAF-scanned ROM library.
+  with portable display topology, live screen swap, remappable gamepad input, and a SAF-scanned ROM library.
 </p>
 
 <p align="center">
@@ -74,7 +74,7 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
 - **Themes** — Ghost, Teal, OLED Black, Neon; optional custom theme JSON.
 - **Performance-minded** — R8-minified release APK, single carousel snap path, DiffUtil browse updates, one-pass chip counts, JPEG tile cache + RGB_565 grid decode, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
-- **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Stats, System (topology diagnostics), About.
+- **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Artwork & backup, Stats, System (topology diagnostics), About. Long-press the page menu to search.
 - **Export/import** — full settings, layout, and ROM-library JSON, plus a zip of the artwork cache.
 - **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.
 - **Optional platform packs** — extra platform/player JSON under `docs/platform-packs/` (loadable in Settings).

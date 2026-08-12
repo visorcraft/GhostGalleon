@@ -45,7 +45,7 @@ class PlatformsTest {
         assertEquals("$dir/genesis_plus_gx_libretro_android.so", core(Platforms.GENESIS))
         assertEquals("$dir/mupen64plus_next_gles3_libretro_android.so", core(Platforms.N64))
         assertEquals("$dir/pcsx_rearmed_libretro_android.so", core(Platforms.PS1))
-        assertEquals("$dir/yabause_libretro_android.so", core(Platforms.SATURN))
+        assertEquals("$dir/mednafen_saturn_libretro_android.so", core(Platforms.SATURN))
         assertEquals("$dir/fbneo_libretro_android.so", core(Platforms.ARCADE))
     }
 

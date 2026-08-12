@@ -104,6 +104,7 @@ class SettingsStore(private val file: File) {
             // Added within schema v3: absent = no per-app overrides.
             customNames = o.optJSONObject("customNames").toStringMap(),
             customIcons = o.optJSONObject("customIcons").toStringMap(),
+            romNames = o.optJSONObject("romNames").toStringMap(),
             keyMap = keyMap,
             // Schema v5 library/play/collections (absent = empty defaults).
             lastLaunchedMs = o.optJSONObject("lastLaunchedMs").toLongMap(),
@@ -173,6 +174,7 @@ class SettingsStore(private val file: File) {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() },
             stickDeadzone = o.optInt("stickDeadzone", 50).coerceIn(20, 80),
+            layoutSeeded = o.optBoolean("layoutSeeded", false),
             schemaVersion = CURRENT_SCHEMA,
         )
         }
@@ -236,6 +238,9 @@ class SettingsStore(private val file: File) {
             .put("customIcons", JSONObject().apply {
                 s.customIcons.forEach { (pkg, uri) -> put(pkg, uri) }
             })
+            .put("romNames", JSONObject().apply {
+                s.romNames.forEach { (id, name) -> put(id, name) }
+            })
             .put("keyMap", keyMapObj)
             .put("lastLaunchedMs", JSONObject().apply {
                 s.lastLaunchedMs.forEach { (k, v) -> put(k, v) }
@@ -287,6 +292,7 @@ class SettingsStore(private val file: File) {
             .put("browseChrome", s.browseChrome.toJson())
             .put("searchHistory", JSONArray(s.searchHistory))
             .put("stickDeadzone", s.stickDeadzone)
+            .put("layoutSeeded", s.layoutSeeded)
             .put("schemaVersion", CURRENT_SCHEMA)
         }
 

@@ -95,6 +95,20 @@ object ArtTile {
                 applyRounded(overlay, context, bitmap, radiusPx)
                 return@load
             }
+            if (cache.diskHas(rom.id, ArtCache.ArtKind.LOGO)) {
+                cache.load(
+                    context, rom, targetPx,
+                    kind = ArtCache.ArtKind.LOGO,
+                    isStillValid = { overlay.tag == rom.id },
+                ) { logoBmp ->
+                    if (logoBmp != null && overlay.tag == rom.id &&
+                        overlay.isAttachedToWindow
+                    ) {
+                        applyRounded(overlay, context, logoBmp, radiusPx)
+                    }
+                }
+                return@load
+            }
             // Local logo/wheel when box art is missing (already scanned).
             val logo = HeroDetail.logoUri(rom) ?: return@load
             cache.loadUri(

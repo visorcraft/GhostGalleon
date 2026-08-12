@@ -29,12 +29,16 @@ object SetupCard {
             .map { PlayerResolver.packageName(it) }
             .distinct()
             .count { installed(it) }
+        val missing = com.visorcraft.ghostgalleon.rom.PlayerInstall.missingPrimaries(
+            installed = installed,
+        ).size
         val chrome = app.settings.browseChrome
         return SetupNeeds.Snapshot(
             setupDismissed = app.settings.setupDismissed,
             romTreeCount = app.settings.romTreeUris.size,
             romEntryCount = app.romEntries.size,
             installedPlayerCount = players,
+            missingPrimaryCount = missing,
             hasSgdbKey = !app.settings.sgdbApiKey.isNullOrBlank(),
             resumeChip = chrome.resumeChip,
             statusPill = chrome.deckStatusPill,
@@ -146,7 +150,7 @@ object SetupCard {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { topMargin = activity.dp(16) },
             )
-            if (snap.installedPlayerCount == 0) {
+            if (snap.installedPlayerCount == 0 || snap.missingPrimaryCount > 0) {
                 card.addView(
                     actionBtn(
                         activity.getString(R.string.setup_get_emulator),

@@ -38,6 +38,8 @@
     <string name="action_open">Ouvrir</string>
     <string name="action_open_quick_panel">Panneau rapide</string>
     <string name="action_open_settings">Ouvrir les paramètres</string>
+    <string name="action_toggle_favorite">Favori</string>
+    <string name="action_show_details">Détails</string>
     <string name="action_open_with">Ouvrir avec…</string>
     <string name="action_page_left">Page précédente (L1)</string>
     <string name="action_page_right">Page suivante (R1)</string>
@@ -236,6 +238,7 @@
     <string name="details_browse_related">Parcourir les similaires</string>
     <string name="rom_unknown_platform">Plateforme inconnue : %1$s</string>
     <string name="rom_player_not_installed">Lecteur %1$s non installé</string>
+    <string name="rom_core_missing">Cœur %1$s absent</string>
     <string name="rom_path_unavailable">Chemin ROM indisponible</string>
     <string name="rom_storage_unmounted">Stockage non monté ou fichier manquant</string>
     <string name="rom_file_unreadable">Fichier ROM illisible</string>
@@ -357,6 +360,9 @@
     <string name="settings_page_apps">Applications</string>
     <string name="settings_page_controls">Contrôles</string>
     <string name="settings_page_library">Bibliothèque</string>
+    <string name="settings_page_art">Illustrations et sauvegarde</string>
+    <string name="settings_search_hint">Rechercher dans les paramètres</string>
+    <string name="settings_reset_chrome_discover">Réafficher l’astuce Resume</string>
     <string name="settings_page_stats">Statistiques</string>
     <string name="settings_page_system">Système</string>
     <string name="settings_page_about">À propos</string>

@@ -54,6 +54,19 @@ object Sgdb {
 
     fun heroesUrl(gameId: Long): String = "$BASE/heroes/game/$gameId"
 
+    fun logosUrl(gameId: Long): String = "$BASE/logos/game/$gameId"
+
+    /** Up to [limit] image URLs from a grids/heroes/logos response. */
+    fun parseImageUrls(json: String, limit: Int = 6): List<String> = runCatching {
+        val data = JSONObject(json).optJSONArray("data") ?: return emptyList()
+        buildList {
+            for (i in 0 until minOf(data.length(), limit.coerceAtLeast(0))) {
+                val url = data.getJSONObject(i).optString("url")
+                if (url.isNotBlank()) add(url)
+            }
+        }
+    }.getOrDefault(emptyList())
+
     /** First game id of a search/autocomplete response, else null. */
     fun parseSearchFirstId(json: String): Long? = runCatching {
         val data = JSONObject(json).optJSONArray("data")
@@ -315,6 +328,19 @@ class SgdbScraper(
                     request(sleep) { transport.download(heroUrl) }?.let { raw ->
                         shrink(raw, ArtCache.ArtKind.HERO)?.let { png ->
                             cache.writeDiskBytes(rom.id, png, ArtCache.ArtKind.HERO)
+                            stored = true
+                        }
+                    }
+                }
+            }
+            if (cancelled) return false
+            if (!cache.diskHas(rom.id, ArtCache.ArtKind.LOGO) && rom.logoUri == null) {
+                val logoUrl = request(sleep) { transport.get(Sgdb.logosUrl(gameId), apiKey) }
+                    ?.let(Sgdb::parseFirstImageUrl)
+                if (logoUrl != null) {
+                    request(sleep) { transport.download(logoUrl) }?.let { raw ->
+                        shrink(raw, ArtCache.ArtKind.GRID)?.let { png ->
+                            cache.writeDiskBytes(rom.id, png, ArtCache.ArtKind.LOGO)
                             stored = true
                         }
                     }

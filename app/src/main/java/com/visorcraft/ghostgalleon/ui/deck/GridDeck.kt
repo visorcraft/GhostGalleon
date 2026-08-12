@@ -363,7 +363,9 @@ class GridDeck(
             onRemoveMember = { memberKey ->
                 val app = activity.application as GhostGalleonApp
                 val folders = Folders.removeMember(app.settings.folders, fid, memberKey)
-                app.updateSettings(app.settings.copy(folders = folders))
+                val collections = com.visorcraft.ghostgalleon.library.FolderCollectionBridge
+                    .syncCollectionFromFolder(folders, fid, app.settings.collections)
+                app.updateSettings(app.settings.copy(folders = folders, collections = collections))
                 Toast.makeText(
                     activity,
                     R.string.deck_removed_from_folder,
@@ -519,7 +521,9 @@ class GridDeck(
                 lastHeight = grid.height
                 val cellWidth =
                     (grid.width - gridPadH * 2 - spacing * (columns - 1)) / columns
-                val iconSize = (cellWidth * 0.6f).toInt()
+                val iconSize = GridIconMetrics.iconSizePx(
+                    cellWidth, settings.iconSizeDp, density,
+                )
                 val guessCellHeight = iconSize + labelHeight + cellPadding * 2
                 val visibleRows =
                     ((grid.height - gridPadTop - gridPadV + spacing) /
@@ -604,7 +608,9 @@ class GridDeck(
                 val pageWidth = pager.width
                 val cellWidth =
                     (pageWidth - gridPadH * 2 - spacing * (columns - 1)) / columns
-                val iconSize = (cellWidth * 0.6f).toInt()
+                val iconSize = GridIconMetrics.iconSizePx(
+                    cellWidth, settings.iconSizeDp, density,
+                )
                 val guessCellHeight = iconSize + labelHeight + cellPadding * 2
                 val visibleRows =
                     ((pager.height - gridPadTop - gridPadV + spacing) /
@@ -979,7 +985,8 @@ class GridDeck(
                     isApp = isApp,
                     fav = fav,
                     inDock = DockSlots.containsKey(settings.dockSlots, key),
-                    hasCustomName = key in settings.customNames,
+                    hasCustomName = key in settings.customNames ||
+                        SlotKey.romId(key)?.let { it in settings.romNames } == true,
                     hasCustomIcon = key in settings.customIcons,
                     showRelated = isRom && gridRelatedOptions(key).isNotEmpty(),
                     showMarkPlayed = com.visorcraft.ghostgalleon.library.LibraryBrowse
@@ -1055,10 +1062,19 @@ class GridDeck(
                     isFolder -> SlotKey.folderId(key)?.let(::renameFolder)
                     else -> key?.let(::showRenameDialog)
                 }
-                SlotMenu.Choice.RESET_NAME -> key?.let { pkg ->
+                SlotMenu.Choice.RESET_NAME -> key?.let { k ->
                     val app = activity.application as GhostGalleonApp
-                    app.updateSettings(app.settings.copy(
-                        customNames = app.settings.customNames - pkg))
+                    val romId = SlotKey.romId(k)
+                    app.updateSettings(
+                        if (romId != null) {
+                            app.settings.copy(
+                                romNames = com.visorcraft.ghostgalleon.settings.RomNames
+                                    .clear(app.settings.romNames, romId),
+                            )
+                        } else {
+                            app.settings.copy(customNames = app.settings.customNames - k)
+                        },
+                    )
                 }
                 SlotMenu.Choice.CUSTOM_ICON -> key?.let { pkg ->
                     (activity as? BaseDeckActivity)?.requestCustomIcon { uri ->
@@ -1127,7 +1143,11 @@ class GridDeck(
 
     private fun gridEntryLabel(key: String): String {
         SlotKey.romId(key)?.let { id ->
-            roms.firstOrNull { it.id == id }?.name?.let { return it }
+            roms.firstOrNull { it.id == id }?.let { rom ->
+                return com.visorcraft.ghostgalleon.settings.RomNames.display(
+                    rom, settings.romNames,
+                )
+            }
         }
         return settings.customNames[key]
             ?: visibleByPkg[key]?.label
@@ -1265,10 +1285,15 @@ class GridDeck(
     // display name (custom name when set, else the app label). Saving an
     // EMPTY field removes the override (same as "Reset name"); Cancel keeps
     // everything as-is. The settings update hot-reloads every surface.
-    private fun showRenameDialog(packageName: String) {
-        val current = settings.customNames[packageName]
-            ?: visibleByPkg[packageName]?.label
-            ?: packageName
+    private fun showRenameDialog(key: String) {
+        val romId = SlotKey.romId(key)
+        val rom = romId?.let { id -> roms.firstOrNull { it.id == id } }
+        val current = if (rom != null) {
+            com.visorcraft.ghostgalleon.settings.RomNames.display(rom, settings.romNames)
+        } else {
+            settings.customNames[key] ?: visibleByPkg[key]?.label ?: key
+        }
+        val original = rom?.name ?: visibleByPkg[key]?.label ?: key
         val input = android.widget.EditText(activity).apply {
             setText(current)
             setSelectAllOnFocus(true)
@@ -1283,21 +1308,30 @@ class GridDeck(
             addView(input)
         }
         androidx.appcompat.app.AlertDialog.Builder(activity)
-            .setTitle(activity.getString(
-                R.string.deck_rename_named,
-                visibleByPkg[packageName]?.label ?: packageName,
-            ))
+            .setTitle(activity.getString(R.string.deck_rename_named, original))
             .setView(container)
             .setPositiveButton(R.string.action_save) { _, _ ->
                 val name = input.text.toString().trim()
                 val app = activity.application as GhostGalleonApp
-                val names = app.settings.customNames
-                app.updateSettings(app.settings.copy(
-                    customNames = if (name.isEmpty() || name == current) {
-                        names - packageName
-                    } else {
-                        names + (packageName to name)
-                    }))
+                if (rom != null) {
+                    app.updateSettings(
+                        app.settings.copy(
+                            romNames = com.visorcraft.ghostgalleon.settings.RomNames.set(
+                                app.settings.romNames,
+                                rom.id,
+                                name.takeIf { it.isNotEmpty() && it != rom.name },
+                            ),
+                        ),
+                    )
+                } else {
+                    val names = app.settings.customNames
+                    app.updateSettings(app.settings.copy(
+                        customNames = if (name.isEmpty() || name == current) {
+                            names - key
+                        } else {
+                            names + (key to name)
+                        }))
+                }
             }
             .setNegativeButton(R.string.action_cancel, null)
             .show()
@@ -1467,6 +1501,22 @@ class GridDeck(
                 }
                 val target = nav.move(selectedIndex(), action)
                 state.selectSlot(target, settings.gridSlots.getOrNull(target))
+                true
+            }
+            Action.SEARCH_LIBRARY -> {
+                openLibrarySearch()
+                true
+            }
+            Action.TOGGLE_FAVORITE -> {
+                settings.gridSlots.getOrNull(selectedIndex())?.let { key ->
+                    EntryActions.toggleFavorite(activity, key)
+                }
+                true
+            }
+            Action.SHOW_DETAILS -> {
+                settings.gridSlots.getOrNull(selectedIndex())?.let { key ->
+                    showGridDetails(key)
+                }
                 true
             }
             else -> false

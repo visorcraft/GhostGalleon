@@ -236,6 +236,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         // Opaque window so a dual-display HOME transition cannot peek the
         // system/Quickstep wallpaper (robot-with-box) through Ghost Galleon.
         window.setBackgroundDrawable(ColorDrawable(0xFF000000.toInt()))
+        if (this is MainActivity) maybeSeedLayout()
         // Only paint in onCreate when this window already has a real display
         // id (Main on default display usually does). Companion launched with
         // setLaunchDisplayId often still reports display 0/null here — painting
@@ -1017,6 +1018,32 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             }
         }
         return true
+    }
+
+    private fun maybeSeedLayout() {
+        val s = app.settings
+        if (s.layoutSeeded) return
+        val dm = resources.displayMetrics
+        val mode = app.displayConfig.mode
+        val next = if (
+            com.visorcraft.ghostgalleon.display.LayoutSeed.shouldApplySuggestions(
+                s.layoutSeeded,
+                mode,
+                com.visorcraft.ghostgalleon.display.LayoutSeed.stillFactoryLayout(s),
+            )
+        ) {
+            val metrics = com.visorcraft.ghostgalleon.display.LayoutMetricsResolver.fromWindow(
+                dm.widthPixels,
+                dm.heightPixels,
+                dm.densityDpi,
+                mode,
+                isCompanionRole = false,
+            )
+            com.visorcraft.ghostgalleon.display.LayoutSeed.apply(s, metrics)
+        } else {
+            com.visorcraft.ghostgalleon.display.LayoutSeed.markSeeded(s)
+        }
+        if (next != s) app.updateSettings(next, notify = false)
     }
 
     protected fun isHomeRole(): Boolean =

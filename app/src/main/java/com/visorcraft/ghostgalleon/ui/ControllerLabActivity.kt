@@ -129,6 +129,7 @@ class ControllerLabActivity : AppCompatActivity() {
             Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
             Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS, Action.TOGGLE_MODE,
             Action.OPEN_SETTINGS, Action.PAGE_PREV, Action.PAGE_NEXT, Action.OPEN_QUICK_PANEL,
+            Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
         )
         val labels = actions.map { resolveText(it.label()) }.toTypedArray()
         AlertDialog.Builder(this)

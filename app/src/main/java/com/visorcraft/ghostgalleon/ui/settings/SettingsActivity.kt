@@ -42,6 +42,8 @@ import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.SettingsBundle
+import com.visorcraft.ghostgalleon.settings.SettingsCatalog
+import com.visorcraft.ghostgalleon.settings.SettingsJump
 import com.visorcraft.ghostgalleon.settings.SettingsStore
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
@@ -69,6 +71,7 @@ class SettingsActivity : AppCompatActivity() {
         APPS(R.string.settings_page_apps),
         CONTROLS(R.string.settings_page_controls),
         LIBRARY(R.string.settings_page_library),
+        ART_DATA(R.string.settings_page_art),
         STATS(R.string.settings_page_stats),
         SYSTEM(R.string.settings_page_system),
         ABOUT(R.string.settings_page_about),
@@ -85,6 +88,7 @@ class SettingsActivity : AppCompatActivity() {
         Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS,
         Action.TOGGLE_MODE, Action.OPEN_SETTINGS, Action.PAGE_PREV, Action.PAGE_NEXT,
         Action.OPEN_QUICK_PANEL,
+        Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
     )
 
     private var captureTarget: Action? = null
@@ -1222,6 +1226,10 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(16), dp(12), dp(16), dp(12))
             isFocusable = true
             setOnClickListener { showPagePicker() }
+            setOnLongClickListener {
+                showSettingsSearch()
+                true
+            }
         }
         val label = TextView(this).apply {
             setText(currentPage.titleRes)
@@ -1237,6 +1245,62 @@ class SettingsActivity : AppCompatActivity() {
         })
         return row
     }
+
+    private fun showSettingsSearch() {
+        val input = android.widget.EditText(this).apply {
+            setHint(R.string.settings_search_hint)
+            setSingleLine()
+            setTextColor(Color.WHITE)
+            setHintTextColor(0x66FFFFFF)
+        }
+        val jumps = settingsSearchIndex()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_search_hint)
+            .setView(input)
+            .setPositiveButton(R.string.action_search) { _, _ ->
+                val hits = SettingsCatalog.matches(input.text.toString(), jumps)
+                if (hits.isEmpty()) {
+                    Toast.makeText(this, R.string.browse_nothing_to_continue, Toast.LENGTH_SHORT)
+                        .show()
+                    return@setPositiveButton
+                }
+                if (hits.size == 1) {
+                    jumpToSettingsPage(hits[0].pageId)
+                    return@setPositiveButton
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.settings_search_hint)
+                    .setItems(hits.map { it.label }.toTypedArray()) { _, which ->
+                        jumpToSettingsPage(hits[which].pageId)
+                    }
+                    .show()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun jumpToSettingsPage(pageId: String) {
+        SettingsPage.entries.firstOrNull { it.name == pageId }?.let { selectPage(it) }
+    }
+
+    private fun settingsSearchIndex(): List<SettingsJump> = listOf(
+        SettingsJump(SettingsCatalog.PAGE_DISPLAY, getString(R.string.settings_page_display_grid),
+            "theme display grid chrome wallpaper columns icon card"),
+        SettingsJump(SettingsCatalog.PAGE_APPS, getString(R.string.settings_page_apps),
+            "apps hidden packages dock"),
+        SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
+            "controls remap deadzone haptics lab"),
+        SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
+            "library rom folder rescan hidden collections players"),
+        SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
+            "artwork backup export import steamgriddb retroachievements scrape pack"),
+        SettingsJump(SettingsCatalog.PAGE_STATS, getString(R.string.settings_page_stats),
+            "stats playtime"),
+        SettingsJump(SettingsCatalog.PAGE_SYSTEM, getString(R.string.settings_page_system),
+            "system topology display"),
+        SettingsJump(SettingsCatalog.PAGE_ABOUT, getString(R.string.settings_page_about),
+            "about license credits"),
+    )
 
     private fun showPagePicker() {
         val labels = SettingsPage.entries.map { getString(it.titleRes) }.toTypedArray()
@@ -1963,6 +2027,7 @@ class SettingsActivity : AppCompatActivity() {
         addSection(SettingsPage.CONTROLS, getString(R.string.settings_page_controls), controlsCard)
 
         val libraryCard = sectionCard()
+        val artCard = sectionCard()
         val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         folderRows = rows
         libraryCard.addView(rows, LinearLayout.LayoutParams(
@@ -2158,7 +2223,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accent)
         })
-        libraryCard.addView(raUserRow, LinearLayout.LayoutParams(
+        artCard.addView(raUserRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val raKeyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2184,7 +2249,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accent)
         })
-        libraryCard.addView(raKeyRow, LinearLayout.LayoutParams(
+        artCard.addView(raKeyRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         if (BuildConfig.DEBUG) {
             val raSampleRow = LinearLayout(this).apply {
@@ -2200,7 +2265,7 @@ class SettingsActivity : AppCompatActivity() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTextColor(0x66FFFFFF.toInt())
             })
-            libraryCard.addView(raSampleRow, LinearLayout.LayoutParams(
+            artCard.addView(raSampleRow, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         }
         val keyRow = LinearLayout(this).apply {
@@ -2224,7 +2289,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         sgdbKeyValue = keyValue
         keyRow.addView(keyValue)
-        libraryCard.addView(keyRow, LinearLayout.LayoutParams(
+        artCard.addView(keyRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val downloadRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2243,17 +2308,17 @@ class SettingsActivity : AppCompatActivity() {
         scrapeValue = downloadValue
         downloadRow.addView(downloadValue)
         scrapeRow = downloadRow
-        libraryCard.addView(downloadRow, LinearLayout.LayoutParams(
+        artCard.addView(downloadRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         toggle(
-            libraryCard,
+            artCard,
             getString(R.string.settings_scrape_wifi_only),
             s.scrapeWifiOnly,
         ) { on ->
             app.updateSettings(app.settings.copy(scrapeWifiOnly = on), notify = false)
         }
         seek(
-            libraryCard,
+            artCard,
             getString(R.string.settings_scrape_battery),
             s.scrapePauseBelowBattery,
             0,
@@ -2274,7 +2339,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         exportRow.addView(rowLabel(getString(R.string.settings_export)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        libraryCard.addView(exportRow, LinearLayout.LayoutParams(
+        artCard.addView(exportRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val importRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2284,7 +2349,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         importRow.addView(rowLabel(getString(R.string.settings_import)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        libraryCard.addView(importRow, LinearLayout.LayoutParams(
+        artCard.addView(importRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val exportArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2294,7 +2359,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         exportArtRow.addView(rowLabel(getString(R.string.settings_export_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        libraryCard.addView(exportArtRow, LinearLayout.LayoutParams(
+        artCard.addView(exportArtRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val importArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2304,7 +2369,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         importArtRow.addView(rowLabel(getString(R.string.settings_import_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        libraryCard.addView(importArtRow, LinearLayout.LayoutParams(
+        artCard.addView(importArtRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val packRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2339,7 +2404,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accent)
         })
-        libraryCard.addView(packRow, LinearLayout.LayoutParams(
+        artCard.addView(packRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val bundledCount = listBundledPackAssets().size
         val examplePackRow = LinearLayout(this).apply {
@@ -2359,14 +2424,17 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(accent)
         })
-        libraryCard.addView(examplePackRow, LinearLayout.LayoutParams(
+        artCard.addView(examplePackRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         val setupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             isFocusable = true
             setOnClickListener {
-                app.updateSettings(app.settings.copy(setupDismissed = false))
+                app.updateSettings(app.settings.copy(
+                    setupDismissed = false,
+                    chromeDiscoverDismissed = false,
+                ))
                 Toast.makeText(this@SettingsActivity,
                     R.string.settings_setup_reset_done, Toast.LENGTH_SHORT).show()
             }
@@ -2375,7 +2443,27 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         libraryCard.addView(setupRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val chromeDiscoverRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(chromeDiscoverDismissed = false))
+                Toast.makeText(
+                    this@SettingsActivity,
+                    R.string.settings_reset_chrome_discover,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        chromeDiscoverRow.addView(
+            rowLabel(getString(R.string.settings_reset_chrome_discover)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        libraryCard.addView(chromeDiscoverRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         addSection(SettingsPage.LIBRARY, getString(R.string.settings_page_library), libraryCard)
+        addSection(SettingsPage.ART_DATA, getString(R.string.settings_page_art), artCard)
 
         val statsCard = sectionCard()
         val most = com.visorcraft.ghostgalleon.library.LibraryStats.mostPlayed(

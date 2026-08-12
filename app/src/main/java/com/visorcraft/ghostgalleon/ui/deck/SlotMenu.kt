@@ -289,6 +289,8 @@ class SlotMenu(
             if (isRom || isApp) {
                 add(Row.Header(R.string.menu_section_customize))
                 if (isRom) {
+                    add(Row.Item(Choice.RENAME))
+                    if (hasCustomName) add(Row.Item(Choice.RESET_NAME))
                     add(Row.Item(Choice.OPEN_WITH))
                     add(Row.Item(Choice.PLAYER))
                     add(Row.Item(Choice.SET_ART))

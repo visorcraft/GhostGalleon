@@ -51,10 +51,15 @@ object RomScanner {
                     if (rootPlatform != null) "" else doc.relativePath.substringBefore('/')
                 val stem = doc.name.substring(0, dot)
                 val artUri = LocalMedia.lookupArt(media, prefix, stem)
+                val display = if (platform.id == "arcade") {
+                    ArcadeTitles.displayName(stem)
+                } else {
+                    stem
+                }
                 entries.add(
                     RomEntry(
                         id = "${platform.id}:${doc.relativePath}",
-                        name = stem,
+                        name = display,
                         platformId = platform.id,
                         uri = doc.uri,
                         path = StoragePaths.filesystemPath(doc.uri),
@@ -71,14 +76,21 @@ object RomScanner {
                 compareBy({ it.platformId }, { it.name.lowercase() }, { it.id }),
             ),
         )
-        if (readText == null || gamelistDocs.isEmpty()) return sorted
+        if (readText == null || gamelistDocs.isEmpty()) return applyFilenameYears(sorted)
         val meta = gamelistDocs.flatMap { doc ->
             val xml = readText(doc.uri) ?: return@flatMap emptyList()
             GamelistMeta.parse(xml)
         }
-        if (meta.isEmpty()) return sorted
-        return GamelistMeta.enrichRoms(sorted, meta)
+        if (meta.isEmpty()) return applyFilenameYears(sorted)
+        return applyFilenameYears(GamelistMeta.enrichRoms(sorted, meta))
     }
+
+    /** Fill blank years from `(1991)` in the display name. */
+    internal fun applyFilenameYears(entries: List<RomEntry>): List<RomEntry> =
+        entries.map { rom ->
+            if (!rom.year.isNullOrBlank()) rom
+            else FilenameMeta.yearFromLabel(rom.name)?.let { rom.copy(year = it) } ?: rom
+        }
 
     /**
      * Scan pre-walked file lists (incremental rescan path: fingerprint walk

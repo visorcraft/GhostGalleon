@@ -56,6 +56,11 @@ object RaFetcher {
         "dreamcast" -> 40
         "arcade" -> 27
         "saturn" -> 39
+        "3ds" -> 62
+        "gamecube", "gc" -> 16
+        "wii" -> 19
+        "wiiu" -> 20
+        "ps2" -> 21
         else -> null
     }
 

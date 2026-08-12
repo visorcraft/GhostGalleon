@@ -107,7 +107,7 @@ class GameDeck(
             nowMs = System.currentTimeMillis(),
             launchablePlatformIds = launchablePlatformIds,
         ).map {
-            CarouselEntry(SlotKey.rom(it.id), it.name, null, it)
+            CarouselEntry(SlotKey.rom(it.id), romLabel(it), null, it)
         }
         val built = when {
             q.mode == LibraryBrowse.Mode.COLLECTION -> {
@@ -139,7 +139,7 @@ class GameDeck(
                         ) {
                             return@mapNotNull null
                         }
-                        CarouselEntry(SlotKey.rom(rom.id), rom.name, null, rom)
+                        CarouselEntry(SlotKey.rom(rom.id), romLabel(rom), null, rom)
                     } ?: byPkg[k]?.let {
                         // Platform/genre/developer/year chips are ROM-only — drop apps when set.
                         if (q.platformId != null ||
@@ -402,6 +402,9 @@ class GameDeck(
         val key = state.selectedKey ?: return 0
         return entryIndexByKey[key] ?: 0
     }
+
+    private fun romLabel(rom: RomEntry): String =
+        com.visorcraft.ghostgalleon.settings.RomNames.display(rom, settings.romNames)
 
     /**
      * Rebuild carousel list + filter chrome in place (browse chips).
@@ -830,6 +833,18 @@ class GameDeck(
             // NAV DOWN leaves the carousel and focuses the dock.
             Action.NAV_DOWN -> {
                 state.focusDock(0)
+                true
+            }
+            Action.SEARCH_LIBRARY -> {
+                openSearchDialog()
+                true
+            }
+            Action.TOGGLE_FAVORITE -> {
+                state.selectedKey?.let { toggleFavorite(it) }
+                true
+            }
+            Action.SHOW_DETAILS -> {
+                entries.getOrNull(selectedIndex())?.let { showDetails(it) }
                 true
             }
             else -> false

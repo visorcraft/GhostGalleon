@@ -27,10 +27,19 @@ class MainActivity : BaseDeckActivity() {
         super.onResume()
         app.refreshDisplayConfig(debounce = true)
         if (returningFromElsewhere) {
-            // Emulators (Eden/Azahar/…) often leave the secondary panel pure
-            // black after return. Recreate Companion — does not require the
-            // system Force Stop UI.
-            restartCompanionPanel("return-from-app")
+            val pinReady = app.settings.companionRole ==
+                com.visorcraft.ghostgalleon.settings.CompanionRole.PINNED_APP.name &&
+                !app.settings.companionPinnedPackage.isNullOrBlank()
+            if (pinReady) {
+                // A pinned app on the companion display is the intended
+                // surface — recreating Companion would cover it.
+                healCompanionIfMissing()
+            } else {
+                // Emulators (Eden/Azahar/…) often leave the secondary panel pure
+                // black after return. Recreate Companion — does not require the
+                // system Force Stop UI.
+                restartCompanionPanel("return-from-app")
+            }
         } else {
             healCompanionIfMissing()
         }

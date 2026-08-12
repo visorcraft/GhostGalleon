@@ -63,4 +63,28 @@ class FolderCollectionBridgeTest {
         assertTrue(FolderCollectionBridge.collectionContains(cols, "A", "k1"))
         assertFalse(FolderCollectionBridge.collectionContains(cols, "A", "k2"))
     }
+
+    @Test
+    fun `live sync folder members replace same-named collection`() {
+        val folders = mapOf(
+            "f1" to FolderSpec("f1", "Indie", listOf("rom:a", "rom:b")),
+        )
+        val cols = FolderCollectionBridge.syncCollectionFromFolder(
+            folders, "f1", mapOf("Indie" to listOf("old")),
+        )
+        assertEquals(listOf("rom:a", "rom:b"), cols["Indie"])
+    }
+
+    @Test
+    fun `live sync collection members replace same-named folder`() {
+        val folders = mapOf(
+            "f1" to FolderSpec("f1", "Indie", listOf("old")),
+        )
+        val next = FolderCollectionBridge.syncFolderFromCollection(
+            mapOf("Indie" to listOf("rom:a")),
+            "Indie",
+            folders,
+        )
+        assertEquals(listOf("rom:a"), next["f1"]!!.members)
+    }
 }
