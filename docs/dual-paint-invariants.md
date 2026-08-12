@@ -9,6 +9,10 @@ Authoritative code: `ui/DualPaintPolicy.kt`, `ui/BaseDeckActivity.kt`,
 Agent checklist: root `AGENTS.md` (dual-paint section). Diagnostics:
 `adb logcat -s GGPaint` (`FULL` / `DEFER`).
 
+How a launched game shares the two panels (yield DS/3DS, keep companion
+for single-surface players):
+[`split-session-ownership.md`](split-session-ownership.md).
+
 ## Policy constants
 
 | Constant | Value | Role |

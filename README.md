@@ -94,6 +94,10 @@ On the **One X Sugar**, Auto/Sugar prefers the **bottom** panel for interactive 
 
 **Settings → System** shows the resolved topology (e.g. `primary=1 companion=0 launch=0 secondaryHome=1 larger=0`) plus hardware readings. **Single-display** devices run in SINGLE mode.
 
+Split-session ownership (dual-surface games keep both panels; single-surface
+games keep a live companion) is specified in
+[`docs/split-session-ownership.md`](docs/split-session-ownership.md).
+
 ---
 
 ## ROM library
