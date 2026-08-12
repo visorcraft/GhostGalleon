@@ -79,6 +79,8 @@ class GameDeck(
     private var entryIndexByKey: Map<String, Int> = emptyMap()
     /** Single snap helper for the carousel (never re-alloc on NAV). */
     private val snapHelper = LinearSnapHelper()
+    private var entriesMemoKey: String? = null
+    private var entriesMemo: List<CarouselEntry> = emptyList()
 
     private fun installEntries(next: List<CarouselEntry>) {
         entries = next
@@ -96,6 +98,25 @@ class GameDeck(
             q.genre.isNullOrBlank() &&
             q.developer.isNullOrBlank() &&
             q.yearDecade.isNullOrBlank()
+        val memoKey = LibraryBrowse.browseRebuildKey(
+            mode = q.mode.name,
+            text = q.text,
+            platformId = q.platformId,
+            genre = q.genre,
+            developer = q.developer,
+            yearDecade = q.yearDecade,
+            collectionName = q.collectionName,
+            sort = q.sort.name,
+            contentEpoch = app().contentEpoch,
+            hiddenCount = settings.hiddenRomIds.size,
+            favoriteCount = settings.favorites.size,
+            lastLaunchCount = settings.lastLaunchedMs.size,
+            playtimeCount = settings.playtimeMs.size,
+            romCount = roms.size,
+            appCount = library.visible(settings).size,
+            nowBucket = System.currentTimeMillis() / LibraryBrowse.DAY_WINDOW_MS,
+        )
+        if (memoKey == entriesMemoKey) return entriesMemo
         val launchablePlatformIds = resolveLaunchablePlatformIds()
         val browsed = LibraryBrowse.browseRoms(
             roms, q,
@@ -364,7 +385,7 @@ class GameDeck(
             else -> browsed
         }
         // Custom sort (long-press All) reorders catalog rails after app/ROM merge.
-        return LibraryBrowse.applyQuerySort(
+        val sorted = LibraryBrowse.applyQuerySort(
             built,
             q,
             keyOf = { it.key },
@@ -373,6 +394,9 @@ class GameDeck(
             lastLaunchedMs = settings.lastLaunchedMs,
             playtimeMs = settings.playtimeMs,
         )
+        entriesMemoKey = memoKey
+        entriesMemo = sorted
+        return sorted
     }
 
     private val nav get() = CarouselNavigation(entries.size)

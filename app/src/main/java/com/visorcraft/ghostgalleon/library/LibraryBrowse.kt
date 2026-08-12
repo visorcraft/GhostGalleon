@@ -23,6 +23,35 @@ object LibraryBrowse {
     /** Default rolling window for [Mode.PLAYED_THIS_MONTH] (30 days). */
     const val MONTH_WINDOW_MS: Long = 30L * 24L * 60L * 60L * 1000L
 
+    /**
+     * Identity of a Game Mode carousel rebuild. Equal keys mean
+     * [com.visorcraft.ghostgalleon.ui.deck.GameDeck] can reuse the last
+     * entry list instead of walking thousands of ROMs again.
+     */
+    fun browseRebuildKey(
+        mode: String,
+        text: String,
+        platformId: String?,
+        genre: String?,
+        developer: String?,
+        yearDecade: String?,
+        collectionName: String?,
+        sort: String,
+        contentEpoch: Int,
+        hiddenCount: Int,
+        favoriteCount: Int,
+        lastLaunchCount: Int,
+        playtimeCount: Int,
+        romCount: Int,
+        appCount: Int,
+        nowBucket: Long,
+    ): String = listOf(
+        mode, text, platformId.orEmpty(), genre.orEmpty(), developer.orEmpty(),
+        yearDecade.orEmpty(), collectionName.orEmpty(), sort, contentEpoch,
+        hiddenCount, favoriteCount, lastLaunchCount, playtimeCount,
+        romCount, appCount, nowBucket,
+    ).joinToString("\u001f")
+
     private val YEAR_TOKEN = Regex("""(\d{4})""")
 
     enum class Mode {

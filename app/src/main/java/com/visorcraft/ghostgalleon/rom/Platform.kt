@@ -68,7 +68,7 @@ data class Platform(
     fun acceptsExtension(ext: String): Boolean = extensions.contains(ext.lowercase())
 }
 
-/** The platform registry. Winlator is excluded: not ROM-launchable. */
+/** The platform registry. */
 object Platforms {
 
     private const val RA_COMPONENT =
@@ -423,10 +423,56 @@ object Platforms {
         ),
     )
 
+    val PSVITA = Platform(
+        id = "psvita",
+        displayName = "PlayStation Vita",
+        shortName = "Vita",
+        folderNames = listOf("psvita", "vita", "psv"),
+        extensions = listOf("vpk", "zip"),
+        players = listOf(
+            PlayerTemplate(
+                id = "vita3k",
+                displayName = "Vita3K",
+                component = "org.vita3k.emulator/.EmulationActivity",
+                action = "android.intent.action.VIEW",
+                uriStyle = UriStyle.URI,
+                grantRead = true,
+            ),
+        ),
+    )
+
+    val WINDOWS = Platform(
+        id = "windows",
+        displayName = "Windows",
+        shortName = "PC",
+        folderNames = listOf("windows", "pc", "winlator"),
+        extensions = listOf("exe", "msi", "bat", "desktop"),
+        players = listOf(
+            PlayerTemplate(
+                id = "winlator",
+                displayName = "Winlator",
+                component = "com.winlator/.XServerDisplayActivity",
+                action = "android.intent.action.VIEW",
+                uriStyle = UriStyle.PATH,
+                extras = mapOf("shortcut_path" to "{file.path}"),
+                grantRead = true,
+            ),
+            PlayerTemplate(
+                id = "winlator-main",
+                displayName = "Winlator (home)",
+                component = "com.winlator/.MainActivity",
+                action = "android.intent.action.MAIN",
+                uriStyle = UriStyle.URI,
+                grantRead = true,
+            ),
+        ),
+    )
+
     /** Built-in registry only (no imported pack overlay). */
     val BUILTIN: List<Platform> = listOf(
         GB, GBC, GBA, NES, SNES, GENESIS, N64, NDS, N3DS, SWITCH,
         PS1, PSP, PS2, SATURN, DREAMCAST, ARCADE, GAMECUBE, WII, WIIU,
+        PSVITA, WINDOWS,
     )
 
     // Imported pack platforms merged at read time via [PlatformPack.merge].

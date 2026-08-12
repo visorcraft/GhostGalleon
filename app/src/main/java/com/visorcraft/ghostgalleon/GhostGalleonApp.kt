@@ -527,19 +527,48 @@ class GhostGalleonApp : Application() {
     private var sessionAwaitingReturn: Boolean = false
     private var liveDeckCount: Int = 0
 
+    @Volatile
+    var romIndexReady: Boolean = false
+        private set
+
+    private val romReadyWaiters = mutableListOf<() -> Unit>()
+
+    fun whenRomIndexReady(block: () -> Unit) {
+        if (romIndexReady) {
+            block()
+            return
+        }
+        synchronized(romReadyWaiters) { romReadyWaiters += block }
+    }
+
+    private fun markRomIndexReady() {
+        romIndexReady = true
+        val waiters = synchronized(romReadyWaiters) {
+            val copy = romReadyWaiters.toList()
+            romReadyWaiters.clear()
+            copy
+        }
+        waiters.forEach { it.invoke() }
+    }
+
+    /** Load the persisted ROM index on this thread so first paint is honest. */
+    private fun loadRomIndexBlocking() {
+        val loaded = romLibrary.load()
+        romEntries = loaded
+        romById = loaded.associateBy { it.id }
+        if (loaded.isNotEmpty()) hadSuccessfulScan = true
+        markRomIndexReady()
+    }
+
     private fun reloadRomEntries() {
         ROM_IO.execute {
             val loaded = romLibrary.load()
             val prev = romEntries
             romEntries = loaded
             romById = loaded.associateBy { it.id }
-            // Only rebuild decks when the index actually changed. Boot used
-            // to always notifyChanged → second full setContentView on both
-            // panels during first paint (contributed to black surfaces).
             Handler(Looper.getMainLooper()).post {
-                // Single load path: also seeds quiet-rescan gate (was a second
-                // main-thread romLibrary.load() on cold start).
                 if (loaded.isNotEmpty()) hadSuccessfulScan = true
+                markRomIndexReady()
                 if (prev.size != loaded.size || prev != loaded) {
                     contentEpoch++
                     invalidateDrawerListCache()
@@ -780,13 +809,13 @@ class GhostGalleonApp : Application() {
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
         refreshDisplayConfig()
         registerDisplayListener()
+        // Disk index before any deck paints or cold-start seed.
+        loadRomIndexBlocking()
         // Cold-start hero seed: prefer Continue key when known, else slot 0.
         // Do not auto-launch — selection only so the companion shows the game.
         seedColdStartSelection()
         // PM query off the UI thread before decks paint.
         prewarmAppLibrary()
-        reloadRomEntries()
-        // hadSuccessfulScan set when reloadRomEntries finishes (no second load).
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 if (activity is BaseDeckActivity) liveDeckActivities.add(activity)

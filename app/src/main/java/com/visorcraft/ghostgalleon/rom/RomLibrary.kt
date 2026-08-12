@@ -21,6 +21,9 @@ class RomLibrary(private val file: File) {
     private val fingerprintFile: File
         get() = File(file.parentFile, "rom_tree_fingerprints.json")
 
+    private val mtimeFile: File
+        get() = File(file.parentFile, "rom_tree_mtimes.json")
+
     /** Outcome of a rescan, so the settings row can toast honestly. */
     sealed class RescanResult {
         /** Fresh index; entries of unreadable/clean trees were retained from
@@ -75,6 +78,28 @@ class RomLibrary(private val file: File) {
         }
     }
 
+    fun loadMtimes(): Map<String, Long> {
+        if (!mtimeFile.exists()) return emptyMap()
+        return try {
+            val o = JSONObject(mtimeFile.readText())
+            o.keys().asSequence().associateWith { o.optLong(it, 0L) }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveMtimes(map: Map<String, Long>) {
+        mtimeFile.parentFile?.mkdirs()
+        val tmp = File(mtimeFile.parentFile, mtimeFile.name + ".tmp")
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        tmp.writeText(o.toString())
+        if (!tmp.renameTo(mtimeFile)) {
+            tmp.copyTo(mtimeFile, overwrite = true)
+            tmp.delete()
+        }
+    }
+
     fun saveFingerprints(map: Map<String, String>) {
         fingerprintFile.parentFile?.mkdirs()
         val tmp = File(fingerprintFile.parentFile, fingerprintFile.name + ".tmp")
@@ -105,6 +130,8 @@ class RomLibrary(private val file: File) {
         SCAN_EXECUTOR.execute {
             val result = try {
                 val priorFp = loadFingerprints()
+                val priorMtimes = loadMtimes()
+                val nextMtimes = priorMtimes.toMutableMap()
                 val total = settings.romTreeUris.size
                 val main = Handler(Looper.getMainLooper())
                 var done = 0
@@ -119,6 +146,16 @@ class RomLibrary(private val file: File) {
                     },
                     priorFingerprints = priorFp,
                     force = force,
+                    skipWalk = { uriString ->
+                        val now = DocumentFile.fromTreeUri(
+                            appContext, Uri.parse(uriString),
+                        )?.lastModified() ?: 0L
+                        val skip = TreeSkip.skipWalk(
+                            priorMtimes[uriString] ?: 0L, now, force,
+                        )
+                        if (now > 0L) nextMtimes[uriString] = now
+                        skip
+                    },
                     // Pure meta fingerprint (count+basenames): one SAF walk, then
                     // skip expensive RomScanner.scan when unchanged. quickMeta
                     // walk-skip is available for injectors that can probe without
@@ -140,6 +177,7 @@ class RomLibrary(private val file: File) {
                 if (scanResult is RescanResult.Success) {
                     save(scanResult.entries)
                     saveFingerprints(newFp)
+                    saveMtimes(nextMtimes)
                 }
                 scanResult
             } catch (_: Exception) {
@@ -256,6 +294,13 @@ class RomLibrary(private val file: File) {
             readText: ((String) -> String?)? = null,
             fingerprintOf: (List<DocFile>) -> String = { TreeFingerprint.ofCombined(it) },
             quickMeta: ((String) -> String?)? = null,
+            /**
+             * When true, skip the full [treeFor] walk and keep prior
+             * entries (TreeSkip lastModified probe). Never invents clean
+             * on its own — caller must only return true when mtimes are
+             * known and equal.
+             */
+            skipWalk: ((String) -> Boolean)? = null,
             /** Invoked once per granted tree after it is classified (clean/dirty/unreadable). */
             onTreeProcessed: (() -> Unit)? = null,
         ): Pair<RescanResult, Map<String, String>> {
@@ -277,6 +322,11 @@ class RomLibrary(private val file: File) {
             }
 
             for (uri in readable) {
+                if (!force && skipWalk?.invoke(uri) == true) {
+                    cleanTrees.add(uri)
+                    onTreeProcessed?.invoke()
+                    continue
+                }
                 // Cheap meta-only short-circuit: pure `m…` prior matches probe.
                 if (!force && quickMeta != null) {
                     val probe = quickMeta(uri)

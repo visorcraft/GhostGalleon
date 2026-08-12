@@ -49,6 +49,10 @@
     <string name="action_remove">ลบออก</string>
     <string name="action_edit_members">แก้ไขสมาชิก</string>
     <string name="artwork_pick_match">เลือกงานศิลป์ที่ตรงกัน</string>
+    <string name="artwork_pick_grid">เลือกปกเกม</string>
+    <string name="artwork_pick_hero">เลือกอาร์ตฮีโร่</string>
+    <string name="artwork_pick_logo">เลือกโลโก้</string>
+    <string name="artwork_use_first">ใช้รายการแรก</string>
     <string name="action_remove_from_grid">ลบออกจากกริด</string>
     <string name="action_remove_from_collection">ลบออกจากคอลเลกชัน</string>
     <string name="action_rename">เปลี่ยนชื่อ</string>
@@ -340,6 +344,7 @@
     <string name="role_now_playing">กำลังเล่น</string>
     <string name="role_perf_hud">HUD ประสิทธิภาพ</string>
     <string name="role_pinned_app">แอปที่ปักหมุด</string>
+    <string name="deck_embed_unavailable">ไม่สามารถฝังแอปบนอุปกรณ์นี้ได้</string>
     <string name="quick_display">หน้าจอ</string>
     <string name="quick_settings">การตั้งค่า</string>
     <string name="quick_theme">ธีม</string>

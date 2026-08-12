@@ -15,7 +15,7 @@ class PlatformsTest {
             listOf(
                 "gb", "gbc", "gba", "nes", "snes", "genesis", "n64", "nds", "3ds",
                 "switch", "ps1", "psp", "ps2", "saturn", "dreamcast", "arcade",
-                "gamecube", "wii", "wiiu",
+                "gamecube", "wii", "wiiu", "psvita", "windows",
             ),
             Platforms.ALL.map { it.id },
         )
@@ -23,9 +23,13 @@ class PlatformsTest {
     }
 
     @Test
-    fun `winlator is not in the registry`() {
-        assertNull(Platforms.byId("windows"))
-        assertTrue(Platforms.ALL.none { it.player.component.startsWith("com.winlator") })
+    fun `vita and winlator are built-in launchable platforms`() {
+        assertEquals("psvita", Platforms.PSVITA.id)
+        assertEquals("org.vita3k.emulator/.EmulationActivity", Platforms.PSVITA.player.component)
+        assertEquals("windows", Platforms.WINDOWS.id)
+        assertTrue(Platforms.WINDOWS.players.any { it.component.startsWith("com.winlator") })
+        assertEquals(Platforms.WINDOWS, Platforms.byId("windows"))
+        assertEquals(Platforms.PSVITA, Platforms.byId("psvita"))
     }
 
     @Test
@@ -179,7 +183,8 @@ class PlatformsTest {
         assertEquals(Platforms.GAMECUBE, Platforms.platformForFolder("GameCube"))
         assertEquals(Platforms.WIIU, Platforms.platformForFolder("WiiU"))
         assertNull(Platforms.platformForFolder("roms"))
-        assertNull(Platforms.platformForFolder("windows"))
+        assertEquals(Platforms.WINDOWS, Platforms.platformForFolder("windows"))
+        assertEquals(Platforms.PSVITA, Platforms.platformForFolder("vita"))
     }
 
     @Test
@@ -188,5 +193,7 @@ class PlatformsTest {
         assertTrue(Platforms.GBA.acceptsExtension("agb"))
         assertFalse(Platforms.SNES.acceptsExtension("srm"))
         assertFalse(Platforms.NDS.acceptsExtension("3ds"))
+        assertTrue(Platforms.WINDOWS.acceptsExtension("exe"))
+        assertTrue(Platforms.PSVITA.acceptsExtension("VPK"))
     }
 }

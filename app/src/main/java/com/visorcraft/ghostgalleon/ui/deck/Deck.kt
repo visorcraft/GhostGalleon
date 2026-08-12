@@ -184,6 +184,8 @@ private fun pickSgdbMatchThenStart(
             if (hits.size <= 1) {
                 hits.firstOrNull()?.let {
                     com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = it.id
+                    pickSgdbImagesThenStart(activity, app, rom, apiKey, it.id)
+                    return@runOnUiThread
                 }
                 startArtworkJob(activity, app, rom, apiKey)
                 return@runOnUiThread
@@ -194,12 +196,73 @@ private fun pickSgdbMatchThenStart(
                 .setItems(labels) { _, which ->
                     val hit = hits.getOrNull(which) ?: return@setItems
                     com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = hit.id
-                    startArtworkJob(activity, app, rom, apiKey)
+                    pickSgdbImagesThenStart(activity, app, rom, apiKey, hit.id)
                 }
                 .setNegativeButton(R.string.action_cancel, null)
                 .show()
         }
     }
+}
+
+private fun pickSgdbImagesThenStart(
+    activity: AppCompatActivity,
+    app: com.visorcraft.ghostgalleon.GhostGalleonApp,
+    rom: RomEntry,
+    apiKey: String,
+    gameId: Long,
+) {
+    ART_SEARCH_EXECUTOR.execute {
+        val transport = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
+        val grids = transport.get(
+            com.visorcraft.ghostgalleon.art.Sgdb.gridsUrl(gameId), apiKey,
+        )?.let { com.visorcraft.ghostgalleon.art.Sgdb.parseImageUrls(it) }.orEmpty()
+        val heroes = transport.get(
+            com.visorcraft.ghostgalleon.art.Sgdb.heroesUrl(gameId), apiKey,
+        )?.let { com.visorcraft.ghostgalleon.art.Sgdb.parseImageUrls(it) }.orEmpty()
+        val logos = transport.get(
+            com.visorcraft.ghostgalleon.art.Sgdb.logosUrl(gameId), apiKey,
+        )?.let { com.visorcraft.ghostgalleon.art.Sgdb.parseImageUrls(it) }.orEmpty()
+        activity.runOnUiThread {
+            if (activity.isFinishing) return@runOnUiThread
+            pickImageKind(activity, R.string.artwork_pick_grid, grids) { gridUrl ->
+                gridUrl?.let {
+                    com.visorcraft.ghostgalleon.art.Sgdb.forcedGridUrls[rom.id] = it
+                }
+                pickImageKind(activity, R.string.artwork_pick_hero, heroes) { heroUrl ->
+                    heroUrl?.let {
+                        com.visorcraft.ghostgalleon.art.Sgdb.forcedHeroUrls[rom.id] = it
+                    }
+                    pickImageKind(activity, R.string.artwork_pick_logo, logos) { logoUrl ->
+                        logoUrl?.let {
+                            com.visorcraft.ghostgalleon.art.Sgdb.forcedLogoUrls[rom.id] = it
+                        }
+                        startArtworkJob(activity, app, rom, apiKey)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun pickImageKind(
+    activity: AppCompatActivity,
+    titleRes: Int,
+    urls: List<String>,
+    onPicked: (String?) -> Unit,
+) {
+    if (urls.size <= 1) {
+        onPicked(urls.firstOrNull())
+        return
+    }
+    val labels = urls.mapIndexed { i, u ->
+        "${i + 1}. ${u.substringAfterLast('/').take(48)}"
+    }.toTypedArray()
+    android.app.AlertDialog.Builder(activity)
+        .setTitle(titleRes)
+        .setItems(labels) { _, which -> onPicked(urls.getOrNull(which)) }
+        .setNeutralButton(R.string.artwork_use_first) { _, _ -> onPicked(urls.first()) }
+        .setNegativeButton(R.string.action_cancel, null)
+        .show()
 }
 
 private val ART_SEARCH_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()

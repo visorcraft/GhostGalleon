@@ -258,6 +258,30 @@ class RomLibraryTest {
     }
 
     @Test
+    fun `skipWalk avoids treeFor and keeps prior entries`() {
+        val priorEntry = entry(
+            uri = childUri("7F7E-2949:roms", "7F7E-2949:roms/snes/smw.smc"),
+        )
+        var treeForCalls = 0
+        val (result, _) = RomLibrary.rescanBlockingWithFingerprints(
+            treeUris = listOf(cardTree),
+            prior = listOf(priorEntry),
+            isReadable = { true },
+            treeFor = {
+                treeForCalls++
+                error("walk should be skipped")
+            },
+            priorFingerprints = mapOf(cardTree to "keep"),
+            force = false,
+            skipWalk = { it == cardTree },
+        )
+        val success = result as RomLibrary.RescanResult.Success
+        assertEquals(1, success.skippedCleanTrees)
+        assertEquals(0, treeForCalls)
+        assertEquals(listOf("snes:snes/smw.smc"), success.entries.map { it.id })
+    }
+
+    @Test
     fun `dirty tree is rescanned even when prior fingerprint exists`() {
         val priorEntry = entry(
             id = "snes:snes/old.smc",

@@ -174,7 +174,7 @@ class SettingsActivity : AppCompatActivity() {
                 ),
                 Toast.LENGTH_LONG,
             ).show()
-            recreate()
+            refreshSettingsUi()
         }
     }
 
@@ -243,7 +243,7 @@ class SettingsActivity : AppCompatActivity() {
                 ),
                 Toast.LENGTH_LONG,
             ).show()
-            recreate()
+            refreshSettingsUi()
         }
     }
 
@@ -385,11 +385,11 @@ class SettingsActivity : AppCompatActivity() {
             .setItems(labels) { _, which ->
                 val pkg = apps[which].packageName
                 app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
-                recreate()
+                refreshSettingsUi()
             }
             .setNeutralButton(R.string.action_clear) { _, _ ->
                 app.updateSettings(app.settings.copy(companionPinnedPackage = null))
-                recreate()
+                refreshSettingsUi()
             }
             .setNegativeButton(R.string.action_cancel, null)
             .show()
@@ -451,7 +451,7 @@ class SettingsActivity : AppCompatActivity() {
                     ),
                     Toast.LENGTH_LONG,
                 ).show()
-                recreate()
+                refreshSettingsUi()
             }
         }
 
@@ -529,7 +529,7 @@ class SettingsActivity : AppCompatActivity() {
                 app.updateSettings(newSettings)
             }.onSuccess {
                 Toast.makeText(this, R.string.settings_imported, Toast.LENGTH_SHORT).show()
-                recreate()
+                refreshSettingsUi()
             }.onFailure {
                 Toast.makeText(this, R.string.settings_invalid_file, Toast.LENGTH_SHORT).show()
             }
@@ -562,13 +562,12 @@ class SettingsActivity : AppCompatActivity() {
             if (tokens == null) {
                 Toast.makeText(this, R.string.settings_theme_invalid, Toast.LENGTH_LONG).show()
             } else {
-                app.updateSettings(ThemePack.applyCustom(app.settings, tokens, text))
+                applyThemeAndRefresh(ThemePack.applyCustom(app.settings, tokens, text))
                 Toast.makeText(
                     this,
                     getString(R.string.format_theme, tokens.displayName),
                     Toast.LENGTH_SHORT,
                 ).show()
-                recreate()
             }
         }
 
@@ -775,7 +774,7 @@ class SettingsActivity : AppCompatActivity() {
                                     (platform.id to player.id),
                             ),
                         )
-                        recreate()
+                        refreshSettingsUi()
                     }
                     .setNegativeButton(R.string.action_cancel, null)
                     .show()
@@ -1006,6 +1005,19 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private val accent get() = app.settings.accentColor
+
+    /** Rebuild the settings tree without an activity recreate. */
+    private fun refreshSettingsUi() {
+        if (isFinishing || isDestroyed) return
+        setContentView(buildContent())
+    }
+
+    private fun applyThemeAndRefresh(next: com.visorcraft.ghostgalleon.settings.Settings) {
+        val prevScale = ThemePack.resolve(app.settings).fontScale
+        app.updateSettings(next)
+        val nextScale = ThemePack.resolve(app.settings).fontScale
+        if (prevScale != nextScale) recreate() else refreshSettingsUi()
+    }
 
     override fun attachBaseContext(newBase: android.content.Context) {
         super.attachBaseContext(applyThemeFontScale(newBase))
@@ -1481,8 +1493,7 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.settings_theme),
             segmented(themeOptions, themeCurrent) { packId ->
                 val tokens = ThemePack.byId(packId)
-                app.updateSettings(ThemePack.applyToSettings(app.settings, tokens))
-                recreate()
+                applyThemeAndRefresh(ThemePack.applyToSettings(app.settings, tokens))
             },
         ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
@@ -1493,7 +1504,7 @@ class SettingsActivity : AppCompatActivity() {
             setOnClickListener { themeJsonPicker.launch(arrayOf("application/json", "text/*", "*/*")) }
             setOnLongClickListener {
                 if (app.settings.themeCustomJson != null) {
-                    app.updateSettings(
+                    applyThemeAndRefresh(
                         ThemePack.applyToSettings(app.settings, ThemePack.GHOST),
                     )
                     Toast.makeText(
@@ -1501,7 +1512,6 @@ class SettingsActivity : AppCompatActivity() {
                         R.string.settings_custom_theme_cleared,
                         Toast.LENGTH_SHORT,
                     ).show()
-                    recreate()
                 }
                 true
             }
@@ -1533,7 +1543,7 @@ class SettingsActivity : AppCompatActivity() {
                     userPinnedPrimaryId = null,
                 ))
                 app.refreshDisplayConfig()
-                recreate()
+                refreshSettingsUi()
             },
         ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
@@ -1554,7 +1564,7 @@ class SettingsActivity : AppCompatActivity() {
                     userPinnedPrimaryId = null,
                 ))
                 app.refreshDisplayConfig()
-                recreate()
+                refreshSettingsUi()
             },
         ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
@@ -1573,7 +1583,7 @@ class SettingsActivity : AppCompatActivity() {
                         gyroEnabled = mode != "lock_landscape",
                     ),
                 )
-                recreate()
+                refreshSettingsUi()
             },
         ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
@@ -1593,7 +1603,7 @@ class SettingsActivity : AppCompatActivity() {
                     R.string.settings_display_roles_reset,
                     Toast.LENGTH_SHORT,
                 ).show()
-                recreate()
+                refreshSettingsUi()
             }
         }
         resetDisplayRow.addView(rowLabel(getString(R.string.settings_reset_display_roles)), LinearLayout.LayoutParams(
@@ -1848,7 +1858,7 @@ class SettingsActivity : AppCompatActivity() {
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(companionPinnedPackage = null))
                 Toast.makeText(this@SettingsActivity, R.string.settings_pin_cleared, Toast.LENGTH_SHORT).show()
-                recreate()
+                refreshSettingsUi()
                 true
             }
         }
@@ -2407,7 +2417,7 @@ class SettingsActivity : AppCompatActivity() {
                     getString(R.string.settings_platform_pack_cleared),
                     Toast.LENGTH_SHORT,
                 ).show()
-                recreate()
+                refreshSettingsUi()
                 true
             }
         }
@@ -2599,7 +2609,7 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             isFocusable = true
-            setOnClickListener { recreate() }
+            setOnClickListener { refreshSettingsUi() }
         }
         refreshSys.addView(rowLabel(getString(R.string.settings_refresh_readings)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))

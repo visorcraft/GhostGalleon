@@ -20,6 +20,12 @@ class DualPaintPolicyTest {
     }
 
     @Test
+    fun `hold first paint until the ROM index is ready`() {
+        assertTrue(DualPaintPolicy.holdFirstPaintUntilReady(romIndexReady = false))
+        assertFalse(DualPaintPolicy.holdFirstPaintUntilReady(romIndexReady = true))
+    }
+
+    @Test
     fun `first paint always allowed when not rendering`() {
         assertTrue(
             DualPaintPolicy.allowFullRender(

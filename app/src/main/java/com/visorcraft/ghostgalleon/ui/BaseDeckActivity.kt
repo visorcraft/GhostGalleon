@@ -243,7 +243,18 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         // then blacks the secondary panel. onResume / onAttachedToWindow paint.
         val displayId = currentDisplayId()
         if (shouldRenderOnCreate() && displayId != null) {
-            renderFromState("onCreate d=$displayId")
+            if (DualPaintPolicy.holdFirstPaintUntilReady(app.romIndexReady)) {
+                setContentView(FrameLayout(this).apply {
+                    setBackgroundColor(0xFF000000.toInt())
+                })
+                app.whenRomIndexReady {
+                    if (!isFinishing && !isDestroyed) {
+                        renderFromState("library-ready")
+                    }
+                }
+            } else {
+                renderFromState("onCreate d=$displayId")
+            }
         }
     }
 

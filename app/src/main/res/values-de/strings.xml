@@ -49,6 +49,10 @@
     <string name="action_remove">Entfernen</string>
     <string name="action_edit_members">Mitglieder bearbeiten</string>
     <string name="artwork_pick_match">Artwork-Treffer wählen</string>
+    <string name="artwork_pick_grid">Cover wählen</string>
+    <string name="artwork_pick_hero">Hero-Art wählen</string>
+    <string name="artwork_pick_logo">Logo wählen</string>
+    <string name="artwork_use_first">Erste verwenden</string>
     <string name="action_remove_from_grid">Vom Raster entfernen</string>
     <string name="action_remove_from_collection">Aus Sammlung entfernen</string>
     <string name="action_rename">Umbenennen</string>
@@ -340,6 +344,7 @@
     <string name="role_now_playing">Jetzt Spielend</string>
     <string name="role_perf_hud">Leistungs-HUD</string>
     <string name="role_pinned_app">Angeheftete App</string>
+    <string name="deck_embed_unavailable">Einbetten ist auf diesem Gerät nicht verfügbar</string>
     <string name="quick_display">Display</string>
     <string name="quick_settings">Einstellungen</string>
     <string name="quick_theme">Design</string>

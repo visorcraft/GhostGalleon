@@ -49,6 +49,10 @@
     <string name="action_remove">Retirer</string>
     <string name="action_edit_members">Modifier les membres</string>
     <string name="artwork_pick_match">Choisir la correspondance d’art</string>
+    <string name="artwork_pick_grid">Choisir la jaquette</string>
+    <string name="artwork_pick_hero">Choisir l’art héro</string>
+    <string name="artwork_pick_logo">Choisir le logo</string>
+    <string name="artwork_use_first">Utiliser la première</string>
     <string name="action_remove_from_grid">Retirer de la grille</string>
     <string name="action_remove_from_collection">Retirer de la collection</string>
     <string name="action_rename">Renommer</string>
@@ -340,6 +344,7 @@
     <string name="role_now_playing">En cours</string>
     <string name="role_perf_hud">HUD Performance</string>
     <string name="role_pinned_app">Application épinglée</string>
+    <string name="deck_embed_unavailable">L’intégration n’est pas disponible sur cet appareil</string>
     <string name="quick_display">Affichage</string>
     <string name="quick_settings">Paramètres</string>
     <string name="quick_theme">Thème</string>

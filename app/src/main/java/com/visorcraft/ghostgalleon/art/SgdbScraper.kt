@@ -36,6 +36,14 @@ object Sgdb {
     val forcedGameIds: java.util.concurrent.ConcurrentHashMap<String, Long> =
         java.util.concurrent.ConcurrentHashMap()
 
+    /** One-shot per-ROM image URLs chosen by the user before a scrape starts. */
+    val forcedGridUrls: java.util.concurrent.ConcurrentHashMap<String, String> =
+        java.util.concurrent.ConcurrentHashMap()
+    val forcedHeroUrls: java.util.concurrent.ConcurrentHashMap<String, String> =
+        java.util.concurrent.ConcurrentHashMap()
+    val forcedLogoUrls: java.util.concurrent.ConcurrentHashMap<String, String> =
+        java.util.concurrent.ConcurrentHashMap()
+
     private val BRACKET = Regex("""\[[^\]]*\]""")
     private val PAREN = Regex("""\([^)]*\)""")
 
@@ -325,8 +333,9 @@ class SgdbScraper(
 
             var stored = false
             if (need.needGrid) {
-                val gridUrl = request(sleep) { transport.get(Sgdb.gridsUrl(gameId), apiKey) }
-                    ?.let(Sgdb::parseFirstImageUrl)
+                val gridUrl = Sgdb.forcedGridUrls.remove(rom.id)
+                    ?: request(sleep) { transport.get(Sgdb.gridsUrl(gameId), apiKey) }
+                        ?.let(Sgdb::parseFirstImageUrl)
                 if (cancelled) return false
                 if (gridUrl != null) {
                     request(sleep) { transport.download(gridUrl) }?.let { raw ->
@@ -343,8 +352,9 @@ class SgdbScraper(
             if (cancelled) return false
 
             if (need.needHero) {
-                val heroUrl = request(sleep) { transport.get(Sgdb.heroesUrl(gameId), apiKey) }
-                    ?.let(Sgdb::parseFirstImageUrl)
+                val heroUrl = Sgdb.forcedHeroUrls.remove(rom.id)
+                    ?: request(sleep) { transport.get(Sgdb.heroesUrl(gameId), apiKey) }
+                        ?.let(Sgdb::parseFirstImageUrl)
                 if (cancelled) return false
                 if (heroUrl != null) {
                     request(sleep) { transport.download(heroUrl) }?.let { raw ->
@@ -357,8 +367,9 @@ class SgdbScraper(
             }
             if (cancelled) return false
             if (!cache.diskHas(rom.id, ArtCache.ArtKind.LOGO) && rom.logoUri == null) {
-                val logoUrl = request(sleep) { transport.get(Sgdb.logosUrl(gameId), apiKey) }
-                    ?.let(Sgdb::parseFirstImageUrl)
+                val logoUrl = Sgdb.forcedLogoUrls.remove(rom.id)
+                    ?: request(sleep) { transport.get(Sgdb.logosUrl(gameId), apiKey) }
+                        ?.let(Sgdb::parseFirstImageUrl)
                 if (logoUrl != null) {
                     request(sleep) { transport.download(logoUrl) }?.let { raw ->
                         shrink(raw, ArtCache.ArtKind.GRID)?.let { png ->

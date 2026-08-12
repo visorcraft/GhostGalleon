@@ -118,6 +118,33 @@ class LibraryBrowseTest {
     }
 
     @Test
+    fun `browseRebuildKey is stable for the same inputs and changes when rails move`() {
+        val a = LibraryBrowse.browseRebuildKey(
+            mode = "ALL", text = "", platformId = null, genre = null,
+            developer = null, yearDecade = null, collectionName = null,
+            sort = "NAME", contentEpoch = 1, hiddenCount = 0, favoriteCount = 0,
+            lastLaunchCount = 2, playtimeCount = 1, romCount = 10, appCount = 3,
+            nowBucket = 5L,
+        )
+        val same = LibraryBrowse.browseRebuildKey(
+            mode = "ALL", text = "", platformId = null, genre = null,
+            developer = null, yearDecade = null, collectionName = null,
+            sort = "NAME", contentEpoch = 1, hiddenCount = 0, favoriteCount = 0,
+            lastLaunchCount = 2, playtimeCount = 1, romCount = 10, appCount = 3,
+            nowBucket = 5L,
+        )
+        val other = LibraryBrowse.browseRebuildKey(
+            mode = "RECENT", text = "", platformId = null, genre = null,
+            developer = null, yearDecade = null, collectionName = null,
+            sort = "NAME", contentEpoch = 1, hiddenCount = 0, favoriteCount = 0,
+            lastLaunchCount = 2, playtimeCount = 1, romCount = 10, appCount = 3,
+            nowBucket = 5L,
+        )
+        assertEquals(a, same)
+        assertNotEquals(a, other)
+    }
+
+    @Test
     fun `searchRoms matches name case-insensitively`() {
         val hits = LibraryBrowse.searchRoms(library, "zel")
         assertEquals(listOf("Zelda"), hits.map { it.name })

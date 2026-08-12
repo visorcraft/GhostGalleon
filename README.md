@@ -70,7 +70,7 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 - **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat. D-pad is remappable; stick deadzone is in Settings → Controls; Controller Lab can bind the last key.
 - **Swipe-up / re-HOME drawer** — all-apps + ROMs without reloading the deck.
 - **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
-- **ROM library** — 19 built-in platforms, SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
+- **ROM library** — 21 built-in platforms (including Vita and Windows/Winlator), SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
 - **Themes** — Ghost, Teal, OLED Black, Neon; optional custom theme JSON.
 - **Performance-minded** — R8-minified release APK, single carousel snap path, DiffUtil browse updates, one-pass chip counts, JPEG tile cache + RGB_565 grid decode, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
@@ -120,7 +120,7 @@ Scans use Storage Access Framework tree grants only — no broad storage permiss
 | Wii U | Cemu | package + VIEW EmulationActivity plan verified |
 
 Alternate players are available where the registry defines them. Windows titles
-can be pinned as Android app launches, but Winlator is not a built-in ROM platform.
+can be pinned as Android app launches, and Winlator is also a built-in Windows ROM platform (`.exe` / `.desktop` shortcuts).
 
 ---
 

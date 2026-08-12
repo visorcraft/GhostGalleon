@@ -49,6 +49,10 @@
     <string name="action_remove">Eliminar</string>
     <string name="action_edit_members">Editar miembros</string>
     <string name="artwork_pick_match">Elegir coincidencia de arte</string>
+    <string name="artwork_pick_grid">Elegir carátula</string>
+    <string name="artwork_pick_hero">Elegir arte de héroe</string>
+    <string name="artwork_pick_logo">Elegir logo</string>
+    <string name="artwork_use_first">Usar la primera</string>
     <string name="action_remove_from_grid">Quitar de la cuadrícula</string>
     <string name="action_remove_from_collection">Eliminar de colección</string>
     <string name="action_rename">Renombrar</string>
@@ -340,6 +344,7 @@
     <string name="role_now_playing">En reproducción</string>
     <string name="role_perf_hud">HUD de rendimiento</string>
     <string name="role_pinned_app">App fijada</string>
+    <string name="deck_embed_unavailable">La incrustación no está disponible en este dispositivo</string>
     <string name="quick_display">Pantalla</string>
     <string name="quick_settings">Ajustes</string>
     <string name="quick_theme">Tema</string>

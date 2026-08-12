@@ -159,7 +159,7 @@ class RomLauncherTest {
             Platforms.GB, Platforms.GBC, Platforms.GBA, Platforms.NES, Platforms.SNES,
             Platforms.GENESIS, Platforms.N64, Platforms.NDS, Platforms.SWITCH,
             Platforms.PS1, Platforms.SATURN, Platforms.DREAMCAST, Platforms.ARCADE,
-            Platforms.GAMECUBE, Platforms.WII,
+            Platforms.GAMECUBE, Platforms.WII, Platforms.PSVITA, Platforms.WINDOWS,
         )
         assertEquals(clearing.size + plain.size, Platforms.ALL.size)
         clearing.forEach { p ->

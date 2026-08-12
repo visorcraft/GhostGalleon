@@ -170,4 +170,11 @@ object DualPaintPolicy {
 
     /** Interval for live PERF_HUD reading refresh (ms). No full SETTINGS paint. */
     const val PERF_HUD_REFRESH_MS = 1_500L
+
+    /**
+     * Hold the first real deck paint until the on-disk ROM index is in
+     * memory. Avoids an empty carousel flash plus a second full dual
+     * setContentView when [reloadRomEntries] used to land after onCreate.
+     */
+    fun holdFirstPaintUntilReady(romIndexReady: Boolean): Boolean = !romIndexReady
 }

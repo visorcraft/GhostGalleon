@@ -49,6 +49,10 @@
     <string name="action_remove">Remove</string>
     <string name="action_edit_members">Edit members</string>
     <string name="artwork_pick_match">Choose artwork match</string>
+    <string name="artwork_pick_grid">Choose box art</string>
+    <string name="artwork_pick_hero">Choose hero art</string>
+    <string name="artwork_pick_logo">Choose logo</string>
+    <string name="artwork_use_first">Use first</string>
     <string name="action_remove_from_grid">Remove from grid</string>
     <string name="action_remove_from_collection">Remove from collection</string>
     <!-- Slot menu section headers -->
@@ -363,6 +367,7 @@
     <string name="role_now_playing">Now Playing</string>
     <string name="role_perf_hud">Performance HUD</string>
     <string name="role_pinned_app">Pinned app</string>
+    <string name="deck_embed_unavailable">Embed is not available on this device</string>
 
     <!-- Quick panel -->
     <string name="quick_display">Display</string>

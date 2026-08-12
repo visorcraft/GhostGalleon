@@ -3,8 +3,10 @@ package com.visorcraft.ghostgalleon.settings
 import com.visorcraft.ghostgalleon.state.UIMode
 
 data class Settings(
+    /** Legacy store field. Visual theme is [themePackId] / [ThemePack]. */
     val theme: String = "dark",
     val accentColor: Int = 0xFF3F51B5.toInt(),
+    /** Legacy store field. Deck fill is [wallpaperUri] or platform tint. */
     val background: String = "solid",
     val gridColumns: Int = 5,
     val iconSizeDp: Int = 72,
