@@ -61,6 +61,8 @@ object RaFetcher {
         "wii" -> 19
         "wiiu" -> 20
         "ps2" -> 21
+        "switch" -> 53
+        "psvita", "vita" -> 46
         else -> null
     }
 

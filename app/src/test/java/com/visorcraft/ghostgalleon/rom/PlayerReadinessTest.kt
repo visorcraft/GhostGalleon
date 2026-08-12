@@ -45,4 +45,19 @@ class PlayerReadinessTest {
         )
         assertEquals("ra-yabause", ready!!.id)
     }
+
+    @Test
+    fun `readyPlayers puts preferred first then remaining registry order`() {
+        val a = Platforms.WINDOWS.players[0]
+        val b = Platforms.WINDOWS.players[1]
+        val platform = Platforms.WINDOWS.copy(players = listOf(a, b))
+        val installed = { pkg: String -> pkg == "com.winlator" }
+        val ordered = PlayerReadiness.readyPlayers(
+            platform,
+            preferredPlayerId = "winlator-main",
+            installed = installed,
+            fileExists = { true },
+        )
+        assertEquals(listOf("winlator-main", "winlator"), ordered.map { it.id })
+    }
 }

@@ -454,7 +454,7 @@ object Platforms {
                 component = "com.winlator/.XServerDisplayActivity",
                 action = "android.intent.action.VIEW",
                 uriStyle = UriStyle.PATH,
-                extras = mapOf("shortcut_path" to "{file.path}"),
+                extras = mapOf("shortcut_path" to "{file.pathOrUri}"),
                 grantRead = true,
             ),
             PlayerTemplate(

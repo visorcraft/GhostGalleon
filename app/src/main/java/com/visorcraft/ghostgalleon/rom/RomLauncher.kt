@@ -89,14 +89,18 @@ object RomLauncher {
         }
         val installed = { pkg: String -> isInstalled(activity, pkg) }
         val fileExists = { path: String -> java.io.File(path).isFile }
-        val template = if (playerId != null) {
-            PlayerResolver.byId(platform, playerId)?.takeIf {
-                PlayerReadiness.isReady(it, installed, fileExists)
-            }
+        val templates = if (playerId != null) {
+            listOfNotNull(
+                PlayerResolver.byId(platform, playerId)?.takeIf {
+                    PlayerReadiness.isReady(it, installed, fileExists)
+                },
+            )
         } else {
-            PlayerReadiness.resolveReady(platform, preferredPlayerId, installed, fileExists)
+            PlayerReadiness.readyPlayers(
+                platform, preferredPlayerId, installed, fileExists,
+            )
         }
-        if (template == null) {
+        if (templates.isEmpty()) {
             val anyPkg = PlayerResolver.resolve(platform, preferredPlayerId, installed)
             if (anyPkg != null && PlayerReadiness.libretroCorePath(anyPkg) != null) {
                 toast(activity, R.string.rom_core_missing, anyPkg.displayName)
@@ -105,44 +109,52 @@ object RomLauncher {
             }
             return false
         }
-        val plan = LaunchPlanBuilder.build(template, entry)
-        if (plan == null) {
-            toast(activity, R.string.rom_path_unavailable)
-            return false
-        }
-        // PATH players (RetroArch): refuse launch when the reconstructed path
-        // is missing or unreadable (card ejected / not mounted yet).
-        when (val gate = PathGate.decide(template.uriStyle, entry.path)) {
-            is PathGate.Decision.Blocked -> {
-                val message = when (gate.reason) {
-                    PathGate.BlockReason.PATH_UNAVAILABLE -> R.string.rom_path_unavailable
-                    PathGate.BlockReason.STORAGE_UNMOUNTED -> R.string.rom_storage_unmounted
-                    PathGate.BlockReason.FILE_UNREADABLE -> R.string.rom_file_unreadable
+        var lastBlock: PathGate.Decision.Blocked? = null
+        var lastTemplate: PlayerTemplate? = null
+        for (template in templates) {
+            lastTemplate = template
+            val plan = LaunchPlanBuilder.build(template, entry) ?: continue
+            when (val gate = PathGate.decide(template.uriStyle, entry.path)) {
+                is PathGate.Decision.Blocked -> {
+                    lastBlock = gate
+                    continue
                 }
-                toast(activity, message)
-                return false
+                PathGate.Decision.Ok -> {}
             }
-            PathGate.Decision.Ok -> {}
-        }
-        val intent = Intent()
-            .setClassName(plan.packageName, plan.className)
-            .apply {
-                plan.action?.let { action = it }
-                plan.dataString?.let { data = Uri.parse(it) }
-                plan.extras.forEach { (k, v) -> putExtra(k, v) }
-                addFlags(plan.flags)
-                if (plan.grantRead) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val intent = Intent()
+                .setClassName(plan.packageName, plan.className)
+                .apply {
+                    plan.action?.let { action = it }
+                    plan.dataString?.let { data = Uri.parse(it) }
+                    plan.extras.forEach { (k, v) -> putExtra(k, v) }
+                    addFlags(plan.flags)
+                    if (plan.grantRead) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            return try {
+                launchOnOtherDisplay(activity, state, intent)
+                true
+            } catch (e: ActivityNotFoundException) {
+                continue
+            } catch (e: SecurityException) {
+                continue
             }
-        return try {
-            launchOnOtherDisplay(activity, state, intent)
-            true
-        } catch (e: ActivityNotFoundException) {
-            toast(activity, R.string.rom_emulator_not_installed, template.displayName)
-            false
-        } catch (e: SecurityException) {
-            toast(activity, R.string.rom_emulator_not_installed, template.displayName)
-            false
         }
+        val blocked = lastBlock
+        if (blocked != null) {
+            val message = when (blocked.reason) {
+                PathGate.BlockReason.PATH_UNAVAILABLE -> R.string.rom_path_unavailable
+                PathGate.BlockReason.STORAGE_UNMOUNTED -> R.string.rom_storage_unmounted
+                PathGate.BlockReason.FILE_UNREADABLE -> R.string.rom_file_unreadable
+            }
+            toast(activity, message)
+        } else {
+            toast(
+                activity,
+                R.string.rom_emulator_not_installed,
+                lastTemplate?.displayName ?: platform.displayName,
+            )
+        }
+        return false
     }
 
     private fun isInstalled(activity: Activity, packageName: String): Boolean =

@@ -184,6 +184,8 @@ private fun pickSgdbMatchThenStart(
             if (hits.size <= 1) {
                 hits.firstOrNull()?.let {
                     com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = it.id
+                    com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[rom.id] = it.id
+                    app.persistSgdbPicks()
                     pickSgdbImagesThenStart(activity, app, rom, apiKey, it.id)
                     return@runOnUiThread
                 }
@@ -196,6 +198,8 @@ private fun pickSgdbMatchThenStart(
                 .setItems(labels) { _, which ->
                     val hit = hits.getOrNull(which) ?: return@setItems
                     com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = hit.id
+                    com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[rom.id] = hit.id
+                    app.persistSgdbPicks()
                     pickSgdbImagesThenStart(activity, app, rom, apiKey, hit.id)
                 }
                 .setNegativeButton(R.string.action_cancel, null)

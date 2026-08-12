@@ -58,4 +58,21 @@ object PlayerReadiness {
         }
         return platform.players.firstOrNull { isReady(it, installed, fileExists) }
     }
+
+    /**
+     * Ready players in launch order: preferred first when ready, then
+     * remaining registry order. Used so a PATH miss can fall through to
+     * a URI player (Winlator home, etc.).
+     */
+    fun readyPlayers(
+        platform: Platform,
+        preferredPlayerId: String?,
+        installed: (String) -> Boolean,
+        fileExists: (String) -> Boolean,
+    ): List<PlayerTemplate> {
+        val ready = platform.players.filter { isReady(it, installed, fileExists) }
+        if (ready.isEmpty()) return emptyList()
+        val pref = preferredPlayerId?.let { id -> ready.find { it.id == id } }
+        return if (pref == null) ready else listOf(pref) + ready.filter { it.id != pref.id }
+    }
 }

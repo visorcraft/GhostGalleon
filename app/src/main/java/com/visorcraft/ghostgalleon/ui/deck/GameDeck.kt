@@ -816,12 +816,16 @@ class GameDeck(
         return true
     }
 
+    private var paintedLetter: Char? = null
+
     private fun paintLetterJumpSelection() {
         if (letterChipViews.isEmpty()) return
         val selectedLetter = entries.getOrNull(selectedIndex())
             ?.label
             ?.let { LibraryBrowse.letterBucket(it) }
+        if (selectedLetter == paintedLetter) return
         letterChipViews.forEach { (letter, tv) ->
+            if (letter != selectedLetter && letter != paintedLetter) return@forEach
             val on = letter == selectedLetter
             tv.setTextColor(if (on) Color.BLACK else Color.WHITE)
             tv.setBackgroundColor(
@@ -829,6 +833,7 @@ class GameDeck(
                 else TileBackgrounds.chipIdleColor(activity),
             )
         }
+        paintedLetter = selectedLetter
     }
 
     override fun handleAction(action: Action): Boolean {
@@ -934,6 +939,7 @@ class GameDeck(
             row.addView(chip)
         }
         letterChipViews = chips
+        paintedLetter = null
         return android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             addView(row)
@@ -1831,6 +1837,52 @@ class GameDeck(
             .show()
     }
 
+    private fun showRenameDialog(entry: CarouselEntry) {
+        val rom = entry.rom ?: return
+        val current = romLabel(rom)
+        val input = android.widget.EditText(activity).apply {
+            setText(current)
+            setSelectAllOnFocus(true)
+            setTextColor(android.graphics.Color.WHITE)
+            setHintTextColor(0x66FFFFFF)
+            setHint(R.string.deck_display_name_hint)
+            setSingleLine()
+        }
+        val container = FrameLayout(activity).apply {
+            val margin = (20 * activity.resources.displayMetrics.density).toInt()
+            setPadding(margin, (12 * activity.resources.displayMetrics.density).toInt(), margin, 0)
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(activity)
+            .setTitle(activity.getString(R.string.deck_rename_named, rom.name))
+            .setView(container)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val name = input.text.toString().trim()
+                app().updateSettings(
+                    settings.copy(
+                        romNames = com.visorcraft.ghostgalleon.settings.RomNames.set(
+                            app().settings.romNames,
+                            rom.id,
+                            name.takeIf { it.isNotEmpty() && it != rom.name },
+                        ),
+                    ),
+                )
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun resetRomName(rom: RomEntry) {
+        app().updateSettings(
+            settings.copy(
+                romNames = com.visorcraft.ghostgalleon.settings.RomNames.clear(
+                    app().settings.romNames,
+                    rom.id,
+                ),
+            ),
+        )
+    }
+
     private fun promptRenameCollection(from: String) {
         val input = android.widget.EditText(activity).apply {
             setText(from)
@@ -2598,6 +2650,10 @@ class GameDeck(
                 add(SlotMenu.Choice.APP_INFO)
             }
             if (entry.rom != null) {
+                add(SlotMenu.Choice.RENAME)
+                if (settings.romNames[entry.rom.id] != null) {
+                    add(SlotMenu.Choice.RESET_NAME)
+                }
                 add(SlotMenu.Choice.OPEN_WITH)
                 add(SlotMenu.Choice.PLAYER)
                 add(SlotMenu.Choice.SET_ART)
@@ -2627,6 +2683,8 @@ class GameDeck(
                 SlotMenu.Choice.MOVE_DOWN,
                 SlotMenu.Choice.MOVE_TO_END,
                 -> reorderCol?.let { reorderInCollection(it, key, choice) }
+                SlotMenu.Choice.RENAME -> showRenameDialog(entry)
+                SlotMenu.Choice.RESET_NAME -> entry.rom?.let { resetRomName(it) }
                 SlotMenu.Choice.OPEN_WITH -> openWithMenu(entry)
                 SlotMenu.Choice.PLAYER -> entry.rom?.let { showPlayerProfileMenu(it) }
                 SlotMenu.Choice.SET_ART -> entry.rom?.let { setArtOverride(it) }

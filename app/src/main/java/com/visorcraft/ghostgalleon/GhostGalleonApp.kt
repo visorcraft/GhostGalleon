@@ -236,6 +236,32 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    private fun loadSgdbPicksFile() {
+        val file = File(filesDir, "sgdb_picks.json")
+        if (!file.isFile) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val id = keys.next()
+                val gameId = root.optLong(id, 0L)
+                if (gameId > 0L) com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[id] = gameId
+            }
+        }
+    }
+
+    fun persistSgdbPicks() {
+        SETTINGS_IO.execute {
+            runCatching {
+                val root = JSONObject()
+                com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds.forEach { (id, gameId) ->
+                    root.put(id, gameId)
+                }
+                File(filesDir, "sgdb_picks.json").writeText(root.toString())
+            }
+        }
+    }
+
     private fun persistSgdbMisses() {
         SETTINGS_IO.execute {
             runCatching {
@@ -804,6 +830,7 @@ class GhostGalleonApp : Application() {
         }
         loadRaCacheFile()
         loadSgdbMissFile()
+        loadSgdbPicksFile()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
@@ -816,6 +843,7 @@ class GhostGalleonApp : Application() {
         seedColdStartSelection()
         // PM query off the UI thread before decks paint.
         prewarmAppLibrary()
+        registerPackageChangeReceiver()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 if (activity is BaseDeckActivity) liveDeckActivities.add(activity)
@@ -1064,6 +1092,28 @@ class GhostGalleonApp : Application() {
                 lib.warm()
                 sharedAppLibrary.compareAndSet(null, lib)
             }
+        }
+    }
+
+    private fun registerPackageChangeReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addDataScheme("package")
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                invalidateAppLibrary()
+                prewarmAppLibrary()
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(receiver, filter)
         }
     }
 

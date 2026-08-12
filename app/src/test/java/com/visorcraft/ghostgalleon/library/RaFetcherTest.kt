@@ -35,7 +35,9 @@ class RaFetcherTest {
         assertEquals(21, RaFetcher.consoleIdForPlatform("ps2"))
         assertEquals(19, RaFetcher.consoleIdForPlatform("wii"))
         assertEquals(20, RaFetcher.consoleIdForPlatform("wiiu"))
-        assertNull(RaFetcher.consoleIdForPlatform("switch"))
+        assertEquals(53, RaFetcher.consoleIdForPlatform("switch"))
+        assertEquals(46, RaFetcher.consoleIdForPlatform("psvita"))
+        assertNull(RaFetcher.consoleIdForPlatform("windows"))
         assertNull(RaFetcher.consoleIdForPlatform("unknown-plat"))
     }
 

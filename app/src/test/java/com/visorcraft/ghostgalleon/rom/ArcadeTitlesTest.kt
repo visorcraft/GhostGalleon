@@ -10,7 +10,9 @@ class ArcadeTitlesTest {
     fun `known stems become titles`() {
         assertEquals("Metal Slug", ArcadeTitles.displayName("mslug"))
         assertEquals("Street Fighter II", ArcadeTitles.displayName("SF2"))
+        assertEquals("Mortal Kombat II", ArcadeTitles.displayName("mk2"))
+        assertEquals("DoDonPachi", ArcadeTitles.displayName("ddonpach"))
         assertEquals("unknownzip", ArcadeTitles.displayName("unknownzip"))
-        assertTrue(ArcadeTitles.knownCount() > 50)
+        assertTrue(ArcadeTitles.knownCount() > 200)
     }
 }

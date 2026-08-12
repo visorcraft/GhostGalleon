@@ -44,6 +44,10 @@ object Sgdb {
     val forcedLogoUrls: java.util.concurrent.ConcurrentHashMap<String, String> =
         java.util.concurrent.ConcurrentHashMap()
 
+    /** Last user-picked / successful SGDB game id, reused by batch scrapes. */
+    val pickedGameIds: java.util.concurrent.ConcurrentHashMap<String, Long> =
+        java.util.concurrent.ConcurrentHashMap()
+
     private val BRACKET = Regex("""\[[^\]]*\]""")
     private val PAREN = Regex("""\([^)]*\)""")
 
@@ -315,8 +319,11 @@ class SgdbScraper(
             val query = Sgdb.normalizeName(rom.name)
             if (query.isEmpty()) return false
             val forced = Sgdb.forcedGameIds.remove(rom.id)
+            if (forced != null) Sgdb.pickedGameIds[rom.id] = forced
             val gameId = if (forced != null) {
                 forced
+            } else if (Sgdb.pickedGameIds[rom.id] != null) {
+                Sgdb.pickedGameIds[rom.id]
             } else {
                 val searchJson = request(sleep) { transport.get(Sgdb.searchUrl(query), apiKey) }
                 if (searchJson == null) {

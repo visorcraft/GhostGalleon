@@ -16,9 +16,6 @@ class PackageManagerAppsSource(
             .map { it.activityInfo.applicationInfo }
             .distinctBy { it.packageName }
             .filter { it.packageName != selfPackage }
-            // Belt-and-braces: some apps (stock "Music") match the LAUNCHER
-            // query yet have no usable launch intent; tapping them no-ops.
-            .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
             .map { info ->
                 val installMs = try {
                     pm.getPackageInfo(info.packageName, 0).firstInstallTime
