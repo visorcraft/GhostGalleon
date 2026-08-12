@@ -144,6 +144,19 @@ object DualPaintPolicy {
     ): Boolean = !anyPeerOnTarget
 
     /**
+     * KEEP must not spawn Companion on the recorded launch display — that
+     * panel is the game. [shouldLaunchCompanion] stays “no peer on target”;
+     * this extra guard is target != KEEP launch display.
+     */
+    fun keepHealBlocked(
+        policy: SessionPolicy?,
+        targetDisplayId: Int?,
+        launchDisplayId: Int?,
+    ): Boolean = policy == SessionPolicy.KEEP_COMPANION &&
+        targetDisplayId != null &&
+        targetDisplayId == launchDisplayId
+
+    /**
      * Pure heal decision for dual-screen companion recovery.
      * - [HealAction.NONE] — healthy peer already on target (or not dual).
      * - [HealAction.LAUNCH] — no peer claims target; start Companion.

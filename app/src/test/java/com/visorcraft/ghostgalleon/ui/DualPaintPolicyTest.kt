@@ -337,6 +337,59 @@ class DualPaintPolicyTest {
     }
 
     @Test
+    fun `keepHealBlocked only when KEEP target equals launch display`() {
+        assertTrue(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.KEEP_COMPANION,
+                targetDisplayId = 10,
+                launchDisplayId = 10,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.KEEP_COMPANION,
+                targetDisplayId = 20,
+                launchDisplayId = 10,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.YIELD_BOTH,
+                targetDisplayId = 10,
+                launchDisplayId = 10,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = null,
+                targetDisplayId = 10,
+                launchDisplayId = 10,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.KEEP_COMPANION,
+                targetDisplayId = null,
+                launchDisplayId = 10,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.KEEP_COMPANION,
+                targetDisplayId = 10,
+                launchDisplayId = null,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.keepHealBlocked(
+                policy = SessionPolicy.KEEP_COMPANION,
+                targetDisplayId = null,
+                launchDisplayId = null,
+            ),
+        )
+    }
+
+    @Test
     fun `allowCompanionRestartDuringSwap blocked when yielding both`() {
         assertFalse(
             DualPaintPolicy.allowCompanionRestartDuringSwap(

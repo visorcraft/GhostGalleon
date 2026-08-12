@@ -102,6 +102,16 @@ class MainActivity : BaseDeckActivity() {
         val target = topo.secondaryHomeDisplayId
             ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
             ?: return
+        // KEEP game owns the launch display; do not spawn Companion on it.
+        if (!returningFromElsewhere &&
+            DualPaintPolicy.keepHealBlocked(
+                app.sessionSurface?.policy,
+                target,
+                app.sessionSurface?.launchDisplayId,
+            )
+        ) {
+            return
+        }
         val live = app.liveCompanions().filter { !it.isFinishing }
         val seat = app.companionSeatHolder()
         // Only a STARTED peer on the secondary target counts as healthy.
@@ -121,7 +131,8 @@ class MainActivity : BaseDeckActivity() {
             )
         ) {
             DualPaintPolicy.HealAction.NONE -> return
-            DualPaintPolicy.HealAction.LAUNCH -> launchCompanionIfPresent()
+            DualPaintPolicy.HealAction.LAUNCH ->
+                launchCompanionIfPresent(returningFromElsewhere)
             DualPaintPolicy.HealAction.RESTART -> {
                 // Peer exists but never reached STARTED on target — recreate.
                 // (Inline: restartCompanionPanel would re-check heal debounce we
@@ -130,7 +141,9 @@ class MainActivity : BaseDeckActivity() {
                 live.forEach { it.closeQuietly() }
                 seat?.takeIf { !it.isFinishing }?.closeQuietly()
                 mainHandler.postDelayed({
-                    if (!isFinishing && !isDestroyed) launchCompanionIfPresent()
+                    if (!isFinishing && !isDestroyed) {
+                        launchCompanionIfPresent(returningFromElsewhere)
+                    }
                 }, 180L)
             }
         }
@@ -156,7 +169,7 @@ class MainActivity : BaseDeckActivity() {
         }, 180L)
     }
 
-    private fun launchCompanionIfPresent() {
+    private fun launchCompanionIfPresent(returningFromElsewhere: Boolean = false) {
         // YIELD owns both panels; starting Companion here would steal one.
         if (app.sessionSurface?.policy == SessionPolicy.YIELD_BOTH) return
         val topo = app.refreshDisplayConfig()
@@ -165,6 +178,16 @@ class MainActivity : BaseDeckActivity() {
             ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
             ?: return
         if (!AndroidDisplayProbe.hasDisplay(this, secondaryHomeId)) return
+        // KEEP: never startActivity on the recorded launch display.
+        if (!returningFromElsewhere &&
+            DualPaintPolicy.keepHealBlocked(
+                app.sessionSurface?.policy,
+                secondaryHomeId,
+                app.sessionSurface?.launchDisplayId,
+            )
+        ) {
+            return
+        }
         // Plain component + setLaunchDisplayId only (no SECONDARY_HOME category).
         val intent = Intent(this, CompanionActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
