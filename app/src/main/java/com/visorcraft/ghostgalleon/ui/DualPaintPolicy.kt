@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.ui
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+
 /**
  * Pure dual-screen paint / thrash policy (host-tested, no Android types).
  * Gates full rebuilds so GPU buffers present real pixels instead of pure black.
@@ -167,6 +169,46 @@ object DualPaintPolicy {
      * (Topology swap alone does not guarantee a new GPU present.)
      */
     fun shouldRestartCompanionAfterSwap(dualMode: Boolean): Boolean = dualMode
+
+    /**
+     * What HOME resume should do to the companion surface.
+     * - [ResumeCompanionAction.NONE] — stay put (still on HOME, or not dual).
+     * - [ResumeCompanionAction.HEAL_IF_MISSING] — launch only if the peer is gone.
+     * - [ResumeCompanionAction.RESTART] — recreate companion (yield return, greedy
+     *   KEEP return, or no-session return when the pin is not ready).
+     */
+    enum class ResumeCompanionAction { NONE, HEAL_IF_MISSING, RESTART }
+
+    fun resumeCompanionAction(
+        dualMode: Boolean,
+        returningFromElsewhere: Boolean,
+        policy: SessionPolicy?,
+        greedy: Boolean,
+        pinReady: Boolean,
+    ): ResumeCompanionAction {
+        if (!dualMode) return ResumeCompanionAction.NONE
+        if (policy == SessionPolicy.YIELD_BOTH) {
+            return if (returningFromElsewhere) ResumeCompanionAction.RESTART
+            else ResumeCompanionAction.NONE
+        }
+        if (policy == SessionPolicy.KEEP_COMPANION) {
+            if (!returningFromElsewhere) return ResumeCompanionAction.NONE
+            if (greedy) return ResumeCompanionAction.RESTART
+            return ResumeCompanionAction.HEAL_IF_MISSING
+        }
+        // No session: today's return-from-app restart (unless pin ready)
+        if (returningFromElsewhere && !pinReady) return ResumeCompanionAction.RESTART
+        return ResumeCompanionAction.HEAL_IF_MISSING
+    }
+
+    /**
+     * Role-swap may restart companion except while a YIELD session owns both
+     * panels. [allowHeal] timing is unchanged.
+     */
+    fun allowCompanionRestartDuringSwap(
+        dualMode: Boolean,
+        policy: SessionPolicy?,
+    ): Boolean = dualMode && policy != SessionPolicy.YIELD_BOTH
 
     /** Interval for live PERF_HUD reading refresh (ms). No full SETTINGS paint. */
     const val PERF_HUD_REFRESH_MS = 1_500L

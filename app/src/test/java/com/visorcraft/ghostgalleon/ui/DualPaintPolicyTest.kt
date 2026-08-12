@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -229,5 +230,137 @@ class DualPaintPolicyTest {
         assertTrue(DualPaintPolicy.shouldRestartCompanionAfterSwap(dualMode = true))
         assertFalse(DualPaintPolicy.shouldRestartCompanionAfterSwap(dualMode = false))
         assertTrue(DualPaintPolicy.PERF_HUD_REFRESH_MS in 500L..5_000L)
+    }
+
+    @Test
+    fun `resumeCompanionAction follows SessionPolicy return table`() {
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.NONE,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = false,
+                returningFromElsewhere = true,
+                policy = SessionPolicy.YIELD_BOTH,
+                greedy = true,
+                pinReady = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.RESTART,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = SessionPolicy.YIELD_BOTH,
+                greedy = false,
+                pinReady = true,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.NONE,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = false,
+                policy = SessionPolicy.YIELD_BOTH,
+                greedy = true,
+                pinReady = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = false,
+                pinReady = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = false,
+                pinReady = true,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.RESTART,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = true,
+                pinReady = true,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.NONE,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = false,
+                policy = SessionPolicy.KEEP_COMPANION,
+                greedy = true,
+                pinReady = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.RESTART,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = null,
+                greedy = false,
+                pinReady = false,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = true,
+                policy = null,
+                greedy = false,
+                pinReady = true,
+            ),
+        )
+        assertEquals(
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING,
+            DualPaintPolicy.resumeCompanionAction(
+                dualMode = true,
+                returningFromElsewhere = false,
+                policy = null,
+                greedy = true,
+                pinReady = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `allowCompanionRestartDuringSwap blocked when yielding both`() {
+        assertFalse(
+            DualPaintPolicy.allowCompanionRestartDuringSwap(
+                dualMode = true,
+                policy = SessionPolicy.YIELD_BOTH,
+            ),
+        )
+        assertTrue(
+            DualPaintPolicy.allowCompanionRestartDuringSwap(
+                dualMode = true,
+                policy = SessionPolicy.KEEP_COMPANION,
+            ),
+        )
+        assertTrue(
+            DualPaintPolicy.allowCompanionRestartDuringSwap(
+                dualMode = true,
+                policy = null,
+            ),
+        )
+        assertFalse(
+            DualPaintPolicy.allowCompanionRestartDuringSwap(
+                dualMode = false,
+                policy = SessionPolicy.KEEP_COMPANION,
+            ),
+        )
     }
 }
