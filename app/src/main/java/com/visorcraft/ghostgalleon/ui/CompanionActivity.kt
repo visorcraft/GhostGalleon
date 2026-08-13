@@ -396,7 +396,11 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
-    val lensDelay = CompanionPanel.tickPlayHudLens(root, app, activity)
+    val lensDelay = if (app.settings.ramLensesEnabled) {
+        CompanionPanel.tickPlayHudLens(root, app, activity)
+    } else {
+        null
+    }
     val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
         watchRa = app.settings.raNetworkCommands,

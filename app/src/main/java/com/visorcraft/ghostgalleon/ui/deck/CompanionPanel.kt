@@ -139,11 +139,12 @@ object CompanionPanel {
         val tv = root.findViewWithTag<TextView>(TAG_PLAY_HUD_OWNER) ?: return
         val hint = owner.hint()
         if (hint == null) {
-            tv.visibility = View.GONE
+            if (tv.visibility != View.GONE) tv.visibility = View.GONE
             return
         }
-        tv.visibility = View.VISIBLE
-        tv.text = tv.context.resolveText(hint)
+        val text = tv.context.resolveText(hint)
+        if (tv.visibility != View.VISIBLE) tv.visibility = View.VISIBLE
+        if (tv.text?.toString() != text) tv.text = text
     }
 
     fun attachSessionSwitcher(
@@ -2638,13 +2639,13 @@ object CompanionPanel {
      * @return next interval ms when a lens is active, else null.
      */
     fun tickPlayHudLens(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+        val settings = app.settings
+        if (!settings.ramLensesEnabled) return null
         val lensView = root?.findViewWithTag<TextView>(TAG_PLAY_HUD_LENS) ?: return null
         val surface = app.sessionSurface
-        val settings = app.settings
         if (surface == null ||
             DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy) ||
-            !settings.raNetworkCommands ||
-            !settings.ramLensesEnabled
+            !settings.raNetworkCommands
         ) {
             lensView.visibility = View.GONE
             return null

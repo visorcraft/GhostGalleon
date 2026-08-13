@@ -59,4 +59,12 @@ class LensCatalogTest {
         assertEquals(emptyList<LensSpec>(), LensCatalog.parse("{ not json"))
         assertEquals(emptyList<LensSpec>(), LensCatalog.parse(""))
     }
+
+    @Test
+    fun `lens assets stay on disk when the feature is off and no pack is set`() {
+        assertFalse(LensCatalog.shouldLoad(enabled = false, packUri = null))
+        assertFalse(LensCatalog.shouldLoad(enabled = false, packUri = ""))
+        assertTrue(LensCatalog.shouldLoad(enabled = true, packUri = null))
+        assertTrue(LensCatalog.shouldLoad(enabled = false, packUri = "content://lenses/pack.json"))
+    }
 }

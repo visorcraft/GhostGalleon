@@ -202,6 +202,9 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
     /** True when this window is the KEEP play host (may claim pad on touch). */
     private var playHostTouchClaimEnabled = false
+    private var lastFocusLock: Boolean? = null
+    private var lastInputOwner: InputOwner? = null
+    private var lastPlayHostAllowed: Boolean? = null
 
     /**
      * Apply or clear [WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE] so the KEEP
@@ -227,6 +230,16 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         val owner = InputOwnerPolicy.effectiveOwner(base, app.hostClaimed)
         val lock = InputOwnerPolicy.focusLockAllowed(owner, allowed)
         val w = window ?: return
+        if (InputOwnerPolicy.applyIsNoop(
+                lastFocusLock, lastInputOwner, lastPlayHostAllowed,
+                lock, owner, allowed,
+            )
+        ) {
+            return
+        }
+        lastFocusLock = lock
+        lastInputOwner = owner
+        lastPlayHostAllowed = allowed
         val params = w.attributes
         if (lock) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -677,6 +690,10 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 root.setBackgroundColor(0xFF000000.toInt())
             }
             setContentView(root)
+            // New view tree: listener + owner hint must be rebound.
+            lastFocusLock = null
+            lastInputOwner = null
+            lastPlayHostAllowed = null
             // Force a present after attach; some Sugar paths left READY_TO_SHOW
             // with an all-black buffer until the next frame was requested.
             root.post {

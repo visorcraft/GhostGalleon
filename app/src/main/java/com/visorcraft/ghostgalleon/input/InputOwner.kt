@@ -25,4 +25,14 @@ object InputOwnerPolicy {
 
     fun focusLockAllowed(owner: InputOwner, playHostAllowed: Boolean): Boolean =
         owner == InputOwner.GAME && playHostAllowed
+
+    /** Skip window flag / listener / hint writes when the applied triple is unchanged. */
+    fun applyIsNoop(
+        prevLock: Boolean?,
+        prevOwner: InputOwner?,
+        prevAllowed: Boolean?,
+        lock: Boolean,
+        owner: InputOwner,
+        allowed: Boolean,
+    ): Boolean = prevLock == lock && prevOwner == owner && prevAllowed == allowed
 }

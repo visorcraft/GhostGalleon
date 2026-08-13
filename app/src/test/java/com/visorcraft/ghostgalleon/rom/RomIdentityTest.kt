@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.rom
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -79,5 +80,14 @@ class RomIdentityTest {
             RomIdentities.chooseAlgo(RomIdentities.SMALL_MAX_BYTES + 1, "nes"),
         )
         assertEquals(RomIdentities.ALGO_SHA1_PAYLOAD, RomIdentities.chooseAlgo(0L, "snes"))
+    }
+
+    @Test
+    fun `sidecar stays quiet when every row was already ready`() {
+        val keys = setOf("nes:a", "snes:b")
+        assertTrue(RomIdentities.sidecarQuiet(keys, keys, newlyComputed = 0))
+        assertFalse(RomIdentities.sidecarQuiet(keys, keys, newlyComputed = 1))
+        assertFalse(RomIdentities.sidecarQuiet(keys, setOf("nes:a"), newlyComputed = 0))
+        assertFalse(RomIdentities.sidecarQuiet(emptySet(), keys, newlyComputed = 0))
     }
 }

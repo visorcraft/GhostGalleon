@@ -2447,6 +2447,7 @@ class SettingsActivity : AppCompatActivity() {
         refreshRaHandoffSaveEnabled()
         toggle(libraryCard, getString(R.string.settings_ram_lenses), s.ramLensesEnabled) { on ->
             app.updateSettings(app.settings.copy(ramLensesEnabled = on))
+            app.reloadLenses()
         }
         val lensPackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

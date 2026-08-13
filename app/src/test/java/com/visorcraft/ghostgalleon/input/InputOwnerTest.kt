@@ -60,4 +60,38 @@ class InputOwnerTest {
         assertFalse(InputOwnerPolicy.focusLockAllowed(InputOwner.NONE, true))
         assertFalse(InputOwnerPolicy.focusLockAllowed(InputOwner.GAME, false))
     }
+
+    @Test
+    fun `apply is no-op only when lock owner and allowed match prior`() {
+        assertTrue(
+            InputOwnerPolicy.applyIsNoop(
+                true, InputOwner.GAME, true,
+                true, InputOwner.GAME, true,
+            ),
+        )
+        assertFalse(
+            InputOwnerPolicy.applyIsNoop(
+                null, null, null,
+                true, InputOwner.GAME, true,
+            ),
+        )
+        assertFalse(
+            InputOwnerPolicy.applyIsNoop(
+                true, InputOwner.GAME, true,
+                false, InputOwner.GAME, true,
+            ),
+        )
+        assertFalse(
+            InputOwnerPolicy.applyIsNoop(
+                true, InputOwner.GAME, true,
+                true, InputOwner.HOST, true,
+            ),
+        )
+        assertFalse(
+            InputOwnerPolicy.applyIsNoop(
+                true, InputOwner.GAME, true,
+                true, InputOwner.GAME, false,
+            ),
+        )
+    }
 }

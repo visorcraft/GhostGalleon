@@ -52,6 +52,13 @@ object RomIdentities {
         else -> ALGO_SHA1_PAYLOAD
     }
 
+    /** Skip sidecar write + deck notify when nothing new was hashed and the id set is unchanged. */
+    fun sidecarQuiet(
+        priorKeys: Set<String>,
+        nextKeys: Set<String>,
+        newlyComputed: Int,
+    ): Boolean = newlyComputed == 0 && priorKeys == nextKeys
+
     private fun le64(value: Long): ByteArray {
         val out = ByteArray(8)
         var v = value

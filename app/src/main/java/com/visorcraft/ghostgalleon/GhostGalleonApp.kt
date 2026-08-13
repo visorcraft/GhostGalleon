@@ -492,6 +492,10 @@ class GhostGalleonApp : Application() {
      * on a background thread. Invalid JSON is ignored. Does not notify decks.
      */
     fun reloadLenses() {
+        if (!LensCatalog.shouldLoad(settings.ramLensesEnabled, settings.ramLensPackUri)) {
+            lenses = emptyList()
+            return
+        }
         ROM_IO.execute {
             val loaded = ArrayList<LensSpec>()
             val names = runCatching {
@@ -969,14 +973,18 @@ class GhostGalleonApp : Application() {
     }
 
     private fun refreshIdentities(entries: List<RomEntry>) {
-        val prior = try {
-            romIdentityStore.load()
-        } catch (_: Exception) {
-            emptyMap()
+        // Prefer the live map so a quiet rescan does not re-read the sidecar.
+        val prior = romIdentities.ifEmpty {
+            try {
+                romIdentityStore.load()
+            } catch (_: Exception) {
+                emptyMap()
+            }
         }
         val next = LinkedHashMap<String, RomIdentity>(entries.size.coerceAtLeast(prior.size))
         var ready = 0
         var fail = 0
+        var newlyComputed = 0
         for (entry in entries) {
             val kept = prior[entry.id]
             if (kept != null && kept.ready) {
@@ -984,6 +992,7 @@ class GhostGalleonApp : Application() {
                 ready++
                 continue
             }
+            newlyComputed++
             val computed = try {
                 computeIdentity(entry)
             } catch (_: Exception) {
@@ -992,15 +1001,21 @@ class GhostGalleonApp : Application() {
             next[entry.id] = computed
             if (computed.ready) ready++ else fail++
         }
-        try {
-            romIdentityStore.save(next)
-        } catch (_: Exception) {
-            // Keep in-memory map even if disk write fails.
+        val quiet = RomIdentities.sidecarQuiet(prior.keys, next.keys, newlyComputed)
+        if (!quiet) {
+            try {
+                romIdentityStore.save(next)
+            } catch (_: Exception) {
+                // Keep in-memory map even if disk write fails.
+            }
+            Log.i(IDENT_TAG, "ready=$ready fail=$fail")
         }
-        Log.i(IDENT_TAG, "ready=$ready fail=$fail")
         mainHandler.post {
+            val firstPaint = romIdentities.isEmpty() && next.isNotEmpty()
             romIdentities = next
-            deckState.notifySelectionRefresh()
+            if (!quiet || firstPaint) {
+                deckState.notifySelectionRefresh()
+            }
         }
     }
 

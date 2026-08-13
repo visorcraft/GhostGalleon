@@ -65,6 +65,10 @@ object LensCatalog {
         return total in 1..MAX_BYTES && spec.blocks.all { it.length > 0 }
     }
 
+    /** Asset / pack I/O only when lenses are on, or a pack URI is waiting. */
+    fun shouldLoad(enabled: Boolean, packUri: String?): Boolean =
+        enabled || !packUri.isNullOrBlank()
+
     private fun parseArray(arr: JSONArray): List<LensSpec> {
         val out = ArrayList<LensSpec>(arr.length())
         for (i in 0 until arr.length()) {
