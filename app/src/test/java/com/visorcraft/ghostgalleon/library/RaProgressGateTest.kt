@@ -27,6 +27,29 @@ class RaProgressGateTest {
     }
 
     @Test
+    fun `theater-only fail does not block browse mayFetch`() {
+        val afterTheaterFail = RaProgressGate.nextBrowseAttempted(
+            theater = true,
+            romId = "rom",
+            attempted = emptySet(),
+        )
+        assertTrue(afterTheaterFail.isEmpty())
+        assertTrue(RaProgressGate.mayFetch("rom", "u", "k", emptySet(), afterTheaterFail))
+        assertFalse(
+            RaProgressGate.mayFetch(
+                "rom",
+                "u",
+                "k",
+                emptySet(),
+                RaProgressGate.nextBrowseAttempted(false, "rom", emptySet()),
+            ),
+        )
+        assertFalse(
+            RaProgressGate.mayFetch("rom", "u", "k", setOf("rom"), afterTheaterFail),
+        )
+    }
+
+    @Test
     fun `isSameProgress field equality`() {
         assertTrue(RaProgressGate.isSameProgress(sample, sample.copy()))
         assertFalse(RaProgressGate.isSameProgress(null, sample))

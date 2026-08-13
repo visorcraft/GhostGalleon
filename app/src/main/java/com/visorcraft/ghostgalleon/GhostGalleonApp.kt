@@ -756,7 +756,7 @@ class GhostGalleonApp : Application() {
 
     /**
      * KEEP theater poll. One HTTP attempt per romId per process until
-     * [RaTheater.pollDue]. Shares the RA in-flight set; does not toast.
+     * [RaTheater.pollDue]. Shares the RA in-flight set only; does not toast.
      */
     fun requestTheaterPoll(romId: String, titleHint: String?, platformId: String? = null) {
         val user = settings.raUsername?.trim().orEmpty()
@@ -787,7 +787,7 @@ class GhostGalleonApp : Application() {
         theater: Boolean,
     ) {
         raFetchInFlight = raFetchInFlight + id
-        raFetchAttempted = raFetchAttempted + id
+        raFetchAttempted = RaProgressGate.nextBrowseAttempted(theater, id, raFetchAttempted)
         if (theater) theaterAttempted = theaterAttempted + id
         val cachedGameId = raProgressByRomId[id]?.gameId
             ?: theaterSnap?.takeIf { theaterRomId == id }?.progress?.gameId
@@ -809,7 +809,9 @@ class GhostGalleonApp : Application() {
                 raFetchInFlight = raFetchInFlight - id
                 val stamp = android.os.SystemClock.elapsedRealtime()
                 if (theater) {
-                    applyTheaterSnap(id, snap, stamp, hadBody = body != null)
+                    if (sessionRomId() == id) {
+                        applyTheaterSnap(id, snap, stamp, hadBody = body != null)
+                    }
                 } else if (body != null && sessionRomId() == id) {
                     applyTheaterSnap(id, snap, stamp, hadBody = true)
                 }

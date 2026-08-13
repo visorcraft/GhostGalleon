@@ -24,6 +24,21 @@ object RaProgressGate {
     }
 
     /**
+     * Next browse [attempted] set after a fetch starts.
+     * Theater-only HTTP must not add [romId]; in-flight stays shared.
+     */
+    fun nextBrowseAttempted(
+        theater: Boolean,
+        romId: String,
+        attempted: Set<String>,
+    ): Set<String> {
+        if (theater) return attempted
+        val id = romId.trim()
+        if (id.isEmpty()) return attempted
+        return attempted + id
+    }
+
+    /**
      * True when [next] is the same progress we already show — skip notify.
      * Equality is field-wise (not identity).
      */
