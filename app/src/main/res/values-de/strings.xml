@@ -42,6 +42,10 @@
     <string name="action_show_details">Details</string>
     <string name="action_open_session_switcher">Sitzungswechsler</string>
     <string name="action_toggle_play_hud">Spiel-HUD</string>
+    <string name="action_claim_host">Pad zum Launcher</string>
+    <string name="action_release_host">Pad zum Spiel</string>
+    <string name="input_owner_game">Pad → Spiel</string>
+    <string name="input_owner_host">Pad → Launcher</string>
     <string name="action_open_with">Öffnen mit…</string>
     <string name="action_page_left">Seite links (L1)</string>
     <string name="action_page_right">Seite rechts (R1)</string>

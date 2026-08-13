@@ -95,6 +95,7 @@ class SettingsActivity : AppCompatActivity() {
         Action.OPEN_QUICK_PANEL,
         Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
         Action.OPEN_SESSION_SWITCHER, Action.TOGGLE_PLAY_HUD,
+        Action.CLAIM_HOST, Action.RELEASE_HOST,
     )
 
     private var captureTarget: Action? = null
