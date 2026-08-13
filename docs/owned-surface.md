@@ -733,3 +733,7 @@ Task-by-task implementation plan (all phases):
 No third session type. `OpenSession` stays playtime.
 `SessionSurface` stays the policy record. Stage plot feeds
 `forLaunch`; it does not become a third clock.
+
+Next program (tracker, cinema, theater, seat, ferry, posture,
+helper, warm Continue):
+[`play-host-depth.md`](play-host-depth.md).
