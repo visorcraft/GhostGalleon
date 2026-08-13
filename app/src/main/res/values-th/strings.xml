@@ -478,6 +478,9 @@
     <string name="settings_stage_face_other">อื่น</string>
     <string name="confirm_keep_on_yield_player">โปรแกรมเล่นนี้ออกแบบมาสำหรับทั้งสองหน้าจอ Ghost Galleon จะเก็บแผงหนึ่งไว้ melonDualDS / Azahar จะไม่เห็นหน้าจอที่สอง</string>
     <string name="confirm_yield_on_keep_player">ทั้งสองแผงจะไปที่เกม HUD เล่นจะถูกซ่อน</string>
+    <string name="confirm_save_ferry">คัดลอก %1$s จาก %2$s ไปยัง %3$s ปลายทางจะถูกเขียนทับ</string>
+    <string name="ferry_refuse_player">ไม่สามารถแปลง DraStic ↔ RetroArch ในเวอร์ชันนี้</string>
+    <string name="ferry_dest_unwritable">ปลายทางเขียนไม่ได้</string>
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
     <string name="settings_ra_cinema">โรงภาพยนตร์สถานะ</string>
     <string name="settings_ra_theater">โรงละครความสำเร็จ</string>
@@ -486,6 +489,7 @@
     <string name="settings_ram_trackers">ตัวติดตาม RAM</string>
     <string name="settings_import_lens_pack">นำเข้าแพ็คเลนส์</string>
     <string name="settings_stack_clones">ซ้อนโคลน</string>
+    <string name="settings_save_ferry">เรือข้ามฟากเซฟ</string>
     <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>
     <string name="settings_ra_username">ชื่อผู้ใช้ RetroAchievements</string>
     <string name="settings_ra_username_hint">ชื่อผู้ใช้ RA</string>

@@ -507,6 +507,9 @@
     <string name="settings_stage_face_other">Other</string>
     <string name="confirm_keep_on_yield_player">This player is built for both screens. Ghost Galleon will keep a panel. melonDualDS / Azahar will not see the second display.</string>
     <string name="confirm_yield_on_keep_player">Both panels will go to the game. The play HUD will hide.</string>
+    <string name="confirm_save_ferry">Copy %1$s from %2$s to %3$s. The destination will be overwritten.</string>
+    <string name="ferry_refuse_player">Cannot convert DraStic ↔ RetroArch in this version</string>
+    <string name="ferry_dest_unwritable">Destination is not writable</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
     <string name="settings_ra_cinema">State cinema</string>
     <string name="settings_ra_theater">Achievement theater</string>
@@ -515,6 +518,7 @@
     <string name="settings_ram_trackers">RAM trackers</string>
     <string name="settings_import_lens_pack">Import lens pack</string>
     <string name="settings_stack_clones">Stack clones</string>
+    <string name="settings_save_ferry">Save ferry</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

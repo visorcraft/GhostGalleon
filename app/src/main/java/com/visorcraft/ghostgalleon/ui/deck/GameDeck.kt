@@ -32,11 +32,18 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.library.PlayStats
 import com.visorcraft.ghostgalleon.library.SearchHistory
 import com.visorcraft.ghostgalleon.library.SessionMath
+import com.visorcraft.ghostgalleon.rom.FerryKind
+import com.visorcraft.ghostgalleon.rom.FerryOffer
+import com.visorcraft.ghostgalleon.rom.FerryRefuse
 import com.visorcraft.ghostgalleon.rom.IdentityStack
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlatformTile
+import com.visorcraft.ghostgalleon.rom.PlayerResolver
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLauncher
+import com.visorcraft.ghostgalleon.rom.RomProfiles
+import com.visorcraft.ghostgalleon.rom.SaveFerry
+import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.GridSlots
@@ -2586,6 +2593,7 @@ class GameDeck(
         )
         val body = activity.resolveText(GameDetails.body(input))
         val related = relatedOptionsFor(rom)
+        val ferryPeers = if (rom != null) saveFerryPeers(rom) else emptyList()
         val builder = android.app.AlertDialog.Builder(activity)
             .setTitle(R.string.details_title)
             .setMessage(body)
@@ -2593,10 +2601,14 @@ class GameDeck(
             .setNeutralButton(R.string.action_copy_title) { _, _ ->
                 copyTitleToClipboard(entry.label)
             }
-        // Apps: system package details. ROMs with meta: Browse related.
+        // Apps: system package details. Same-title ferry dests. Else related.
         when {
             rom == null && !SlotKey.isRom(key) ->
                 builder.setNegativeButton(R.string.action_app_info) { _, _ -> openAppInfo(key) }
+            rom != null && ferryPeers.isNotEmpty() ->
+                builder.setNegativeButton(R.string.settings_save_ferry) { _, _ ->
+                    showSaveFerryDests(rom, ferryPeers)
+                }
             related.isNotEmpty() ->
                 builder.setNegativeButton(R.string.action_browse_related) { _, _ ->
                     showBrowseRelatedDialog(related)
@@ -2610,6 +2622,109 @@ class GameDeck(
                 true
             }
         }
+    }
+
+    private fun saveFerryPeers(rom: RomEntry): List<RomEntry> {
+        if (!settings.saveFerryEnabled) return emptyList()
+        val fromId = app().romIdentities[rom.id]
+        return app().romEntries.filter { other ->
+            other.id != rom.id && SaveFerry.sameTitle(fromId, app().romIdentities[other.id])
+        }
+    }
+
+    private fun showSaveFerryDests(from: RomEntry, peers: List<RomEntry>) {
+        if (peers.isEmpty()) return
+        if (peers.size == 1) {
+            startSaveFerry(from, peers[0])
+            return
+        }
+        val labels = peers.map { romLabel(it) }.toTypedArray()
+        android.app.AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_save_ferry)
+            .setItems(labels) { _, which ->
+                if (which in peers.indices) startSaveFerry(from, peers[which])
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun startSaveFerry(from: RomEntry, to: RomEntry) {
+        val refuse = SaveFerry.refuse(
+            app().romIdentities[from.id],
+            app().romIdentities[to.id],
+            playerIdOf(from),
+            playerIdOf(to),
+            app().destIsOpenYield(to.id),
+        )
+        if (refuse != FerryRefuse.NONE) {
+            val reason = when (refuse) {
+                FerryRefuse.YIELD_DEST -> R.string.settings_stage_yield
+                else -> R.string.ferry_refuse_player
+            }
+            Toast.makeText(activity, reason, Toast.LENGTH_SHORT).show()
+            return
+        }
+        app().loadFerryOffers(from, to, refuse) { offers ->
+            if (offers.isEmpty()) return@loadFerryOffers
+            if (offers.size == 1) {
+                confirmSaveFerry(from, to, offers[0])
+            } else {
+                pickSaveFerryOffer(from, to, offers)
+            }
+        }
+    }
+
+    private fun pickSaveFerryOffer(from: RomEntry, to: RomEntry, offers: List<FerryOffer>) {
+        val labels = offers.map { ferryKindLabel(it) }.toTypedArray()
+        android.app.AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_save_ferry)
+            .setItems(labels) { _, which ->
+                if (which in offers.indices) confirmSaveFerry(from, to, offers[which])
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun confirmSaveFerry(from: RomEntry, to: RomEntry, offer: FerryOffer) {
+        android.app.AlertDialog.Builder(activity)
+            .setMessage(
+                activity.getString(
+                    R.string.confirm_save_ferry,
+                    ferryKindLabel(offer),
+                    romLabel(from),
+                    romLabel(to),
+                ),
+            )
+            .setPositiveButton(R.string.action_ok) { _, _ ->
+                if (app().destIsOpenYield(to.id)) {
+                    Toast.makeText(activity, R.string.settings_stage_yield, Toast.LENGTH_SHORT)
+                        .show()
+                    return@setPositiveButton
+                }
+                app().ferryCopy(offer)
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun ferryKindLabel(offer: FerryOffer): String = when (offer.kind) {
+        FerryKind.RA_SRM -> "SRM"
+        FerryKind.RA_STATE -> {
+            val slot = offer.slot
+            if (slot == null || slot == 0) "state" else "state$slot"
+        }
+    }
+
+    private fun playerIdOf(rom: RomEntry): String? {
+        val preferred = RomProfiles.preferredPlayerId(
+            rom.id,
+            settings.romProfiles,
+            settings.defaultPlayers[rom.platformId],
+        )
+        val platform = Platforms.byId(rom.platformId) ?: return preferred
+        return PlayerResolver.resolve(platform, preferred) { pkg ->
+            activity.packageManager.isInstalled(pkg)
+        }?.id ?: preferred
     }
 
     private fun copyHashToClipboard(hash: String) {

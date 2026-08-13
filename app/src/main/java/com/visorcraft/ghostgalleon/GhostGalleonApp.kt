@@ -70,9 +70,16 @@ import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import android.hardware.display.DisplayManager
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.visorcraft.ghostgalleon.rom.ArcadeTitles
+import com.visorcraft.ghostgalleon.rom.FerryKind
+import com.visorcraft.ghostgalleon.rom.FerryOffer
+import com.visorcraft.ghostgalleon.rom.FerryRefuse
+import com.visorcraft.ghostgalleon.rom.SaveDoc
+import com.visorcraft.ghostgalleon.rom.SaveFerry
+import com.visorcraft.ghostgalleon.rom.StoragePaths
 import com.visorcraft.ghostgalleon.rom.RomIdentities
 import com.visorcraft.ghostgalleon.rom.RomIdentity
 import com.visorcraft.ghostgalleon.rom.RomIdentityStore
@@ -82,6 +89,7 @@ import com.visorcraft.ghostgalleon.rom.VitaVpk
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1490,6 +1498,302 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    /**
+     * Same-title dest is the open YIELD session. Do not write under a
+     * running dual-surface player.
+     */
+    fun destIsOpenYield(destRomId: String): Boolean {
+        val surface = sessionSurface ?: return false
+        if (surface.policy != SessionPolicy.YIELD_BOTH) return false
+        if (openSession == null) return false
+        val destKey = SlotKey.rom(destRomId)
+        return surface.key == destKey || surface.key == destRomId
+    }
+
+    /**
+     * List source save/state docs then [SaveFerry.offers] on [ROM_IO].
+     * Callback runs on the main thread. Empty when nothing is readable.
+     */
+    fun loadFerryOffers(
+        from: RomEntry,
+        to: RomEntry,
+        refuse: FerryRefuse,
+        onReady: (List<FerryOffer>) -> Unit,
+    ) {
+        ROM_IO.execute {
+            val docs = listFerryDocs(from)
+            val offers = SaveFerry.offers(from, to, docs, refuse)
+            mainHandler.post { onReady(offers) }
+        }
+    }
+
+    /**
+     * Copy [offer] on [ROM_IO]. Prefer `*.tmp` beside dest then rename;
+     * write in place when rename is impossible.
+     */
+    fun ferryCopy(offer: FerryOffer) {
+        ROM_IO.execute {
+            val ok = runCatching { copyFerryOffer(offer) }.getOrDefault(false)
+            if (!ok) {
+                Log.w(FERRY_TAG, "unwritable dest ${offer.toName}")
+            }
+            mainHandler.post {
+                android.widget.Toast.makeText(
+                    this,
+                    if (ok) R.string.settings_save_ferry else R.string.ferry_dest_unwritable,
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    /**
+     * Granted RA save/state trees only: KEEP extras EXTERNAL plus
+     * RetroArch/saves and RetroArch/states. No whole-card scan.
+     */
+    private fun listFerryDocs(from: RomEntry): List<SaveDoc> {
+        val stem = SaveFerry.stemOf(from)
+        if (stem.isEmpty()) return emptyList()
+        val out = ArrayList<SaveDoc>()
+        val seen = HashSet<String>()
+        val addDoc: (String, String) -> Unit = { uri, name ->
+            if (SaveFerry.classifyName(name, stem) != null && seen.add(uri)) {
+                out += SaveDoc(uri, name)
+            }
+        }
+        raExternalDir()?.let { external ->
+            collectFerryFiles(File(external, "saves"), addDoc, depth = 3)
+            collectFerryFiles(File(external, "states"), addDoc, depth = 2)
+        }
+        for (treeUri in settings.romTreeUris) {
+            listGrantedRaFolders(treeUri).forEach { folder ->
+                collectFerryDocs(folder, addDoc, depth = 3)
+            }
+        }
+        return out
+    }
+
+    private fun raExternalDir(): File? {
+        val extras = Platforms.ALL.asSequence()
+            .flatMap { it.players.asSequence() }
+            .firstOrNull { it.id.startsWith("ra-") }
+            ?.extras
+        val external = extras?.get("EXTERNAL")?.trim().orEmpty()
+        if (external.isEmpty()) return null
+        return File(external)
+    }
+
+    private fun collectFerryFiles(
+        dir: File,
+        add: (String, String) -> Unit,
+        depth: Int,
+    ) {
+        if (depth < 0 || !dir.isDirectory) return
+        val children = dir.listFiles() ?: return
+        for (child in children) {
+            if (child.isDirectory) {
+                collectFerryFiles(child, add, depth - 1)
+            } else {
+                add(Uri.fromFile(child).toString(), child.name)
+            }
+        }
+    }
+
+    private fun collectFerryDocs(
+        dir: DocumentFile,
+        add: (String, String) -> Unit,
+        depth: Int,
+    ) {
+        if (depth < 0) return
+        for (child in dir.listFiles()) {
+            val name = child.name ?: continue
+            when {
+                child.isDirectory -> collectFerryDocs(child, add, depth - 1)
+                child.isFile -> add(child.uri.toString(), name)
+            }
+        }
+    }
+
+    /** Saves/states folders under a granted RetroArch tree. Empty for ROM cards. */
+    private fun listGrantedRaFolders(treeUri: String): List<DocumentFile> {
+        val path = StoragePaths.documentId(treeUri)
+            ?.substringAfter(':', "")
+            ?.trim('/')
+            .orEmpty()
+        if (path.isEmpty()) return emptyList()
+        val segs = path.split('/')
+        val last = segs.last().lowercase()
+        val raTree = segs.any { it.equals("RetroArch", ignoreCase = true) } ||
+            path.contains("com.retroarch", ignoreCase = true)
+        if (!raTree) return emptyList()
+        val root = runCatching {
+            DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
+        }.getOrNull() ?: return emptyList()
+        return when (last) {
+            "saves", "states" -> listOf(root)
+            else -> root.listFiles().filter { child ->
+                child.isDirectory &&
+                    (child.name.equals("saves", ignoreCase = true) ||
+                        child.name.equals("states", ignoreCase = true))
+            }
+        }
+    }
+
+    private fun copyFerryOffer(offer: FerryOffer): Boolean {
+        openFerryInput(offer.fromUri)?.use { input ->
+            val bytes = input.readBytes()
+            if (tryWriteBesideSource(offer.fromUri, offer.toName, bytes)) return true
+            return tryWriteFallback(offer.kind, offer.toName, bytes)
+        }
+        return false
+    }
+
+    private fun openFerryInput(fromUri: String): InputStream? {
+        val uri = runCatching { Uri.parse(fromUri) }.getOrNull()
+        if (uri != null && (uri.scheme == "file" || uri.scheme.isNullOrEmpty())) {
+            val path = uri.path ?: fromUri
+            val file = File(path)
+            if (file.isFile) return runCatching { file.inputStream() }.getOrNull()
+        }
+        if (uri != null) {
+            runCatching { contentResolver.openInputStream(uri) }.getOrNull()?.let { return it }
+        }
+        val file = File(fromUri)
+        if (file.isFile) return runCatching { file.inputStream() }.getOrNull()
+        return null
+    }
+
+    private fun tryWriteBesideSource(fromUri: String, destName: String, bytes: ByteArray): Boolean {
+        fileParent(fromUri)?.let { parent ->
+            if (writeFerryFile(parent, destName, bytes)) return true
+        }
+        safParent(fromUri)?.let { parent ->
+            if (writeFerryDocument(parent, destName, bytes)) return true
+        }
+        return false
+    }
+
+    private fun tryWriteFallback(kind: FerryKind, destName: String, bytes: ByteArray): Boolean {
+        val folder = if (kind == FerryKind.RA_SRM) "saves" else "states"
+        raExternalDir()?.let { external ->
+            val dir = File(external, folder)
+            if (writeFerryFile(dir, destName, bytes)) return true
+        }
+        for (treeUri in settings.romTreeUris) {
+            for (dir in listGrantedRaFolders(treeUri)) {
+                val name = dir.name.orEmpty()
+                val target = when {
+                    name.equals(folder, ignoreCase = true) -> dir
+                    name.equals("RetroArch", ignoreCase = true) ->
+                        dir.listFiles().firstOrNull {
+                            it.isDirectory && it.name.equals(folder, ignoreCase = true)
+                        }
+                    else -> null
+                } ?: continue
+                if (writeFerryDocument(target, destName, bytes)) return true
+            }
+        }
+        return false
+    }
+
+    private fun fileParent(fromUri: String): File? {
+        val uri = runCatching { Uri.parse(fromUri) }.getOrNull()
+        val path = when {
+            uri?.scheme == "file" -> uri.path
+            uri?.scheme.isNullOrEmpty() -> fromUri
+            else -> StoragePaths.filesystemPath(fromUri)
+        } ?: return null
+        val parent = File(path).parentFile ?: return null
+        return parent.takeIf { it.isDirectory }
+    }
+
+    private fun safParent(fromUri: String): DocumentFile? {
+        val uri = runCatching { Uri.parse(fromUri) }.getOrNull() ?: return null
+        runCatching { DocumentFile.fromSingleUri(this, uri)?.parentFile }
+            .getOrNull()
+            ?.let { return it }
+        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+            ?: StoragePaths.documentId(fromUri)
+            ?: return null
+        val treeUri = settings.romTreeUris.firstOrNull { tree ->
+            val treeId = runCatching {
+                DocumentsContract.getTreeDocumentId(Uri.parse(tree))
+            }.getOrNull() ?: StoragePaths.documentId(tree) ?: return@firstOrNull false
+            docId == treeId || docId.startsWith("$treeId/")
+        } ?: return null
+        val slash = docId.lastIndexOf('/')
+        val parentId = if (slash <= 0) {
+            DocumentsContract.getTreeDocumentId(Uri.parse(treeUri))
+        } else {
+            docId.substring(0, slash)
+        }
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUri), parentId)
+        return runCatching { DocumentFile.fromSingleUri(this, parentUri) }.getOrNull()
+    }
+
+    private fun writeFerryFile(parent: File, destName: String, bytes: ByteArray): Boolean {
+        if (!parent.isDirectory && !parent.mkdirs()) return false
+        if (!parent.canWrite()) return false
+        val dest = File(parent, destName)
+        val tmp = File(parent, "$destName.tmp")
+        return runCatching {
+            tmp.outputStream().use { it.write(bytes) }
+            if (tmp.renameTo(dest)) return@runCatching true
+            if (dest.exists() && dest.delete() && tmp.renameTo(dest)) return@runCatching true
+            dest.outputStream().use { it.write(bytes) }
+            tmp.delete()
+            true
+        }.getOrElse {
+            tmp.delete()
+            false
+        }
+    }
+
+    private fun writeFerryDocument(
+        parent: DocumentFile,
+        destName: String,
+        bytes: ByteArray,
+    ): Boolean {
+        if (!parent.canWrite()) return false
+        val tmpName = "$destName.tmp"
+        parent.findFile(tmpName)?.delete()
+        val tmp = parent.createFile("application/octet-stream", tmpName)
+            ?: return writeFerryDocumentInPlace(parent, destName, bytes)
+        if (!writeDocumentBytes(tmp, bytes)) {
+            tmp.delete()
+            return writeFerryDocumentInPlace(parent, destName, bytes)
+        }
+        parent.findFile(destName)?.delete()
+        if (tmp.renameTo(destName)) return true
+        tmp.delete()
+        return writeFerryDocumentInPlace(parent, destName, bytes)
+    }
+
+    private fun writeFerryDocumentInPlace(
+        parent: DocumentFile,
+        destName: String,
+        bytes: ByteArray,
+    ): Boolean {
+        val dest = parent.findFile(destName)
+            ?: parent.createFile("application/octet-stream", destName)
+            ?: return false
+        return writeDocumentBytes(dest, bytes)
+    }
+
+    private fun writeDocumentBytes(doc: DocumentFile, bytes: ByteArray): Boolean {
+        val stream: OutputStream = runCatching {
+            contentResolver.openOutputStream(doc.uri, "w")
+                ?: contentResolver.openOutputStream(doc.uri)
+        }.getOrNull() ?: return false
+        return stream.use { out ->
+            runCatching {
+                out.write(bytes)
+                out.flush()
+                true
+            }.getOrDefault(false)
+        }
+    }
+
     /** O(1) ROM by id from the process snapshot (falls back to linear scan). */
     fun romEntry(id: String): RomEntry? =
         romById[id] ?: romEntries.firstOrNull { it.id == id }
@@ -2031,6 +2335,7 @@ class GhostGalleonApp : Application() {
         const val SETTINGS_SAVE_DEBOUNCE_MS = 180L
         const val SAMPLE_CHUNK_BYTES = 64 * 1024
         const val IDENT_TAG = "GGIdent"
+        const val FERRY_TAG = "GGFerry"
         const val THEATER_TICKER_MS = 4_000L
     }
 }

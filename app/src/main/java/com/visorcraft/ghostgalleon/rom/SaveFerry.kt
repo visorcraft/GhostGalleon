@@ -81,7 +81,7 @@ object SaveFerry {
         return out
     }
 
-    private fun stemOf(entry: RomEntry): String {
+    fun stemOf(entry: RomEntry): String {
         val file = entry.path?.substringAfterLast('/')
             ?: entry.id.substringAfter(':', entry.name).substringAfterLast('/')
         val dot = file.lastIndexOf('.')

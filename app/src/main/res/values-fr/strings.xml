@@ -478,6 +478,9 @@
     <string name="settings_stage_face_other">Autre</string>
     <string name="confirm_keep_on_yield_player">Ce lecteur est conçu pour les deux écrans. Ghost Galleon gardera un panneau. melonDualDS / Azahar ne verront pas le second écran.</string>
     <string name="confirm_yield_on_keep_player">Les deux panneaux iront au jeu. Le HUD de jeu sera masqué.</string>
+    <string name="confirm_save_ferry">Copier %1$s de %2$s vers %3$s. La destination sera écrasée.</string>
+    <string name="ferry_refuse_player">Impossible de convertir DraStic ↔ RetroArch dans cette version</string>
+    <string name="ferry_dest_unwritable">Destination non accessible en écriture</string>
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_cinema">Cinéma d\'états</string>
     <string name="settings_ra_theater">Théâtre des succès</string>
@@ -486,6 +489,7 @@
     <string name="settings_ram_trackers">Traceurs RAM</string>
     <string name="settings_import_lens_pack">Importer un pack de lentilles</string>
     <string name="settings_stack_clones">Empiler les clones</string>
+    <string name="settings_save_ferry">Bac de sauvegardes</string>
     <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>
     <string name="settings_ra_username">Nom d\'utilisateur RetroAchievements</string>
     <string name="settings_ra_username_hint">Nom RA</string>

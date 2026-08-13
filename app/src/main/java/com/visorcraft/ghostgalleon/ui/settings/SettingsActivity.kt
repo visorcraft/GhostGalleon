@@ -1480,7 +1480,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
-            "library rom folder rescan hidden collections players retroarch network commands talk"),
+            "library rom folder rescan hidden collections players retroarch network commands talk ferry save"),
         SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
             "artwork backup export import steamgriddb retroachievements scrape pack"),
         SettingsJump(SettingsCatalog.PAGE_STATS, getString(R.string.settings_page_stats),
@@ -2553,6 +2553,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         toggle(libraryCard, getString(R.string.settings_ra_theater), s.raTheaterEnabled) { on ->
             app.updateSettings(app.settings.copy(raTheaterEnabled = on))
+        }
+        toggle(libraryCard, getString(R.string.settings_save_ferry), s.saveFerryEnabled) { on ->
+            app.updateSettings(app.settings.copy(saveFerryEnabled = on))
         }
         toggle(libraryCard, getString(R.string.settings_ram_lenses), s.ramLensesEnabled) { on ->
             app.updateSettings(app.settings.copy(ramLensesEnabled = on))
