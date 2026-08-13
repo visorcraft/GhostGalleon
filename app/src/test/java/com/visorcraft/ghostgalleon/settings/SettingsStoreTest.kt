@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
@@ -477,7 +478,7 @@ class SettingsStoreTest {
         raw.remove("raNetworkCommands")
         f.writeText(raw.toString())
         val loaded = SettingsStore(f).load()
-        assertEquals(10, loaded.schemaVersion)
+        assertEquals(11, loaded.schemaVersion)
         assertTrue(loaded.sessionRing.isEmpty())
         assertTrue(loaded.detectBlackCompanion)
         assertFalse(loaded.raNetworkCommands)
@@ -525,7 +526,7 @@ class SettingsStoreTest {
         assertEquals(true, loaded.ramLensesEnabled)
         assertEquals("content://lenses/pack.json", loaded.ramLensPackUri)
         assertEquals(true, loaded.stackClones)
-        assertEquals(10, loaded.schemaVersion)
+        assertEquals(11, loaded.schemaVersion)
 
         val raw = org.json.JSONObject(f.readText())
         raw.put("schemaVersion", 9)
@@ -541,6 +542,60 @@ class SettingsStoreTest {
         assertTrue(migrated.stagePlots.isEmpty())
         assertTrue(migrated.packageYield.isEmpty())
         assertEquals(false, migrated.stackClones)
-        assertEquals(10, migrated.schemaVersion)
+        assertEquals(11, migrated.schemaVersion)
+    }
+
+    @Test
+    fun `v11 play-host fields round-trip and missing keys default`() {
+        val f = tmp.root.resolve("cfg-v11/settings.json")
+        val anchor = SeatAnchor("a", 0.8f, 0.7f)
+        val s = Settings.DEFAULT.copy(
+            schemaVersion = 11,
+            ramTrackersEnabled = false,
+            raCinemaEnabled = true,
+            raCinemaIntervalMs = 30_000,
+            raTheaterEnabled = true,
+            raTheaterPollMs = 45_000,
+            raSecondSeat = true,
+            raSeatAnchors = listOf(anchor),
+            saveFerryEnabled = false,
+            postureAware = false,
+            postureSuggestYield = true,
+            playHostHelperPackage = "org.example.maps",
+            romHelpers = mapOf("snes:x.sfc" to "org.example.wiki"),
+            warmResumeEnabled = false,
+            warmResumeLoad = true,
+        )
+        SettingsStore(f).save(s)
+        val loaded = SettingsStore(f).load()
+        assertEquals(false, loaded.ramTrackersEnabled)
+        assertEquals(true, loaded.raCinemaEnabled)
+        assertEquals(30_000, loaded.raCinemaIntervalMs)
+        assertEquals(true, loaded.raTheaterEnabled)
+        assertEquals(45_000, loaded.raTheaterPollMs)
+        assertEquals(true, loaded.raSecondSeat)
+        assertEquals(listOf(anchor), loaded.raSeatAnchors)
+        assertEquals(false, loaded.saveFerryEnabled)
+        assertEquals(false, loaded.postureAware)
+        assertEquals(true, loaded.postureSuggestYield)
+        assertEquals("org.example.maps", loaded.playHostHelperPackage)
+        assertEquals("org.example.wiki", loaded.romHelpers["snes:x.sfc"])
+        assertEquals(false, loaded.warmResumeEnabled)
+        assertEquals(true, loaded.warmResumeLoad)
+        assertEquals(11, loaded.schemaVersion)
+
+        val raw = org.json.JSONObject(f.readText())
+        raw.put("schemaVersion", 10)
+        raw.remove("raCinemaEnabled")
+        raw.remove("romHelpers")
+        raw.remove("warmResumeEnabled")
+        raw.remove("warmResumeLoad")
+        f.writeText(raw.toString())
+        val migrated = SettingsStore(f).load()
+        assertEquals(false, migrated.raCinemaEnabled)
+        assertTrue(migrated.romHelpers.isEmpty())
+        assertEquals(false, migrated.warmResumeLoad)
+        assertEquals(true, migrated.warmResumeEnabled)
+        assertEquals(11, migrated.schemaVersion)
     }
 }

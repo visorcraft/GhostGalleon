@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.StagePlot
@@ -37,7 +38,7 @@ class SettingsStore(private val file: File) {
     }
 
     companion object {
-        const val CURRENT_SCHEMA = 10
+        const val CURRENT_SCHEMA = 11
 
         // Internal (not private) so SettingsBundle can pack/unpack settings
         // through the exact same codec the on-disk file uses; same-module
@@ -192,6 +193,21 @@ class SettingsStore(private val file: File) {
             ramLensesEnabled = o.optBoolean("ramLensesEnabled", false),
             ramLensPackUri = o.optString("ramLensPackUri", "").ifBlank { null },
             stackClones = o.optBoolean("stackClones", false),
+            // Schema v11 play-host depth fields (absent = defaults).
+            ramTrackersEnabled = o.optBoolean("ramTrackersEnabled", true),
+            raCinemaEnabled = o.optBoolean("raCinemaEnabled", false),
+            raCinemaIntervalMs = o.optInt("raCinemaIntervalMs", 60_000).coerceIn(15_000, 300_000),
+            raTheaterEnabled = o.optBoolean("raTheaterEnabled", false),
+            raTheaterPollMs = o.optInt("raTheaterPollMs", 60_000).coerceIn(30_000, 300_000),
+            raSecondSeat = o.optBoolean("raSecondSeat", false),
+            raSeatAnchors = o.optJSONArray("raSeatAnchors").toSeatAnchors(),
+            saveFerryEnabled = o.optBoolean("saveFerryEnabled", true),
+            postureAware = o.optBoolean("postureAware", true),
+            postureSuggestYield = o.optBoolean("postureSuggestYield", false),
+            playHostHelperPackage = o.optString("playHostHelperPackage", "").ifBlank { null },
+            romHelpers = o.optJSONObject("romHelpers").toStringMap(),
+            warmResumeEnabled = o.optBoolean("warmResumeEnabled", true),
+            warmResumeLoad = o.optBoolean("warmResumeLoad", false),
             schemaVersion = CURRENT_SCHEMA,
         )
         }
@@ -337,6 +353,24 @@ class SettingsStore(private val file: File) {
             .put("ramLensesEnabled", s.ramLensesEnabled)
             .put("ramLensPackUri", s.ramLensPackUri ?: JSONObject.NULL)
             .put("stackClones", s.stackClones)
+            .put("ramTrackersEnabled", s.ramTrackersEnabled)
+            .put("raCinemaEnabled", s.raCinemaEnabled)
+            .put("raCinemaIntervalMs", s.raCinemaIntervalMs)
+            .put("raTheaterEnabled", s.raTheaterEnabled)
+            .put("raTheaterPollMs", s.raTheaterPollMs)
+            .put("raSecondSeat", s.raSecondSeat)
+            .put("raSeatAnchors", JSONArray().apply {
+                s.raSeatAnchors.forEach { put(SeatAnchor.toJson(it)) }
+            })
+            .put("saveFerryEnabled", s.saveFerryEnabled)
+            .put("postureAware", s.postureAware)
+            .put("postureSuggestYield", s.postureSuggestYield)
+            .put("playHostHelperPackage", s.playHostHelperPackage ?: JSONObject.NULL)
+            .put("romHelpers", JSONObject().apply {
+                s.romHelpers.forEach { (k, v) -> put(k, v) }
+            })
+            .put("warmResumeEnabled", s.warmResumeEnabled)
+            .put("warmResumeLoad", s.warmResumeLoad)
             .put("schemaVersion", CURRENT_SCHEMA)
         }
 
@@ -412,6 +446,14 @@ class SettingsStore(private val file: File) {
         private fun JSONObject?.toBooleanMap(): Map<String, Boolean> {
             if (this == null) return emptyMap()
             return keys().asSequence().associateWith { optBoolean(it) }
+        }
+
+        private fun JSONArray?.toSeatAnchors(): List<SeatAnchor> {
+            if (this == null) return emptyList()
+            return (0 until length()).mapNotNull { i ->
+                val o = optJSONObject(i) ?: return@mapNotNull null
+                SeatAnchor.fromJson(o)
+            }
         }
     }
 }

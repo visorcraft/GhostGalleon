@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.state.UIMode
@@ -152,7 +153,22 @@ data class Settings(
     val ramLensesEnabled: Boolean = false,
     val ramLensPackUri: String? = null,
     val stackClones: Boolean = false,
-    val schemaVersion: Int = 10,
+    // --- schema v11: play-host depth (trackers, cinema, theater, seat, ferry, posture, helper, warm) ---
+    val ramTrackersEnabled: Boolean = true,
+    val raCinemaEnabled: Boolean = false,
+    val raCinemaIntervalMs: Int = 60_000,
+    val raTheaterEnabled: Boolean = false,
+    val raTheaterPollMs: Int = 60_000,
+    val raSecondSeat: Boolean = false,
+    val raSeatAnchors: List<SeatAnchor> = emptyList(),
+    val saveFerryEnabled: Boolean = true,
+    val postureAware: Boolean = true,
+    val postureSuggestYield: Boolean = false,
+    val playHostHelperPackage: String? = null,
+    val romHelpers: Map<String, String> = emptyMap(),
+    val warmResumeEnabled: Boolean = true,
+    val warmResumeLoad: Boolean = false,
+    val schemaVersion: Int = 11,
 ) {
     companion object {
         val DEFAULT_KEY_MAP: Map<Int, Action> = mapOf(
