@@ -1252,6 +1252,24 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
+                // Play host moves with the swap — drop HOST claim and re-apply
+                // flags on every live deck (not only the activity that handled SWAP).
+                app.releaseHost()
+                app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+            }
+            true
+        }
+        Action.CLAIM_HOST -> {
+            if (repeatCount == 0) {
+                app.claimHost()
+                applyPlayHostFocusLock()
+            }
+            true
+        }
+        Action.RELEASE_HOST -> {
+            if (repeatCount == 0) {
+                app.releaseHost()
+                applyPlayHostFocusLock()
             }
             true
         }
@@ -1376,7 +1394,14 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
         )
     )
     if (!allowed) return
+    // Switcher chrome needs HOST pad; yield already returned above.
+    app.claimHost()
+    app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     val host = sessionSwitcherHost(activity) ?: return
+    fun releaseSwitcherHost() {
+        app.releaseHost()
+        app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+    }
     fun attach() {
         SessionSwitcherView.attach(
             host,
@@ -1392,7 +1417,10 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                         target,
                     )
                 ) {
-                    SwitchToResult.NO_OP -> SessionSwitcherView.detach(host)
+                    SwitchToResult.NO_OP -> {
+                        SessionSwitcherView.detach(host)
+                        releaseSwitcherHost()
+                    }
                     SwitchToResult.REFUSE_YIELD -> {
                         Toast.makeText(
                             activity,
@@ -1400,8 +1428,10 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                             Toast.LENGTH_SHORT,
                         ).show()
                         SessionSwitcherView.detach(host)
+                        releaseSwitcherHost()
                     }
                     SwitchToResult.LAUNCH -> {
+                        // Leave claim until beginSession resets hostClaimed.
                         SessionSwitcherView.detach(host)
                         launchSlotKey(
                             activity,
@@ -1422,7 +1452,10 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                 )
                 attach()
             },
-            onClose = { SessionSwitcherView.detach(host) },
+            onClose = {
+                SessionSwitcherView.detach(host)
+                releaseSwitcherHost()
+            },
         )
     }
     attach()
