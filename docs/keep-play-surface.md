@@ -106,9 +106,9 @@ for a HUD.
 ### What it shows
 
 One column, compact on the short panel (`CompanionHeroMetrics` rules).
-In-place updates only (`DeckState` **SELECTION** or a dedicated
-`PLAY_HUD` change that maps to the same in-place path). Never SETTINGS
-for a clock tick or RA status.
+Clock and RA status mutate `TextView`s in place. Never SETTINGS, BROWSE,
+or SELECTION for a clock tick or RA status. There is no
+`DeckState.Change.PLAY_HUD`.
 
 | Row | Content | Notes |
 |---|---|---|
@@ -347,6 +347,12 @@ v1 commands (ASCII, newline-terminated):
 | `LOAD_STATE` | After slot pick. |
 | `SAVE_STATE_SLOT n` / `LOAD_STATE_SLOT n` | If the build supports them; else set slot via two-step documented fallback and disable the strip. |
 
+`PAUSE_TOGGLE`, `SAVE_STATE`, and `LOAD_STATE` are fire-and-forget
+(RetroArch sends no UDP reply). A timeout must not drop `linkUp`.
+`VERSION` and `GET_STATUS` still require a reply. First failed
+`*_STATE_SLOT` hides the slot strip for the process and falls back to
+`SAVE_STATE` / `LOAD_STATE`.
+
 Probe at most every **5s** while the HUD is visible and the link is
 down. Probe immediately when the HUD binds. Timeout **200 ms**. One
 outstanding datagram.
@@ -405,7 +411,7 @@ switcher + favorite + open with + end/reclaim. No fake pause button.
 
 ## Data / settings (schema v9)
 
-Bump `Settings.schemaVersion` to **9**. `SettingsStoreTest` must cover
+`Settings.schemaVersion` is **9**. `SettingsStoreTest` covers
 missing-v9 → defaults.
 
 | Field | Default | Role |
@@ -432,9 +438,11 @@ Log tags: `GGSession` (existing greedy + `ra-cmd enabled`),
 
 ## Dual-paint additions
 
-- Play HUD ticks are not SETTINGS and not BROWSE.
+- Play HUD ticks (clock + RA chip state) are not SETTINGS, not BROWSE,
+  and not SELECTION.
 - Oracle heals use the existing `restartCompanionPanel` + `allowHeal`
-  debounce. No new full-paint storm.
+  debounce (`oracle-black`). They are not SETTINGS. No new full-paint
+  storm.
 - Switcher open/close is in-place on the play host (add/remove a
   child). If that fails once, one full companion rebuild is allowed.
 - Yield / greedy: `sessionOwnsCompanionDisplay` still blocks heal,
@@ -444,20 +452,23 @@ Log tags: `GGSession` (existing greedy + `ra-cmd enabled`),
 
 Ship in this order. Phase 2 and 3 may overlap after 1. Phase 4 needs 1.
 
-| Phase | Ships | Depends on |
+| Phase | Ships | Status |
 |---|---|---|
-| **1 — Play host** | `playHostAllowed`, HUD chrome (art/title/clock/actions without RA), new Actions, SELECTION ticks | Split-session KEEP |
-| **2 — Switcher** | Ring push/persist v9, switcher UI, switch-to via `launchSlotKey` | Phase 1 |
-| **3 — Oracle** | `oracleMaySample`, 32×32 PixelCopy, 3-miss heal, System toggle | Dual-paint heal |
-| **4 — RA link** | Opt-in cfg, UDP probe/status/pause/save/load, optional thumbs | Phase 1 |
+| **1 — Play host** | `playHostAllowed`, HUD chrome (art/title/clock/actions without RA), new Actions, in-place clock ticks | **Implemented** (host). Sugar device matrix **not run**. |
+| **2 — Switcher** | Ring push/persist v9, switcher overlay, switch-to via `launchSlotKey` | **Implemented** (host). Sugar device matrix **not run**. |
+| **3 — Oracle** | `oracleMaySample`, 32×32 PixelCopy, 3-miss heal, System toggle | **Implemented** (host). Sugar device matrix **not run**. |
+| **4 — RA link** | Opt-in cfg, UDP probe/status, fire-and-forget pause/save/load, slot strip 1–8 | **Implemented** (host). Sugar device matrix **not run**. |
 
 Phase 1 before 4: a HUD that pauses RA is useless if it can appear on
 a DS panel. Phase 2 before claiming “better than Recents”: the ring
 must not be launchable during yield.
 
+Code for all four phases is on `feat/keep-play-surface`. Host tests are
+not device proof. Do not claim the Sugar matrix from this doc.
+
 ## Device matrix (Sugar)
 
-Do not claim a phase done from host tests alone.
+**Not run.** Rows below are the intended checks, not observed proof.
 
 | Step | Must see |
 |---|---|
@@ -508,19 +519,25 @@ Device: run the matrix. Host green is not a Sugar claim.
 Task-by-task implementation plan (all four phases):
 [`superpowers/plans/2026-08-13-keep-play-surface.md`](superpowers/plans/2026-08-13-keep-play-surface.md).
 
-## Implementation sketch (not a plan)
+## Implementation (shipped)
 
-Authoritative new types (host-testable, no Android `Display`):
+Authoritative types (host-testable, no Android `Display`):
 
 - `ui/PlayHostPolicy.kt` — `playHostAllowed`, `oracleMaySample`
-- `rom/SessionRing.kt` — cap, dedupe, JSON
-- `rom/RaCommandClient.kt` — UDP encode/decode + timeout (inject clock)
+- `rom/SessionRing.kt` — cap 8, dedupe by key
+- `rom/SessionSwitch.kt` — switch-to decision
+- `rom/OracleTally.kt` — 3-miss heal tally
+- `rom/RaCommand.kt` — UDP encode/decode, probe, fire-and-forget pause/save/load
+- `rom/RaCfg.kt` — opt-in `network_cmd_*`
+- `rom/RaStateSlots.kt` — slots 1–8 + best-effort thumbs
 
 Call sites:
 
 - `CompanionPanel` binds HUD when `playHostAllowed`
+- `SessionSwitcherView` overlay + `launchSlotKey`
 - `GhostGalleonApp.beginSession` pushes the ring
-- `MainActivity` / `CompanionActivity` schedule oracle ticks
-- Settings v9 + Controller Lab actions
+- `MainActivity` / `CompanionActivity` clock ticks + oracle (`PixelCopy` of the owned window)
+- Settings v9 (`sessionRing`, `detectBlackCompanion`, `raNetworkCommands`) + Controller Lab actions
+- `RaUdpTransport` holds `DatagramSocket` (not referenced from `RaCommand.kt` policy types)
 
-Do not put `PixelCopy` or `DatagramSocket` in `SessionPolicy`.
+Do not put `PixelCopy` or `DatagramSocket` in `SessionPolicy` / `PlayHostPolicy`.

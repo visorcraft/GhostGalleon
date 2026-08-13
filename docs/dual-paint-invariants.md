@@ -79,6 +79,12 @@ KEEP play HUD, session switcher, pixel oracle, RetroArch commands
     happens on HOME return after `clearSessionSurface`. See
     [`split-session-ownership.md`](split-session-ownership.md).
 
+12. **Play HUD ticks and oracle heals are not SETTINGS.** Clock and RA
+    status mutate `TextView`s in place. Oracle heals use
+    `restartCompanionPanel("oracle-black")` plus `MIN_HEAL_GAP_MS`.
+    Neither path calls `notifyChanged()`. See
+    [`keep-play-surface.md`](keep-play-surface.md).
+
 ## Granular re-render map
 
 `DeckState.Change` drives how each activity reacts:
