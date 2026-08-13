@@ -40,6 +40,8 @@
     <string name="action_open_settings">Ouvrir les paramètres</string>
     <string name="action_toggle_favorite">Favori</string>
     <string name="action_show_details">Détails</string>
+    <string name="action_open_session_switcher">Sélecteur de session</string>
+    <string name="action_toggle_play_hud">HUD de jeu</string>
     <string name="action_open_with">Ouvrir avec…</string>
     <string name="action_page_left">Page précédente (L1)</string>
     <string name="action_page_right">Page suivante (R1)</string>
@@ -332,6 +334,15 @@
     <string name="deck_only_one_display">Un seul écran — échange impossible</string>
     <string name="deck_restart_bottom_panel">Redémarrage du panneau inférieur…</string>
     <string name="session_yields_both_screens">Ce jeu utilise les deux écrans</string>
+    <string name="play_hud_end">Terminer la session</string>
+    <string name="play_hud_reclaim">Récupérer l’accueil</string>
+    <string name="play_hud_switcher">Sessions</string>
+    <string name="play_hud_pause">Pause</string>
+    <string name="play_hud_resume">Reprendre</string>
+    <string name="play_hud_save">Sauver</string>
+    <string name="play_hud_load">Charger</string>
+    <string name="session_switcher_title">Sessions</string>
+    <string name="session_ring_empty">Aucune session récente</string>
     <string name="deck_add_rom_folder_done">Dossier ROM ajouté</string>
     <string name="theme_ghost">Fantôme</string>
     <string name="theme_threeds">Turquoise</string>
@@ -439,6 +450,8 @@
     <string name="settings_default_players">Lecteurs par défaut</string>
     <string name="settings_system_defaults">Paramètres système par défaut</string>
     <string name="settings_player_uses_both_screens">Utilise les deux écrans</string>
+    <string name="settings_ra_network_commands">Parler à RetroArch</string>
+    <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>
     <string name="settings_ra_username">Nom d\'utilisateur RetroAchievements</string>
     <string name="settings_ra_username_hint">Nom RA</string>
     <string name="settings_ra_username_cleared">Nom RA effacé</string>
@@ -596,6 +609,7 @@
     <string name="settings_dual_recovery_title">Écrans duals noirs</string>
     <string name="settings_dual_recovery_body">Si un ou les deux panneaux deviennent noirs : (1) Redémarrer le panneau compagnon ci-dessous, ou appuyer sur X une ou deux fois ; (2) Lancer un jeu puis revenir ; (3) Forcer l’arrêt de Ghost Galleon puis HOME ; (4) Redémarrer si besoin.</string>
     <string name="settings_restart_companion">Redémarrer le panneau compagnon</string>
+    <string name="settings_detect_black_companion">Détecter le compagnon noir</string>
     <string name="settings_dual_recovery_no_main">Ouvrez d’abord l’écran d’accueil, puis réessayez</string>
     <string name="settings_chrome_custom_hint">Personnalisé s’applique dès qu’un rail avancé diffère de Minimal ou Complet.</string>
     <string name="settings_chrome_power_rails">Rails avancés et extras</string>

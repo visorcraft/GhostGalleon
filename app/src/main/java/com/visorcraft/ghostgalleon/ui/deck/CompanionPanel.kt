@@ -4,6 +4,7 @@ import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
@@ -14,6 +15,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -21,6 +23,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -41,16 +44,22 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaStateSlots
+import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.rom.SelectionStrip
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.Settings
@@ -59,9 +68,13 @@ import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.MainActivity
+import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
+import com.visorcraft.ghostgalleon.ui.openSessionSwitcher
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
+import java.io.File
 
 object CompanionPanel {
 
@@ -91,6 +104,34 @@ object CompanionPanel {
     private const val TAG_STRIP_DETAIL = "strip_detail"
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
+    private const val TAG_PLAY_HUD = "play_hud"
+    private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
+    private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
+    private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
+    private const val TAG_PLAY_HUD_RA = "play_hud_ra"
+    private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
+    private const val TAG_PLAY_HUD_SLOTS = "play_hud_slots"
+    private const val RA_PACKAGE = "com.retroarch.aarch64"
+    /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
+    const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
+
+    fun sessionSwitcherHost(root: View): ViewGroup? =
+        root.findViewWithTag(TAG_SESSION_SWITCHER_HOST)
+
+    fun attachSessionSwitcher(
+        root: View,
+        entries: List<SessionRingEntry>,
+        onPick: (SessionRingEntry) -> Unit,
+        onRemove: (String) -> Unit,
+        onClose: () -> Unit,
+    ) {
+        val host = sessionSwitcherHost(root) ?: return
+        SessionSwitcherView.attach(host, entries, onPick, onRemove, onClose)
+    }
+
+    fun detachSessionSwitcher(root: View) {
+        sessionSwitcherHost(root)?.let { SessionSwitcherView.detach(it) }
+    }
 
     /**
      * Slot key companion Resume launches through [launchSlotKey].
@@ -272,6 +313,10 @@ object CompanionPanel {
         if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
             return updateTopStrip(view, context, state, library, roms, settings)
         }
+        // KEEP full play HUD and PERF tab replace hero. Selection lives on
+        // the other display — do not rebuild Companion on every NAV.
+        if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) return true
+        if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
         // Resume chip: only touch an existing view (GONE/show). Never require
         // the chip to exist when resumeChip is on — content may omit it.
         view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
@@ -1073,6 +1118,18 @@ object CompanionPanel {
         // rain in front) can span the WHOLE panel; all normal content lives
         // in the vertical `content` column, which carries TAG_PANEL_ROOT.
         val root = FrameLayout(context)
+        fun installSwitcherHost(): FrameLayout {
+            if (root.findViewWithTag<View>(TAG_SESSION_SWITCHER_HOST) == null) {
+                root.addView(
+                    FrameLayout(context).apply { tag = TAG_SESSION_SWITCHER_HOST },
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            }
+            return root
+        }
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             tag = TAG_PANEL_ROOT
@@ -1105,6 +1162,29 @@ object CompanionPanel {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { bottomMargin = dp(8) })
 
+        val surface = app.sessionSurface
+        val hostId = activity.currentDisplayId()
+        val playHud = PlayHostPolicy.playHostAllowed(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            hostDisplayId = hostId,
+            launchDisplayId = surface?.launchDisplayId,
+        )
+        fun sessionCard(
+            session: com.visorcraft.ghostgalleon.library.OpenSession,
+            compact: Boolean,
+        ): View =
+            if (playHud && surface != null) {
+                buildPlayHud(
+                    activity, library, roms, settings, session, surface, toDp, compact,
+                )
+            } else {
+                buildNowPlayingCard(
+                    activity, library, roms, settings, session, toDp, compact,
+                )
+            }
+
         when (effectiveRole) {
             CompanionRole.PERF_HUD -> {
                 content.addView(buildPerfHud(context, settings, toDp), LinearLayout.LayoutParams(
@@ -1116,7 +1196,7 @@ object CompanionPanel {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ))
-                return root
+                return installSwitcherHost()
             }
             CompanionRole.PINNED_APP -> {
                 if (!CompanionRoleResolve.pinConflictsWithSession(pinPkg, app.sessionSurface)) {
@@ -1132,41 +1212,56 @@ object CompanionPanel {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     ))
-                    return root
+                    return installSwitcherHost()
                 }
-                // Pin is the open KEEP game — pause pin, show Now Playing / hero.
+                // Pin is the open KEEP game — pause pin, show play HUD.
             }
-            CompanionRole.NOW_PLAYING -> {
-                // Full Now Playing as primary content when role is set.
-                val session = app.openSession
-                if (session != null) {
-                    content.addView(
-                        buildNowPlayingCard(
-                            activity, library, roms, settings, session, toDp, compact = false,
-                        ),
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ),
-                    )
-                    content.background = panelBackground(context, settings.accentColor)
-                    root.addView(content, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    ))
-                    return root
-                }
-                // Fall through to hero when no session.
-            }
-            CompanionRole.HERO -> { /* default hero below */ }
+            CompanionRole.NOW_PLAYING, CompanionRole.HERO -> { /* play HUD / hero below */ }
         }
 
-        // Compact Now Playing banner when a session is open.
-        app.openSession?.let { session ->
+        val openSession = app.openSession
+        // KEEP play host: full play HUD replaces hero (and compact banner).
+        // PERF stays the in-place tab (already returned). Pin without a
+        // conflict already returned. Pin-of-the-open-game falls through here.
+        if (playHud && surface != null && openSession != null) {
             content.addView(
-                buildNowPlayingCard(
-                    activity, library, roms, settings, session, toDp, compact = true,
+                buildPlayHud(
+                    activity, library, roms, settings, openSession, surface, toDp,
+                    compact = panelHeightDp < 500f,
                 ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            content.background = panelBackground(context, settings.accentColor)
+            root.addView(content, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            return installSwitcherHost()
+        }
+
+        if (effectiveRole == CompanionRole.NOW_PLAYING && openSession != null) {
+            content.addView(
+                sessionCard(openSession, compact = false),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            content.background = panelBackground(context, settings.accentColor)
+            root.addView(content, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            return installSwitcherHost()
+        }
+
+        // Compact Now Playing banner when a session is open (non-play-host).
+        openSession?.let { session ->
+            content.addView(
+                sessionCard(session, compact = true),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1670,7 +1765,7 @@ object CompanionPanel {
         if (shouldHostSystemChromeIcons(activity)) {
             attachSystemChromeOverlay(root, context, activity, state)
         }
-        return root
+        return installSwitcherHost()
     }
 
     private fun roleChipRow(
@@ -2037,5 +2132,450 @@ object CompanionPanel {
         })
         nowPlaying.addView(actions)
         return nowPlaying
+    }
+
+    private fun buildPlayHud(
+        activity: AppCompatActivity,
+        library: AppLibrary,
+        roms: List<RomEntry>,
+        settings: Settings,
+        session: com.visorcraft.ghostgalleon.library.OpenSession,
+        surface: SessionSurface,
+        dp: (Int) -> Int,
+        compact: Boolean,
+    ): View {
+        val app = activity.application as GhostGalleonApp
+        val hud = LinearLayout(activity).apply {
+            tag = TAG_PLAY_HUD
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = TileBackgrounds.card(activity)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        hud.addView(TextView(activity).apply {
+            setText(R.string.label_now_playing)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            letterSpacing = 0.12f
+            gravity = Gravity.CENTER
+        })
+        val artPx = dp(if (compact) 64 else 96)
+        val hudRom = selectedRom(surface.key, roms, app)
+        if (hudRom != null) {
+            hud.addView(
+                ArtTile.view(
+                    activity,
+                    app.artCache,
+                    hudRom,
+                    targetPx = artPx,
+                    artOverrides = settings.artOverrides,
+                ),
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                },
+            )
+        } else {
+            val icon = ImageView(activity)
+            CustomIcon.bind(
+                icon,
+                iconLoader(activity),
+                app.artCache,
+                settings,
+                surface.packageName.ifBlank { surface.key },
+                artPx,
+            )
+            hud.addView(
+                icon,
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                },
+            )
+        }
+        val label = resumeLabel(surface.key, library, roms, settings, app)
+        hud.addView(TextView(activity).apply {
+            text = label
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            maxLines = if (compact) 1 else 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        val playerName = Platforms.ALL.flatMap { it.players }
+            .firstOrNull { it.id == surface.playerId }
+            ?.displayName
+            .orEmpty()
+        hud.addView(TextView(activity).apply {
+            text = playerName
+            visibility = if (playerName.isEmpty()) View.GONE else View.VISIBLE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 14f)
+            setTextColor(0xBBFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
+        hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_CLOCK
+            text = activity.getString(
+                if (session.isActive) R.string.format_session else R.string.format_session_paused,
+                activity.resolveText(SessionMath.formatPlaytime(elapsed)),
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 16f)
+            setTextColor(0x99FFFFFF.toInt())
+            gravity = Gravity.CENTER
+        })
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            isBaselineAligned = false
+        }
+        val actionsScroll = HorizontalScrollView(activity).apply {
+            tag = TAG_PLAY_HUD_ACTIONS
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+            visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
+            addView(
+                actions,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ),
+            )
+        }
+        fun actionChip(
+            labelRes: Int,
+            chipTag: Any? = null,
+            filled: Boolean = false,
+            visibility: Int = View.VISIBLE,
+            onClick: (() -> Unit)? = null,
+        ): TextView = TextView(activity).apply {
+            tag = chipTag
+            setText(labelRes)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(if (filled) Color.BLACK else Color.WHITE)
+            if (filled) {
+                background = TileBackgrounds.selected(activity, settings.accentColor)
+            }
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            this.visibility = visibility
+            if (onClick != null) setOnClickListener { onClick() }
+        }
+        fun addChip(chip: View) {
+            if (actions.childCount > 0 && chip.visibility != View.GONE) {
+                actions.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+            }
+            actions.addView(chip)
+        }
+        addChip(actionChip(R.string.action_swap, filled = true) {
+            app.swapInteractiveDisplay()
+        })
+        addChip(actionChip(R.string.play_hud_end) {
+            app.clearOpenSession()
+        })
+        addChip(actionChip(R.string.play_hud_reclaim) {
+            app.noteReturnToLauncher()
+            hud.visibility = View.GONE
+            if (app.liveCompanion() == null) {
+                (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
+            }
+        })
+        addChip(
+            actionChip(
+                if (surface.key in settings.favorites) R.string.action_unfavorite
+                else R.string.action_favorite,
+            ) {
+                EntryActions.toggleFavorite(activity, surface.key)
+            },
+        )
+        addChip(actionChip(R.string.action_open_with) {
+            val rom = selectedRom(surface.key, roms, app) ?: return@actionChip
+            EntryActions.openWith(activity, rom) { playerId ->
+                launchSlotKey(
+                    activity, app.deckState, roms, surface.key, playerId = playerId,
+                )
+            }
+        })
+        var slotStrip: View? = null
+        if (raHudEligible(settings.raNetworkCommands, surface)) {
+            val raChips = LinearLayout(activity).apply {
+                tag = TAG_PLAY_HUD_RA
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                isBaselineAligned = false
+                visibility = View.GONE
+                if (actions.childCount > 0) setPadding(dp(12), 0, 0, 0)
+            }
+            fun addRaChip(chip: View) {
+                if (raChips.childCount > 0) {
+                    raChips.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+                }
+                raChips.addView(chip)
+            }
+            fun runRa(command: (RaCommandClient, Int) -> Unit) {
+                enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                    command(client, port)
+                }
+            }
+            var slotSaveMode = false
+            val builtSlots = buildRaSlotStrip(
+                activity, settings, surface, dp, compact,
+            ) { slot ->
+                val save = slotSaveMode
+                enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                    val ok = if (save) client.saveStateSlot(port, slot)
+                    else client.loadStateSlot(port, slot)
+                    if (!ok) {
+                        if (save) client.saveState(port) else client.loadState(port)
+                    }
+                }
+            }
+            slotStrip = builtSlots
+            fun showOrRunSlots(save: Boolean) {
+                val client = app.ensureRaCommandClient()
+                if (!client.slotStripAllowed()) {
+                    enqueueRaChipWork(hud, app, probe = false) { c, port ->
+                        if (save) c.saveState(port) else c.loadState(port)
+                    }
+                    return
+                }
+                if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
+                    builtSlots.visibility = View.GONE
+                    return
+                }
+                slotSaveMode = save
+                builtSlots.visibility = View.VISIBLE
+            }
+            addRaChip(
+                actionChip(R.string.play_hud_pause, chipTag = TAG_PLAY_HUD_PAUSE) {
+                    runRa { client, port -> client.pauseToggle(port) }
+                },
+            )
+            addRaChip(
+                actionChip(R.string.play_hud_save) {
+                    showOrRunSlots(save = true)
+                },
+            )
+            addRaChip(
+                actionChip(R.string.play_hud_load) {
+                    showOrRunSlots(save = false)
+                },
+            )
+            actions.addView(raChips)
+            hud.post {
+                if (!hud.isAttachedToWindow) return@post
+                enqueueRaChipWork(hud, app, probe = true)
+            }
+        }
+        addChip(
+            actionChip(
+                R.string.play_hud_switcher,
+                chipTag = TAG_PLAY_HUD_SWITCHER,
+            ) {
+                openSessionSwitcher(activity)
+            },
+        )
+        hud.addView(actionsScroll)
+        slotStrip?.let { strip ->
+            if (!app.playHudExpanded) strip.visibility = View.GONE
+            hud.addView(strip)
+        }
+        return hud
+    }
+
+    fun tickPlayHudRa(root: View?, app: GhostGalleonApp, activity: Context) {
+        val group = root?.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+        val surface = app.sessionSurface
+        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
+        val allowed = surface != null &&
+            raHudEligible(app.settings.raNetworkCommands, surface) &&
+            PlayHostPolicy.playHostAllowed(
+                dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                policy = surface.policy,
+                greedy = surface.greedy,
+                hostDisplayId = hostId,
+                launchDisplayId = surface.launchDisplayId,
+            )
+        if (!allowed) {
+            group.visibility = View.GONE
+            root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.visibility = View.GONE
+            return
+        }
+        val client = app.raCommandClient
+        if (client?.isLinkUp() == true) return
+        enqueueRaChipWork(root, app, probe = true)
+    }
+
+    private fun raHudEligible(raNetworkCommands: Boolean, surface: SessionSurface): Boolean {
+        if (!raNetworkCommands) return false
+        val playerId = surface.playerId.orEmpty()
+        return playerId.startsWith("ra-") || surface.packageName == RA_PACKAGE
+    }
+
+    private class RaChipSnap(
+        val show: Boolean,
+        val paused: Boolean,
+        val slotsAllowed: Boolean,
+    )
+
+    private fun enqueueRaChipWork(
+        root: View,
+        app: GhostGalleonApp,
+        probe: Boolean,
+        extra: (RaCommandClient, Int) -> Unit = { _, _ -> },
+    ) {
+        val port = app.settings.raNetworkCmdPort
+        var snap: RaChipSnap? = null
+        app.enqueueRaUdp(
+            work = { client ->
+                extra(client, port)
+                snap = sampleRaChip(client, port, probe)
+            },
+            onMain = {
+                if (!root.isAttachedToWindow) return@enqueueRaUdp
+                paintRaChip(root, snap)
+            },
+        )
+    }
+
+    private fun sampleRaChip(client: RaCommandClient, port: Int, probe: Boolean): RaChipSnap {
+        if (probe && !client.probe(port, SystemClock.elapsedRealtime())) {
+            return RaChipSnap(false, false, client.slotStripAllowed())
+        }
+        if (!client.isLinkUp()) {
+            return RaChipSnap(false, false, client.slotStripAllowed())
+        }
+        val status = client.status(port)
+        if (!client.isLinkUp()) {
+            return RaChipSnap(false, false, client.slotStripAllowed())
+        }
+        return RaChipSnap(true, status == RaStatus.PAUSED, client.slotStripAllowed())
+    }
+
+    private fun paintRaChip(root: View, snap: RaChipSnap?) {
+        val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+        val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
+        val slots = root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)
+        if (snap == null || !snap.show) {
+            group.visibility = View.GONE
+            slots?.visibility = View.GONE
+            return
+        }
+        pause.setText(
+            if (snap.paused) R.string.play_hud_resume
+            else R.string.play_hud_pause,
+        )
+        group.visibility = View.VISIBLE
+        if (!snap.slotsAllowed) slots?.visibility = View.GONE
+    }
+
+    private fun buildRaSlotStrip(
+        activity: AppCompatActivity,
+        settings: Settings,
+        surface: SessionSurface,
+        dp: (Int) -> Int,
+        compact: Boolean,
+        onPick: (Int) -> Unit,
+    ): View {
+        val cell = dp(if (compact) 36 else 44)
+        val statesDir = raStatesDir(surface)
+        val pngNames = statesDir?.let { RaStateSlots.pngNamesIn(it) }.orEmpty()
+        val thumbs = RaStateSlots.thumbsBySlot(pngNames)
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            isBaselineAligned = false
+        }
+        for (slot in RaStateSlots.slotLabels(pngNames)) {
+            val thumbName = thumbs[slot]
+            val bmp = if (statesDir != null && thumbName != null) {
+                decodeSlotThumb(File(statesDir, thumbName), cell)
+            } else {
+                null
+            }
+            row.addView(raSlotCell(activity, settings, slot, bmp, cell, dp, onPick))
+        }
+        return HorizontalScrollView(activity).apply {
+            tag = TAG_PLAY_HUD_SLOTS
+            visibility = View.GONE
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, dp(8), 0, 0)
+            addView(
+                row,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { gravity = Gravity.CENTER_HORIZONTAL },
+            )
+        }
+    }
+
+    private fun raSlotCell(
+        activity: AppCompatActivity,
+        settings: Settings,
+        slot: Int,
+        thumb: Bitmap?,
+        sizePx: Int,
+        dp: (Int) -> Int,
+        onPick: (Int) -> Unit,
+    ): View {
+        val cell = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                if (slot > RaStateSlots.SLOTS.first()) marginStart = dp(6)
+            }
+            background = TileBackgrounds.chip(activity)
+            setOnClickListener { onPick(slot) }
+        }
+        if (thumb != null) {
+            cell.addView(ImageView(activity).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageBitmap(thumb)
+            })
+        }
+        cell.addView(TextView(activity).apply {
+            text = slot.toString()
+            setTextColor(if (thumb != null) Color.WHITE else settings.accentColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            if (thumb != null) setBackgroundColor(0x66000000)
+        })
+        return cell
+    }
+
+    private fun raStatesDir(surface: SessionSurface): File? {
+        val players = Platforms.ALL.flatMap { it.players }
+        val extras = players.firstOrNull { it.id == surface.playerId }?.extras
+            ?: players.firstOrNull { it.id.startsWith("ra-") }?.extras
+        val external = extras?.get("EXTERNAL")?.trim().orEmpty()
+        if (external.isEmpty()) return null
+        return File("$external/states")
+    }
+
+    private fun decodeSlotThumb(file: File, targetPx: Int): Bitmap? {
+        if (!file.isFile || !file.canRead()) return null
+        return runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            var sample = 1
+            val w = bounds.outWidth
+            val h = bounds.outHeight
+            while (w / sample > targetPx * 2 && h / sample > targetPx * 2) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+        }.getOrNull()
     }
 }

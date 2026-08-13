@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.state.UIMode
 
 data class Settings(
@@ -135,7 +136,12 @@ data class Settings(
      * schema v8; absent on disk → false.
      */
     val layoutSeeded: Boolean = false,
-    val schemaVersion: Int = 8,
+    // --- schema v9: session ring + black-companion detect + RA network cmds ---
+    val sessionRing: List<SessionRingEntry> = emptyList(),
+    val detectBlackCompanion: Boolean = true,
+    val raNetworkCommands: Boolean = false,
+    val raNetworkCmdPort: Int = 55355,
+    val schemaVersion: Int = 9,
 ) {
     companion object {
         val DEFAULT_KEY_MAP: Map<Int, Action> = mapOf(

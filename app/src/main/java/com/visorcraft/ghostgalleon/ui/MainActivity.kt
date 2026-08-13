@@ -17,6 +17,14 @@ class MainActivity : BaseDeckActivity() {
 
     private var lastHealUptimeMs: Long = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val playHudHandler = Handler(Looper.getMainLooper())
+    private val playHudTick = object : Runnable {
+        override fun run() {
+            tickPlayHudClock(window.decorView, app, this@MainActivity)
+            playHudHandler.postDelayed(this, 1000L)
+        }
+    }
+    private val oracle = PixelOracle(this) { isFullRenderInFlight }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +67,20 @@ class MainActivity : BaseDeckActivity() {
             // Playtime stays on endOpenSession / noteReturnToLauncher.
             app.clearSessionSurface()
         }
+        playHudHandler.post(playHudTick)
+        oracle.start()
+    }
+
+    override fun onPause() {
+        playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent?) {

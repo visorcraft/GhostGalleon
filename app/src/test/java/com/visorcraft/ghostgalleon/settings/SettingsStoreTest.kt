@@ -1,7 +1,10 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.state.UIMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -459,5 +462,37 @@ class SettingsStoreTest {
         // The re-saved file stores filled keys only.
         val arr = org.json.JSONObject(f.readText()).getJSONArray("dockSlots")
         assertEquals(4, arr.length())
+    }
+
+    @Test
+    fun `v8 json loads v9 defaults and stamps schema 9`() {
+        val f = tmp.newFile()
+        SettingsStore(f).save(Settings.DEFAULT.copy(schemaVersion = 8))
+        val raw = org.json.JSONObject(f.readText())
+        raw.put("schemaVersion", 8)
+        raw.remove("sessionRing")
+        raw.remove("detectBlackCompanion")
+        raw.remove("raNetworkCommands")
+        f.writeText(raw.toString())
+        val loaded = SettingsStore(f).load()
+        assertEquals(9, loaded.schemaVersion)
+        assertTrue(loaded.sessionRing.isEmpty())
+        assertTrue(loaded.detectBlackCompanion)
+        assertFalse(loaded.raNetworkCommands)
+        assertEquals(55355, loaded.raNetworkCmdPort)
+    }
+
+    @Test
+    fun `sessionRing round trips without a greedy field`() {
+        val entry = SessionRingEntry(
+            "rom:snes:a.smc", "ra-snes9x", "com.retroarch.aarch64",
+            SessionPolicy.KEEP_COMPANION, 10L, "A",
+        )
+        val f = tmp.newFile("ring.json")
+        SettingsStore(f).save(Settings.DEFAULT.copy(sessionRing = listOf(entry)))
+        val loaded = SettingsStore(f).load()
+        assertEquals(listOf(entry), loaded.sessionRing)
+        assertFalse(org.json.JSONObject(f.readText()).getJSONArray("sessionRing")
+            .getJSONObject(0).has("greedy"))
     }
 }

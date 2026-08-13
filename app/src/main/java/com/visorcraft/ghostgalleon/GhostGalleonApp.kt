@@ -30,16 +30,21 @@ import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaUdpTransport
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRing
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.DataMigrator
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SettingsStore
+import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.CompanionActivity
@@ -54,6 +59,7 @@ import android.hardware.display.DisplayManager
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class GhostGalleonApp : Application() {
@@ -420,6 +426,52 @@ class GhostGalleonApp : Application() {
     @Volatile
     var sessionSurface: SessionSurface? = null
         private set
+
+    // Process-only KEEP play HUD chrome. Expanded shows the actions row.
+    var playHudExpanded: Boolean = true
+
+    // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
+    @Volatile
+    var raCommandClient: RaCommandClient? = null
+        private set
+    private val raUdpOutstanding = AtomicBoolean(false)
+    private val raUdpWorker = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "ra-udp").apply { isDaemon = true }
+    }
+
+    fun ensureRaCommandClient(): RaCommandClient {
+        raCommandClient?.let { return it }
+        synchronized(this) {
+            raCommandClient?.let { return it }
+            return RaCommandClient(RaUdpTransport()) {
+                android.os.SystemClock.elapsedRealtime()
+            }.also { raCommandClient = it }
+        }
+    }
+
+    /**
+     * Run RetroArch UDP on the dedicated worker. Drops if a datagram is
+     * already in flight so Companion never queues overlapping bind/receive.
+     * [onMain] always posts; it must only mutate views.
+     */
+    fun enqueueRaUdp(work: (RaCommandClient) -> Unit, onMain: () -> Unit): Boolean {
+        if (!raUdpOutstanding.compareAndSet(false, true)) return false
+        val client = ensureRaCommandClient()
+        raUdpWorker.execute {
+            try {
+                work(client)
+            } finally {
+                mainHandler.post {
+                    try {
+                        onMain()
+                    } finally {
+                        raUdpOutstanding.set(false)
+                    }
+                }
+            }
+        }
+        return true
+    }
 
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
     @Volatile
@@ -835,8 +887,25 @@ class GhostGalleonApp : Application() {
         openSession = SessionTracker.onDeviceWake(s, nowMs)
     }
 
-    fun beginSession(surface: SessionSurface) {
+    fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
+        val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
+        val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
+            null
+        } else {
+            appLibrary().byPackage(settings)[surface.key]?.label
+        }
+        val title = SessionRing.titleFor(romName, appLabel, surface.key)
+        val entry = SessionRingEntry(
+            key = surface.key,
+            playerId = surface.playerId,
+            packageName = surface.packageName,
+            policy = surface.policy,
+            launchedAtMs = nowMs,
+            title = title,
+        )
+        settings = settings.copy(sessionRing = SessionRing.push(settings.sessionRing, entry))
+        scheduleSettingsSave(settings)
         if (surface.policy == SessionPolicy.YIELD_BOTH) {
             liveCompanions().forEach { it.closeQuietly() }
         }

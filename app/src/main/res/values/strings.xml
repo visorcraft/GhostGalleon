@@ -40,6 +40,8 @@
     <string name="action_open_settings">Open settings</string>
     <string name="action_toggle_favorite">Favorite</string>
     <string name="action_show_details">Details</string>
+    <string name="action_open_session_switcher">Session switcher</string>
+    <string name="action_toggle_play_hud">Play HUD</string>
     <string name="action_open_with">Open with…</string>
     <string name="action_page_left">Page left (L1)</string>
     <string name="action_page_right">Page right (R1)</string>
@@ -353,6 +355,15 @@
     <string name="deck_only_one_display">Only one display — swap unavailable</string>
     <string name="deck_restart_bottom_panel">Restarting bottom panel…</string>
     <string name="session_yields_both_screens">This game uses both screens</string>
+    <string name="play_hud_end">End session</string>
+    <string name="play_hud_reclaim">Reclaim HOME</string>
+    <string name="play_hud_switcher">Sessions</string>
+    <string name="play_hud_pause">Pause</string>
+    <string name="play_hud_resume">Resume</string>
+    <string name="play_hud_save">Save</string>
+    <string name="play_hud_load">Load</string>
+    <string name="session_switcher_title">Sessions</string>
+    <string name="session_ring_empty">No recent sessions</string>
     <string name="deck_add_rom_folder_done">ROM folder added</string>
 
     <!-- Built-in names -->
@@ -468,6 +479,8 @@
     <string name="settings_default_players">Default players</string>
     <string name="settings_system_defaults">System defaults</string>
     <string name="settings_player_uses_both_screens">Uses both screens</string>
+    <string name="settings_ra_network_commands">Talk to RetroArch</string>
+    <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>
     <string name="settings_ra_username_cleared">RA username cleared</string>
@@ -628,6 +641,7 @@
     <string name="settings_dual_recovery_title">Dual-screen black panels</string>
     <string name="settings_dual_recovery_body">If one or both panels go pure black: (1) Restart companion panel below, or press X once or twice; (2) Launch any game and return; (3) Force-stop Ghost Galleon then HOME; (4) Reboot if still stuck.</string>
     <string name="settings_restart_companion">Restart companion panel</string>
+    <string name="settings_detect_black_companion">Detect black companion</string>
     <string name="settings_dual_recovery_no_main">Open the home deck first, then retry</string>
     <string name="settings_chrome_custom_hint">Custom is automatic when any power-rail toggle differs from Minimal or Full.</string>
     <string name="settings_chrome_power_rails">Power rails &amp; extras</string>

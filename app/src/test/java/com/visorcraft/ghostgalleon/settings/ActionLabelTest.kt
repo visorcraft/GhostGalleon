@@ -26,4 +26,10 @@ class ActionLabelTest {
             assertNotEquals(action.name, action.label())
         }
     }
+
+    @Test
+    fun `play surface actions have user-friendly labels`() {
+        assertEquals(text(R.string.action_open_session_switcher), Action.OPEN_SESSION_SWITCHER.label())
+        assertEquals(text(R.string.action_toggle_play_hud), Action.TOGGLE_PLAY_HUD.label())
+    }
 }

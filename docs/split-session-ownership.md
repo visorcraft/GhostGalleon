@@ -53,7 +53,8 @@ Display ids are never hard-coded `0`/`1`. Roles come from
   Azahar from using the second panel.
 - Do not replace Android Recents or patch Quickstep in this epic.
 - Do not implement the shoulder HUD or black-panel pixel oracle here.
-  Those consume this policy; they are separate specs.
+  Those consume this policy; they are specified in
+  [`keep-play-surface.md`](keep-play-surface.md).
 - SINGLE topology: this policy is a no-op. One display, one activity.
 
 ## Policy
@@ -249,8 +250,10 @@ Settings player-default rows show a read-only “Uses both screens”
   is not the input target unless swap moves interactive there.
 - YIELD: the game owns input. Ghost Galleon must not inject keys into
   melonDualDS to “drive the HUD.”
-- Shoulder HUD (later spec) may appear only under KEEP, and only on the
-  display Ghost Galleon still owns.
+- Play HUD / session switcher / pixel oracle / RA link
+  ([`keep-play-surface.md`](keep-play-surface.md)) may appear only under
+  KEEP, and only on a Ghost Galleon display that is not the launch
+  display.
 
 ## Dual-paint
 

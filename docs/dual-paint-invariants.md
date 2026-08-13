@@ -14,6 +14,10 @@ How a launched game shares the two panels (yield DS/3DS, keep companion
 for single-surface players):
 [`split-session-ownership.md`](split-session-ownership.md).
 
+KEEP play HUD, session switcher, pixel oracle, RetroArch commands
+(only on a Ghost Galleon display that is not the launch display):
+[`keep-play-surface.md`](keep-play-surface.md).
+
 ## Policy constants
 
 | Constant | Value | Role |
@@ -74,6 +78,12 @@ for single-surface players):
     session owns that panel (`sessionOwnsCompanionDisplay`). Reclaim
     happens on HOME return after `clearSessionSurface`. See
     [`split-session-ownership.md`](split-session-ownership.md).
+
+12. **Play HUD ticks and oracle heals are not SETTINGS.** Clock and RA
+    status mutate `TextView`s in place. Oracle heals use
+    `restartCompanionPanel("oracle-black")` plus `MIN_HEAL_GAP_MS`.
+    Neither path calls `notifyChanged()`. See
+    [`keep-play-surface.md`](keep-play-surface.md).
 
 ## Granular re-render map
 

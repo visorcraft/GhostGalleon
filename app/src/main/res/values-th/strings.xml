@@ -40,6 +40,8 @@
     <string name="action_open_settings">เปิดการตั้งค่า</string>
     <string name="action_toggle_favorite">รายการโปรด</string>
     <string name="action_show_details">รายละเอียด</string>
+    <string name="action_open_session_switcher">สลับเซสชัน</string>
+    <string name="action_toggle_play_hud">HUD เล่นเกม</string>
     <string name="action_open_with">เปิดด้วย…</string>
     <string name="action_page_left">หน้าซ้าย (L1)</string>
     <string name="action_page_right">หน้าขวา (R1)</string>
@@ -332,6 +334,15 @@
     <string name="deck_only_one_display">มีหน้าจอเดียว — ไม่สามารถสลับได้</string>
     <string name="deck_restart_bottom_panel">กำลังรีสตาร์ทพาเนลด้านล่าง…</string>
     <string name="session_yields_both_screens">เกมนี้ใช้ทั้งสองหน้าจอ</string>
+    <string name="play_hud_end">สิ้นสุดเซสชัน</string>
+    <string name="play_hud_reclaim">คืนหน้า HOME</string>
+    <string name="play_hud_switcher">เซสชัน</string>
+    <string name="play_hud_pause">หยุดชั่วคราว</string>
+    <string name="play_hud_resume">เล่นต่อ</string>
+    <string name="play_hud_save">บันทึก</string>
+    <string name="play_hud_load">โหลด</string>
+    <string name="session_switcher_title">เซสชัน</string>
+    <string name="session_ring_empty">ไม่มีเซสชันล่าสุด</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>
@@ -439,6 +450,8 @@
     <string name="settings_default_players">โปรแกรมเล่นเริ่มต้น</string>
     <string name="settings_system_defaults">ค่าเริ่มต้นของระบบ</string>
     <string name="settings_player_uses_both_screens">ใช้ทั้งสองหน้าจอ</string>
+    <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
+    <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>
     <string name="settings_ra_username">ชื่อผู้ใช้ RetroAchievements</string>
     <string name="settings_ra_username_hint">ชื่อผู้ใช้ RA</string>
     <string name="settings_ra_username_cleared">ล้างชื่อผู้ใช้ RA แล้ว</string>
@@ -596,6 +609,7 @@
     <string name="settings_dual_recovery_title">หน้าจอคู่เป็นสีดำ</string>
     <string name="settings_dual_recovery_body">ถ้าหน้าจอด้านหนึ่งหรือทั้งสองดำ: (1) รีสตาร์ทแผงคู่ด้านล่าง หรือกด X หนึ่งถึงสองครั้ง (2) เปิดเกมแล้วกลับมา (3) บังคับหยุด Ghost Galleon แล้วกด HOME (4) รีบูตถ้ายังค้าง</string>
     <string name="settings_restart_companion">รีสตาร์ทแผงคู่</string>
+    <string name="settings_detect_black_companion">ตรวจจับแผงคู่สีดำ</string>
     <string name="settings_dual_recovery_no_main">เปิดหน้าโฮมก่อน แล้วลองใหม่</string>
     <string name="settings_chrome_custom_hint">กำหนดเองจะถูกเลือกเมื่อสวิตช์เรลขั้นสูงต่างจากแบบน้อยหรือเต็ม</string>
     <string name="settings_chrome_power_rails">เรลขั้นสูงและส่วนเสริม</string>
