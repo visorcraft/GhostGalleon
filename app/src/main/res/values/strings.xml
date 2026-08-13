@@ -486,6 +486,7 @@
     <string name="settings_system_defaults">System defaults</string>
     <string name="settings_player_uses_both_screens">Uses both screens</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
+    <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

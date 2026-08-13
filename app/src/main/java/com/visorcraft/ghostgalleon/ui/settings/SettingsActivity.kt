@@ -2325,13 +2325,37 @@ class SettingsActivity : AppCompatActivity() {
         })
         libraryCard.addView(playersRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        var raHandoffSaveRow: View? = null
+        var raHandoffSaveSwitch: Switch? = null
+        fun refreshRaHandoffSaveEnabled() {
+            val talk = app.settings.raNetworkCommands
+            raHandoffSaveRow?.isEnabled = talk
+            raHandoffSaveRow?.alpha = if (talk) 1f else 0.5f
+            raHandoffSaveSwitch?.isEnabled = talk
+        }
         toggle(libraryCard, getString(R.string.settings_ra_network_commands), s.raNetworkCommands) { on ->
             if (on) {
                 applyRaNetworkCommandsOn()
             } else {
                 app.updateSettings(app.settings.copy(raNetworkCommands = false))
             }
+            refreshRaHandoffSaveEnabled()
         }
+        val handoffSwitch = accentSwitch(s.raHandoffSave) { on ->
+            if (!app.settings.raNetworkCommands) return@accentSwitch
+            app.updateSettings(app.settings.copy(raHandoffSave = on))
+        }
+        raHandoffSaveSwitch = handoffSwitch
+        val handoffRow = controlRow(
+            getString(R.string.settings_ra_handoff_save),
+            handoffSwitch,
+        )
+        raHandoffSaveRow = handoffRow
+        libraryCard.addView(
+            handoffRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
+        refreshRaHandoffSaveEnabled()
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

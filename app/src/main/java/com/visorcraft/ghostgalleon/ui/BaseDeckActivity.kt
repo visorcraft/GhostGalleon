@@ -49,8 +49,10 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
+import com.visorcraft.ghostgalleon.rom.HandoffPrep
+import com.visorcraft.ghostgalleon.rom.RaStatus
+import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionRing
-import com.visorcraft.ghostgalleon.rom.SessionSwitch
 import com.visorcraft.ghostgalleon.rom.SwitchToResult
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.deck.AppIconLoader
@@ -1408,15 +1410,13 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
             app.settings.sessionRing,
             onPick = { target ->
                 val current = app.sessionSurface
-                when (
-                    SessionSwitch.decide(
-                        current?.key,
-                        current?.playerId,
-                        current?.policy,
-                        current?.greedy == true,
-                        target,
-                    )
-                ) {
+                val plan = SessionHandoff.plan(
+                    current,
+                    target,
+                    app.settings.raNetworkCommands,
+                    app.settings.raHandoffSave,
+                )
+                when (plan.result) {
                     SwitchToResult.NO_OP -> {
                         SessionSwitcherView.detach(host)
                         releaseSwitcherHost()
@@ -1433,13 +1433,33 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                     SwitchToResult.LAUNCH -> {
                         // Leave claim until beginSession resets hostClaimed.
                         SessionSwitcherView.detach(host)
-                        launchSlotKey(
-                            activity,
-                            app.deckState,
-                            app.romEntries,
-                            target.key,
-                            playerId = target.playerId,
-                        )
+                        val finish = {
+                            launchSlotKey(
+                                activity,
+                                app.deckState,
+                                app.romEntries,
+                                target.key,
+                                playerId = target.playerId,
+                            )
+                        }
+                        if (plan.prep != HandoffPrep.RA_PAUSE_SAVE) {
+                            finish()
+                        } else {
+                            val started = SystemClock.elapsedRealtime()
+                            app.enqueueRaUdp(
+                                work = { client ->
+                                    val port = app.settings.raNetworkCmdPort
+                                    val status = client.status(port)
+                                    if (status == RaStatus.PLAYING) client.pauseToggle(port)
+                                    client.saveState(port)
+                                },
+                                onMain = {
+                                    val used = SystemClock.elapsedRealtime() - started
+                                    Log.i("GGHandoff", "prep ms=$used")
+                                    finish()
+                                },
+                            ) || run { finish(); true }
+                        }
                     }
                 }
             },
