@@ -24,6 +24,27 @@ object RaCommand {
         if (reply == null) return false
         return reply.trim().isNotEmpty()
     }
+
+    fun encodeReadCoreRam(address: Int, length: Int): ByteArray? {
+        if (length !in 1..256 || address < 0) return null
+        return encode("READ_CORE_RAM ${address.toString(16).uppercase()} $length")
+    }
+
+    fun parseRamReply(reply: String?, expectedLen: Int): ByteArray? {
+        if (reply == null) return null
+        val tokens = reply.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val hex = if (tokens.firstOrNull().equals("READ_CORE_RAM", ignoreCase = true)) {
+            tokens.drop(1)
+        } else {
+            tokens
+        }
+        if (hex.size != expectedLen) return null
+        return try {
+            ByteArray(hex.size) { i -> hex[i].toInt(radix = 16).toByte() }
+        } catch (_: NumberFormatException) {
+            null
+        }
+    }
 }
 
 fun interface RaTransport {
