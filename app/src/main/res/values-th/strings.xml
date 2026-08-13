@@ -456,6 +456,14 @@
     <string name="settings_default_players">โปรแกรมเล่นเริ่มต้น</string>
     <string name="settings_system_defaults">ค่าเริ่มต้นของระบบ</string>
     <string name="settings_player_uses_both_screens">ใช้ทั้งสองหน้าจอ</string>
+    <string name="settings_stage_plot">หน้าจอ</string>
+    <string name="settings_package_yield">ใช้ทั้งสองหน้าจอ</string>
+    <string name="settings_stage_keep">เก็บแผง</string>
+    <string name="settings_stage_yield">มอบทั้งคู่</string>
+    <string name="settings_stage_face_interactive">โต้ตอบ</string>
+    <string name="settings_stage_face_other">อื่น</string>
+    <string name="confirm_keep_on_yield_player">โปรแกรมเล่นนี้ออกแบบมาสำหรับทั้งสองหน้าจอ Ghost Galleon จะเก็บแผงหนึ่งไว้ melonDualDS / Azahar จะไม่เห็นหน้าจอที่สอง</string>
+    <string name="confirm_yield_on_keep_player">ทั้งสองแผงจะไปที่เกม HUD เล่นจะถูกซ่อน</string>
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
     <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>

@@ -10,13 +10,19 @@ import android.provider.Settings
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.PlayStats
 import com.visorcraft.ghostgalleon.library.SessionMath
+import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlayerResolver
+import com.visorcraft.ghostgalleon.rom.PlotConfirm
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.StagePlot
+import com.visorcraft.ghostgalleon.rom.StagePlots
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.toast
 
@@ -152,6 +158,134 @@ object EntryActions {
         }
         runCatching { activity.startActivity(intent) }
             .onFailure { activity.toast(R.string.deck_cannot_open_app_info) }
+    }
+
+    /**
+     * Per-title stage plot: Default / KEEP / YIELD (+ launch face on dual).
+     * Confirm when the plot fights the preferred player's built-in policy.
+     */
+    fun screensPlot(activity: AppCompatActivity, rom: RomEntry) {
+        val app = activity.application as GhostGalleonApp
+        val live = app.settings
+        val preferred = RomProfiles.preferredPlayerId(
+            rom.id,
+            live.romProfiles,
+            live.defaultPlayers[rom.platformId],
+        )
+        val builtIn = SessionPolicy.forPlayerId(preferred)
+        val current = live.stagePlots[rom.id]
+        val dual = app.displayConfig.mode == SurfaceMode.DUAL
+
+        data class Option(
+            val label: String,
+            val policy: SessionPolicy?,
+            val face: LaunchFace,
+            val clear: Boolean,
+        )
+
+        val options = buildList {
+            add(
+                Option(
+                    label = activity.getString(R.string.label_default),
+                    policy = null,
+                    face = LaunchFace.AUTO,
+                    clear = true,
+                ),
+            )
+            if (dual) {
+                fun keep(face: LaunchFace, faceLabel: String) = Option(
+                    label = activity.getString(R.string.settings_stage_keep) + " · " + faceLabel,
+                    policy = SessionPolicy.KEEP_COMPANION,
+                    face = face,
+                    clear = false,
+                )
+                add(keep(LaunchFace.AUTO, activity.getString(R.string.label_auto)))
+                add(
+                    keep(
+                        LaunchFace.INTERACTIVE,
+                        activity.getString(R.string.settings_stage_face_interactive),
+                    ),
+                )
+                add(
+                    keep(
+                        LaunchFace.OTHER,
+                        activity.getString(R.string.settings_stage_face_other),
+                    ),
+                )
+            } else {
+                add(
+                    Option(
+                        label = activity.getString(R.string.settings_stage_keep),
+                        policy = SessionPolicy.KEEP_COMPANION,
+                        face = LaunchFace.AUTO,
+                        clear = false,
+                    ),
+                )
+            }
+            add(
+                Option(
+                    label = activity.getString(R.string.settings_stage_yield),
+                    policy = SessionPolicy.YIELD_BOTH,
+                    face = LaunchFace.AUTO,
+                    clear = false,
+                ),
+            )
+        }
+
+        fun isSelected(opt: Option): Boolean = when {
+            opt.clear -> current == null
+            current == null -> false
+            else -> current.policy == opt.policy && current.launchFace == opt.face
+        }
+
+        val labels = options.map { opt ->
+            if (isSelected(opt)) {
+                activity.getString(R.string.format_selected_check, opt.label)
+            } else {
+                opt.label
+            }
+        }.toTypedArray()
+
+        fun writePlot(opt: Option) {
+            val now = app.settings
+            val nextPlots = if (opt.clear) {
+                now.stagePlots - rom.id
+            } else {
+                now.stagePlots + (rom.id to StagePlot(opt.policy, opt.face))
+            }
+            app.updateSettings(now.copy(stagePlots = nextPlots))
+        }
+
+        fun applyOption(opt: Option) {
+            if (opt.clear) {
+                writePlot(opt)
+                return
+            }
+            val confirm = StagePlots.confirmFor(builtIn, opt.policy)
+            if (confirm == PlotConfirm.NONE) {
+                writePlot(opt)
+                return
+            }
+            val message = when (confirm) {
+                PlotConfirm.KEEP_ON_YIELD_PLAYER -> R.string.confirm_keep_on_yield_player
+                PlotConfirm.YIELD_ON_KEEP_PLAYER -> R.string.confirm_yield_on_keep_player
+                PlotConfirm.NONE -> return
+            }
+            AlertDialog.Builder(activity)
+                .setTitle(R.string.settings_stage_plot)
+                .setMessage(message)
+                .setPositiveButton(R.string.action_ok) { _, _ -> writePlot(opt) }
+                .setNegativeButton(R.string.action_cancel, null)
+                .show()
+        }
+
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_stage_plot)
+            .setItems(labels) { _, which ->
+                options.getOrNull(which)?.let(::applyOption)
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
     }
 
     fun copyTitle(activity: AppCompatActivity, title: String) {

@@ -456,6 +456,14 @@
     <string name="settings_default_players">Reproductores predeterminados</string>
     <string name="settings_system_defaults">Valores predeterminados del sistema</string>
     <string name="settings_player_uses_both_screens">Usa ambas pantallas</string>
+    <string name="settings_stage_plot">Pantallas</string>
+    <string name="settings_package_yield">Usa ambas pantallas</string>
+    <string name="settings_stage_keep">Mantener panel</string>
+    <string name="settings_stage_yield">Ceder ambas</string>
+    <string name="settings_stage_face_interactive">Interactiva</string>
+    <string name="settings_stage_face_other">Otra</string>
+    <string name="confirm_keep_on_yield_player">Este reproductor está hecho para ambas pantallas. Ghost Galleon mantendrá un panel. melonDualDS / Azahar no verán la segunda pantalla.</string>
+    <string name="confirm_yield_on_keep_player">Ambos paneles irán al juego. El HUD de juego se ocultará.</string>
     <string name="settings_ra_network_commands">Hablar con RetroArch</string>
     <string name="settings_ra_handoff_save">Guardar antes de cambiar</string>
     <string name="settings_ra_network_commands_help">En RetroArch: Ajustes → Red → Comandos de red ACTIVADOS, puerto 55355.</string>

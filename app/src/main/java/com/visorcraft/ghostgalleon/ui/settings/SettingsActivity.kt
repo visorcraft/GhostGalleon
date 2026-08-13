@@ -112,6 +112,7 @@ class SettingsActivity : AppCompatActivity() {
     private var hiddenValue: TextView? = null
     private var hiddenRomsValue: TextView? = null
     private var dockValue: TextView? = null
+    private var packageYieldValue: TextView? = null
 
     private fun appLabel(packageName: String): String =
         appLibrary.all(app.settings).firstOrNull { it.packageName == packageName }
@@ -278,6 +279,8 @@ class SettingsActivity : AppCompatActivity() {
         dockValue?.text =
             if (dock.isEmpty()) getString(R.string.label_empty)
             else dock.joinToString(" · ", transform = ::dockEntryLabel)
+        val yieldCount = app.settings.packageYield.count { it.value }
+        packageYieldValue?.text = formatNumber(yieldCount)
     }
 
     private fun modalRow(label: String, chip: String, onChip: () -> Unit): View =
@@ -430,6 +433,53 @@ class SettingsActivity : AppCompatActivity() {
         rebuild()
         AlertDialog.Builder(this)
             .setTitle(R.string.label_dock)
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
+    /** Per-package YIELD_BOTH overrides for Android apps (no launch face). */
+    private fun showPackageYieldDialog() {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(8), pad, dp(8))
+        }
+        fun yieldChip(on: Boolean): String =
+            if (on) getString(R.string.label_yes) else getString(R.string.label_no)
+        fun rebuild() {
+            list.removeAllViews()
+            val apps = appLibrary.visible(app.settings)
+                .sortedBy { it.label.lowercase() }
+            if (apps.isEmpty()) {
+                list.addView(modalEmpty(getString(R.string.settings_no_apps)))
+                return
+            }
+            apps.forEach { entry ->
+                val pkg = entry.packageName
+                val on = app.settings.packageYield[pkg] == true
+                list.addView(
+                    modalRow(entry.label, yieldChip(on)) {
+                        val live = app.settings
+                        val next = if (live.packageYield[pkg] == true) {
+                            live.packageYield - pkg
+                        } else {
+                            live.packageYield + (pkg to true)
+                        }
+                        app.updateSettings(live.copy(packageYield = next))
+                        refreshAppsRows()
+                        rebuild()
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(56),
+                    ),
+                )
+            }
+        }
+        rebuild()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_package_yield)
             .setView(ScrollView(this).apply { addView(list) })
             .setNegativeButton(R.string.action_close, null)
             .show()
@@ -2060,6 +2110,25 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
         appsCard.addView(dockRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val packageYieldRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showPackageYieldDialog() }
+        }
+        packageYieldRow.addView(
+            rowLabel(getString(R.string.settings_package_yield)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        packageYieldValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        }
+        packageYieldRow.addView(packageYieldValue)
+        appsCard.addView(
+            packageYieldRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
         refreshAppsRows()
         addSection(SettingsPage.APPS, getString(R.string.settings_page_apps), appsCard)
 

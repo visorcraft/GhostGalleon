@@ -901,6 +901,10 @@ class GridDeck(
         EntryActions.playerProfile(activity, rom)
     }
 
+    private fun showScreensPlotMenu(rom: RomEntry) {
+        EntryActions.screensPlot(activity, rom)
+    }
+
     private fun createFolderAt(slot: Int) {
         val app = activity.application as GhostGalleonApp
         val id = Folders.nextId(app.settings.folders)
@@ -1064,6 +1068,11 @@ class GridDeck(
                     val id = SlotKey.romId(k) ?: return@let
                     val rom = roms.firstOrNull { it.id == id } ?: return@let
                     showPlayerProfileMenu(rom)
+                }
+                SlotMenu.Choice.SCREENS -> key?.let { k ->
+                    val id = SlotKey.romId(k) ?: return@let
+                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    showScreensPlotMenu(rom)
                 }
                 SlotMenu.Choice.SET_ART -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let

@@ -456,6 +456,14 @@
     <string name="settings_default_players">Lecteurs par défaut</string>
     <string name="settings_system_defaults">Paramètres système par défaut</string>
     <string name="settings_player_uses_both_screens">Utilise les deux écrans</string>
+    <string name="settings_stage_plot">Écrans</string>
+    <string name="settings_package_yield">Utilise les deux écrans</string>
+    <string name="settings_stage_keep">Garder le panneau</string>
+    <string name="settings_stage_yield">Céder les deux</string>
+    <string name="settings_stage_face_interactive">Interactif</string>
+    <string name="settings_stage_face_other">Autre</string>
+    <string name="confirm_keep_on_yield_player">Ce lecteur est conçu pour les deux écrans. Ghost Galleon gardera un panneau. melonDualDS / Azahar ne verront pas le second écran.</string>
+    <string name="confirm_yield_on_keep_player">Les deux panneaux iront au jeu. Le HUD de jeu sera masqué.</string>
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
     <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>

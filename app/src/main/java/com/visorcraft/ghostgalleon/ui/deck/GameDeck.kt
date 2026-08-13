@@ -2319,6 +2319,10 @@ class GameDeck(
         EntryActions.playerProfile(activity, rom)
     }
 
+    private fun showScreensPlotMenu(rom: RomEntry) {
+        EntryActions.screensPlot(activity, rom)
+    }
+
     private fun setArtOverride(rom: RomEntry) {
         val host = activity as? com.visorcraft.ghostgalleon.ui.BaseDeckActivity
         if (host == null) {
@@ -2670,6 +2674,7 @@ class GameDeck(
                 }
                 add(SlotMenu.Choice.OPEN_WITH)
                 add(SlotMenu.Choice.PLAYER)
+                add(SlotMenu.Choice.SCREENS)
                 add(SlotMenu.Choice.SET_ART)
                 add(SlotMenu.Choice.DOWNLOAD_ART)
                 add(SlotMenu.Choice.ADD_TO_GRID)
@@ -2701,6 +2706,7 @@ class GameDeck(
                 SlotMenu.Choice.RESET_NAME -> entry.rom?.let { resetRomName(it) }
                 SlotMenu.Choice.OPEN_WITH -> openWithMenu(entry)
                 SlotMenu.Choice.PLAYER -> entry.rom?.let { showPlayerProfileMenu(it) }
+                SlotMenu.Choice.SCREENS -> entry.rom?.let { showScreensPlotMenu(it) }
                 SlotMenu.Choice.SET_ART -> entry.rom?.let { setArtOverride(it) }
                 SlotMenu.Choice.DOWNLOAD_ART -> entry.rom?.let { requestMissingArtwork(activity, it) }
                 SlotMenu.Choice.ADD_TO_GRID -> addToGrid(key)

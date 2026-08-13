@@ -485,6 +485,14 @@
     <string name="settings_default_players">Default players</string>
     <string name="settings_system_defaults">System defaults</string>
     <string name="settings_player_uses_both_screens">Uses both screens</string>
+    <string name="settings_stage_plot">Screens</string>
+    <string name="settings_package_yield">Uses both screens</string>
+    <string name="settings_stage_keep">Keep panel</string>
+    <string name="settings_stage_yield">Yield both</string>
+    <string name="settings_stage_face_interactive">Interactive</string>
+    <string name="settings_stage_face_other">Other</string>
+    <string name="confirm_keep_on_yield_player">This player is built for both screens. Ghost Galleon will keep a panel. melonDualDS / Azahar will not see the second display.</string>
+    <string name="confirm_yield_on_keep_player">Both panels will go to the game. The play HUD will hide.</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
     <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
