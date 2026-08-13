@@ -95,4 +95,33 @@ class PlayHostPolicyTest {
         assertEquals(60_000L, PlayHostPolicy.playHudTickDelayMs(0L, watchRa = false, raProbeMs = 5_000L))
         assertEquals(5_000L, PlayHostPolicy.playHudTickDelayMs(0L, watchRa = true, raProbeMs = 5_000L))
     }
+
+    @Test
+    fun `cinema and theater ticks stay off until the user opts in`() {
+        assertFalse(PlayHostPolicy.cinemaTickAllowed(false, false))
+        assertFalse(PlayHostPolicy.cinemaTickAllowed(true, false))
+        assertFalse(PlayHostPolicy.cinemaTickAllowed(false, true))
+        assertTrue(PlayHostPolicy.cinemaTickAllowed(true, true))
+        assertFalse(PlayHostPolicy.theaterTickAllowed(false, false))
+        assertFalse(PlayHostPolicy.theaterTickAllowed(true, false))
+        assertTrue(PlayHostPolicy.theaterTickAllowed(true, true))
+    }
+
+    @Test
+    fun `seat and helper chrome ticks only while that surface is live`() {
+        assertFalse(PlayHostPolicy.seatChromeTickAllowed(HostSurface.HUD))
+        assertTrue(PlayHostPolicy.seatChromeTickAllowed(HostSurface.SEAT))
+        assertFalse(PlayHostPolicy.helperChromeTickAllowed(HostSurface.HUD))
+        assertTrue(PlayHostPolicy.helperChromeTickAllowed(HostSurface.HELPER))
+        assertFalse(PlayHostPolicy.helperChromeTickAllowed(HostSurface.SEAT))
+        assertFalse(PlayHostPolicy.seatChromeTickAllowed(HostSurface.HELPER))
+    }
+
+    @Test
+    fun `RA watch sleeps once the link is up`() {
+        assertTrue(PlayHostPolicy.playHudWatchRa(true, false))
+        assertFalse(PlayHostPolicy.playHudWatchRa(true, true))
+        assertFalse(PlayHostPolicy.playHudWatchRa(false, false))
+        assertFalse(PlayHostPolicy.playHudWatchRa(false, true))
+    }
 }

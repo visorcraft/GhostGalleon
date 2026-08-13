@@ -236,7 +236,8 @@ class GhostGalleonApp : Application() {
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        sm.registerListener(listener, hinge, SensorManager.SENSOR_DELAY_UI, mainHandler)
+        // Buckets are CLOSED/TABLETOP/BOOK/FLAT — 5 Hz is enough.
+        sm.registerListener(listener, hinge, SensorManager.SENSOR_DELAY_NORMAL, mainHandler)
     }
 
     private fun onHingeDegrees(deg: Float) {

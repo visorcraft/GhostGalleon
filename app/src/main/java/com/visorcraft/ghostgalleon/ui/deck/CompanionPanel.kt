@@ -3321,7 +3321,6 @@ object CompanionPanel {
 
     fun tickPlayHudRa(root: View?, app: GhostGalleonApp, activity: Context) {
         if (!app.settings.raNetworkCommands) return
-        val group = root?.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
         val surface = app.sessionSurface
         val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
         val allowed = surface != null &&
@@ -3334,8 +3333,13 @@ object CompanionPanel {
                 launchDisplayId = surface.launchDisplayId,
             )
         if (!allowed) {
-            group.visibility = View.GONE
-            root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.visibility = View.GONE
+            // Non-RA sessions never built the chip — skip the tree walk.
+            if (surface != null && !raHudEligible(true, surface)) return
+            val group = root?.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+            if (group.visibility != View.GONE) group.visibility = View.GONE
+            root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
             return
         }
         val client = app.raCommandClient
@@ -3345,6 +3349,7 @@ object CompanionPanel {
         ) {
             return
         }
+        if (root == null) return
         enqueueRaChipWork(root, app, probe = true)
     }
 
@@ -3482,16 +3487,21 @@ object CompanionPanel {
      * @return next interval ms when cinema is shown, else null.
      */
     fun tickPlayHudCinema(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+        val settings = app.settings
+        if (!PlayHostPolicy.cinemaTickAllowed(
+                settings.raCinemaEnabled,
+                settings.raNetworkCommands,
+            )
+        ) {
+            return null
+        }
         val strip = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_CINEMA)
         if (strip == null) return null
-        val settings = app.settings
         val surface = app.sessionSurface
         if (surface == null ||
-            !settings.raCinemaEnabled ||
-            !settings.raNetworkCommands ||
             DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy)
         ) {
-            hidePlayHudCinema(root)
+            if (strip.visibility != View.GONE) strip.visibility = View.GONE
             return null
         }
         val playHost = cinemaPlayHostAllowed(app, activity, surface)
@@ -3575,18 +3585,19 @@ object CompanionPanel {
      * @return next delay ms when the block is shown, else null.
      */
     fun tickPlayHudTheater(root: View?, app: GhostGalleonApp, activity: Context): Long? {
-        val block = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_THEATER)
-        if (block == null) return null
         val settings = app.settings
-        val surface = app.sessionSurface
         val creds = !settings.raUsername.isNullOrBlank() &&
             !settings.raApiKey.isNullOrBlank()
+        if (!PlayHostPolicy.theaterTickAllowed(settings.raTheaterEnabled, creds)) {
+            return null
+        }
+        val block = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_THEATER)
+        if (block == null) return null
+        val surface = app.sessionSurface
         if (surface == null ||
-            !settings.raTheaterEnabled ||
-            !creds ||
             DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy)
         ) {
-            hidePlayHudTheater(root)
+            if (block.visibility != View.GONE) block.visibility = View.GONE
             return null
         }
         val playHost = cinemaPlayHostAllowed(app, activity, surface)

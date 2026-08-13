@@ -398,20 +398,43 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
-    CompanionPanel.applySeatChrome(root, app)
+    if (PlayHostPolicy.seatChromeTickAllowed(app.hostSurface)) {
+        CompanionPanel.applySeatChrome(root, app)
+    }
+    val settings = app.settings
     // Cinema SAVE_STATE_SLOT takes the single UDP flight when due.
-    val cinemaDelay = CompanionPanel.tickPlayHudCinema(root, app, activity)
-    val theaterDelay = CompanionPanel.tickPlayHudTheater(root, app, activity)
-    val lensDelay = if (app.settings.ramLensesEnabled) {
-        CompanionPanel.tickPlayHudLens(root, app, activity)
+    val cinemaDelay = if (PlayHostPolicy.cinemaTickAllowed(
+            settings.raCinemaEnabled,
+            settings.raNetworkCommands,
+        )
+    ) {
+        CompanionPanel.tickPlayHudCinema(root, app, activity)
     } else {
-        CompanionPanel.hidePlayHudTracker(root)
         null
     }
-    CompanionPanel.applyHelperChrome(root, app)
+    val theaterDelay = if (PlayHostPolicy.theaterTickAllowed(
+            settings.raTheaterEnabled,
+            !settings.raUsername.isNullOrBlank() && !settings.raApiKey.isNullOrBlank(),
+        )
+    ) {
+        CompanionPanel.tickPlayHudTheater(root, app, activity)
+    } else {
+        null
+    }
+    val lensDelay = if (settings.ramLensesEnabled) {
+        CompanionPanel.tickPlayHudLens(root, app, activity)
+    } else {
+        null
+    }
+    if (PlayHostPolicy.helperChromeTickAllowed(app.hostSurface)) {
+        CompanionPanel.applyHelperChrome(root, app)
+    }
     val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
-        watchRa = app.settings.raNetworkCommands,
+        watchRa = PlayHostPolicy.playHudWatchRa(
+            settings.raNetworkCommands,
+            app.raCommandClient?.isLinkUp() == true,
+        ),
         raProbeMs = com.visorcraft.ghostgalleon.rom.RaCommand.PROBE_INTERVAL_MS,
     )
     var delay = base
