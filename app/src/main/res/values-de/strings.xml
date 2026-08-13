@@ -604,6 +604,7 @@
     <string name="settings_dual_recovery_title">Dual-Bildschirm schwarz</string>
     <string name="settings_dual_recovery_body">Wenn ein oder beide Panels schwarz sind: (1) Companion unten neu starten oder X ein- bis zweimal drücken; (2) Spiel starten und zurück; (3) Ghost Galleon beenden, dann HOME; (4) Neu starten falls nötig.</string>
     <string name="settings_restart_companion">Companion-Panel neu starten</string>
+    <string name="settings_detect_black_companion">Schwarzes Companion erkennen</string>
     <string name="settings_dual_recovery_no_main">Zuerst den Home-Deck öffnen, dann erneut versuchen</string>
     <string name="settings_chrome_custom_hint">Benutzerdefiniert gilt, sobald ein Power-Rail-Schalter von Minimal oder Voll abweicht.</string>
     <string name="settings_chrome_power_rails">Power-Rails &amp; Extras</string>

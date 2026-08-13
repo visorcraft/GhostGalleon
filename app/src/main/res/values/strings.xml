@@ -635,6 +635,7 @@
     <string name="settings_dual_recovery_title">Dual-screen black panels</string>
     <string name="settings_dual_recovery_body">If one or both panels go pure black: (1) Restart companion panel below, or press X once or twice; (2) Launch any game and return; (3) Force-stop Ghost Galleon then HOME; (4) Reboot if still stuck.</string>
     <string name="settings_restart_companion">Restart companion panel</string>
+    <string name="settings_detect_black_companion">Detect black companion</string>
     <string name="settings_dual_recovery_no_main">Open the home deck first, then retry</string>
     <string name="settings_chrome_custom_hint">Custom is automatic when any power-rail toggle differs from Minimal or Full.</string>
     <string name="settings_chrome_power_rails">Power rails &amp; extras</string>

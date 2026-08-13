@@ -603,6 +603,7 @@
     <string name="settings_dual_recovery_title">Paneles duales en negro</string>
     <string name="settings_dual_recovery_body">Si uno o ambos paneles se ponen negros: (1) Reinicia el panel compañero abajo, o pulsa X una o dos veces; (2) Abre un juego y vuelve; (3) Forzar detención de Ghost Galleon y HOME; (4) Reinicia el dispositivo si sigue fallando.</string>
     <string name="settings_restart_companion">Reiniciar panel compañero</string>
+    <string name="settings_detect_black_companion">Detectar compañero negro</string>
     <string name="settings_dual_recovery_no_main">Abre primero la pantalla de inicio y reintenta</string>
     <string name="settings_chrome_custom_hint">Personalizado se aplica cuando algún interruptor de potencias difiere de Mínimo o Completo.</string>
     <string name="settings_chrome_power_rails">Rails y extras avanzados</string>

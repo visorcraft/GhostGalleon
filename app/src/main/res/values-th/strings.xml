@@ -603,6 +603,7 @@
     <string name="settings_dual_recovery_title">หน้าจอคู่เป็นสีดำ</string>
     <string name="settings_dual_recovery_body">ถ้าหน้าจอด้านหนึ่งหรือทั้งสองดำ: (1) รีสตาร์ทแผงคู่ด้านล่าง หรือกด X หนึ่งถึงสองครั้ง (2) เปิดเกมแล้วกลับมา (3) บังคับหยุด Ghost Galleon แล้วกด HOME (4) รีบูตถ้ายังค้าง</string>
     <string name="settings_restart_companion">รีสตาร์ทแผงคู่</string>
+    <string name="settings_detect_black_companion">ตรวจจับแผงคู่สีดำ</string>
     <string name="settings_dual_recovery_no_main">เปิดหน้าโฮมก่อน แล้วลองใหม่</string>
     <string name="settings_chrome_custom_hint">กำหนดเองจะถูกเลือกเมื่อสวิตช์เรลขั้นสูงต่างจากแบบน้อยหรือเต็ม</string>
     <string name="settings_chrome_power_rails">เรลขั้นสูงและส่วนเสริม</string>

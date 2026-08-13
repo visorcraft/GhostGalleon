@@ -1364,7 +1364,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_STATS, getString(R.string.settings_page_stats),
             "stats playtime"),
         SettingsJump(SettingsCatalog.PAGE_SYSTEM, getString(R.string.settings_page_system),
-            "system topology display"),
+            "system topology display black companion oracle"),
         SettingsJump(SettingsCatalog.PAGE_ABOUT, getString(R.string.settings_page_about),
             "about license credits"),
     )
@@ -2722,6 +2722,9 @@ class SettingsActivity : AppCompatActivity() {
         )
         systemCard.addView(restartCompanion, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        toggle(systemCard, getString(R.string.settings_detect_black_companion), s.detectBlackCompanion) {
+            app.updateSettings(app.settings.copy(detectBlackCompanion = it))
+        }
         addSection(SettingsPage.SYSTEM, getString(R.string.settings_page_system), systemCard)
         pageBodies.getValue(SettingsPage.ABOUT).addView(
             AboutPage.build(this, accent),
