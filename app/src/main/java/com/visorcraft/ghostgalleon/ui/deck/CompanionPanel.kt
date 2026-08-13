@@ -44,6 +44,7 @@ import com.visorcraft.ghostgalleon.art.ArtTile
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputAssistService
 import com.visorcraft.ghostgalleon.input.InputOwner
+import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
@@ -143,6 +144,9 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_SLOTS = "play_hud_slots"
     private const val TAG_PLAY_HUD_COCKPIT = "play_hud_cockpit"
     private const val TAG_PLAY_HUD_TRACKPAD = "play_hud_trackpad"
+    private const val TAG_PLAY_HUD_SEAT = "play_hud_seat"
+    private const val TAG_PLAY_HUD_SEAT_CLUSTER = "play_hud_seat_cluster"
+    private const val TAG_PLAY_HUD_SEAT_HINT = "play_hud_seat_hint"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
     private const val LENS_MAX_INTERVAL_MS = 200L
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
@@ -162,6 +166,187 @@ object CompanionPanel {
         val text = tv.context.resolveText(hint)
         if (tv.visibility != View.VISIBLE) tv.visibility = View.VISIBLE
         if (tv.text?.toString() != text) tv.text = text
+    }
+
+    /**
+     * Chip equivalent of [com.visorcraft.ghostgalleon.settings.Action.TOGGLE_SEAT].
+     * Does not claim HOST.
+     */
+    fun toggleSeat(app: GhostGalleonApp) {
+        setSeatActive(app, app.hostSurface != HostSurface.SEAT)
+    }
+
+    fun setSeatActive(app: GhostGalleonApp, on: Boolean) {
+        if (on) {
+            if (!seatChromeAllowed(app)) return
+            app.hostSurface = HostSurface.SEAT
+            app.releaseHost()
+        } else if (app.hostSurface == HostSurface.SEAT) {
+            app.hostSurface = HostSurface.HUD
+        }
+        app.liveDeckActivities().forEach { deck ->
+            deck.applyPlayHostFocusLock()
+            applySeatChrome(deck.window?.decorView, app)
+        }
+    }
+
+    fun applySeatChrome(root: View?, app: GhostGalleonApp) {
+        val allowed = seatChromeAllowed(app)
+        if (!allowed && app.hostSurface == HostSurface.SEAT) {
+            app.hostSurface = HostSurface.HUD
+            app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+        }
+        val seat = root?.findViewWithTag<View>(TAG_PLAY_HUD_SEAT) ?: return
+        val onSeat = app.hostSurface == HostSurface.SEAT && allowed
+        val vis = if (onSeat) View.VISIBLE else View.GONE
+        if (seat.visibility != vis) seat.visibility = vis
+        val canInject = onSeat &&
+            app.inputAssistConnected &&
+            InputAssistService.supportsDisplayGesture()
+        val cluster = root.findViewWithTag<View>(TAG_PLAY_HUD_SEAT_CLUSTER)
+        val hint = root.findViewWithTag<View>(TAG_PLAY_HUD_SEAT_HINT)
+        val clusterVis = if (canInject) View.VISIBLE else View.GONE
+        val hintVis = if (onSeat && !canInject) View.VISIBLE else View.GONE
+        if (cluster != null && cluster.visibility != clusterVis) cluster.visibility = clusterVis
+        if (hint != null && hint.visibility != hintVis) hint.visibility = hintVis
+        val actions = root.findViewWithTag<View>(TAG_PLAY_HUD_ACTIONS)
+        if (onSeat) {
+            if (actions != null && actions.visibility != View.GONE) actions.visibility = View.GONE
+            root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
+            root.findViewWithTag<View>(TAG_PLAY_HUD_TRACKER)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
+            root.findViewWithTag<View>(TAG_PLAY_HUD_CINEMA)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
+            root.findViewWithTag<View>(TAG_PLAY_HUD_THEATER)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
+            root.findViewWithTag<View>(TAG_PLAY_HUD_LENS)?.let {
+                if (it.visibility != View.GONE) it.visibility = View.GONE
+            }
+        } else if (actions != null && app.playHudExpanded) {
+            if (actions.visibility != View.VISIBLE) actions.visibility = View.VISIBLE
+        }
+    }
+
+    private fun seatChromeAllowed(app: GhostGalleonApp): Boolean {
+        val surface = app.sessionSurface ?: return false
+        val dual = app.displayConfig.mode == SurfaceMode.DUAL
+        val launchId = surface.launchDisplayId
+        val hostId = launchId?.let { lid ->
+            app.displayConfig.allIds.firstOrNull { it != lid }
+        }
+        val playHost = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = launchId,
+        )
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface.policy,
+            surface.greedy,
+        )
+        val cockpit = CockpitPolicy.cockpitAllowed(
+            playHostAllowed = playHost,
+            playerId = surface.playerId,
+            cockpitEnabled = app.settings.winlatorCockpit,
+        )
+        if (!HostSurfacePolicy.seatAllowed(app.hostSurface, cockpit)) return false
+        if (!app.settings.raSecondSeat) return false
+        if (!SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)) return false
+        return dual && playHost && !sessionOwns
+    }
+
+    private fun buildSeatBody(
+        activity: AppCompatActivity,
+        app: GhostGalleonApp,
+        settings: Settings,
+        dp: (Int) -> Int,
+        compact: Boolean,
+    ): View {
+        val body = LinearLayout(activity).apply {
+            tag = TAG_PLAY_HUD_SEAT
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            contentDescription = activity.getString(R.string.play_hud_seat)
+        }
+        body.addView(
+            TextView(activity).apply {
+                setText(R.string.play_hud_back_to_hud)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(Color.BLACK)
+                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
+                setOnClickListener { setSeatActive(app, false) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(8) },
+        )
+        body.addView(
+            TextView(activity).apply {
+                tag = TAG_PLAY_HUD_SEAT_HINT
+                setText(R.string.seat_need_assist)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                setTextColor(0xBBFFFFFF.toInt())
+                gravity = Gravity.CENTER
+                setPadding(0, dp(12), 0, dp(8))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val cluster = GridLayout(activity).apply {
+            tag = TAG_PLAY_HUD_SEAT_CLUSTER
+            columnCount = 5
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+        }
+        val anchors = SecondSeatPolicy.anchorsOrDefault(settings.raSeatAnchors)
+        for (anchor in anchors) {
+            val cell = TextView(activity).apply {
+                text = anchor.id.uppercase()
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 13f else 15f)
+                setTextColor(Color.WHITE)
+                background = TileBackgrounds.chip(activity)
+                setPadding(dp(8), dp(12), dp(8), dp(12))
+                minimumHeight = dp(if (compact) 40 else 48)
+                setOnTouchListener { _, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> app.injectSeat(anchor.id, true)
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL,
+                        -> app.injectSeat(anchor.id, false)
+                    }
+                    true
+                }
+            }
+            cluster.addView(
+                cell,
+                GridLayout.LayoutParams().apply {
+                    width = 0
+                    height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                    setMargins(dp(4), dp(4), dp(4), dp(4))
+                },
+            )
+        }
+        body.addView(
+            cluster,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        return body
     }
 
     fun attachSessionSwitcher(
@@ -1288,8 +1473,11 @@ object CompanionPanel {
                 ),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    if (cockpit) ViewGroup.LayoutParams.MATCH_PARENT
-                    else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    if (cockpit || app.hostSurface == HostSurface.SEAT) {
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    } else {
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    },
                 ),
             )
             content.background = panelBackground(context, settings.accentColor)
@@ -2720,11 +2908,33 @@ object CompanionPanel {
                     openSessionSwitcher(activity)
                 },
             )
+            val seatChrome = seatChromeAllowed(app)
+            if (app.hostSurface == HostSurface.SEAT && !seatChrome) {
+                app.hostSurface = HostSurface.HUD
+            }
+            if (seatChrome) {
+                addChip(
+                    actionChip(labelRes = R.string.play_hud_seat) {
+                        setSeatActive(app, true)
+                    },
+                )
+            }
             hud.addView(chipScroll(tagActions = true))
             slotStrip?.let { strip ->
                 if (!app.playHudExpanded) strip.visibility = View.GONE
                 hud.addView(strip)
             }
+            if (seatChrome) {
+                hud.addView(
+                    buildSeatBody(activity, app, settings, dp, compact),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f,
+                    ),
+                )
+            }
+            applySeatChrome(hud, app)
         }
         return hud
     }

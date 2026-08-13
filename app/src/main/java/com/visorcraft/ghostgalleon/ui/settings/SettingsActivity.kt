@@ -44,6 +44,8 @@ import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.TreeLabels
 import com.visorcraft.ghostgalleon.rom.playerSettingsLabel
 import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
+import com.visorcraft.ghostgalleon.input.SeatAnchor
+import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.SettingsBundle
@@ -96,7 +98,7 @@ class SettingsActivity : AppCompatActivity() {
         Action.OPEN_QUICK_PANEL,
         Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
         Action.OPEN_SESSION_SWITCHER, Action.TOGGLE_PLAY_HUD,
-        Action.CLAIM_HOST, Action.RELEASE_HOST,
+        Action.CLAIM_HOST, Action.RELEASE_HOST, Action.TOGGLE_SEAT,
     )
 
     private var captureTarget: Action? = null
@@ -1189,6 +1191,15 @@ class SettingsActivity : AppCompatActivity() {
         NumberFormat.getIntegerInstance(resources.configuration.locales[0])
     }
 
+    private fun commitSeatAnchor(id: String, nx: Float?, ny: Float?) {
+        val current = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors).toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx < 0) return
+        val prev = current[idx]
+        current[idx] = SeatAnchor(id, nx ?: prev.nx, ny ?: prev.ny)
+        app.updateSettings(app.settings.copy(raSeatAnchors = current), notify = false)
+    }
+
     private fun formatNumber(value: Int): String = integerFormat.format(value)
 
     private fun dpF(value: Int): Float =
@@ -2163,6 +2174,98 @@ class SettingsActivity : AppCompatActivity() {
         toggle(controlsCard, getString(R.string.settings_winlator_cockpit), s.winlatorCockpit) {
             app.updateSettings(app.settings.copy(winlatorCockpit = it))
         }
+        toggle(controlsCard, getString(R.string.settings_second_seat), s.raSecondSeat) {
+            app.updateSettings(app.settings.copy(raSecondSeat = it))
+        }
+        // empty stored list = DEFAULT_ANCHORS (SNES-like lower-right 40%).
+        val seatLayoutHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        fun bindSeatLayout() {
+            seatLayoutHost.removeAllViews()
+            val resetRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+                setOnClickListener {
+                    app.updateSettings(
+                        app.settings.copy(raSeatAnchors = emptyList()),
+                        notify = false,
+                    )
+                    bindSeatLayout()
+                }
+            }
+            resetRow.addView(
+                rowLabel(getString(R.string.settings_second_seat_layout)),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            resetRow.addView(TextView(this).apply {
+                setText(R.string.action_clear)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(accent)
+            })
+            seatLayoutHost.addView(
+                resetRow,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+            )
+            val shown = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors)
+            for (anchor in shown) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                row.addView(
+                    TextView(this).apply {
+                        text = anchor.id
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        setTextColor(Color.WHITE)
+                    },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                fun coordField(value: Float, write: (Float) -> Unit): EditText =
+                    EditText(this).apply {
+                        setText(value.toString())
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        setTextColor(Color.WHITE)
+                        inputType = InputType.TYPE_CLASS_NUMBER or
+                            InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        isSingleLine = true
+                        onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+                            if (hasFocus) return@OnFocusChangeListener
+                            val parsed = text?.toString()?.toFloatOrNull()?.coerceIn(0f, 1f)
+                                ?: return@OnFocusChangeListener
+                            write(parsed)
+                        }
+                    }
+                row.addView(
+                    coordField(anchor.nx) { nx ->
+                        commitSeatAnchor(anchor.id, nx, null)
+                    },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                row.addView(
+                    coordField(anchor.ny) { ny ->
+                        commitSeatAnchor(anchor.id, null, ny)
+                    },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                seatLayoutHost.addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+        }
+        bindSeatLayout()
+        controlsCard.addView(
+            seatLayoutHost,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         val labRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

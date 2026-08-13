@@ -247,11 +247,13 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         }
         w.attributes = params
-        playHostTouchClaimEnabled = allowed
+        playHostTouchClaimEnabled = allowed && app.hostSurface != HostSurface.SEAT
         val content = findViewById<View>(android.R.id.content)
         if (allowed) {
             content?.setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                    app.hostSurface != HostSurface.SEAT
+                ) {
                     app.claimHost()
                     applyPlayHostFocusLock()
                 }
@@ -1334,6 +1336,12 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     root.findViewWithTag<View>("play_hud_slots")
                         ?.visibility = View.GONE
                 }
+            }
+            true
+        }
+        Action.TOGGLE_SEAT -> {
+            if (repeatCount == 0) {
+                CompanionPanel.toggleSeat(app)
             }
             true
         }

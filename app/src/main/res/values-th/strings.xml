@@ -42,6 +42,7 @@
     <string name="action_show_details">รายละเอียด</string>
     <string name="action_open_session_switcher">สลับเซสชัน</string>
     <string name="action_toggle_play_hud">HUD เล่นเกม</string>
+    <string name="action_toggle_seat">ที่นั่งที่สอง</string>
     <string name="action_claim_host">แพดไปลอนเชอร์</string>
     <string name="action_release_host">แพดไปเกม</string>
     <string name="input_owner_game">แพด → เกม</string>
@@ -350,6 +351,9 @@
     <string name="play_hud_tracker">ตัวติดตาม</string>
     <string name="play_hud_cinema">โรงภาพยนตร์</string>
     <string name="play_hud_theater">ปลดล็อก · %1$s</string>
+    <string name="play_hud_seat">ที่นั่ง</string>
+    <string name="play_hud_back_to_hud">กลับไปที่ HUD</string>
+    <string name="seat_need_assist">เปิดตัวช่วยอินพุตเพื่อใช้ที่นั่งที่สอง</string>
     <string name="cockpit_keyboard">คีย์บอร์ด</string>
     <string name="cockpit_need_assist">เปิดตัวช่วยอินพุตเพื่อขยับเมาส์</string>
     <string name="session_switcher_title">เซสชัน</string>
@@ -449,6 +453,8 @@
     <string name="settings_input_assist">ตัวช่วยอินพุต</string>
     <string name="settings_input_assist_open_system">เปิดการตั้งค่าการเข้าถึงของระบบ</string>
     <string name="settings_winlator_cockpit">ค็อกพิต Winlator</string>
+    <string name="settings_second_seat">ที่นั่งที่สอง</string>
+    <string name="settings_second_seat_layout">เลย์เอาต์ที่นั่งที่สอง</string>
     <string name="settings_controller_lab">ห้องทดลองคอนโทรลเลอร์</string>
     <string name="settings_stick_deadzone">เดดโซนสติ๊ก</string>
     <string name="settings_press_button">กดปุ่ม…</string>

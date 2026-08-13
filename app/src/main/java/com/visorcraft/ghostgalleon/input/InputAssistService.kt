@@ -118,9 +118,32 @@ class InputAssistService : AccessibilityService() {
             normX, normY,
             bounds.left, bounds.top, bounds.width(), bounds.height(),
         )
-        val x = px.toFloat()
-        val y = py.toFloat()
+        dispatchOnLaunchDisplay(px.toFloat(), py.toFloat(), down, launchDisplayId)
+    }
 
+    /** Same launch-display rectangle the cockpit pointer uses. */
+    fun launchDisplaySize(launchDisplayId: Int): Pair<Int, Int>? {
+        val bounds = launchDisplayBounds(launchDisplayId) ?: return null
+        return bounds.width() to bounds.height()
+    }
+
+    /**
+     * Pixel tap/hold on [launchDisplayId]. Fail closed if [setDisplayId] is
+     * missing — never gesture onto the play host as if it were the game.
+     */
+    fun injectSeatTap(x: Float, y: Float, down: Boolean, launchDisplayId: Int) {
+        if (!supportsDisplayGesture()) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        dispatchOnLaunchDisplay(x, y, down, launchDisplayId, seat = true)
+    }
+
+    private fun dispatchOnLaunchDisplay(
+        x: Float,
+        y: Float,
+        down: Boolean,
+        launchDisplayId: Int,
+        seat: Boolean = false,
+    ) {
         val stroke: GestureDescription.StrokeDescription = if (down) {
             if (activeStroke == null) {
                 val path = Path().apply { moveTo(x, y) }
@@ -161,6 +184,7 @@ class InputAssistService : AccessibilityService() {
         if (!applyDisplayId(builder, launchDisplayId)) {
             // Fail closed: never dispatch without a targeted display.
             activeStroke = null
+            if (seat) Log.i(SEAT_TAG, "inject skipped: no displayId")
             return
         }
         dispatchGesture(builder.build(), null, null)
@@ -230,6 +254,7 @@ class InputAssistService : AccessibilityService() {
 
     companion object {
         private const val TAG = "GGInput"
+        private const val SEAT_TAG = "GGSeat"
         private const val STROKE_MS = 16L
         private const val TAP_MS = 50L
 

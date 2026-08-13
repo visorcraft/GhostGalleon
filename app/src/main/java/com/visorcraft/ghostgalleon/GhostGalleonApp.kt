@@ -32,6 +32,7 @@ import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputAssistService
+import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.rom.LensCatalog
 import com.visorcraft.ghostgalleon.rom.LensSpec
@@ -42,6 +43,7 @@ import com.visorcraft.ghostgalleon.rom.RaUdpTransport
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRing
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
@@ -596,6 +598,47 @@ class GhostGalleonApp : Application() {
             )
         ) return
         service.injectOnLaunchDisplay(normX, normY, down, launchId)
+    }
+
+    /**
+     * Calibrated second-seat tap/hold on the session launch display.
+     * Does not claim HOST. No-ops unless [InputAssistPolicy.mayInjectSeat]
+     * and display-targeted gestures exist. Never targets the play host.
+     */
+    fun injectSeat(id: String, down: Boolean) {
+        if (!InputAssistService.supportsDisplayGesture()) return
+        val service = inputAssistService ?: return
+        if (!inputAssistConnected) return
+        val surface = sessionSurface ?: return
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface.policy,
+            surface.greedy,
+        )
+        if (sessionOwns) return
+        val launchId = surface.launchDisplayId ?: return
+        val dual = displayConfig.mode == SurfaceMode.DUAL
+        val hostId = displayConfig.allIds.firstOrNull { it != launchId }
+        val allowed = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = launchId,
+        )
+        if (!InputAssistPolicy.mayInjectSeat(
+                assistConnected = true,
+                playHostAllowed = allowed,
+                sessionOwnsCompanion = false,
+                playerIsRa = SessionHandoff.isRaPlayer(surface.playerId, surface.packageName),
+                seatEnabled = settings.raSecondSeat,
+            )
+        ) return
+        val anchor = SecondSeatPolicy.anchorsOrDefault(settings.raSeatAnchors)
+            .firstOrNull { it.id == id }
+            ?: return
+        val size = service.launchDisplaySize(launchId) ?: return
+        val (x, y) = SecondSeatPolicy.point(anchor, size.first, size.second)
+        service.injectSeatTap(x, y, down, launchId)
     }
 
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.

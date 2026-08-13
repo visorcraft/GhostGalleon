@@ -396,6 +396,7 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
+    CompanionPanel.applySeatChrome(root, app)
     // Cinema SAVE_STATE_SLOT takes the single UDP flight when due.
     val cinemaDelay = CompanionPanel.tickPlayHudCinema(root, app, activity)
     val theaterDelay = CompanionPanel.tickPlayHudTheater(root, app, activity)

@@ -42,6 +42,7 @@
     <string name="action_show_details">Details</string>
     <string name="action_open_session_switcher">Session switcher</string>
     <string name="action_toggle_play_hud">Play HUD</string>
+    <string name="action_toggle_seat">Second seat</string>
     <string name="action_claim_host">Pad to launcher</string>
     <string name="action_release_host">Pad to game</string>
     <string name="input_owner_game">Pad → game</string>
@@ -371,6 +372,9 @@
     <string name="play_hud_tracker">Tracker</string>
     <string name="play_hud_cinema">Cinema</string>
     <string name="play_hud_theater">Unlocked · %1$s</string>
+    <string name="play_hud_seat">Seat</string>
+    <string name="play_hud_back_to_hud">Back to HUD</string>
+    <string name="seat_need_assist">Enable Input assist to use the second seat.</string>
     <string name="cockpit_keyboard">Keyboard</string>
     <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -478,6 +482,8 @@
     <string name="settings_input_assist">Input assist</string>
     <string name="settings_input_assist_open_system">Opens system Accessibility settings</string>
     <string name="settings_winlator_cockpit">Winlator cockpit</string>
+    <string name="settings_second_seat">Second seat</string>
+    <string name="settings_second_seat_layout">Second seat layout</string>
     <string name="settings_controller_lab">Controller lab</string>
     <string name="settings_stick_deadzone">Stick deadzone</string>
     <string name="settings_press_button">Press a button…</string>

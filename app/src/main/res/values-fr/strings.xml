@@ -42,6 +42,7 @@
     <string name="action_show_details">Détails</string>
     <string name="action_open_session_switcher">Sélecteur de session</string>
     <string name="action_toggle_play_hud">HUD de jeu</string>
+    <string name="action_toggle_seat">Second siège</string>
     <string name="action_claim_host">Manette vers lanceur</string>
     <string name="action_release_host">Manette vers jeu</string>
     <string name="input_owner_game">Manette → jeu</string>
@@ -350,6 +351,9 @@
     <string name="play_hud_tracker">Traceur</string>
     <string name="play_hud_cinema">Cinéma</string>
     <string name="play_hud_theater">Débloqué · %1$s</string>
+    <string name="play_hud_seat">Siège</string>
+    <string name="play_hud_back_to_hud">Retour au HUD</string>
+    <string name="seat_need_assist">Activez l’assistance saisie pour utiliser le second siège.</string>
     <string name="cockpit_keyboard">Clavier</string>
     <string name="cockpit_need_assist">Activez l’assistance saisie pour déplacer la souris.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -449,6 +453,8 @@
     <string name="settings_input_assist">Assistance saisie</string>
     <string name="settings_input_assist_open_system">Ouvre les paramètres d’accessibilité du système</string>
     <string name="settings_winlator_cockpit">Cockpit Winlator</string>
+    <string name="settings_second_seat">Second siège</string>
+    <string name="settings_second_seat_layout">Disposition du second siège</string>
     <string name="settings_controller_lab">Lab Manette</string>
     <string name="settings_stick_deadzone">Zone morte du stick</string>
     <string name="settings_press_button">Appuyez sur un bouton…</string>

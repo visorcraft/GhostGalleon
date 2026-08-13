@@ -11,7 +11,7 @@ enum class Action {
     OPEN_SETTINGS, PAGE_PREV, PAGE_NEXT,
     OPEN_QUICK_PANEL, SEARCH_LIBRARY, TOGGLE_FAVORITE, SHOW_DETAILS,
     OPEN_SESSION_SWITCHER, TOGGLE_PLAY_HUD,
-    CLAIM_HOST, RELEASE_HOST, NONE
+    CLAIM_HOST, RELEASE_HOST, TOGGLE_SEAT, NONE
 }
 
 // User-facing labels for the settings/remap UI: raw enum names must never
@@ -36,6 +36,7 @@ fun Action.label(): UiText = text(when (this) {
     Action.TOGGLE_PLAY_HUD -> R.string.action_toggle_play_hud
     Action.CLAIM_HOST -> R.string.action_claim_host
     Action.RELEASE_HOST -> R.string.action_release_host
+    Action.TOGGLE_SEAT -> R.string.action_toggle_seat
     Action.NONE -> R.string.action_none
 })
 

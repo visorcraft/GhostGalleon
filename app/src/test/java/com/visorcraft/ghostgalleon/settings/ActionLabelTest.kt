@@ -47,4 +47,9 @@ class ActionLabelTest {
         assertEquals(text(R.string.input_owner_host), InputOwner.HOST.hint())
         assertNull(InputOwner.NONE.hint())
     }
+
+    @Test
+    fun `toggle seat has a user-friendly label`() {
+        assertEquals(text(R.string.action_toggle_seat), Action.TOGGLE_SEAT.label())
+    }
 }
