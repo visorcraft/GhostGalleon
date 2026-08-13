@@ -2419,6 +2419,9 @@ class SettingsActivity : AppCompatActivity() {
             raHandoffSaveRow?.alpha = if (talk) 1f else 0.5f
             raHandoffSaveSwitch?.isEnabled = talk
         }
+        toggle(libraryCard, getString(R.string.settings_stack_clones), s.stackClones) { on ->
+            app.updateSettings(app.settings.copy(stackClones = on))
+        }
         toggle(libraryCard, getString(R.string.settings_ra_network_commands), s.raNetworkCommands) { on ->
             if (on) {
                 applyRaNetworkCommandsOn()

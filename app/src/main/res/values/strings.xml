@@ -265,6 +265,8 @@
     <string name="details_collections">Collections: %1$s</string>
     <string name="details_title">Details</string>
     <string name="details_browse_related">Browse related</string>
+    <string name="identity_hash">Hash: %1$s</string>
+    <string name="identity_not_ready">Identity not ready</string>
 
     <!-- ROM launch errors -->
     <string name="rom_unknown_platform">Unknown platform: %1$s</string>
@@ -500,6 +502,7 @@
     <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ram_lenses">RAM lenses</string>
     <string name="settings_import_lens_pack">Import lens pack</string>
+    <string name="settings_stack_clones">Stack clones</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

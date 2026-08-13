@@ -248,6 +248,8 @@
     <string name="details_collections">Sammlungen: %1$s</string>
     <string name="details_title">Details</string>
     <string name="details_browse_related">Ähnliche durchsuchen</string>
+    <string name="identity_hash">Hash: %1$s</string>
+    <string name="identity_not_ready">Identität noch nicht bereit</string>
     <string name="rom_unknown_platform">Unbekannte Plattform: %1$s</string>
     <string name="rom_player_not_installed">%1$s Player nicht installiert</string>
     <string name="rom_core_missing">%1$s-Core nicht installiert</string>
@@ -472,6 +474,7 @@
     <string name="settings_ra_handoff_save">Vor dem Wechsel speichern</string>
     <string name="settings_ram_lenses">RAM-Linsen</string>
     <string name="settings_import_lens_pack">Linsenpaket importieren</string>
+    <string name="settings_stack_clones">Klone stapeln</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Einstellungen → Netzwerk → Netzwerkbefehle EIN, Port 55355.</string>
     <string name="settings_ra_username">RetroAchievements-Benutzername</string>
     <string name="settings_ra_username_hint">RA-Benutzername</string>

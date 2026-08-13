@@ -643,22 +643,22 @@ Log tags: `GGInput`, `GGHandoff`, `GGLens`, `GGIdent`, plus existing
 
 Ship in this order. Phase 6 may overlap 4–5 after 1.
 
-| Phase | Ships | Depends on |
+| Phase | Ships | Status |
 |---|---|---|
-| **1 — Input** | `InputOwner`, focus lock, CLAIM/RELEASE, timeout, `GGInput` | KEEP play host |
-| **1b — Assist** | Accessibility service, filter-key, cockpit gestures | 1; optional |
-| **2 — Handoff** | `SessionHandoff`, RA pause+save, Library toggle | Session ring + RA UDP |
-| **3 — Choreography** | `StagePlot`, Screens UI, `packageYield`, confirm dialogs | `SessionPolicy.resolve` |
-| **4 — Cockpit** | Winlator HUD chrome, IME, assist trackpad | 1 (1b for mouse) |
-| **5 — Lenses** | `READ_CORE_RAM`, lens JSON, in-place panel | RA UDP; identity hash optional |
-| **6 — Identity** | `RomIdentity`, sidecar file, details, optional stack | ROM_IO scan |
+| **1 — Input** | `InputOwner`, focus lock, CLAIM/RELEASE, timeout, `GGInput` | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **1b — Assist** | Accessibility service, filter-key, cockpit gestures | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **2 — Handoff** | `SessionHandoff`, RA pause+save, Library toggle | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **3 — Choreography** | `StagePlot`, Screens UI, `packageYield`, confirm dialogs | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **4 — Cockpit** | Winlator HUD chrome, IME, assist trackpad | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **5 — Lenses** | `READ_CORE_RAM`, lens JSON, in-place panel | **Implemented (host)**. Sugar device matrix **Not run**. |
+| **6 — Identity** | `RomIdentity`, sidecar file, details, optional stack | **Implemented (host)**. Sugar device matrix **Not run**. |
 
 Do not ship 4 before 1: a cockpit that steals the pad on first touch
 is worse than no cockpit. Do not ship 5 on by default. Do not ship
 3’s KEEP-on-melonDualDS without the confirm dialog.
 
 Host tests are not device proof. Do not claim the Sugar matrix from
-this doc.
+this doc. Code for all phases is on `feat/owned-surface`.
 
 ## Device matrix (Sugar)
 

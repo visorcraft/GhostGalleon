@@ -248,6 +248,8 @@
     <string name="details_collections">คอลเลกชัน: %1$s</string>
     <string name="details_title">รายละเอียด</string>
     <string name="details_browse_related">ดูที่เกี่ยวข้อง</string>
+    <string name="identity_hash">แฮช: %1$s</string>
+    <string name="identity_not_ready">ตัวตนยังไม่พร้อม</string>
     <string name="rom_unknown_platform">แพลตฟอร์มไม่รู้จัก: %1$s</string>
     <string name="rom_player_not_installed">โปรแกรมเล่น %1$s ยังไม่ติดตั้ง</string>
     <string name="rom_core_missing">ยังไม่มีคอร์ %1$s</string>
@@ -471,6 +473,7 @@
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
     <string name="settings_ram_lenses">เลนส์ RAM</string>
     <string name="settings_import_lens_pack">นำเข้าแพ็คเลนส์</string>
+    <string name="settings_stack_clones">ซ้อนโคลน</string>
     <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>
     <string name="settings_ra_username">ชื่อผู้ใช้ RetroAchievements</string>
     <string name="settings_ra_username_hint">ชื่อผู้ใช้ RA</string>

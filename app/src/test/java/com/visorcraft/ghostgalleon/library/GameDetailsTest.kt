@@ -90,6 +90,68 @@ class GameDetailsTest {
     }
 
     @Test
+    fun `body shows identity not ready`() {
+        val body = GameDetails.body(
+            GameDetails.Input(
+                title = "Rom",
+                key = "rom:x",
+                kind = GameDetails.Kind.ROM,
+                identity = com.visorcraft.ghostgalleon.rom.RomIdentity(
+                    romId = "x",
+                    algo = "sha1-payload",
+                    hash = null,
+                    headerTitle = null,
+                    groupId = null,
+                    discIndex = null,
+                    ready = false,
+                ),
+            ),
+        )
+        assertTrue(R.string.identity_not_ready in body.resourceIds())
+        assertFalse(R.string.identity_hash in body.resourceIds())
+        assertNull(GameDetails.copyableHash(
+            com.visorcraft.ghostgalleon.rom.RomIdentity(
+                romId = "x",
+                algo = "sha1-payload",
+                hash = null,
+                headerTitle = null,
+                groupId = null,
+                discIndex = null,
+                ready = false,
+            ),
+        ))
+    }
+
+    @Test
+    fun `body shows ready identity short hash group and disc`() {
+        val hash = "0123456789abcdef0123456789abcdef01234567"
+        val identity = com.visorcraft.ghostgalleon.rom.RomIdentity(
+            romId = "nes:game",
+            algo = "sha1-payload",
+            hash = hash,
+            headerTitle = null,
+            groupId = "grp-1",
+            discIndex = 2,
+            ready = true,
+        )
+        val body = GameDetails.body(
+            GameDetails.Input(
+                title = "Game",
+                key = "rom:nes:game",
+                kind = GameDetails.Kind.ROM,
+                identity = identity,
+            ),
+        )
+        val values = body.literalArgs()
+        assertTrue(R.string.identity_hash in body.resourceIds())
+        assertTrue("sha1-payload" in values)
+        assertTrue("01234567…01234567" in values)
+        assertTrue("grp-1" in values)
+        assertTrue("2" in values)
+        assertEquals(hash, GameDetails.copyableHash(identity))
+    }
+
+    @Test
     fun `relatedOptions respects chrome flags and genre tokens`() {
         assertTrue(
             GameDetails.relatedOptions(

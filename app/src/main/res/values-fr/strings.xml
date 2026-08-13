@@ -248,6 +248,8 @@
     <string name="details_collections">Collections : %1$s</string>
     <string name="details_title">Détails</string>
     <string name="details_browse_related">Parcourir les similaires</string>
+    <string name="identity_hash">Hash : %1$s</string>
+    <string name="identity_not_ready">Identité pas prête</string>
     <string name="rom_unknown_platform">Plateforme inconnue : %1$s</string>
     <string name="rom_player_not_installed">Lecteur %1$s non installé</string>
     <string name="rom_core_missing">Cœur %1$s absent</string>
@@ -471,6 +473,7 @@
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
     <string name="settings_ram_lenses">Lentilles RAM</string>
     <string name="settings_import_lens_pack">Importer un pack de lentilles</string>
+    <string name="settings_stack_clones">Empiler les clones</string>
     <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>
     <string name="settings_ra_username">Nom d\'utilisateur RetroAchievements</string>
     <string name="settings_ra_username_hint">Nom RA</string>
