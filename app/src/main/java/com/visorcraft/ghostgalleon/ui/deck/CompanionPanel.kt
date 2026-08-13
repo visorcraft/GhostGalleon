@@ -46,6 +46,7 @@ import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -90,6 +91,24 @@ object CompanionPanel {
     private const val TAG_STRIP_DETAIL = "strip_detail"
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
+
+    /**
+     * Slot key companion Resume launches through [launchSlotKey].
+     * KEEP prefers [sessionSurfaceKey] (then [selectedKey]) so a navigated
+     * hero does not steal Resume. Otherwise the browse continue key.
+     * No new intent extras.
+     */
+    internal fun resumeLaunchKey(
+        continueKey: String?,
+        sessionSurfaceKey: String?,
+        selectedKey: String?,
+        sessionPolicy: SessionPolicy?,
+    ): String? =
+        if (sessionPolicy == SessionPolicy.KEEP_COMPANION) {
+            sessionSurfaceKey ?: selectedKey
+        } else {
+            continueKey
+        }
 
     /**
      * Skip hero media rebind when this ROM is already painted and the
@@ -429,9 +448,15 @@ object CompanionPanel {
         var downY = 0f
         var tracking = false
         view.setOnClickListener {
-            val idx = app.settings.gridSlots.indexOf(cont)
-            if (idx >= 0) state.selectSlot(idx, cont) else state.select(cont)
-            launchSlotKey(activity, state, roms, cont)
+            val key = resumeLaunchKey(
+                continueKey = cont,
+                sessionSurfaceKey = app.sessionSurface?.key,
+                selectedKey = state.selectedKey,
+                sessionPolicy = app.sessionSurface?.policy,
+            ) ?: return@setOnClickListener
+            val idx = app.settings.gridSlots.indexOf(key)
+            if (idx >= 0) state.selectSlot(idx, key) else state.select(key)
+            launchSlotKey(activity, state, roms, key)
         }
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -1060,9 +1085,6 @@ object CompanionPanel {
 
         // Companion role chips (Hero / Now Playing / Perf / Pin).
         val preferredRole = CompanionRole.parse(settings.companionRole)
-        val sessionPlatform = app.openSession?.key?.let { k ->
-            SlotKey.platformIdOf(k)
-        }
         val pinPkg = settings.companionPinnedPackage
         val pinInstalled = pinPkg != null && context.packageManager.isInstalled(pinPkg)
         val effectiveRole = CompanionRoleResolve.effective(
@@ -1070,8 +1092,9 @@ object CompanionPanel {
                 preferred = preferredRole,
                 openSessionKey = app.openSession?.key,
                 pinnedPackage = pinPkg,
-                openSessionPlatformId = sessionPlatform,
+                sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = pinInstalled,
+                sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
         val toDp: (Int) -> Int = { v -> dp(v) }
@@ -1096,19 +1119,22 @@ object CompanionPanel {
                 return root
             }
             CompanionRole.PINNED_APP -> {
-                content.addView(
-                    buildPinnedAppPanel(activity, settings, pinPkg, pinInstalled, toDp),
-                    LinearLayout.LayoutParams(
+                if (!CompanionRoleResolve.pinConflictsWithSession(pinPkg, app.sessionSurface)) {
+                    content.addView(
+                        buildPinnedAppPanel(activity, settings, pinPkg, pinInstalled, toDp),
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    content.background = panelBackground(context, settings.accentColor)
+                    root.addView(content, FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                    ),
-                )
-                content.background = panelBackground(context, settings.accentColor)
-                root.addView(content, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ))
-                return root
+                    ))
+                    return root
+                }
+                // Pin is the open KEEP game — pause pin, show Now Playing / hero.
             }
             CompanionRole.NOW_PLAYING -> {
                 // Full Now Playing as primary content when role is set.
@@ -1187,7 +1213,8 @@ object CompanionPanel {
         // Browse chrome [resumeChip]. Never show for the already-selected key,
         // open session, or after user swipe-dismiss ([Settings.hideResumeChip]
         // until the next real launch). Horizontal swipe dismisses the pill;
-        // tap still launches.
+        // tap launches via launchSlotKey. KEEP click prefers sessionSurface.key
+        // (resumeLaunchKey) so a navigated hero does not steal the session.
         run {
             if (!settings.browseChrome.resumeChip) return@run
             if (app.openSession != null) return@run
@@ -1792,8 +1819,9 @@ object CompanionPanel {
                 preferred = CompanionRole.PINNED_APP,
                 openSessionKey = app.openSession?.key,
                 pinnedPackage = pinPkg,
-                openSessionPlatformId = app.openSession?.key?.let { SlotKey.platformIdOf(it) },
+                sessionPolicy = app.sessionSurface?.policy,
                 pinnedPackageInstalled = installed,
+                sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
         when (honesty) {
@@ -1849,7 +1877,11 @@ object CompanionPanel {
                     setPadding(0, dp(12), 0, dp(16))
                 })
                 val embedHost = FrameLayout(activity)
-                val embedded = ActivityEmbed.available() &&
+                val pinAllowed = !DualPaintPolicy.sessionOwnsCompanionDisplay(
+                    app.sessionSurface?.policy,
+                    app.sessionSurface?.greedy == true,
+                )
+                val embedded = pinAllowed && ActivityEmbed.available() &&
                     ActivityEmbed.attach(embedHost, activity, pinPkg)
                 if (embedded) {
                     col.addView(
@@ -1859,7 +1891,7 @@ object CompanionPanel {
                         ).apply { topMargin = dp(8) },
                     )
                 } else {
-                    if (ActivityEmbed.available()) {
+                    if (pinAllowed && ActivityEmbed.available()) {
                         col.addView(TextView(activity).apply {
                             setText(R.string.deck_embed_unavailable)
                             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -1868,15 +1900,17 @@ object CompanionPanel {
                             setPadding(0, 0, 0, dp(8))
                         })
                     }
-                    col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
-                        val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
-                            ?: return@pinActionChip
-                        val displayId = activity.currentDisplayId() ?: 0
-                        val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
-                        runCatching {
-                            activity.startActivity(intent, options.toBundle())
-                        }
-                    })
+                    if (pinAllowed) {
+                        col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
+                            val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
+                                ?: return@pinActionChip
+                            val displayId = activity.currentDisplayId() ?: 0
+                            val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+                            runCatching {
+                                activity.startActivity(intent, options.toBundle())
+                            }
+                        })
+                    }
                 }
                 col.addView(pinActionChip(activity, settings, dp, R.string.action_change_pin) {
                     ActivityEmbed.release(embedHost)

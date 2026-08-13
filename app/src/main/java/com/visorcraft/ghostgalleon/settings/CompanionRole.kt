@@ -1,10 +1,13 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionSurface
+
 /**
  * Companion (non-interactive) panel presentation mode. Pure; host-tested.
  *
  * Preferred [PINNED_APP] stays [PINNED_APP]; [pinHonesty] drives empty /
- * missing / dual-claim (NDS/3DS) CTAs in the companion panel.
+ * missing / dual-claim (YIELD_BOTH) CTAs in the companion panel.
  */
 enum class CompanionRole {
     HERO,
@@ -22,19 +25,15 @@ enum class CompanionRole {
 
 object CompanionRoleResolve {
 
-    /**
-     * Platforms that typically claim both displays; pinned apps must not
-     * fight them — fall back to Now Playing when a session is open, else Hero.
-     */
-    val DUAL_CLAIM_PLATFORMS: Set<String> = setOf("nds", "3ds")
-
     data class Context(
         val preferred: CompanionRole,
         val openSessionKey: String? = null,
         val pinnedPackage: String? = null,
-        /** Platform id of the open session ROM, if known. */
-        val openSessionPlatformId: String? = null,
+        /** Policy of the launched player; dual-claim when [SessionPolicy.YIELD_BOTH]. */
+        val sessionPolicy: SessionPolicy? = null,
         val pinnedPackageInstalled: Boolean = true,
+        /** Open greedy KEEP owns both panels — same dual-claim as YIELD. */
+        val sessionGreedy: Boolean = false,
     )
 
     /**
@@ -46,19 +45,28 @@ object CompanionRoleResolve {
         EMPTY,
         /** Package set but not installed. */
         MISSING,
-        /** NDS/3DS (etc.) session owns both displays — do not fight them. */
+        /** Yield or greedy KEEP owns both displays — do not fight them. */
         DUAL_CLAIM,
         /** Pin package is set and installed. */
         READY,
     }
 
     fun pinHonesty(ctx: Context): PinHonesty {
-        val dualClaim = ctx.openSessionPlatformId?.lowercase() in DUAL_CLAIM_PLATFORMS
-        if (dualClaim && ctx.openSessionKey != null) return PinHonesty.DUAL_CLAIM
-        if (dualClaim) return PinHonesty.DUAL_CLAIM
+        if (ctx.sessionPolicy == SessionPolicy.YIELD_BOTH || ctx.sessionGreedy) {
+            return PinHonesty.DUAL_CLAIM
+        }
         if (ctx.pinnedPackage.isNullOrBlank()) return PinHonesty.EMPTY
         if (!ctx.pinnedPackageInstalled) return PinHonesty.MISSING
         return PinHonesty.READY
+    }
+
+    /**
+     * True when the companion pin is the same package as the open session.
+     * KEEP must not ActivityEmbed that game over itself on the companion.
+     */
+    fun pinConflictsWithSession(pinnedPackage: String?, surface: SessionSurface?): Boolean {
+        if (surface == null || pinnedPackage.isNullOrBlank()) return false
+        return pinnedPackage == surface.packageName
     }
 
     /**

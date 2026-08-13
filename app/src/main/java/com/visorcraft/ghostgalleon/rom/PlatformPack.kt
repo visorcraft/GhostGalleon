@@ -119,6 +119,9 @@ object PlatformPack {
         } else {
             Intent.FLAG_ACTIVITY_NEW_TASK
         }
+        val sessionPolicy = SessionPolicy.parse(
+            if (o.has("sessionPolicy")) o.optString("sessionPolicy") else null,
+        )
         return PlayerTemplate(
             id = id,
             displayName = o.optString("displayName", id).ifBlank { id },
@@ -128,6 +131,7 @@ object PlatformPack {
             extras = extras,
             grantRead = grantRead,
             flags = flags,
+            sessionPolicy = sessionPolicy,
         )
     }
 

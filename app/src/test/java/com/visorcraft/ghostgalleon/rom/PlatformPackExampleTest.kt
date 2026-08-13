@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.rom
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,5 +30,24 @@ class PlatformPackExampleTest {
         assertTrue(snes.players.any { it.id == "ra-bsnes" })
         // Builtins preserved.
         assertTrue(merged.any { it.id == "gb" })
+    }
+
+    @Test
+    fun `pack sessionPolicy parses and omitted field keeps`() {
+        val json = """
+            {"schemaVersion":1,"platforms":[{
+              "id":"nds","displayName":"NDS","shortName":"NDS",
+              "folderNames":["nds"],"extensions":["nds"],
+              "players":[
+                {"id":"melondualds","displayName":"m","component":"a.b/.C",
+                 "uriStyle":"URI","sessionPolicy":"YIELD_BOTH"},
+                {"id":"other","displayName":"o","component":"c.d/.E","uriStyle":"URI"}
+              ]
+            }]}
+        """.trimIndent()
+        val parsed = PlatformPack.parse(json)!!
+        val players = parsed.platforms.first().players.associateBy { it.id }
+        assertEquals(SessionPolicy.YIELD_BOTH, players.getValue("melondualds").sessionPolicy)
+        assertEquals(SessionPolicy.KEEP_COMPANION, players.getValue("other").sessionPolicy)
     }
 }

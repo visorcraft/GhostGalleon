@@ -1,6 +1,11 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompanionRoleTest {
@@ -76,7 +81,7 @@ class CompanionRoleTest {
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
                     openSessionKey = "rom:nds:mario.nds",
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                 ),
             ),
         )
@@ -86,7 +91,7 @@ class CompanionRoleTest {
                 CompanionRoleResolve.Context(
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
-                    openSessionPlatformId = "3ds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                     openSessionKey = null,
                 ),
             ),
@@ -99,7 +104,7 @@ class CompanionRoleTest {
                     pinnedPackage = "com.example.pin",
                     pinnedPackageInstalled = true,
                     openSessionKey = "rom:nds:mario.nds",
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                 ),
             ),
         )
@@ -172,10 +177,106 @@ class CompanionRoleTest {
                     preferred = CompanionRole.PINNED_APP,
                     pinnedPackage = "com.example.pin",
                     pinnedPackageInstalled = true,
-                    openSessionPlatformId = "nds",
+                    sessionPolicy = SessionPolicy.YIELD_BOTH,
                     openSessionKey = "rom:nds:x.nds",
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `pinHonesty greedy KEEP is DUAL_CLAIM like YIELD`() {
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.DUAL_CLAIM,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    openSessionKey = "rom:snes:x.smc",
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = true,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRoleResolve.PinHonesty.READY,
+            CompanionRoleResolve.pinHonesty(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = false,
+                ),
+            ),
+        )
+        assertEquals(
+            CompanionRole.PINNED_APP,
+            CompanionRoleResolve.effective(
+                CompanionRoleResolve.Context(
+                    preferred = CompanionRole.PINNED_APP,
+                    pinnedPackage = "com.example.pin",
+                    pinnedPackageInstalled = true,
+                    sessionPolicy = SessionPolicy.KEEP_COMPANION,
+                    sessionGreedy = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `pinHonesty openSession NDS with KEEP_COMPANION is not DUAL_CLAIM`() {
+        val honesty = CompanionRoleResolve.pinHonesty(
+            CompanionRoleResolve.Context(
+                preferred = CompanionRole.PINNED_APP,
+                pinnedPackage = "com.example.pin",
+                pinnedPackageInstalled = true,
+                openSessionKey = "rom:nds:mario.nds",
+                sessionPolicy = SessionPolicy.KEEP_COMPANION,
+            ),
+        )
+        assertNotEquals(CompanionRoleResolve.PinHonesty.DUAL_CLAIM, honesty)
+        assertEquals(CompanionRoleResolve.PinHonesty.READY, honesty)
+    }
+
+    @Test
+    fun `pinConflictsWithSession is false when surface or pin is missing`() {
+        val surface = SessionSurface.forLaunch(
+            "rom:snes:x.smc",
+            "ra-snes9x",
+            "com.retroarch.aarch64",
+            0,
+        )
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession(null, surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("", surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("   ", surface))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.retroarch.aarch64", null))
+    }
+
+    @Test
+    fun `pinConflictsWithSession when pin matches KEEP session package`() {
+        val keep = SessionSurface.forLaunch(
+            "rom:snes:x.smc",
+            "ra-snes9x",
+            "com.retroarch.aarch64",
+            0,
+        )
+        assertEquals(SessionPolicy.KEEP_COMPANION, keep.policy)
+        assertTrue(CompanionRoleResolve.pinConflictsWithSession("com.retroarch.aarch64", keep))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.other.app", keep))
+    }
+
+    @Test
+    fun `pinConflictsWithSession when pin matches YIELD session package`() {
+        val yield = SessionSurface.forLaunch(
+            "rom:nds:mario.nds",
+            "melondualds",
+            "me.magnum.melondualds",
+            0,
+        )
+        assertEquals(SessionPolicy.YIELD_BOTH, yield.policy)
+        assertTrue(CompanionRoleResolve.pinConflictsWithSession("me.magnum.melondualds", yield))
+        assertFalse(CompanionRoleResolve.pinConflictsWithSession("com.other.app", yield))
     }
 }

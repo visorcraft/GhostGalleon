@@ -331,6 +331,7 @@
     <string name="deck_unavailable">Indisponible</string>
     <string name="deck_only_one_display">Un seul écran — échange impossible</string>
     <string name="deck_restart_bottom_panel">Redémarrage du panneau inférieur…</string>
+    <string name="session_yields_both_screens">Ce jeu utilise les deux écrans</string>
     <string name="deck_add_rom_folder_done">Dossier ROM ajouté</string>
     <string name="theme_ghost">Fantôme</string>
     <string name="theme_threeds">Turquoise</string>
@@ -437,6 +438,7 @@
     <string name="settings_pin_favorites">Épingler les favoris aux cases vides</string>
     <string name="settings_default_players">Lecteurs par défaut</string>
     <string name="settings_system_defaults">Paramètres système par défaut</string>
+    <string name="settings_player_uses_both_screens">Utilise les deux écrans</string>
     <string name="settings_ra_username">Nom d\'utilisateur RetroAchievements</string>
     <string name="settings_ra_username_hint">Nom RA</string>
     <string name="settings_ra_username_cleared">Nom RA effacé</string>

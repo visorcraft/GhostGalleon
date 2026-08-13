@@ -10,6 +10,8 @@ import android.util.Log
 import com.visorcraft.ghostgalleon.display.AndroidDisplayProbe
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.settings.CompanionRole
 
 class MainActivity : BaseDeckActivity() {
 
@@ -30,35 +32,102 @@ class MainActivity : BaseDeckActivity() {
             app.maybeSealHomeWallpaper()
         }
         app.refreshDisplayConfig(debounce = true)
+        val surface = app.sessionSurface
+        val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
+            !app.settings.companionPinnedPackage.isNullOrBlank()
+        // Mark before resumeCompanionAction so KEEP+stolen becomes RESTART.
+        maybeMarkGreedyIfStolen(returningFromElsewhere)
+        val action = DualPaintPolicy.resumeCompanionAction(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            returningFromElsewhere = returningFromElsewhere,
+            policy = surface?.policy,
+            greedy = app.sessionSurface?.greedy == true,
+            pinReady = pinReady,
+        )
+        when (action) {
+            DualPaintPolicy.ResumeCompanionAction.NONE -> { }
+            DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING ->
+                healCompanionIfMissing(returningFromElsewhere)
+            DualPaintPolicy.ResumeCompanionAction.RESTART ->
+                restartCompanionPanel(
+                    if (surface?.policy == SessionPolicy.YIELD_BOTH) "return-from-yield"
+                    else "return-from-app",
+                )
+        }
         if (returningFromElsewhere) {
-            val pinReady = app.settings.companionRole ==
-                com.visorcraft.ghostgalleon.settings.CompanionRole.PINNED_APP.name &&
-                !app.settings.companionPinnedPackage.isNullOrBlank()
-            if (pinReady) {
-                // A pinned app on the companion display is the intended
-                // surface — recreating Companion would cover it.
-                healCompanionIfMissing()
-            } else {
-                // Emulators (Eden/Azahar/…) often leave the secondary panel pure
-                // black after return. Recreate Companion — does not require the
-                // system Force Stop UI.
-                restartCompanionPanel("return-from-app")
-            }
-        } else {
-            healCompanionIfMissing()
+            // After the action so YIELD return still sees the policy.
+            // Playtime stays on endOpenSession / noteReturnToLauncher.
+            app.clearSessionSurface()
         }
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        healCompanionIfMissing()
+        val returningFromElsewhere = leftHomeSinceResume()
+        // Heal only when policy says HEAL_IF_MISSING. A HOME return is
+        // onNewIntent then onResume; consuming allowHeal here would reject
+        // onResume's RESTART (YIELD / greedy KEEP / no-session).
+        // Already-resumed HOME redelivery never re-fires onResume.
+        val surface = app.sessionSurface
+        val pinReady = app.settings.companionRole == CompanionRole.PINNED_APP.name &&
+            !app.settings.companionPinnedPackage.isNullOrBlank()
+        // Same mark as onResume so HOME (onNewIntent then onResume) does not
+        // treat stolen KEEP as HEAL_IF_MISSING and consume the RESTART debounce.
+        maybeMarkGreedyIfStolen(returningFromElsewhere)
+        val action = DualPaintPolicy.resumeCompanionAction(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            returningFromElsewhere = returningFromElsewhere,
+            policy = surface?.policy,
+            greedy = app.sessionSurface?.greedy == true,
+            pinReady = pinReady,
+        )
+        if (action == DualPaintPolicy.ResumeCompanionAction.HEAL_IF_MISSING) {
+            healCompanionIfMissing(returningFromElsewhere)
+        }
         // Still on home (never onStop'd): swipe-up / re-HOME opens all-apps.
-        if (!leftHomeSinceResume()) {
+        if (!returningFromElsewhere) {
             requestAppDrawer(allowToggle = true)
         }
     }
 
-    private fun healCompanionIfMissing() {
+    /**
+     * KEEP return with companion missing / not STARTED on the secondary
+     * target: process-only greedy flag. Does not write Settings.
+     */
+    private fun maybeMarkGreedyIfStolen(returningFromElsewhere: Boolean) {
+        val surface = app.sessionSurface ?: return
+        if (surface.greedy) return
+        if (!DualPaintPolicy.shouldMarkGreedy(
+                policy = surface.policy,
+                returningFromElsewhere = returningFromElsewhere,
+                companionHealthy = companionHealthyOnSecondary(),
+            )
+        ) return
+        app.markSessionGreedy()
+        Log.i("GGSession", "greedy package=${surface.packageName} player=${surface.playerId}")
+    }
+
+    private fun companionHealthyOnSecondary(): Boolean {
+        val topo = app.displayConfig
+        if (topo.mode != SurfaceMode.DUAL) return true
+        val target = topo.secondaryHomeDisplayId
+            ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
+            ?: return false
+        val live = app.liveCompanions().filter { !it.isFinishing }
+        val seat = app.companionSeatHolder()
+        return live.any { it.isHealthyCompanion(target) } ||
+            seat?.isHealthyCompanion(target) == true
+    }
+
+    private fun healCompanionIfMissing(returningFromElsewhere: Boolean) {
+        // YIELD or open greedy KEEP owns both panels until HOME return.
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                app.sessionSurface?.policy,
+                app.sessionSurface?.greedy == true,
+            ) && !returningFromElsewhere
+        ) {
+            return
+        }
         if (!isHomeRole()) return
         val now = SystemClock.uptimeMillis()
         if (!DualPaintPolicy.allowHeal(now, lastHealUptimeMs)) return
@@ -69,6 +138,16 @@ class MainActivity : BaseDeckActivity() {
         val target = topo.secondaryHomeDisplayId
             ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
             ?: return
+        // KEEP game owns the launch display; do not spawn Companion on it.
+        if (!returningFromElsewhere &&
+            DualPaintPolicy.keepHealBlocked(
+                app.sessionSurface?.policy,
+                target,
+                app.sessionSurface?.launchDisplayId,
+            )
+        ) {
+            return
+        }
         val live = app.liveCompanions().filter { !it.isFinishing }
         val seat = app.companionSeatHolder()
         // Only a STARTED peer on the secondary target counts as healthy.
@@ -88,7 +167,8 @@ class MainActivity : BaseDeckActivity() {
             )
         ) {
             DualPaintPolicy.HealAction.NONE -> return
-            DualPaintPolicy.HealAction.LAUNCH -> launchCompanionIfPresent()
+            DualPaintPolicy.HealAction.LAUNCH ->
+                launchCompanionIfPresent(returningFromElsewhere)
             DualPaintPolicy.HealAction.RESTART -> {
                 // Peer exists but never reached STARTED on target — recreate.
                 // (Inline: restartCompanionPanel would re-check heal debounce we
@@ -97,7 +177,9 @@ class MainActivity : BaseDeckActivity() {
                 live.forEach { it.closeQuietly() }
                 seat?.takeIf { !it.isFinishing }?.closeQuietly()
                 mainHandler.postDelayed({
-                    if (!isFinishing && !isDestroyed) launchCompanionIfPresent()
+                    if (!isFinishing && !isDestroyed) {
+                        launchCompanionIfPresent(returningFromElsewhere)
+                    }
                 }, 180L)
             }
         }
@@ -123,13 +205,29 @@ class MainActivity : BaseDeckActivity() {
         }, 180L)
     }
 
-    private fun launchCompanionIfPresent() {
+    private fun launchCompanionIfPresent(returningFromElsewhere: Boolean = false) {
+        // YIELD or open greedy KEEP owns both panels; do not steal one.
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                app.sessionSurface?.policy,
+                app.sessionSurface?.greedy == true,
+            )
+        ) return
         val topo = app.refreshDisplayConfig()
         if (topo.mode != SurfaceMode.DUAL) return
         val secondaryHomeId = topo.secondaryHomeDisplayId
             ?: topo.allIds.firstOrNull { it != (currentDisplayId() ?: -1) }
             ?: return
         if (!AndroidDisplayProbe.hasDisplay(this, secondaryHomeId)) return
+        // KEEP: never startActivity on the recorded launch display.
+        if (!returningFromElsewhere &&
+            DualPaintPolicy.keepHealBlocked(
+                app.sessionSurface?.policy,
+                secondaryHomeId,
+                app.sessionSurface?.launchDisplayId,
+            )
+        ) {
+            return
+        }
         // Plain component + setLaunchDisplayId only (no SECONDARY_HOME category).
         val intent = Intent(this, CompanionActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

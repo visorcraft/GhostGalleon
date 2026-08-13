@@ -33,6 +33,8 @@ import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.DataMigrator
@@ -411,6 +413,12 @@ class GhostGalleonApp : Application() {
     // Exposed for Now Playing companion UI.
     @Volatile
     var openSession: OpenSession? = null
+        private set
+
+    // Process-only session surface beside playtime. Policy/player record;
+    // OpenSession stays playtime-only.
+    @Volatile
+    var sessionSurface: SessionSurface? = null
         private set
 
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
@@ -827,10 +835,26 @@ class GhostGalleonApp : Application() {
         openSession = SessionTracker.onDeviceWake(s, nowMs)
     }
 
+    fun beginSession(surface: SessionSurface) {
+        sessionSurface = surface
+        if (surface.policy == SessionPolicy.YIELD_BOTH) {
+            liveCompanions().forEach { it.closeQuietly() }
+        }
+    }
+
+    fun markSessionGreedy() {
+        sessionSurface = sessionSurface?.copy(greedy = true)
+    }
+
+    fun clearSessionSurface() {
+        sessionSurface = null
+    }
+
     private fun endOpenSession(nowMs: Long) {
         val s = openSession ?: return
         openSession = null
         sessionAwaitingReturn = false
+        clearSessionSurface()
         val activeMs = SessionTracker.onReturn(s, nowMs)
         val stamped = SessionTracker.commitPlaytime(
             PlayStats(

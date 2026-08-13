@@ -352,6 +352,7 @@
     <string name="deck_unavailable">Unavailable</string>
     <string name="deck_only_one_display">Only one display — swap unavailable</string>
     <string name="deck_restart_bottom_panel">Restarting bottom panel…</string>
+    <string name="session_yields_both_screens">This game uses both screens</string>
     <string name="deck_add_rom_folder_done">ROM folder added</string>
 
     <!-- Built-in names -->
@@ -466,6 +467,7 @@
     <string name="settings_pin_favorites">Pin favorites to empty grid slots</string>
     <string name="settings_default_players">Default players</string>
     <string name="settings_system_defaults">System defaults</string>
+    <string name="settings_player_uses_both_screens">Uses both screens</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>
     <string name="settings_ra_username_cleared">RA username cleared</string>

@@ -74,6 +74,30 @@ object LaunchPlanBuilder {
     }
 }
 
+/** Android-free session record from a successful ROM or app launch. */
+object LaunchSession {
+    fun forRom(
+        key: String,
+        template: PlayerTemplate,
+        launchDisplayId: Int?,
+    ): SessionSurface = SessionSurface.forLaunch(
+        key = key,
+        playerId = template.id,
+        packageName = template.component.substringBefore('/'),
+        launchDisplayId = launchDisplayId,
+        // Pack YIELD is an override; KEEP/omit stays null so forPlayerId still yields built-ins.
+        romOverride = template.sessionPolicy.takeIf { it == SessionPolicy.YIELD_BOTH },
+    )
+
+    fun forApp(key: String, launchDisplayId: Int?): SessionSurface =
+        SessionSurface.forLaunch(
+            key = key,
+            playerId = null,
+            packageName = key,
+            launchDisplayId = launchDisplayId,
+        )
+}
+
 /** Fires launch intents for ROM entries through the platform templates. */
 object RomLauncher {
 
@@ -81,8 +105,9 @@ object RomLauncher {
      * Launch [entry] on the non-interactive display. [playerId] forces a
      * specific registry player; otherwise [preferredPlayerId] (settings
      * default for the platform) is tried before the first installed player.
-     * Returns false (with a Toast) when the platform is unknown, the path is
-     * unavailable, or no suitable player is installed.
+     * Returns the winning [PlayerTemplate], or null (with a Toast) when the
+     * platform is unknown, the path is unavailable, or no suitable player
+     * is installed.
      */
     fun launch(
         activity: Activity,
@@ -90,11 +115,11 @@ object RomLauncher {
         entry: RomEntry,
         playerId: String? = null,
         preferredPlayerId: String? = null,
-    ): Boolean {
+    ): PlayerTemplate? {
         val platform = Platforms.byId(entry.platformId)
         if (platform == null) {
             toast(activity, R.string.rom_unknown_platform, entry.platformId)
-            return false
+            return null
         }
         val installed = { pkg: String -> isInstalled(activity, pkg) }
         val fileExists = { path: String -> java.io.File(path).isFile }
@@ -116,7 +141,7 @@ object RomLauncher {
             } else {
                 toast(activity, R.string.rom_player_not_installed, platform.displayName)
             }
-            return false
+            return null
         }
         var lastBlock: PathGate.Decision.Blocked? = null
         var lastTemplate: PlayerTemplate? = null
@@ -141,7 +166,7 @@ object RomLauncher {
                 }
             return try {
                 launchOnOtherDisplay(activity, state, intent)
-                true
+                template
             } catch (e: ActivityNotFoundException) {
                 continue
             } catch (e: SecurityException) {
@@ -163,7 +188,7 @@ object RomLauncher {
                 lastTemplate?.displayName ?: platform.displayName,
             )
         }
-        return false
+        return null
     }
 
     private fun isInstalled(activity: Activity, packageName: String): Boolean =

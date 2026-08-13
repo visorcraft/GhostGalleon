@@ -231,4 +231,65 @@ class RomLauncherTest {
             plan.flags,
         )
     }
+
+    @Test
+    fun `successful melonDualDS plan stores YIELD_BOTH`() {
+        val template = Platforms.NDS.player
+        val surface = LaunchSession.forRom("rom:nds:a.nds", template, 0)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals("melondualds", surface.playerId)
+        assertEquals("me.magnum.melondualds", surface.packageName)
+        assertEquals("rom:nds:a.nds", surface.key)
+        assertEquals(0, surface.launchDisplayId)
+        assertFalse(surface.greedy)
+    }
+
+    @Test
+    fun `successful RA SNES plan stores KEEP_COMPANION`() {
+        val template = Platforms.SNES.player
+        val surface = LaunchSession.forRom("rom:snes:x.smc", template, 0)
+        assertEquals(SessionPolicy.KEEP_COMPANION, surface.policy)
+        assertEquals("ra-snes9x", surface.playerId)
+        assertEquals("com.retroarch.aarch64", surface.packageName)
+    }
+
+    @Test
+    fun `android app launch records package with null player`() {
+        val surface = LaunchSession.forApp("com.example.game", 1)
+        assertEquals(SessionPolicy.KEEP_COMPANION, surface.policy)
+        assertNull(surface.playerId)
+        assertEquals("com.example.game", surface.packageName)
+        assertEquals("com.example.game", surface.key)
+        assertEquals(1, surface.launchDisplayId)
+    }
+
+    @Test
+    fun `unknown player id with pack YIELD_BOTH yields at launch`() {
+        val template = PlayerTemplate(
+            id = "pack-dual",
+            displayName = "Pack Dual",
+            component = "com.pack.dual/com.pack.dual.Emu",
+            action = null,
+            uriStyle = UriStyle.URI,
+            sessionPolicy = SessionPolicy.YIELD_BOTH,
+        )
+        val surface = LaunchSession.forRom("rom:foo:a.bin", template, 0)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals("pack-dual", surface.playerId)
+    }
+
+    @Test
+    fun `melondualds with default KEEP field still yields via player id`() {
+        val template = PlayerTemplate(
+            id = "melondualds",
+            displayName = "melonDualDS",
+            component = "me.magnum.melondualds/me.magnum.melondualds.ui.EmulatorActivity",
+            action = "android.intent.action.VIEW",
+            uriStyle = UriStyle.URI,
+        )
+        assertEquals(SessionPolicy.KEEP_COMPANION, template.sessionPolicy)
+        val surface = LaunchSession.forRom("rom:nds:a.nds", template, 0)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals("melondualds", surface.playerId)
+    }
 }

@@ -282,6 +282,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (isFinishing || isDestroyed) return
         hideStatusBar(window)
         deckState.addListener(stateListener)
         // Rebuild when: never painted, library/settings epoch changed, OR we
@@ -1084,11 +1085,12 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 val main = this as? MainActivity
                     ?: app.liveDeckActivities().filterIsInstance<MainActivity>()
                         .firstOrNull()
-                val dual = DualPaintPolicy.shouldRestartCompanionAfterSwap(
-                    dualMode = app.displayConfig.mode ==
-                        com.visorcraft.ghostgalleon.display.SurfaceMode.DUAL,
-                )
-                if (dual && main != null) {
+                if (DualPaintPolicy.allowCompanionRestartDuringSwap(
+                        dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                        policy = app.sessionSurface?.policy,
+                        greedy = app.sessionSurface?.greedy == true,
+                    ) && main != null
+                ) {
                     main.restartCompanionPanel(
                         if (swapped) "swap-recover" else "swap-recover-fallback",
                     )
@@ -1099,6 +1101,16 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                } else if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                        app.sessionSurface?.policy,
+                        app.sessionSurface?.greedy == true,
+                    )
+                ) {
+                    Toast.makeText(
+                        this,
+                        R.string.session_yields_both_screens,
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 } else if (!swapped) {
                     Toast.makeText(
                         this,

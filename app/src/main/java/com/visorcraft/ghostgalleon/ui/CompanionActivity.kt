@@ -24,7 +24,14 @@ class CompanionActivity : BaseDeckActivity() {
 
     override fun skipExitCascade(): Boolean = true
 
-    override fun shouldRenderOnCreate(): Boolean = !absorbDuplicate
+    override fun shouldRenderOnCreate(): Boolean =
+        !absorbDuplicate && !sessionOwnsCompanionDisplay()
+
+    private fun sessionOwnsCompanionDisplay(): Boolean =
+        DualPaintPolicy.sessionOwnsCompanionDisplay(
+            app.sessionSurface?.policy,
+            app.sessionSurface?.greedy == true,
+        )
 
     fun closeQuietly() {
         selfClosing = true
@@ -95,6 +102,12 @@ class CompanionActivity : BaseDeckActivity() {
             return
         }
 
+        if (sessionOwnsCompanionDisplay()) {
+            super.onCreate(savedInstanceState)
+            closeQuietly()
+            return
+        }
+
         super.onCreate(savedInstanceState)
 
         val currentDisplay = currentDisplayId()
@@ -115,6 +128,10 @@ class CompanionActivity : BaseDeckActivity() {
 
     private fun redirectToSecondary(target: Int) {
         if (selfClosing || isFinishing || didRedirect) return
+        if (sessionOwnsCompanionDisplay()) {
+            closeQuietly()
+            return
+        }
         if (!AndroidDisplayProbe.hasDisplay(this, target)) return
         didRedirect = true
         val intent = Intent(this, CompanionActivity::class.java)
@@ -140,8 +157,21 @@ class CompanionActivity : BaseDeckActivity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        if (sessionOwnsCompanionDisplay()) {
+            closeQuietly()
+            super.onResume()
+            return
+        }
+        super.onResume()
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (sessionOwnsCompanionDisplay()) {
+            closeQuietly()
+            return
+        }
         // All-apps is Main-only (AGENTS + DualPaintPolicy). Companion must
         // never open the drawer — SECONDARY_HOME redelivery storms would
         // flash/glitch All-apps and thrash paints.
