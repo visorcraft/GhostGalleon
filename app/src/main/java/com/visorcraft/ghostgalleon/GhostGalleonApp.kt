@@ -59,6 +59,7 @@ import android.hardware.display.DisplayManager
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class GhostGalleonApp : Application() {
@@ -433,6 +434,10 @@ class GhostGalleonApp : Application() {
     @Volatile
     var raCommandClient: RaCommandClient? = null
         private set
+    private val raUdpOutstanding = AtomicBoolean(false)
+    private val raUdpWorker = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "ra-udp").apply { isDaemon = true }
+    }
 
     fun ensureRaCommandClient(): RaCommandClient {
         raCommandClient?.let { return it }
@@ -442,6 +447,30 @@ class GhostGalleonApp : Application() {
                 android.os.SystemClock.elapsedRealtime()
             }.also { raCommandClient = it }
         }
+    }
+
+    /**
+     * Run RetroArch UDP on the dedicated worker. Drops if a datagram is
+     * already in flight so Companion never queues overlapping bind/receive.
+     * [onMain] always posts; it must only mutate views.
+     */
+    fun enqueueRaUdp(work: (RaCommandClient) -> Unit, onMain: () -> Unit): Boolean {
+        if (!raUdpOutstanding.compareAndSet(false, true)) return false
+        val client = ensureRaCommandClient()
+        raUdpWorker.execute {
+            try {
+                work(client)
+            } finally {
+                mainHandler.post {
+                    try {
+                        onMain()
+                    } finally {
+                        raUdpOutstanding.set(false)
+                    }
+                }
+            }
+        }
+        return true
     }
 
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
@@ -860,7 +889,13 @@ class GhostGalleonApp : Application() {
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
-        val title = SlotKey.romId(surface.key)?.let { romEntry(it)?.name } ?: surface.key
+        val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
+        val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
+            null
+        } else {
+            appLibrary().byPackage(settings)[surface.key]?.label
+        }
+        val title = SessionRing.titleFor(romName, appLabel, surface.key)
         val entry = SessionRingEntry(
             key = surface.key,
             playerId = surface.playerId,

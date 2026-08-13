@@ -34,7 +34,9 @@ class RaCommandClient(
     private val transport: RaTransport,
     private val clockMs: () -> Long,
 ) {
+    @Volatile
     private var lastProbeMs: Long = Long.MIN_VALUE / 2
+    @Volatile
     private var linkUp: Boolean = false
 
     fun isLinkUp(): Boolean = linkUp
@@ -61,6 +63,7 @@ class RaCommandClient(
     fun loadState(port: Int): Boolean = sendFireAndForget(port, "LOAD_STATE")
 
     /** Process-only: hide the slot strip after one failed SLOT command. */
+    @Volatile
     private var slotStripAllowed: Boolean = true
 
     fun slotStripAllowed(): Boolean = slotStripAllowed

@@ -313,6 +313,10 @@ object CompanionPanel {
         if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
             return updateTopStrip(view, context, state, library, roms, settings)
         }
+        // KEEP full play HUD and PERF tab replace hero. Selection lives on
+        // the other display — do not rebuild Companion on every NAV.
+        if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) return true
+        if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
         // Resume chip: only touch an existing view (GONE/show). Never require
         // the chip to exist when resumeChip is on — content may omit it.
         view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
@@ -1210,33 +1214,52 @@ object CompanionPanel {
                     ))
                     return installSwitcherHost()
                 }
-                // Pin is the open KEEP game — pause pin, show Now Playing / hero.
+                // Pin is the open KEEP game — pause pin, show play HUD.
             }
-            CompanionRole.NOW_PLAYING -> {
-                // Full Now Playing as primary content when role is set.
-                val session = app.openSession
-                if (session != null) {
-                    content.addView(
-                        sessionCard(session, compact = false),
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ),
-                    )
-                    content.background = panelBackground(context, settings.accentColor)
-                    root.addView(content, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    ))
-                    return installSwitcherHost()
-                }
-                // Fall through to hero when no session.
-            }
-            CompanionRole.HERO -> { /* default hero below */ }
+            CompanionRole.NOW_PLAYING, CompanionRole.HERO -> { /* play HUD / hero below */ }
         }
 
-        // Compact Now Playing banner when a session is open.
-        app.openSession?.let { session ->
+        val openSession = app.openSession
+        // KEEP play host: full play HUD replaces hero (and compact banner).
+        // PERF stays the in-place tab (already returned). Pin without a
+        // conflict already returned. Pin-of-the-open-game falls through here.
+        if (playHud && surface != null && openSession != null) {
+            content.addView(
+                buildPlayHud(
+                    activity, library, roms, settings, openSession, surface, toDp,
+                    compact = panelHeightDp < 500f,
+                ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            content.background = panelBackground(context, settings.accentColor)
+            root.addView(content, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            return installSwitcherHost()
+        }
+
+        if (effectiveRole == CompanionRole.NOW_PLAYING && openSession != null) {
+            content.addView(
+                sessionCard(openSession, compact = false),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            content.background = panelBackground(context, settings.accentColor)
+            root.addView(content, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            return installSwitcherHost()
+        }
+
+        // Compact Now Playing banner when a session is open (non-play-host).
+        openSession?.let { session ->
             content.addView(
                 sessionCard(session, compact = true),
                 LinearLayout.LayoutParams(
@@ -2136,6 +2159,42 @@ object CompanionPanel {
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
+        val artPx = dp(if (compact) 64 else 96)
+        val hudRom = selectedRom(surface.key, roms, app)
+        if (hudRom != null) {
+            hud.addView(
+                ArtTile.view(
+                    activity,
+                    app.artCache,
+                    hudRom,
+                    targetPx = artPx,
+                    artOverrides = settings.artOverrides,
+                ),
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                },
+            )
+        } else {
+            val icon = ImageView(activity)
+            CustomIcon.bind(
+                icon,
+                iconLoader(activity),
+                app.artCache,
+                settings,
+                surface.packageName.ifBlank { surface.key },
+                artPx,
+            )
+            hud.addView(
+                icon,
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                },
+            )
+        }
         val label = resumeLabel(surface.key, library, roms, settings, app)
         hud.addView(TextView(activity).apply {
             text = label
@@ -2170,12 +2229,25 @@ object CompanionPanel {
             gravity = Gravity.CENTER
         })
         val actions = LinearLayout(activity).apply {
-            tag = TAG_PLAY_HUD_ACTIONS
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             isBaselineAligned = false
+        }
+        val actionsScroll = HorizontalScrollView(activity).apply {
+            tag = TAG_PLAY_HUD_ACTIONS
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             setPadding(0, dp(if (compact) 8 else 12), 0, 0)
             visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
+            addView(
+                actions,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ),
+            )
         }
         fun actionChip(
             labelRes: Int,
@@ -2247,32 +2319,30 @@ object CompanionPanel {
                 raChips.addView(chip)
             }
             fun runRa(command: (RaCommandClient, Int) -> Unit) {
-                val client = app.ensureRaCommandClient()
-                val port = app.settings.raNetworkCmdPort
-                command(client, port)
-                applyRaChipState(hud, client, port, probe = false)
+                enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                    command(client, port)
+                }
             }
             var slotSaveMode = false
             val builtSlots = buildRaSlotStrip(
                 activity, settings, surface, dp, compact,
             ) { slot ->
-                val client = app.ensureRaCommandClient()
-                val port = app.settings.raNetworkCmdPort
                 val save = slotSaveMode
-                val ok = if (save) client.saveStateSlot(port, slot)
-                else client.loadStateSlot(port, slot)
-                if (!ok) {
-                    if (save) client.saveState(port) else client.loadState(port)
+                enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                    val ok = if (save) client.saveStateSlot(port, slot)
+                    else client.loadStateSlot(port, slot)
+                    if (!ok) {
+                        if (save) client.saveState(port) else client.loadState(port)
+                    }
                 }
-                applyRaChipState(hud, client, port, probe = false)
             }
             slotStrip = builtSlots
             fun showOrRunSlots(save: Boolean) {
                 val client = app.ensureRaCommandClient()
-                val port = app.settings.raNetworkCmdPort
                 if (!client.slotStripAllowed()) {
-                    if (save) client.saveState(port) else client.loadState(port)
-                    applyRaChipState(hud, client, port, probe = false)
+                    enqueueRaChipWork(hud, app, probe = false) { c, port ->
+                        if (save) c.saveState(port) else c.loadState(port)
+                    }
                     return
                 }
                 if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
@@ -2300,10 +2370,7 @@ object CompanionPanel {
             actions.addView(raChips)
             hud.post {
                 if (!hud.isAttachedToWindow) return@post
-                val client = app.ensureRaCommandClient()
-                applyRaChipState(
-                    hud, client, app.settings.raNetworkCmdPort, probe = true,
-                )
+                enqueueRaChipWork(hud, app, probe = true)
             }
         }
         addChip(
@@ -2314,7 +2381,7 @@ object CompanionPanel {
                 openSessionSwitcher(activity)
             },
         )
-        hud.addView(actions)
+        hud.addView(actionsScroll)
         slotStrip?.let { strip ->
             if (!app.playHudExpanded) strip.visibility = View.GONE
             hud.addView(strip)
@@ -2340,9 +2407,9 @@ object CompanionPanel {
             root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.visibility = View.GONE
             return
         }
-        val client = app.ensureRaCommandClient()
-        if (client.isLinkUp()) return
-        applyRaChipState(root, client, app.settings.raNetworkCmdPort, probe = true)
+        val client = app.raCommandClient
+        if (client?.isLinkUp() == true) return
+        enqueueRaChipWork(root, app, probe = true)
     }
 
     private fun raHudEligible(raNetworkCommands: Boolean, surface: SessionSurface): Boolean {
@@ -2351,38 +2418,61 @@ object CompanionPanel {
         return playerId.startsWith("ra-") || surface.packageName == RA_PACKAGE
     }
 
-    private fun applyRaChipState(
+    private class RaChipSnap(
+        val show: Boolean,
+        val paused: Boolean,
+        val slotsAllowed: Boolean,
+    )
+
+    private fun enqueueRaChipWork(
         root: View,
-        client: RaCommandClient,
-        port: Int,
+        app: GhostGalleonApp,
         probe: Boolean,
+        extra: (RaCommandClient, Int) -> Unit = { _, _ -> },
     ) {
-        val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
-        val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
-        val slots = root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)
-        fun hideRa() {
-            group.visibility = View.GONE
-            slots?.visibility = View.GONE
-        }
-        if (!probe && !client.isLinkUp()) {
-            hideRa()
-            return
-        }
+        val port = app.settings.raNetworkCmdPort
+        var snap: RaChipSnap? = null
+        app.enqueueRaUdp(
+            work = { client ->
+                extra(client, port)
+                snap = sampleRaChip(client, port, probe)
+            },
+            onMain = {
+                if (!root.isAttachedToWindow) return@enqueueRaUdp
+                paintRaChip(root, snap)
+            },
+        )
+    }
+
+    private fun sampleRaChip(client: RaCommandClient, port: Int, probe: Boolean): RaChipSnap {
         if (probe && !client.probe(port, SystemClock.elapsedRealtime())) {
-            hideRa()
-            return
+            return RaChipSnap(false, false, client.slotStripAllowed())
+        }
+        if (!client.isLinkUp()) {
+            return RaChipSnap(false, false, client.slotStripAllowed())
         }
         val status = client.status(port)
         if (!client.isLinkUp()) {
-            hideRa()
+            return RaChipSnap(false, false, client.slotStripAllowed())
+        }
+        return RaChipSnap(true, status == RaStatus.PAUSED, client.slotStripAllowed())
+    }
+
+    private fun paintRaChip(root: View, snap: RaChipSnap?) {
+        val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+        val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
+        val slots = root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)
+        if (snap == null || !snap.show) {
+            group.visibility = View.GONE
+            slots?.visibility = View.GONE
             return
         }
         pause.setText(
-            if (status == RaStatus.PAUSED) R.string.play_hud_resume
+            if (snap.paused) R.string.play_hud_resume
             else R.string.play_hud_pause,
         )
         group.visibility = View.VISIBLE
-        if (!client.slotStripAllowed()) slots?.visibility = View.GONE
+        if (!snap.slotsAllowed) slots?.visibility = View.GONE
     }
 
     private fun buildRaSlotStrip(

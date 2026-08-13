@@ -556,6 +556,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             // Rebuilding the content view detaches any activity-level overlay.
             appDrawer = null
             quickPanel = null
+            detachSessionSwitcher(this)
             // setContentView destroys the setup view; clear host + global flag so
             // we never leave input blocked when setup is no longer shown.
             setupOverlay = null
@@ -1216,10 +1217,30 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
 }
 
-/** Session switcher overlay host: play-HUD parent, else the window decor. */
+/**
+ * Session switcher host: tagged play-HUD overlay, else [android.R.id.content]
+ * (same parent as Quick Panel). Never [android.view.Window.getDecorView] —
+ * that survives [setContentView] and leaves an orphan overlay.
+ */
 internal fun sessionSwitcherHost(activity: AppCompatActivity): ViewGroup? {
-    val decor = activity.window?.decorView as? ViewGroup ?: return null
-    return CompanionPanel.sessionSwitcherHost(decor) ?: decor
+    val content = activity.findViewById<ViewGroup>(android.R.id.content)
+    CompanionPanel.sessionSwitcherHost(content ?: activity.window?.decorView ?: return null)
+        ?.let { return it }
+    return content
+}
+
+/** Drop any switcher on content, the tagged host, or a leftover decor child. */
+internal fun detachSessionSwitcher(activity: AppCompatActivity) {
+    val content = activity.findViewById<ViewGroup>(android.R.id.content)
+    val decor = activity.window?.decorView
+    if (content != null) {
+        CompanionPanel.detachSessionSwitcher(content)
+        SessionSwitcherView.detach(content)
+    }
+    if (decor != null) {
+        CompanionPanel.detachSessionSwitcher(decor)
+        (decor as? ViewGroup)?.let { SessionSwitcherView.detach(it) }
+    }
 }
 
 /**
@@ -1269,11 +1290,14 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                     )
                 ) {
                     SwitchToResult.NO_OP -> SessionSwitcherView.detach(host)
-                    SwitchToResult.REFUSE_YIELD -> Toast.makeText(
-                        activity,
-                        R.string.session_yields_both_screens,
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    SwitchToResult.REFUSE_YIELD -> {
+                        Toast.makeText(
+                            activity,
+                            R.string.session_yields_both_screens,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        SessionSwitcherView.detach(host)
+                    }
                     SwitchToResult.LAUNCH -> {
                         SessionSwitcherView.detach(host)
                         launchSlotKey(

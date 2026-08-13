@@ -43,4 +43,12 @@ class SessionRingTest {
             SessionSwitch.decide("rom:gba:c.gba", "ra-mgba", SessionPolicy.KEEP_COMPANION, false, tgt),
         )
     }
+
+    @Test
+    fun `titleFor prefers rom name then app label then key`() {
+        assertEquals("Chrono Trigger", SessionRing.titleFor("Chrono Trigger", "RA", "rom:snes:ct.smc"))
+        assertEquals("Firefox", SessionRing.titleFor(null, "Firefox", "org.mozilla.firefox"))
+        assertEquals("org.mozilla.firefox", SessionRing.titleFor(null, null, "org.mozilla.firefox"))
+        assertEquals("org.mozilla.firefox", SessionRing.titleFor("", "  ", "org.mozilla.firefox"))
+    }
 }
