@@ -488,6 +488,8 @@
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
     <string name="settings_ra_cinema">โรงภาพยนตร์สถานะ</string>
     <string name="settings_ra_theater">โรงละครความสำเร็จ</string>
+    <string name="settings_warm_resume">เล่นต่อแบบวอร์ม</string>
+    <string name="settings_warm_resume_load">โหลดช่องโรงภาพยนตร์ล่าสุดเมื่อเล่นต่อ</string>
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
     <string name="settings_ram_lenses">เลนส์ RAM</string>
     <string name="settings_ram_trackers">ตัวติดตาม RAM</string>

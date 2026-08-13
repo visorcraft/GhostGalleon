@@ -23,6 +23,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.art.ArtTile
@@ -324,7 +325,9 @@ class GridDeck(
                 when {
                     key == null -> openPicker(position)
                     SlotKey.isFolder(key) -> openFolder(key)
-                    else -> launchSlotKey(activity, state, roms, key)
+                    else -> launchSlotKey(
+                        activity, state, roms, key, reason = LaunchReason.SLOT,
+                    )
                 }
             }
             else -> state.selectSlot(
@@ -387,7 +390,9 @@ class GridDeck(
             members = members,
             onLaunch = { memberKey ->
                 closeFolderPanel()
-                launchSlotKey(activity, state, roms, memberKey)
+                launchSlotKey(
+                    activity, state, roms, memberKey, reason = LaunchReason.SLOT,
+                )
             },
             onClose = { closeFolderPanel() },
             onRemoveMember = { memberKey ->
@@ -1560,7 +1565,9 @@ class GridDeck(
                 when {
                     key == null -> openPicker(slot)
                     SlotKey.isFolder(key) -> openFolder(key)
-                    else -> launchSlotKey(activity, state, roms, key)
+                    else -> launchSlotKey(
+                        activity, state, roms, key, reason = LaunchReason.SLOT,
+                    )
                 }
                 true
             }

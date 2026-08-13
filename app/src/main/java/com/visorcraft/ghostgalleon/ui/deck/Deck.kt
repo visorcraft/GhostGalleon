@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.LaunchSession
 import com.visorcraft.ghostgalleon.rom.PlayerTemplate
 import com.visorcraft.ghostgalleon.rom.RomEntry
@@ -80,14 +81,15 @@ internal fun launchOnOtherDisplay(
 // platform template fires on the non-interactive display), app packages
 // through their launcher intent. A ROM that dropped out of the library
 // toasts instead of launching. [playerId] forces Open-with; otherwise the
-// platform's settings default is used. On success: noteLaunch first (ends
-// any prior play session + surface), then beginSession for the new surface.
+// platform's settings default is used. On success: noteLaunchReason then
+// noteLaunch (ends any prior play session + surface), then beginSession.
 internal fun launchSlotKey(
     activity: AppCompatActivity,
     state: DeckState,
     roms: List<RomEntry>,
     key: String,
     playerId: String? = null,
+    reason: LaunchReason = LaunchReason.OTHER,
 ) {
     // Folder tiles are opened by GridDeck (member list), never launched.
     if (SlotKey.isFolder(key)) return
@@ -127,6 +129,7 @@ internal fun launchSlotKey(
                 resolveLaunchDisplayId = { surfaceFor(it).launchDisplayId },
             )
             if (template != null && app != null) {
+                app.noteLaunchReason(reason, key)
                 app.noteLaunch(key)
                 app.beginSession(surfaceFor(template))
             }
@@ -141,6 +144,7 @@ internal fun launchSlotKey(
             val launchId = app?.displayConfig?.launchDisplayId
             launchOnOtherDisplay(activity, state, it, launchId)
             if (app != null) {
+                app.noteLaunchReason(reason, key)
                 app.noteLaunch(key)
                 app.beginSession(
                     LaunchSession.forApp(key, launchId, packageYield = pkgYield),

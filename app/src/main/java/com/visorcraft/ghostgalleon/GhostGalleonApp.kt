@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.visorcraft.ghostgalleon.art.HttpSgdbTransport
 import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
@@ -41,21 +42,26 @@ import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputAssistService
 import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.rom.CinemaFrame
+import com.visorcraft.ghostgalleon.rom.CinemaPolicy
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.LensCatalog
 import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.PlayerResolver
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
 import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.RaUdpTransport
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
+import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRing
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.SessionSurface
+import com.visorcraft.ghostgalleon.rom.WarmResumePolicy
 import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.DataMigrator
@@ -75,6 +81,7 @@ import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.library.AppLibrary
+import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import android.hardware.display.DisplayManager
 import android.net.Uri
@@ -639,8 +646,36 @@ class GhostGalleonApp : Application() {
     // Process-only cinema ring. Not persisted.
     var cinemaFrames: List<CinemaFrame> = emptyList()
     var cinemaLastSlot: Int? = null
+        set(value) {
+            field = value
+            if (value != null) {
+                warmLastCinemaSlot = value
+                (sessionSurface?.key ?: openSession?.key)?.let { warmCinemaKey = it }
+            }
+        }
     var cinemaLastCaptureMs: Long = 0L
     var cinemaPinnedSlot: Int? = null
+        set(value) {
+            field = value
+            if (value != null) {
+                warmCinemaPinnedSlot = value
+                (sessionSurface?.key ?: openSession?.key)?.let { warmCinemaKey = it }
+            }
+        }
+
+    // Process-only warm Continue. Survives cinema-ring clear. Not persisted.
+    var warmLastProbeMs: Long = -WarmResumePolicy.PROBE_GAP_MS
+        private set
+    private var lastLaunchReason: LaunchReason = LaunchReason.OTHER
+    private var pendingWarmSlot: Int? = null
+    private var warmCinemaKey: String? = null
+    private var warmCinemaPinnedSlot: Int? = null
+    private var warmLastCinemaSlot: Int? = null
+    private var lastUserSlotKey: String? = null
+    private var lastUserSlot: Int? = null
+    private var pendingWarmLoadKey: String? = null
+    private var pendingWarmLoadSlot: Int? = null
+    private val warmLoadRunnable = Runnable { runPendingWarmLoad() }
 
     // Process-only achievement theater. Not persisted.
     var theaterSnap: RaTheaterSnap? = null
@@ -1165,6 +1200,7 @@ class GhostGalleonApp : Application() {
             copy
         }
         waiters.forEach { it.invoke() }
+        maybeWarmIdle()
     }
 
     /** Load the persisted ROM index on this thread so first paint is honest. */
@@ -1902,6 +1938,132 @@ class GhostGalleonApp : Application() {
     fun romEntry(id: String): RomEntry? =
         romById[id] ?: romEntries.firstOrNull { it.id == id }
 
+    /**
+     * Process-only launch reason + warm-load slot snapshot. Call immediately
+     * before [noteLaunch] so cinema pin / last cinema / last user survive
+     * the session teardown that [noteLaunch] performs.
+     */
+    fun noteLaunchReason(reason: LaunchReason, key: String) {
+        lastLaunchReason = reason
+        pendingWarmSlot = resolveWarmLoadSlot(key)
+    }
+
+    /** Last HUD user slot (1–8) for Continue load. Process-only. */
+    fun noteUserSlot(slot: Int) {
+        if (slot !in CinemaPolicy.USER_SLOTS) return
+        lastUserSlot = slot
+        lastUserSlotKey = sessionSurface?.key ?: openSession?.key
+    }
+
+    private fun lastCinemaFrameSlot(): Int? =
+        cinemaFrames.maxByOrNull { it.savedAtMs }?.slot ?: cinemaLastSlot
+
+    private fun resolveWarmLoadSlot(forKey: String): Int? {
+        val current = sessionSurface?.key ?: openSession?.key
+        val pin = (if (current == forKey) cinemaPinnedSlot else null)
+            ?: warmCinemaPinnedSlot.takeIf { warmCinemaKey == forKey }
+        val cinema = (if (current == forKey) lastCinemaFrameSlot() else null)
+            ?: warmLastCinemaSlot.takeIf { warmCinemaKey == forKey }
+        val user = lastUserSlot.takeIf { lastUserSlotKey == forKey }
+        return WarmResumePolicy.loadSlot(pin, cinema, user)
+    }
+
+    private fun cancelWarmLoad() {
+        mainHandler.removeCallbacks(warmLoadRunnable)
+        pendingWarmLoadKey = null
+        pendingWarmLoadSlot = null
+    }
+
+    private fun runPendingWarmLoad() {
+        val key = pendingWarmLoadKey
+        val slot = pendingWarmLoadSlot
+        pendingWarmLoadKey = null
+        pendingWarmLoadSlot = null
+        if (key == null || slot == null) return
+        val live = sessionSurface ?: return
+        if (live.key != key) return
+        if (live.policy == SessionPolicy.YIELD_BOTH ||
+            DualPaintPolicy.sessionOwnsCompanionDisplay(live.policy, live.greedy)
+        ) {
+            return
+        }
+        val port = settings.raNetworkCmdPort
+        Log.i("GGWarm", "load slot=$slot")
+        enqueueRaUdp(
+            work = { client -> client.loadStateSlot(port, slot) },
+            onMain = {},
+        )
+    }
+
+    private fun continueKey(): String? =
+        LibraryBrowse.continueKey(
+            settings.lastLaunchedMs.keys.toList(),
+            settings.lastLaunchedMs,
+        )
+
+    private fun sessionIsOpen(): Boolean = openSession != null || sessionSurface != null
+
+    private fun continuePlayerIsRa(key: String?): Boolean {
+        if (key.isNullOrBlank()) return false
+        if (!SlotKey.isRom(key)) {
+            return SessionHandoff.isRaPlayer(null, key)
+        }
+        val id = SlotKey.romId(key) ?: return false
+        val entry = romEntry(id) ?: return false
+        val preferred = RomProfiles.preferredPlayerId(
+            entry.id,
+            settings.romProfiles,
+            settings.defaultPlayers[entry.platformId],
+        )
+        val platform = Platforms.byId(entry.platformId) ?: return false
+        val player = PlayerResolver.resolve(platform, preferred) { pkg ->
+            packageManager.isInstalled(pkg)
+        }
+        return SessionHandoff.isRaPlayer(
+            player?.id,
+            player?.let { PlayerResolver.packageName(it) },
+        )
+    }
+
+    private fun prefetchContinueArt() {
+        if (!settings.warmResumeEnabled || sessionIsOpen()) return
+        val key = continueKey() ?: return
+        val id = SlotKey.romId(key) ?: return
+        val rom = romEntry(id) ?: return
+        val px = (settings.cardSizeDp * resources.displayMetrics.density)
+            .toInt()
+            .coerceAtLeast(1)
+        artCache.prefetch(this, rom, px, artOverrides = settings.artOverrides)
+    }
+
+    private fun maybeWarmIdle() {
+        prefetchContinueArt()
+        val now = SystemClock.elapsedRealtime()
+        val key = continueKey()
+        if (!WarmResumePolicy.mayProbe(
+                settings.warmResumeEnabled,
+                sessionIsOpen(),
+                key,
+                continuePlayerIsRa(key),
+                settings.raNetworkCommands,
+                warmLastProbeMs,
+                now,
+            )
+        ) {
+            return
+        }
+        warmLastProbeMs = now
+        val port = settings.raNetworkCmdPort
+        Log.i("GGWarm", "probe")
+        enqueueRaUdp(
+            work = { client ->
+                client.probe(port, now)
+                if (client.isLinkUp()) client.status(port)
+            },
+            onMain = {},
+        )
+    }
+
     /** Stamp last-launched and open a play session for [key]. */
     fun noteLaunch(key: String, nowMs: Long = System.currentTimeMillis()) {
         endOpenSession(nowMs)
@@ -1981,6 +2143,11 @@ class GhostGalleonApp : Application() {
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         CompanionPanel.releaseHelperEmbeds(this)
+        val reason = lastLaunchReason
+        val slot = pendingWarmSlot
+        lastLaunchReason = LaunchReason.OTHER
+        pendingWarmSlot = null
+        cancelWarmLoad()
         sessionSurface = surface
         hostClaimed = false
         hostSurface = HostSurface.HUD
@@ -2004,6 +2171,30 @@ class GhostGalleonApp : Application() {
         scheduleSettingsSave(settings)
         if (surface.policy == SessionPolicy.YIELD_BOTH) {
             liveCompanions().forEach { it.closeQuietly() }
+        } else {
+            val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+                surface.policy,
+                surface.greedy,
+            )
+            val playerIsRa = SessionHandoff.isRaPlayer(
+                surface.playerId,
+                surface.packageName,
+            )
+            if (WarmResumePolicy.mayAutoload(
+                    settings.warmResumeLoad,
+                    reason,
+                    playerIsRa,
+                    slot,
+                    sessionOwns,
+                ) && slot != null
+            ) {
+                pendingWarmLoadKey = surface.key
+                pendingWarmLoadSlot = slot
+                mainHandler.postDelayed(
+                    warmLoadRunnable,
+                    WarmResumePolicy.LOAD_BUDGET_MS,
+                )
+            }
         }
         // Ownership / surface change: re-apply FLAG_NOT_FOCUSABLE on every live deck
         // (companion stays resumed on secondary and would otherwise keep a stale flag).
@@ -2012,6 +2203,7 @@ class GhostGalleonApp : Application() {
 
     fun markSessionGreedy() {
         CompanionPanel.releaseHelperEmbeds(this)
+        cancelWarmLoad()
         sessionSurface = sessionSurface?.copy(greedy = true)
         hostClaimed = false
         hostSurface = HostSurface.HUD
@@ -2021,6 +2213,7 @@ class GhostGalleonApp : Application() {
 
     fun clearSessionSurface() {
         CompanionPanel.releaseHelperEmbeds(this)
+        cancelWarmLoad()
         sessionSurface = null
         hostClaimed = false
         hostSurface = HostSurface.HUD
@@ -2167,9 +2360,12 @@ class GhostGalleonApp : Application() {
             override fun onActivityStarted(activity: Activity) {
                 if (activity is BaseDeckActivity) {
                     liveDeckCount++
-                    if (liveDeckCount == 1 && openSession != null) {
-                        // Returning to launcher after all decks were stopped.
-                        sessionAwaitingReturn = true
+                    if (liveDeckCount == 1) {
+                        maybeWarmIdle()
+                        if (openSession != null) {
+                            // Returning to launcher after all decks were stopped.
+                            sessionAwaitingReturn = true
+                        }
                     }
                 }
             }

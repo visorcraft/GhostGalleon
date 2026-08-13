@@ -36,6 +36,7 @@ import com.visorcraft.ghostgalleon.rom.FerryKind
 import com.visorcraft.ghostgalleon.rom.FerryOffer
 import com.visorcraft.ghostgalleon.rom.FerryRefuse
 import com.visorcraft.ghostgalleon.rom.IdentityStack
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.PlayerResolver
@@ -909,7 +910,10 @@ class GameDeck(
                 // Continue / chip changes can select a key not in entries).
                 val key = state.selectedKey
                 if (key != null) {
-                    launchSlotKey(activity, state, roms, key)
+                    launchSlotKey(
+                        activity, state, roms, key,
+                        reason = gameLaunchReason(key),
+                    )
                 }
                 true
             }
@@ -2346,7 +2350,32 @@ class GameDeck(
     // Apps launch through their package intent, ROMs through the platform
     // template; both open on the non-interactive display.
     private fun launch(entry: CarouselEntry, playerId: String? = null) {
-        launchSlotKey(activity, state, roms, entry.key, playerId = playerId)
+        val reason = if (playerId != null) {
+            LaunchReason.OTHER
+        } else {
+            gameLaunchReason(entry.key)
+        }
+        launchSlotKey(
+            activity, state, roms, entry.key,
+            playerId = playerId,
+            reason = reason,
+        )
+    }
+
+    private fun gameLaunchReason(key: String): LaunchReason {
+        val live = app().settings
+        val cont = LibraryBrowse.continueKey(
+            live.lastLaunchedMs.keys.toList(),
+            live.lastLaunchedMs,
+        )
+        return if (
+            key == cont &&
+            state.libraryBrowse.mode == LibraryBrowse.Mode.RECENT
+        ) {
+            LaunchReason.CONTINUE
+        } else {
+            LaunchReason.SLOT
+        }
     }
 
     private fun app(): GhostGalleonApp = activity.application as GhostGalleonApp

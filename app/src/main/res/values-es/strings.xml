@@ -488,6 +488,8 @@
     <string name="settings_ra_network_commands">Hablar con RetroArch</string>
     <string name="settings_ra_cinema">Cine de estados</string>
     <string name="settings_ra_theater">Teatro de logros</string>
+    <string name="settings_warm_resume">Continuar en caliente</string>
+    <string name="settings_warm_resume_load">Cargar la última ranura de cine al continuar</string>
     <string name="settings_ra_handoff_save">Guardar antes de cambiar</string>
     <string name="settings_ram_lenses">Lentes de RAM</string>
     <string name="settings_ram_trackers">Rastreadores de RAM</string>

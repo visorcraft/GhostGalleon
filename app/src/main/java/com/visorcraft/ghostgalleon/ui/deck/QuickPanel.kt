@@ -16,6 +16,7 @@ import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.library.HiddenRoms
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
@@ -253,7 +254,7 @@ class QuickPanel(
         }
         val idx = app.settings.gridSlots.indexOf(cont)
         if (idx >= 0) state.selectSlot(idx, cont) else state.select(cont)
-        launchSlotKey(activity, state, roms, cont)
+        launchSlotKey(activity, state, roms, cont, reason = LaunchReason.CONTINUE)
     }
 
     /** Pick a random curated app or visible ROM and launch it immediately. */

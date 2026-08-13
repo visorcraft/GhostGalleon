@@ -60,6 +60,7 @@ import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.rom.CinemaPolicy
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.CockpitPolicy
 import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.HeroDetail
@@ -989,7 +990,7 @@ object CompanionPanel {
             ) ?: return@setOnClickListener
             val idx = app.settings.gridSlots.indexOf(key)
             if (idx >= 0) state.selectSlot(idx, key) else state.select(key)
-            launchSlotKey(activity, state, roms, key)
+            launchSlotKey(activity, state, roms, key, reason = LaunchReason.CONTINUE)
         }
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -3130,6 +3131,7 @@ object CompanionPanel {
                     activity, settings, surface, dp, compact,
                 ) { slot ->
                     val save = slotSaveMode
+                    if (slot in RaStateSlots.SLOTS) app.noteUserSlot(slot)
                     enqueueRaChipWork(hud, app, probe = false) { client, port ->
                         val ok = if (save) client.saveStateSlot(port, slot)
                         else client.loadStateSlot(port, slot)

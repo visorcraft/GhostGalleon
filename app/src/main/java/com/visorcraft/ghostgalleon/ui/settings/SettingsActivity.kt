@@ -1520,7 +1520,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
-            "library rom folder rescan hidden collections players retroarch network commands talk ferry save"),
+            "library rom folder rescan hidden collections players retroarch network commands talk ferry save warm continue cinema"),
         SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
             "artwork backup export import steamgriddb retroachievements scrape pack"),
         SettingsJump(SettingsCatalog.PAGE_STATS, getString(R.string.settings_page_stats),
@@ -2643,6 +2643,33 @@ class SettingsActivity : AppCompatActivity() {
         toggle(libraryCard, getString(R.string.settings_ra_theater), s.raTheaterEnabled) { on ->
             app.updateSettings(app.settings.copy(raTheaterEnabled = on))
         }
+        var warmLoadRow: View? = null
+        var warmLoadSwitch: Switch? = null
+        fun refreshWarmLoadEnabled() {
+            val on = app.settings.warmResumeEnabled
+            warmLoadRow?.isEnabled = on
+            warmLoadRow?.alpha = if (on) 1f else 0.5f
+            warmLoadSwitch?.isEnabled = on
+        }
+        toggle(libraryCard, getString(R.string.settings_warm_resume), s.warmResumeEnabled) { on ->
+            app.updateSettings(app.settings.copy(warmResumeEnabled = on))
+            refreshWarmLoadEnabled()
+        }
+        val warmLoadToggle = accentSwitch(s.warmResumeLoad) { on ->
+            if (!app.settings.warmResumeEnabled) return@accentSwitch
+            app.updateSettings(app.settings.copy(warmResumeLoad = on))
+        }
+        warmLoadSwitch = warmLoadToggle
+        val warmLoadControl = controlRow(
+            getString(R.string.settings_warm_resume_load),
+            warmLoadToggle,
+        )
+        warmLoadRow = warmLoadControl
+        libraryCard.addView(
+            warmLoadControl,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
+        refreshWarmLoadEnabled()
         toggle(libraryCard, getString(R.string.settings_save_ferry), s.saveFerryEnabled) { on ->
             app.updateSettings(app.settings.copy(saveFerryEnabled = on))
         }

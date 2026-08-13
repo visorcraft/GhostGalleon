@@ -489,6 +489,8 @@
     <string name="settings_ra_network_commands">Mit RetroArch sprechen</string>
     <string name="settings_ra_cinema">Zustandskino</string>
     <string name="settings_ra_theater">Errungenschaftstheater</string>
+    <string name="settings_warm_resume">Warm fortsetzen</string>
+    <string name="settings_warm_resume_load">Letzten Kino-Slot beim Fortsetzen laden</string>
     <string name="settings_ra_handoff_save">Vor dem Wechsel speichern</string>
     <string name="settings_ram_lenses">RAM-Linsen</string>
     <string name="settings_ram_trackers">RAM-Tracker</string>

@@ -50,6 +50,7 @@ import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
 import com.visorcraft.ghostgalleon.rom.HandoffPrep
+import com.visorcraft.ghostgalleon.rom.LaunchReason
 import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionRing
@@ -1498,6 +1499,7 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                                 app.romEntries,
                                 target.key,
                                 playerId = target.playerId,
+                                reason = LaunchReason.SWITCHER,
                             )
                         }
                         if (plan.prep != HandoffPrep.RA_PAUSE_SAVE) {

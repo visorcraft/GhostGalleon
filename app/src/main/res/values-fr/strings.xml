@@ -488,6 +488,8 @@
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_cinema">Cinéma d\'états</string>
     <string name="settings_ra_theater">Théâtre des succès</string>
+    <string name="settings_warm_resume">Reprise à chaud</string>
+    <string name="settings_warm_resume_load">Charger le dernier emplacement cinéma en continuant</string>
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
     <string name="settings_ram_lenses">Lentilles RAM</string>
     <string name="settings_ram_trackers">Traceurs RAM</string>

@@ -517,6 +517,8 @@
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
     <string name="settings_ra_cinema">State cinema</string>
     <string name="settings_ra_theater">Achievement theater</string>
+    <string name="settings_warm_resume">Warm Continue</string>
+    <string name="settings_warm_resume_load">Load last cinema slot on Continue</string>
     <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ram_lenses">RAM lenses</string>
     <string name="settings_ram_trackers">RAM trackers</string>
