@@ -867,6 +867,9 @@ class GhostGalleonApp : Application() {
         val names = linkedSetOf<String>()
         snap.nextLocked?.badgeName?.let(names::add)
         snap.lastUnlock?.badgeName?.let(names::add)
+        theaterTickerId?.let { id ->
+            snap.items.firstOrNull { it.id == id }?.badgeName?.let(names::add)
+        }
         for (name in names) {
             val key = theaterBadgeKey(name)
             if (artCache.diskHas(key)) continue
