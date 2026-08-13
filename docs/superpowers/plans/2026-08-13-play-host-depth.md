@@ -1196,7 +1196,7 @@ Expected: compile fail
 
 - [ ] **Step 3: Write minimal implementation**
 
-`sameTitle`: both ready and (hash equal non-blank **or** groupId equal non-blank). `samePlayerHint`: both `SessionHandoff.isRaPlayer`. `refuse` order: not ready → different title → different player → yield dest → NONE. `offers` empty when refuse != NONE.
+`sameTitle`: both ready and (hash equal non-blank **or** groupId equal non-blank). `samePlayerHint`: `SessionHandoff.isRaPlayer(id, id)` on each side so either a `ra-` player id or `com.retroarch.aarch64` counts. `refuse` order: not ready → different title → different player → yield dest → NONE. `offers` empty when refuse != NONE.
 
 - [ ] **Step 4: Run test to verify it passes**
 
