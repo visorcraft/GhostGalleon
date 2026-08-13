@@ -209,6 +209,7 @@ class CompanionActivity : BaseDeckActivity() {
 
     private fun armPlayHudTick() {
         playHudHandler.removeCallbacks(playHudTick)
+        if (!PlayHostPolicy.playHudTickShouldArm(app.openSession != null)) return
         playHudHandler.post(playHudTick)
     }
 
@@ -251,6 +252,7 @@ internal class PixelOracle(
     fun start() {
         handler.removeCallbacks(tick)
         if (!shouldSchedule()) return
+        tally = OracleTally()
         handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
     }
 
@@ -274,8 +276,11 @@ internal class PixelOracle(
         handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
         if (copyPending) return
         if (renderInFlight()) return
+        val now = SystemClock.uptimeMillis()
         val app = activity.application as GhostGalleonApp
         val surface = app.sessionSurface
+        // KEEP play-host stays at 2s so a black HUD still heals in ~6s.
+        if (!OracleTallyLogic.shouldCopy(tally, now, stretch = surface == null)) return
         val windowId = activity.currentDisplayId()
         val may = PlayHostPolicy.oracleMaySample(
             dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
@@ -434,6 +439,10 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         watchRa = PlayHostPolicy.playHudWatchRa(
             settings.raNetworkCommands,
             app.raCommandClient?.isLinkUp() == true,
+            com.visorcraft.ghostgalleon.rom.SessionHandoff.isRaPlayer(
+                app.sessionSurface?.playerId,
+                app.sessionSurface?.packageName,
+            ),
         ),
         raProbeMs = com.visorcraft.ghostgalleon.rom.RaCommand.PROBE_INTERVAL_MS,
     )

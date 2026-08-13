@@ -27,4 +27,35 @@ class OracleTallyTest {
         assertFalse(ignored.second)
         assertEquals(0, ignored.first.misses)
     }
+
+    @Test
+    fun `healthy samples skip PixelCopy until the stretch elapses`() {
+        var t = OracleTally()
+        assertTrue(OracleTallyLogic.shouldCopy(t, nowMs = 0L))
+        repeat(OracleTallyLogic.HITS_TO_STRETCH) {
+            t = OracleTallyLogic.onSample(t, maxLuma = 40, copyFailed = false, nowMs = 2_000L).first
+        }
+        assertEquals(OracleTallyLogic.HITS_TO_STRETCH, t.hits)
+        assertFalse(OracleTallyLogic.shouldCopy(t, nowMs = 2_000L))
+        assertFalse(
+            OracleTallyLogic.shouldCopy(
+                t,
+                nowMs = 2_000L + OracleTallyLogic.STRETCH_GAP_MS - 1,
+            ),
+        )
+        assertTrue(
+            OracleTallyLogic.shouldCopy(
+                t,
+                nowMs = 2_000L + OracleTallyLogic.STRETCH_GAP_MS,
+            ),
+        )
+        assertTrue(OracleTallyLogic.shouldCopy(t, nowMs = 2_000L, stretch = false))
+        val miss = OracleTallyLogic.onSample(t, maxLuma = 0, copyFailed = false, nowMs = 20_000L)
+        assertEquals(0, miss.first.hits)
+        assertTrue(OracleTallyLogic.shouldCopy(miss.first, nowMs = 20_000L))
+        assertFalse(OracleTallyLogic.shouldCopy(failBackoff(1_000L), nowMs = 5_000L))
+    }
+
+    private fun failBackoff(nowMs: Long): OracleTally =
+        OracleTallyLogic.onSample(OracleTally(), null, true, nowMs).first
 }

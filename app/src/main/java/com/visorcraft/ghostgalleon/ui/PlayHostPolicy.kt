@@ -56,9 +56,15 @@ object PlayHostPolicy {
         return minOf(clock, raProbeMs.coerceAtLeast(1_000L))
     }
 
-    /** VERSION probe only while Talk is on and the link is still down. */
-    fun playHudWatchRa(raNetworkCommands: Boolean, raLinkUp: Boolean): Boolean =
-        raNetworkCommands && !raLinkUp
+    /** VERSION probe only while Talk is on, the player is RA, and the link is still down. */
+    fun playHudWatchRa(
+        raNetworkCommands: Boolean,
+        raLinkUp: Boolean,
+        raPlayer: Boolean,
+    ): Boolean = raNetworkCommands && raPlayer && !raLinkUp
+
+    /** KEEP clock ticker only while a play session is open. */
+    fun playHudTickShouldArm(sessionOpen: Boolean): Boolean = sessionOpen
 
     /** Cinema strip walk / capture only when both toggles are on. */
     fun cinemaTickAllowed(cinemaEnabled: Boolean, raNetworkCommands: Boolean): Boolean =

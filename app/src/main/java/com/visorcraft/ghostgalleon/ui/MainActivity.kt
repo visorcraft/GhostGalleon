@@ -80,6 +80,7 @@ class MainActivity : BaseDeckActivity() {
 
     private fun armPlayHudTick() {
         playHudHandler.removeCallbacks(playHudTick)
+        if (!PlayHostPolicy.playHudTickShouldArm(app.openSession != null)) return
         playHudHandler.post(playHudTick)
     }
 

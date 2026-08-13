@@ -118,10 +118,17 @@ class PlayHostPolicyTest {
     }
 
     @Test
-    fun `RA watch sleeps once the link is up`() {
-        assertTrue(PlayHostPolicy.playHudWatchRa(true, false))
-        assertFalse(PlayHostPolicy.playHudWatchRa(true, true))
-        assertFalse(PlayHostPolicy.playHudWatchRa(false, false))
-        assertFalse(PlayHostPolicy.playHudWatchRa(false, true))
+    fun `RA watch sleeps once the link is up or the player is not RA`() {
+        assertTrue(PlayHostPolicy.playHudWatchRa(true, false, true))
+        assertFalse(PlayHostPolicy.playHudWatchRa(true, true, true))
+        assertFalse(PlayHostPolicy.playHudWatchRa(false, false, true))
+        assertFalse(PlayHostPolicy.playHudWatchRa(false, true, true))
+        assertFalse(PlayHostPolicy.playHudWatchRa(true, false, false))
+    }
+
+    @Test
+    fun `play HUD ticker stays disarmed without an open session`() {
+        assertFalse(PlayHostPolicy.playHudTickShouldArm(sessionOpen = false))
+        assertTrue(PlayHostPolicy.playHudTickShouldArm(sessionOpen = true))
     }
 }
