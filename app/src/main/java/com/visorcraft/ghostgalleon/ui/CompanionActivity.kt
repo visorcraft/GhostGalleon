@@ -59,6 +59,7 @@ class CompanionActivity : BaseDeckActivity() {
 
     fun closeQuietly() {
         selfClosing = true
+        CompanionPanel.releaseHelperEmbed(window?.decorView)
         releaseSeat()
         // Clear focus-lock flag before the window goes away (owner NONE).
         applyPlayHostFocusLock()
@@ -181,6 +182,7 @@ class CompanionActivity : BaseDeckActivity() {
     override fun onDestroy() {
         playHudHandler.removeCallbacks(playHudTick)
         oracle.stop()
+        CompanionPanel.releaseHelperEmbed(window?.decorView)
         releaseSeat()
         super.onDestroy()
     }
@@ -406,6 +408,7 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         CompanionPanel.hidePlayHudTracker(root)
         null
     }
+    CompanionPanel.applyHelperChrome(root, app)
     val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
         watchRa = app.settings.raNetworkCommands,

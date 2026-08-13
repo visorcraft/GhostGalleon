@@ -49,6 +49,7 @@ import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.CompanionRole
+import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.SettingsBundle
 import com.visorcraft.ghostgalleon.settings.SettingsCatalog
 import com.visorcraft.ghostgalleon.settings.SettingsJump
@@ -61,6 +62,7 @@ import com.visorcraft.ghostgalleon.state.UIMode
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
+import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.deviceProfileName
 import com.visorcraft.ghostgalleon.ui.applyThemeFontScale
@@ -116,6 +118,7 @@ class SettingsActivity : AppCompatActivity() {
     private var hiddenRomsValue: TextView? = null
     private var dockValue: TextView? = null
     private var packageYieldValue: TextView? = null
+    private var playHostHelperValue: TextView? = null
 
     private fun appLabel(packageName: String): String =
         appLibrary.all(app.settings).firstOrNull { it.packageName == packageName }
@@ -284,6 +287,9 @@ class SettingsActivity : AppCompatActivity() {
             else dock.joinToString(" · ", transform = ::dockEntryLabel)
         val yieldCount = app.settings.packageYield.count { it.value }
         packageYieldValue?.text = formatNumber(yieldCount)
+        playHostHelperValue?.text = app.settings.playHostHelperPackage?.let { pkg ->
+            appLabel(pkg)
+        } ?: getString(R.string.action_none)
     }
 
     private fun modalRow(label: String, chip: String, onChip: () -> Unit): View =
@@ -407,6 +413,39 @@ class SettingsActivity : AppCompatActivity() {
             .setNegativeButton(R.string.action_cancel, null)
             .show()
     }
+
+    /** Pick a non-session, non-dual-surface helper for the KEEP play host. */
+    private fun showPlayHostHelperPicker() {
+        val apps = helperPickerApps()
+        if (apps.isEmpty()) {
+            Toast.makeText(this, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = apps.map { it.label }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_play_host_helper)
+            .setItems(labels) { _, which ->
+                val pkg = apps[which].packageName
+                app.updateSettings(app.settings.copy(playHostHelperPackage = pkg))
+                refreshSettingsUi()
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                app.updateSettings(app.settings.copy(playHostHelperPackage = null))
+                refreshSettingsUi()
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun helperPickerApps() = appLibrary.visible(app.settings)
+        .sortedBy { it.label.lowercase() }
+        .filter { entry ->
+            !HelperEmbedPolicy.refused(entry.packageName) &&
+                !CompanionRoleResolve.pinConflictsWithSession(
+                    entry.packageName,
+                    app.sessionSurface,
+                )
+        }
 
     private fun showDockDialog() {
         val list = LinearLayout(this).apply {
@@ -1477,7 +1516,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_DISPLAY, getString(R.string.settings_page_display_grid),
             "theme display grid chrome wallpaper columns icon card posture hinge flat yield"),
         SettingsJump(SettingsCatalog.PAGE_APPS, getString(R.string.settings_page_apps),
-            "apps hidden packages dock"),
+            "apps hidden packages dock helper play-host"),
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
@@ -2172,6 +2211,36 @@ class SettingsActivity : AppCompatActivity() {
         packageYieldRow.addView(packageYieldValue)
         appsCard.addView(
             packageYieldRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
+        val helperRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showPlayHostHelperPicker() }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(playHostHelperPackage = null))
+                refreshSettingsUi()
+                true
+            }
+        }
+        helperRow.addView(
+            rowLabel(getString(R.string.settings_play_host_helper)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        playHostHelperValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.END
+        }
+        helperRow.addView(
+            playHostHelperValue,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
+        )
+        appsCard.addView(
+            helperRow,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
         )
         refreshAppsRows()

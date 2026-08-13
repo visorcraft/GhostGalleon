@@ -373,7 +373,9 @@
     <string name="play_hud_cinema">Cinema</string>
     <string name="play_hud_theater">Unlocked · %1$s</string>
     <string name="play_hud_seat">Seat</string>
+    <string name="play_hud_helper">Helper</string>
     <string name="play_hud_back_to_hud">Back to HUD</string>
+    <string name="helper_embed_unavailable">Cannot embed on this system</string>
     <string name="posture_use_both_screens">Use both screens?</string>
     <string name="seat_need_assist">Enable Input assist to use the second seat.</string>
     <string name="cockpit_keyboard">Keyboard</string>
@@ -502,6 +504,7 @@
     <string name="settings_player_uses_both_screens">Uses both screens</string>
     <string name="settings_stage_plot">Screens</string>
     <string name="settings_package_yield">Uses both screens</string>
+    <string name="settings_play_host_helper">Play-host helper</string>
     <string name="settings_stage_keep">Keep panel</string>
     <string name="settings_stage_yield">Yield both</string>
     <string name="settings_stage_face_interactive">Interactive</string>

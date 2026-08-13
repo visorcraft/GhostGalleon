@@ -39,5 +39,8 @@ class HelperEmbedPolicyTest {
             HelperEmbedPolicy.mayEmbed(true, false, "org.wiki", "com.retroarch.aarch64", true, true),
         )
         assertFalse(HelperEmbedPolicy.mayLaunchOnHostDisplay())
+        assertTrue(HelperEmbedPolicy.refused("me.magnum.melondualds"))
+        assertTrue(HelperEmbedPolicy.refused("org.azahar_emu.azahar"))
+        assertFalse(HelperEmbedPolicy.refused("org.wiki"))
     }
 }

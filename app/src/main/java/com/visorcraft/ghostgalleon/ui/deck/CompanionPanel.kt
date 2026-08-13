@@ -17,6 +17,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -91,6 +92,7 @@ import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.HostSurface
 import com.visorcraft.ghostgalleon.ui.HostSurfacePolicy
 import com.visorcraft.ghostgalleon.ui.MainActivity
@@ -152,7 +154,13 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_SEAT_CHIP = "play_hud_seat_chip"
     private const val TAG_PLAY_HUD_SEAT_CLUSTER = "play_hud_seat_cluster"
     private const val TAG_PLAY_HUD_SEAT_HINT = "play_hud_seat_hint"
+    private const val TAG_PLAY_HUD_HELPER = "play_hud_helper"
+    private const val TAG_PLAY_HUD_HELPER_BODY = "play_hud_helper_body"
+    private const val TAG_PLAY_HUD_HELPER_CHIP = "play_hud_helper_chip"
+    private const val TAG_PLAY_HUD_TITLE = "play_hud_title"
+    private const val TAG_PLAY_HUD_ART = "play_hud_art"
     private const val TAG_PLAY_HUD_POSTURE = "play_hud_posture"
+    private const val HELPER_LOG = "GGHelper"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
     private const val LENS_MAX_INTERVAL_MS = 200L
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
@@ -298,6 +306,210 @@ object CompanionPanel {
         if (!app.settings.raSecondSeat) return false
         if (!SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)) return false
         return dual && playHost && !sessionOwns
+    }
+
+    private enum class HelperChipKind { HIDDEN, ENABLED, UNAVAILABLE }
+
+    fun releaseHelperEmbed(root: View?) {
+        val host = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_HELPER) ?: return
+        ActivityEmbed.release(host)
+    }
+
+    fun releaseHelperEmbeds(app: GhostGalleonApp) {
+        app.liveDeckActivities().forEach { deck ->
+            releaseHelperEmbed(deck.window?.decorView)
+        }
+    }
+
+    fun applyHelperChrome(root: View?, app: GhostGalleonApp) {
+        val kind = helperChipKind(app)
+        val allowed = kind == HelperChipKind.ENABLED
+        if (!allowed && app.hostSurface == HostSurface.HELPER) {
+            releaseHelperEmbed(root)
+            app.hostSurface = HostSurface.HUD
+            app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+        }
+        val body = root?.findViewWithTag<View>(TAG_PLAY_HUD_HELPER_BODY) ?: return
+        val onHelper = app.hostSurface == HostSurface.HELPER &&
+            helperChipKind(app) == HelperChipKind.ENABLED
+        val vis = if (onHelper) View.VISIBLE else View.GONE
+        if (body.visibility != vis) body.visibility = vis
+        fun setTagged(tag: String, visibility: Int) {
+            val v = root.findViewWithTag<View>(tag) ?: return
+            if (v.visibility != visibility) v.visibility = visibility
+        }
+        if (onHelper) {
+            setTagged(TAG_PLAY_HUD_ART, View.GONE)
+            setTagged(TAG_PLAY_HUD_CLOCK, View.GONE)
+            setTagged(TAG_PLAY_HUD_OWNER, View.GONE)
+            setTagged(TAG_PLAY_HUD_LENS, View.GONE)
+            setTagged(TAG_PLAY_HUD_TRACKER, View.GONE)
+            setTagged(TAG_PLAY_HUD_CINEMA, View.GONE)
+            setTagged(TAG_PLAY_HUD_THEATER, View.GONE)
+            setTagged(TAG_PLAY_HUD_ACTIONS, View.GONE)
+            setTagged(TAG_PLAY_HUD_SLOTS, View.GONE)
+            setTagged(TAG_PLAY_HUD_SEAT, View.GONE)
+        } else {
+            setTagged(TAG_PLAY_HUD_ART, View.VISIBLE)
+            setTagged(TAG_PLAY_HUD_CLOCK, View.VISIBLE)
+            val actions = root.findViewWithTag<View>(TAG_PLAY_HUD_ACTIONS)
+            if (actions != null && app.playHudExpanded && app.hostSurface != HostSurface.SEAT) {
+                if (actions.visibility != View.VISIBLE) actions.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    fun setHelperActive(app: GhostGalleonApp, on: Boolean) {
+        if (on) {
+            if (helperChipKind(app) != HelperChipKind.ENABLED) return
+            app.hostSurface = HostSurface.HELPER
+            var toasted = false
+            app.liveDeckActivities().forEach { deck ->
+                deck.applyPlayHostFocusLock()
+                applyHelperChrome(deck.window?.decorView, app)
+                applySeatChrome(deck.window?.decorView, app)
+                if (!attachHelper(deck.window?.decorView, deck, app) && !toasted) {
+                    toasted = true
+                    Toast.makeText(deck, R.string.helper_embed_unavailable, Toast.LENGTH_SHORT)
+                        .show()
+                }
+            }
+        } else if (app.hostSurface == HostSurface.HELPER) {
+            releaseHelperEmbeds(app)
+            app.hostSurface = HostSurface.HUD
+            app.liveDeckActivities().forEach { deck ->
+                deck.applyPlayHostFocusLock()
+                applyHelperChrome(deck.window?.decorView, app)
+                applySeatChrome(deck.window?.decorView, app)
+            }
+        }
+    }
+
+    private fun resolvedHelperPackage(app: GhostGalleonApp): String? {
+        val surface = app.sessionSurface ?: return null
+        return HelperEmbedPolicy.resolvePackage(
+            SlotKey.romId(surface.key),
+            app.settings.romHelpers,
+            app.settings.playHostHelperPackage,
+        )
+    }
+
+    private fun helperChipKind(app: GhostGalleonApp): HelperChipKind {
+        val pkg = resolvedHelperPackage(app)
+        if (pkg.isNullOrBlank() || HelperEmbedPolicy.refused(pkg)) return HelperChipKind.HIDDEN
+        val surface = app.sessionSurface ?: return HelperChipKind.HIDDEN
+        val dual = app.displayConfig.mode == SurfaceMode.DUAL
+        val launchId = surface.launchDisplayId
+        val hostId = launchId?.let { lid ->
+            app.displayConfig.allIds.firstOrNull { it != lid }
+        }
+        val playHost = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = launchId,
+        )
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface.policy,
+            surface.greedy,
+        )
+        val cockpit = CockpitPolicy.cockpitAllowed(
+            playHostAllowed = playHost,
+            playerId = surface.playerId,
+            cockpitEnabled = app.settings.winlatorCockpit,
+        )
+        if (!HostSurfacePolicy.helperAllowed(app.hostSurface, cockpit)) {
+            return HelperChipKind.HIDDEN
+        }
+        if (!playHost || sessionOwns) return HelperChipKind.HIDDEN
+        val embed = ActivityEmbed.available()
+        if (HelperEmbedPolicy.mayEmbed(
+                playHost,
+                sessionOwns,
+                pkg,
+                surface.packageName,
+                embed,
+                cockpit,
+            )
+        ) {
+            return HelperChipKind.ENABLED
+        }
+        if (!embed) return HelperChipKind.UNAVAILABLE
+        return HelperChipKind.HIDDEN
+    }
+
+    /**
+     * @return false when attach was attempted and failed (caller toasts once).
+     */
+    private fun attachHelper(root: View?, activity: Context, app: GhostGalleonApp): Boolean {
+        if (app.hostSurface != HostSurface.HELPER) return true
+        val host = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_HELPER) ?: return true
+        val pkg = resolvedHelperPackage(app)
+        val kind = helperChipKind(app)
+        if (pkg == null || HelperEmbedPolicy.refused(pkg) || kind != HelperChipKind.ENABLED) {
+            ActivityEmbed.release(host)
+            app.hostSurface = HostSurface.HUD
+            applyHelperChrome(root, app)
+            return true
+        }
+        // v1: embed or nothing. mayLaunchOnHostDisplay is always false.
+        if (HelperEmbedPolicy.mayLaunchOnHostDisplay()) {
+            ActivityEmbed.release(host)
+            app.hostSurface = HostSurface.HUD
+            applyHelperChrome(root, app)
+            return false
+        }
+        val ok = ActivityEmbed.attach(host, activity, pkg)
+        if (!ok) {
+            ActivityEmbed.release(host)
+            app.hostSurface = HostSurface.HUD
+            Log.i(HELPER_LOG, "attach failed pkg=$pkg")
+            applyHelperChrome(root, app)
+            return false
+        }
+        Log.i(HELPER_LOG, "attach pkg=$pkg")
+        return true
+    }
+
+    private fun buildHelperBody(
+        activity: AppCompatActivity,
+        app: GhostGalleonApp,
+        settings: Settings,
+        dp: (Int) -> Int,
+    ): View {
+        val body = LinearLayout(activity).apply {
+            tag = TAG_PLAY_HUD_HELPER_BODY
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            contentDescription = activity.getString(R.string.play_hud_helper)
+        }
+        body.addView(
+            TextView(activity).apply {
+                setText(R.string.play_hud_back_to_hud)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(Color.BLACK)
+                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
+                setOnClickListener { setHelperActive(app, false) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(8) },
+        )
+        body.addView(
+            FrameLayout(activity).apply {
+                tag = TAG_PLAY_HUD_HELPER
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ).apply { topMargin = dp(8) },
+        )
+        return body
     }
 
     private fun buildSeatBody(
@@ -1415,6 +1627,7 @@ object CompanionPanel {
         }
 
         val app = activity.application as GhostGalleonApp
+        releaseHelperEmbed(activity.window?.decorView)
 
         // Companion role chips (Hero / Now Playing / Perf / Pin).
         val preferredRole = CompanionRole.parse(settings.companionRole)
@@ -1512,7 +1725,11 @@ object CompanionPanel {
                 ),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    if (cockpit || app.hostSurface == HostSurface.SEAT) {
+                    if (cockpit ||
+                        app.hostSurface == HostSurface.SEAT ||
+                        app.hostSurface == HostSurface.HELPER ||
+                        helperChipKind(app) == HelperChipKind.ENABLED
+                    ) {
                         ViewGroup.LayoutParams.MATCH_PARENT
                     } else {
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2454,7 +2671,7 @@ object CompanionPanel {
                     hudRom,
                     targetPx = artPx,
                     artOverrides = settings.artOverrides,
-                ),
+                ).apply { tag = TAG_PLAY_HUD_ART },
                 LinearLayout.LayoutParams(artPx, artPx).apply {
                     gravity = Gravity.CENTER_HORIZONTAL
                     topMargin = dp(8)
@@ -2462,7 +2679,7 @@ object CompanionPanel {
                 },
             )
         } else {
-            val icon = ImageView(activity)
+            val icon = ImageView(activity).apply { tag = TAG_PLAY_HUD_ART }
             CustomIcon.bind(
                 icon,
                 iconLoader(activity),
@@ -2482,6 +2699,7 @@ object CompanionPanel {
         }
         val label = resumeLabel(surface.key, library, roms, settings, app)
         hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_TITLE
             text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
             setTextColor(Color.WHITE)
@@ -2982,6 +3200,27 @@ object CompanionPanel {
                     },
                 )
             }
+            val helperKind = helperChipKind(app)
+            if (app.hostSurface == HostSurface.HELPER && helperKind != HelperChipKind.ENABLED) {
+                releaseHelperEmbed(hud)
+                app.hostSurface = HostSurface.HUD
+            }
+            if (helperKind != HelperChipKind.HIDDEN) {
+                val helperEnabled = helperKind == HelperChipKind.ENABLED
+                addChip(
+                    actionChip(
+                        labelRes = if (helperEnabled) {
+                            R.string.play_hud_helper
+                        } else {
+                            R.string.helper_embed_unavailable
+                        },
+                        chipTag = TAG_PLAY_HUD_HELPER_CHIP,
+                        enabled = helperEnabled,
+                    ) {
+                        setHelperActive(app, true)
+                    },
+                )
+            }
             hud.addView(chipScroll(tagActions = true))
             slotStrip?.let { strip ->
                 if (!app.playHudExpanded) strip.visibility = View.GONE
@@ -2997,7 +3236,29 @@ object CompanionPanel {
                     ),
                 )
             }
+            if (helperKind == HelperChipKind.ENABLED ||
+                app.hostSurface == HostSurface.HELPER
+            ) {
+                hud.addView(
+                    buildHelperBody(activity, app, settings, dp),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f,
+                    ),
+                )
+            }
             applySeatChrome(hud, app)
+            applyHelperChrome(hud, app)
+            if (app.hostSurface == HostSurface.HELPER &&
+                !attachHelper(hud, activity, app)
+            ) {
+                Toast.makeText(
+                    activity,
+                    R.string.helper_embed_unavailable,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
         applyPostureChip(hud, app)
         return hud

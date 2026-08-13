@@ -45,11 +45,13 @@ import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.rom.SaveFerry
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.GridSlots
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
+import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.resolveText
 
 class GameDeck(
@@ -2596,11 +2598,60 @@ class GameDeck(
         val ferryPeers = if (rom != null) saveFerryPeers(rom) else emptyList()
         val builder = android.app.AlertDialog.Builder(activity)
             .setTitle(R.string.details_title)
-            .setMessage(body)
             .setPositiveButton(R.string.action_ok, null)
             .setNeutralButton(R.string.action_copy_title) { _, _ ->
                 copyTitleToClipboard(entry.label)
             }
+        var bodyView: TextView? = null
+        if (rom != null) {
+            val pad = (20 * activity.resources.displayMetrics.density).toInt()
+            val message = TextView(activity).apply {
+                text = body
+                setTextIsSelectable(true)
+                setPadding(pad, pad / 2, pad, pad / 2)
+            }
+            bodyView = message
+            val helperPkg = settings.romHelpers[rom.id]
+            val helperRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(pad, 0, pad, pad)
+                isFocusable = true
+                setOnClickListener { showRomHelperPicker(rom.id) }
+                setOnLongClickListener {
+                    clearRomHelper(rom.id)
+                    true
+                }
+            }
+            helperRow.addView(
+                TextView(activity).apply {
+                    setText(R.string.settings_play_host_helper)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setTextColor(Color.WHITE)
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            helperRow.addView(
+                TextView(activity).apply {
+                    text = helperPkg?.let { helperAppLabel(it) }
+                        ?: activity.getString(R.string.action_none)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextColor(settings.accentColor)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    gravity = Gravity.END
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
+            )
+            val content = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(message)
+                addView(helperRow)
+            }
+            builder.setView(android.widget.ScrollView(activity).apply { addView(content) })
+        } else {
+            builder.setMessage(body)
+        }
         // Apps: system package details. Same-title ferry dests. Else related.
         when {
             rom == null && !SlotKey.isRom(key) ->
@@ -2624,11 +2675,52 @@ class GameDeck(
         }
         val fullHash = GameDetails.copyableHash(identity)
         if (fullHash != null) {
-            dialog.findViewById<TextView>(android.R.id.message)?.setOnLongClickListener {
+            val hashTarget = bodyView
+                ?: dialog.findViewById<TextView>(android.R.id.message)
+            hashTarget?.setOnLongClickListener {
                 copyHashToClipboard(fullHash)
                 true
             }
         }
+    }
+
+    private fun helperAppLabel(packageName: String): String =
+        library.byPackage(settings)[packageName]?.label ?: packageName
+
+    private fun helperPickerApps() = library.visible(settings)
+        .sortedBy { it.label.lowercase() }
+        .filter { entry ->
+            !HelperEmbedPolicy.refused(entry.packageName) &&
+                !CompanionRoleResolve.pinConflictsWithSession(
+                    entry.packageName,
+                    app().sessionSurface,
+                )
+        }
+
+    private fun clearRomHelper(romId: String) {
+        val live = app().settings
+        app().updateSettings(live.copy(romHelpers = live.romHelpers - romId))
+    }
+
+    private fun showRomHelperPicker(romId: String) {
+        val apps = helperPickerApps()
+        if (apps.isEmpty()) {
+            Toast.makeText(activity, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = apps.map { it.label }.toTypedArray()
+        android.app.AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_play_host_helper)
+            .setItems(labels) { _, which ->
+                val pkg = apps[which].packageName
+                val live = app().settings
+                app().updateSettings(live.copy(romHelpers = live.romHelpers + (romId to pkg)))
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                clearRomHelper(romId)
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
     }
 
     private fun saveFerryPeers(rom: RomEntry): List<RomEntry> {

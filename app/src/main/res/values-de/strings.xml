@@ -352,7 +352,9 @@
     <string name="play_hud_cinema">Kino</string>
     <string name="play_hud_theater">Freigeschaltet · %1$s</string>
     <string name="play_hud_seat">Sitz</string>
+    <string name="play_hud_helper">Helfer</string>
     <string name="play_hud_back_to_hud">Zurück zum HUD</string>
+    <string name="helper_embed_unavailable">Einbetten auf diesem System nicht möglich</string>
     <string name="posture_use_both_screens">Beide Bildschirme nutzen?</string>
     <string name="seat_need_assist">Eingabehilfe aktivieren, um den zweiten Sitz zu nutzen.</string>
     <string name="cockpit_keyboard">Tastatur</string>
@@ -474,6 +476,7 @@
     <string name="settings_player_uses_both_screens">Nutzt beide Bildschirme</string>
     <string name="settings_stage_plot">Bildschirme</string>
     <string name="settings_package_yield">Nutzt beide Bildschirme</string>
+    <string name="settings_play_host_helper">Spielhost-Helfer</string>
     <string name="settings_stage_keep">Panel behalten</string>
     <string name="settings_stage_yield">Beide abgeben</string>
     <string name="settings_stage_face_interactive">Interaktiv</string>

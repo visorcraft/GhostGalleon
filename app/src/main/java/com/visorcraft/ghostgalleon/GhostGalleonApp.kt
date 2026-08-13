@@ -1980,6 +1980,7 @@ class GhostGalleonApp : Application() {
     }
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
+        CompanionPanel.releaseHelperEmbeds(this)
         sessionSurface = surface
         hostClaimed = false
         hostSurface = HostSurface.HUD
@@ -2010,6 +2011,7 @@ class GhostGalleonApp : Application() {
     }
 
     fun markSessionGreedy() {
+        CompanionPanel.releaseHelperEmbeds(this)
         sessionSurface = sessionSurface?.copy(greedy = true)
         hostClaimed = false
         hostSurface = HostSurface.HUD
@@ -2018,6 +2020,7 @@ class GhostGalleonApp : Application() {
     }
 
     fun clearSessionSurface() {
+        CompanionPanel.releaseHelperEmbeds(this)
         sessionSurface = null
         hostClaimed = false
         hostSurface = HostSurface.HUD

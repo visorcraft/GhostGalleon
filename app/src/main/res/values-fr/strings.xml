@@ -352,7 +352,9 @@
     <string name="play_hud_cinema">Cinéma</string>
     <string name="play_hud_theater">Débloqué · %1$s</string>
     <string name="play_hud_seat">Siège</string>
+    <string name="play_hud_helper">Aide</string>
     <string name="play_hud_back_to_hud">Retour au HUD</string>
+    <string name="helper_embed_unavailable">Impossible d’intégrer sur ce système</string>
     <string name="posture_use_both_screens">Utiliser les deux écrans ?</string>
     <string name="seat_need_assist">Activez l’assistance saisie pour utiliser le second siège.</string>
     <string name="cockpit_keyboard">Clavier</string>
@@ -473,6 +475,7 @@
     <string name="settings_player_uses_both_screens">Utilise les deux écrans</string>
     <string name="settings_stage_plot">Écrans</string>
     <string name="settings_package_yield">Utilise les deux écrans</string>
+    <string name="settings_play_host_helper">Aide sur l’hôte de jeu</string>
     <string name="settings_stage_keep">Garder le panneau</string>
     <string name="settings_stage_yield">Céder les deux</string>
     <string name="settings_stage_face_interactive">Interactif</string>

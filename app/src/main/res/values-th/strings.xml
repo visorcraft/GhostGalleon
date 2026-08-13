@@ -352,7 +352,9 @@
     <string name="play_hud_cinema">โรงภาพยนตร์</string>
     <string name="play_hud_theater">ปลดล็อก · %1$s</string>
     <string name="play_hud_seat">ที่นั่ง</string>
+    <string name="play_hud_helper">ตัวช่วย</string>
     <string name="play_hud_back_to_hud">กลับไปที่ HUD</string>
+    <string name="helper_embed_unavailable">ฝังบนระบบนี้ไม่ได้</string>
     <string name="posture_use_both_screens">ใช้ทั้งสองหน้าจอ?</string>
     <string name="seat_need_assist">เปิดตัวช่วยอินพุตเพื่อใช้ที่นั่งที่สอง</string>
     <string name="cockpit_keyboard">คีย์บอร์ด</string>
@@ -473,6 +475,7 @@
     <string name="settings_player_uses_both_screens">ใช้ทั้งสองหน้าจอ</string>
     <string name="settings_stage_plot">หน้าจอ</string>
     <string name="settings_package_yield">ใช้ทั้งสองหน้าจอ</string>
+    <string name="settings_play_host_helper">ตัวช่วยบนโฮสต์เล่น</string>
     <string name="settings_stage_keep">เก็บแผง</string>
     <string name="settings_stage_yield">มอบทั้งคู่</string>
     <string name="settings_stage_face_interactive">โต้ตอบ</string>
