@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.settings
 
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
+import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.state.UIMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -36,7 +37,7 @@ class SettingsStore(private val file: File) {
     }
 
     companion object {
-        const val CURRENT_SCHEMA = 9
+        const val CURRENT_SCHEMA = 10
 
         // Internal (not private) so SettingsBundle can pack/unpack settings
         // through the exact same codec the on-disk file uses; same-module
@@ -181,6 +182,16 @@ class SettingsStore(private val file: File) {
             detectBlackCompanion = o.optBoolean("detectBlackCompanion", true),
             raNetworkCommands = o.optBoolean("raNetworkCommands", false),
             raNetworkCmdPort = o.optInt("raNetworkCmdPort", 55355).let { if (it in 1..65535) it else 55355 },
+            // Schema v10 owned-surface fields (absent = defaults).
+            inputHostTimeoutMs = o.optInt("inputHostTimeoutMs", 8000).coerceIn(1_000, 60_000),
+            inputAssistEnabled = o.optBoolean("inputAssistEnabled", false),
+            raHandoffSave = o.optBoolean("raHandoffSave", true),
+            stagePlots = o.optJSONObject("stagePlots").toStagePlotMap(),
+            packageYield = o.optJSONObject("packageYield").toBooleanMap(),
+            winlatorCockpit = o.optBoolean("winlatorCockpit", true),
+            ramLensesEnabled = o.optBoolean("ramLensesEnabled", false),
+            ramLensPackUri = o.optString("ramLensPackUri", "").ifBlank { null },
+            stackClones = o.optBoolean("stackClones", false),
             schemaVersion = CURRENT_SCHEMA,
         )
         }
@@ -313,6 +324,19 @@ class SettingsStore(private val file: File) {
             .put("detectBlackCompanion", s.detectBlackCompanion)
             .put("raNetworkCommands", s.raNetworkCommands)
             .put("raNetworkCmdPort", s.raNetworkCmdPort)
+            .put("inputHostTimeoutMs", s.inputHostTimeoutMs)
+            .put("inputAssistEnabled", s.inputAssistEnabled)
+            .put("raHandoffSave", s.raHandoffSave)
+            .put("stagePlots", JSONObject().apply {
+                s.stagePlots.forEach { (id, plot) -> put(id, StagePlot.toJson(plot)) }
+            })
+            .put("packageYield", JSONObject().apply {
+                s.packageYield.forEach { (pkg, yield) -> put(pkg, yield) }
+            })
+            .put("winlatorCockpit", s.winlatorCockpit)
+            .put("ramLensesEnabled", s.ramLensesEnabled)
+            .put("ramLensPackUri", s.ramLensPackUri ?: JSONObject.NULL)
+            .put("stackClones", s.stackClones)
             .put("schemaVersion", CURRENT_SCHEMA)
         }
 
@@ -375,6 +399,19 @@ class SettingsStore(private val file: File) {
                     members = members,
                 )
             }.toMap()
+        }
+
+        private fun JSONObject?.toStagePlotMap(): Map<String, StagePlot> {
+            if (this == null) return emptyMap()
+            return keys().asSequence().mapNotNull { id ->
+                val child = optJSONObject(id) ?: return@mapNotNull null
+                id to StagePlot.fromJson(child)
+            }.toMap()
+        }
+
+        private fun JSONObject?.toBooleanMap(): Map<String, Boolean> {
+            if (this == null) return emptyMap()
+            return keys().asSequence().associateWith { optBoolean(it) }
         }
     }
 }

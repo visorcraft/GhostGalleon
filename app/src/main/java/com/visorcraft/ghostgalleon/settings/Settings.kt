@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.settings
 
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
+import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.state.UIMode
 
 data class Settings(
@@ -141,7 +142,17 @@ data class Settings(
     val detectBlackCompanion: Boolean = true,
     val raNetworkCommands: Boolean = false,
     val raNetworkCmdPort: Int = 55355,
-    val schemaVersion: Int = 9,
+    // --- schema v10: owned-surface input host, stage plots, yield, RAM lenses ---
+    val inputHostTimeoutMs: Int = 8000,
+    val inputAssistEnabled: Boolean = false,
+    val raHandoffSave: Boolean = true,
+    val stagePlots: Map<String, StagePlot> = emptyMap(),
+    val packageYield: Map<String, Boolean> = emptyMap(),
+    val winlatorCockpit: Boolean = true,
+    val ramLensesEnabled: Boolean = false,
+    val ramLensPackUri: String? = null,
+    val stackClones: Boolean = false,
+    val schemaVersion: Int = 10,
 ) {
     companion object {
         val DEFAULT_KEY_MAP: Map<Int, Action> = mapOf(
