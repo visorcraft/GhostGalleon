@@ -360,7 +360,9 @@ outstanding datagram.
 Unreachable: hide RA chips, keep art/title/clock. Do not toast a
 failure every probe.
 
-Do not use RA cheats, RAM peek, or screenshot commands in v1.
+Do not use RA cheats, RAM peek, or screenshot commands in KEEP v1.
+Read-only RAM lenses are specified later in
+[`owned-surface.md`](owned-surface.md) §5.
 
 ### Opt-in cfg
 
