@@ -440,6 +440,8 @@
     <string name="settings_no_apps">Keine Apps verfügbar</string>
     <string name="settings_dock_empty">Dock ist leer</string>
     <string name="settings_haptics">Haptik</string>
+    <string name="settings_input_assist">Eingabehilfe</string>
+    <string name="settings_input_assist_open_system">Öffnet die System-Bedienungshilfen</string>
     <string name="settings_controller_lab">Controller-Labor</string>
     <string name="settings_stick_deadzone">Stick-Totzone</string>
     <string name="settings_press_button">Taste drücken…</string>

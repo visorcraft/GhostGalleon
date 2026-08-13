@@ -468,6 +468,8 @@
     <string name="settings_no_apps">No apps available</string>
     <string name="settings_dock_empty">Dock is empty</string>
     <string name="settings_haptics">Haptics</string>
+    <string name="settings_input_assist">Input assist</string>
+    <string name="settings_input_assist_open_system">Opens system Accessibility settings</string>
     <string name="settings_controller_lab">Controller lab</string>
     <string name="settings_stick_deadzone">Stick deadzone</string>
     <string name="settings_press_button">Press a button…</string>

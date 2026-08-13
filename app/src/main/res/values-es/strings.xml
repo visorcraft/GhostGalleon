@@ -439,6 +439,8 @@
     <string name="settings_no_apps">Sin apps disponibles</string>
     <string name="settings_dock_empty">Dock vacío</string>
     <string name="settings_haptics">Hápticos</string>
+    <string name="settings_input_assist">Asistencia de entrada</string>
+    <string name="settings_input_assist_open_system">Abre los ajustes de Accesibilidad del sistema</string>
     <string name="settings_controller_lab">Laboratorio de controladores</string>
     <string name="settings_stick_deadzone">Zona muerta del stick</string>
     <string name="settings_press_button">Pulsa un botón…</string>

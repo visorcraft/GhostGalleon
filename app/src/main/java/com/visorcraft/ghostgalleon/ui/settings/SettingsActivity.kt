@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
@@ -2066,6 +2067,16 @@ class SettingsActivity : AppCompatActivity() {
         toggle(controlsCard, getString(R.string.settings_haptics), s.haptics) {
             app.updateSettings(app.settings.copy(haptics = it))
         }
+        toggle(controlsCard, getString(R.string.settings_input_assist), s.inputAssistEnabled) { on ->
+            app.updateSettings(app.settings.copy(inputAssistEnabled = on))
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        controlsCard.addView(TextView(this).apply {
+            setText(R.string.settings_input_assist_open_system)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+            setPadding(0, 0, 0, dp(4))
+        })
         val labRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

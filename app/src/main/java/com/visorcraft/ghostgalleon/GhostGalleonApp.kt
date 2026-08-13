@@ -442,6 +442,10 @@ class GhostGalleonApp : Application() {
         hostClaimed = false
     }
 
+    // True while optional InputAssistService is bound by the system.
+    @Volatile
+    var inputAssistConnected: Boolean = false
+
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
     @Volatile
     var raCommandClient: RaCommandClient? = null

@@ -439,6 +439,8 @@
     <string name="settings_no_apps">ไม่มีแอป</string>
     <string name="settings_dock_empty">ด็อกว่างเปล่า</string>
     <string name="settings_haptics">แรงสั่นสะเทือน</string>
+    <string name="settings_input_assist">ตัวช่วยอินพุต</string>
+    <string name="settings_input_assist_open_system">เปิดการตั้งค่าการเข้าถึงของระบบ</string>
     <string name="settings_controller_lab">ห้องทดลองคอนโทรลเลอร์</string>
     <string name="settings_stick_deadzone">เดดโซนสติ๊ก</string>
     <string name="settings_press_button">กดปุ่ม…</string>
