@@ -31,3 +31,45 @@ data class StagePlot(
         }
     }
 }
+
+enum class PlotConfirm { NONE, KEEP_ON_YIELD_PLAYER, YIELD_ON_KEEP_PLAYER }
+
+object StagePlots {
+    fun resolve(
+        romPlot: StagePlot?,
+        packPlot: StagePlot?,
+        packageYield: Boolean,
+        playerId: String?,
+    ): StagePlot {
+        romPlot?.let { return it }
+        packPlot?.let { return it }
+        if (packageYield) return StagePlot(SessionPolicy.YIELD_BOTH, LaunchFace.AUTO)
+        return StagePlot(SessionPolicy.forPlayerId(playerId), LaunchFace.AUTO)
+    }
+
+    fun launchDisplayId(
+        face: LaunchFace,
+        policy: SessionPolicy,
+        interactiveId: Int?,
+        companionId: Int?,
+        launchId: Int?,
+    ): Int? {
+        if (policy == SessionPolicy.YIELD_BOTH) return launchId
+        return when (face) {
+            LaunchFace.AUTO, LaunchFace.OTHER -> launchId
+            LaunchFace.INTERACTIVE -> interactiveId
+            LaunchFace.COMPANION -> companionId
+        }
+    }
+
+    fun confirmFor(builtIn: SessionPolicy, requested: SessionPolicy?): PlotConfirm {
+        if (requested == null || requested == builtIn) return PlotConfirm.NONE
+        if (builtIn == SessionPolicy.YIELD_BOTH && requested == SessionPolicy.KEEP_COMPANION) {
+            return PlotConfirm.KEEP_ON_YIELD_PLAYER
+        }
+        if (builtIn == SessionPolicy.KEEP_COMPANION && requested == SessionPolicy.YIELD_BOTH) {
+            return PlotConfirm.YIELD_ON_KEEP_PLAYER
+        }
+        return PlotConfirm.NONE
+    }
+}
