@@ -2146,6 +2146,9 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(0x66FFFFFF.toInt())
             setPadding(0, 0, 0, dp(4))
         })
+        toggle(controlsCard, getString(R.string.settings_winlator_cockpit), s.winlatorCockpit) {
+            app.updateSettings(app.settings.copy(winlatorCockpit = it))
+        }
         val labRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

@@ -345,6 +345,8 @@
     <string name="play_hud_resume">เล่นต่อ</string>
     <string name="play_hud_save">บันทึก</string>
     <string name="play_hud_load">โหลด</string>
+    <string name="cockpit_keyboard">คีย์บอร์ด</string>
+    <string name="cockpit_need_assist">เปิดตัวช่วยอินพุตเพื่อขยับเมาส์</string>
     <string name="session_switcher_title">เซสชัน</string>
     <string name="session_ring_empty">ไม่มีเซสชันล่าสุด</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
@@ -441,6 +443,7 @@
     <string name="settings_haptics">แรงสั่นสะเทือน</string>
     <string name="settings_input_assist">ตัวช่วยอินพุต</string>
     <string name="settings_input_assist_open_system">เปิดการตั้งค่าการเข้าถึงของระบบ</string>
+    <string name="settings_winlator_cockpit">ค็อกพิต Winlator</string>
     <string name="settings_controller_lab">ห้องทดลองคอนโทรลเลอร์</string>
     <string name="settings_stick_deadzone">เดดโซนสติ๊ก</string>
     <string name="settings_press_button">กดปุ่ม…</string>

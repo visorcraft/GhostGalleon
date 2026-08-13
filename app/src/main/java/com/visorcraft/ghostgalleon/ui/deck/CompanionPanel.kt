@@ -22,6 +22,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -38,6 +40,7 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.art.ArtTile
+import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputOwner
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.CollectionsOps
@@ -47,6 +50,7 @@ import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.CockpitPolicy
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
@@ -114,6 +118,8 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
     private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
     private const val TAG_PLAY_HUD_SLOTS = "play_hud_slots"
+    private const val TAG_PLAY_HUD_COCKPIT = "play_hud_cockpit"
+    private const val TAG_PLAY_HUD_TRACKPAD = "play_hud_trackpad"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
     const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
@@ -1245,6 +1251,11 @@ object CompanionPanel {
         // PERF stays the in-place tab (already returned). Pin without a
         // conflict already returned. Pin-of-the-open-game falls through here.
         if (playHud && surface != null && openSession != null) {
+            val cockpit = CockpitPolicy.cockpitAllowed(
+                playHostAllowed = true,
+                playerId = surface.playerId,
+                cockpitEnabled = settings.winlatorCockpit,
+            )
             content.addView(
                 buildPlayHud(
                     activity, library, roms, settings, openSession, surface, toDp,
@@ -1252,7 +1263,8 @@ object CompanionPanel {
                 ),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    if (cockpit) ViewGroup.LayoutParams.MATCH_PARENT
+                    else ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
             content.background = panelBackground(context, settings.accentColor)
@@ -2257,36 +2269,37 @@ object CompanionPanel {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
         })
+        // buildPlayHud is only called when playHostAllowed is true.
+        val cockpit = CockpitPolicy.cockpitAllowed(
+            playHostAllowed = true,
+            playerId = surface.playerId,
+            cockpitEnabled = settings.winlatorCockpit,
+        )
+        val mayPointer = InputAssistPolicy.mayInjectPointer(
+            assistConnected = app.inputAssistConnected,
+            playHostAllowed = true,
+            sessionOwnsCompanion = DualPaintPolicy.sessionOwnsCompanionDisplay(
+                surface.policy,
+                surface.greedy,
+            ),
+            playerId = surface.playerId,
+        )
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             isBaselineAligned = false
         }
-        val actionsScroll = HorizontalScrollView(activity).apply {
-            tag = TAG_PLAY_HUD_ACTIONS
-            isFillViewport = true
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            setPadding(0, dp(if (compact) 8 else 12), 0, 0)
-            visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
-            addView(
-                actions,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER,
-                ),
-            )
-        }
         fun actionChip(
-            labelRes: Int,
+            labelRes: Int? = null,
+            label: CharSequence? = null,
             chipTag: Any? = null,
             filled: Boolean = false,
             visibility: Int = View.VISIBLE,
+            enabled: Boolean = true,
             onClick: (() -> Unit)? = null,
         ): TextView = TextView(activity).apply {
             tag = chipTag
-            setText(labelRes)
+            if (labelRes != null) setText(labelRes) else text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(if (filled) Color.BLACK else Color.WHITE)
             if (filled) {
@@ -2294,7 +2307,9 @@ object CompanionPanel {
             }
             setPadding(dp(16), dp(8), dp(16), dp(8))
             this.visibility = visibility
-            if (onClick != null) setOnClickListener { onClick() }
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.4f
+            if (onClick != null && enabled) setOnClickListener { onClick() }
         }
         fun addChip(chip: View) {
             if (actions.childCount > 0 && chip.visibility != View.GONE) {
@@ -2302,118 +2317,254 @@ object CompanionPanel {
             }
             actions.addView(chip)
         }
-        addChip(actionChip(R.string.action_swap, filled = true) {
-            app.swapInteractiveDisplay()
-        })
-        addChip(actionChip(R.string.play_hud_end) {
-            app.clearOpenSession()
-        })
-        addChip(actionChip(R.string.play_hud_reclaim) {
-            app.noteReturnToLauncher()
-            hud.visibility = View.GONE
-            if (app.liveCompanion() == null) {
-                (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
-            }
-        })
-        addChip(
-            actionChip(
-                if (surface.key in settings.favorites) R.string.action_unfavorite
-                else R.string.action_favorite,
-            ) {
-                EntryActions.toggleFavorite(activity, surface.key)
-            },
-        )
-        addChip(actionChip(R.string.action_open_with) {
-            val rom = selectedRom(surface.key, roms, app) ?: return@actionChip
-            EntryActions.openWith(activity, rom) { playerId ->
-                launchSlotKey(
-                    activity, app.deckState, roms, surface.key, playerId = playerId,
+        fun chipScroll(tagActions: Boolean): HorizontalScrollView =
+            HorizontalScrollView(activity).apply {
+                if (tagActions) tag = TAG_PLAY_HUD_ACTIONS
+                isFillViewport = true
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+                if (tagActions) {
+                    visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
+                }
+                addView(
+                    actions,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER,
+                    ),
                 )
             }
-        })
-        var slotStrip: View? = null
-        if (raHudEligible(settings.raNetworkCommands, surface)) {
-            val raChips = LinearLayout(activity).apply {
-                tag = TAG_PLAY_HUD_RA
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-                isBaselineAligned = false
-                visibility = View.GONE
-                if (actions.childCount > 0) setPadding(dp(12), 0, 0, 0)
-            }
-            fun addRaChip(chip: View) {
-                if (raChips.childCount > 0) {
-                    raChips.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
-                }
-                raChips.addView(chip)
-            }
-            fun runRa(command: (RaCommandClient, Int) -> Unit) {
-                enqueueRaChipWork(hud, app, probe = false) { client, port ->
-                    command(client, port)
-                }
-            }
-            var slotSaveMode = false
-            val builtSlots = buildRaSlotStrip(
-                activity, settings, surface, dp, compact,
-            ) { slot ->
-                val save = slotSaveMode
-                enqueueRaChipWork(hud, app, probe = false) { client, port ->
-                    val ok = if (save) client.saveStateSlot(port, slot)
-                    else client.loadStateSlot(port, slot)
-                    if (!ok) {
-                        if (save) client.saveState(port) else client.loadState(port)
+        if (cockpit) {
+            val imeHost = EditText(activity).apply {
+                isSingleLine = true
+                setTextColor(Color.TRANSPARENT)
+                setBackgroundColor(Color.TRANSPARENT)
+                setTextIsSelectable(false)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                isFocusable = true
+                isFocusableInTouchMode = true
+                onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+                    if (!hasFocus) {
+                        app.releaseHost()
+                        app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
                     }
                 }
             }
-            slotStrip = builtSlots
-            fun showOrRunSlots(save: Boolean) {
-                val client = app.ensureRaCommandClient()
-                if (!client.slotStripAllowed()) {
-                    enqueueRaChipWork(hud, app, probe = false) { c, port ->
-                        if (save) c.saveState(port) else c.loadState(port)
+            addChip(actionChip(labelRes = R.string.cockpit_keyboard, filled = true) {
+                app.claimHost()
+                app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+                imeHost.post {
+                    imeHost.requestFocus()
+                    activity.getSystemService(InputMethodManager::class.java)
+                        ?.showSoftInput(imeHost, InputMethodManager.SHOW_IMPLICIT)
+                }
+            })
+            // Mouse buttons are no-ops until Task 15.
+            addChip(actionChip(label = "LMB", enabled = mayPointer))
+            addChip(actionChip(label = "RMB", enabled = mayPointer))
+            addChip(actionChip(label = "MMB", enabled = mayPointer))
+            addChip(
+                actionChip(
+                    labelRes = R.string.play_hud_switcher,
+                    chipTag = TAG_PLAY_HUD_SWITCHER,
+                ) {
+                    openSessionSwitcher(activity)
+                },
+            )
+            val collapsible = LinearLayout(activity).apply {
+                tag = TAG_PLAY_HUD_ACTIONS
+                orientation = LinearLayout.VERTICAL
+                visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
+            }
+            collapsible.addView(
+                chipScroll(tagActions = false),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            if (!mayPointer) {
+                collapsible.addView(
+                    TextView(activity).apply {
+                        setText(R.string.cockpit_need_assist)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                        setTextColor(0xBBFFFFFF.toInt())
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(8), 0, dp(4))
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            val padPoint = floatArrayOf(0f, 0f)
+            val trackpad = View(activity).apply {
+                tag = TAG_PLAY_HUD_TRACKPAD
+                setTag(R.id.cockpit_pad_point, padPoint)
+                minimumHeight = dp(if (compact) 96 else 160)
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(12).toFloat()
+                    setColor(0x22FFFFFF)
+                    setStroke(dp(1), 0x44FFFFFF)
+                }
+                // Record normalized 0..1 only — inject is Task 15.
+                setOnTouchListener { v, event ->
+                    val w = v.width.coerceAtLeast(1).toFloat()
+                    val h = v.height.coerceAtLeast(1).toFloat()
+                    padPoint[0] = (event.x / w).coerceIn(0f, 1f)
+                    padPoint[1] = (event.y / h).coerceIn(0f, 1f)
+                    true
+                }
+            }
+            collapsible.addView(
+                trackpad,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ).apply { topMargin = dp(8) },
+            )
+            val cockpitRoot = LinearLayout(activity).apply {
+                tag = TAG_PLAY_HUD_COCKPIT
+                orientation = LinearLayout.VERTICAL
+            }
+            cockpitRoot.addView(
+                collapsible,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ),
+            )
+            cockpitRoot.addView(imeHost, LinearLayout.LayoutParams(1, 1))
+            hud.addView(
+                cockpitRoot,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ),
+            )
+        } else {
+            addChip(actionChip(labelRes = R.string.action_swap, filled = true) {
+                app.swapInteractiveDisplay()
+            })
+            addChip(actionChip(labelRes = R.string.play_hud_end) {
+                app.clearOpenSession()
+            })
+            addChip(actionChip(labelRes = R.string.play_hud_reclaim) {
+                app.noteReturnToLauncher()
+                hud.visibility = View.GONE
+                if (app.liveCompanion() == null) {
+                    (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
+                }
+            })
+            addChip(
+                actionChip(
+                    labelRes = if (surface.key in settings.favorites) R.string.action_unfavorite
+                    else R.string.action_favorite,
+                ) {
+                    EntryActions.toggleFavorite(activity, surface.key)
+                },
+            )
+            addChip(actionChip(labelRes = R.string.action_open_with) {
+                val rom = selectedRom(surface.key, roms, app) ?: return@actionChip
+                EntryActions.openWith(activity, rom) { playerId ->
+                    launchSlotKey(
+                        activity, app.deckState, roms, surface.key, playerId = playerId,
+                    )
+                }
+            })
+            var slotStrip: View? = null
+            if (raHudEligible(settings.raNetworkCommands, surface)) {
+                val raChips = LinearLayout(activity).apply {
+                    tag = TAG_PLAY_HUD_RA
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    isBaselineAligned = false
+                    visibility = View.GONE
+                    if (actions.childCount > 0) setPadding(dp(12), 0, 0, 0)
+                }
+                fun addRaChip(chip: View) {
+                    if (raChips.childCount > 0) {
+                        raChips.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
                     }
-                    return
+                    raChips.addView(chip)
                 }
-                if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
-                    builtSlots.visibility = View.GONE
-                    return
+                fun runRa(command: (RaCommandClient, Int) -> Unit) {
+                    enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                        command(client, port)
+                    }
                 }
-                slotSaveMode = save
-                builtSlots.visibility = View.VISIBLE
+                var slotSaveMode = false
+                val builtSlots = buildRaSlotStrip(
+                    activity, settings, surface, dp, compact,
+                ) { slot ->
+                    val save = slotSaveMode
+                    enqueueRaChipWork(hud, app, probe = false) { client, port ->
+                        val ok = if (save) client.saveStateSlot(port, slot)
+                        else client.loadStateSlot(port, slot)
+                        if (!ok) {
+                            if (save) client.saveState(port) else client.loadState(port)
+                        }
+                    }
+                }
+                slotStrip = builtSlots
+                fun showOrRunSlots(save: Boolean) {
+                    val client = app.ensureRaCommandClient()
+                    if (!client.slotStripAllowed()) {
+                        enqueueRaChipWork(hud, app, probe = false) { c, port ->
+                            if (save) c.saveState(port) else c.loadState(port)
+                        }
+                        return
+                    }
+                    if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
+                        builtSlots.visibility = View.GONE
+                        return
+                    }
+                    slotSaveMode = save
+                    builtSlots.visibility = View.VISIBLE
+                }
+                addRaChip(
+                    actionChip(
+                        labelRes = R.string.play_hud_pause,
+                        chipTag = TAG_PLAY_HUD_PAUSE,
+                    ) {
+                        runRa { client, port -> client.pauseToggle(port) }
+                    },
+                )
+                addRaChip(
+                    actionChip(labelRes = R.string.play_hud_save) {
+                        showOrRunSlots(save = true)
+                    },
+                )
+                addRaChip(
+                    actionChip(labelRes = R.string.play_hud_load) {
+                        showOrRunSlots(save = false)
+                    },
+                )
+                actions.addView(raChips)
+                hud.post {
+                    if (!hud.isAttachedToWindow) return@post
+                    enqueueRaChipWork(hud, app, probe = true)
+                }
             }
-            addRaChip(
-                actionChip(R.string.play_hud_pause, chipTag = TAG_PLAY_HUD_PAUSE) {
-                    runRa { client, port -> client.pauseToggle(port) }
+            addChip(
+                actionChip(
+                    labelRes = R.string.play_hud_switcher,
+                    chipTag = TAG_PLAY_HUD_SWITCHER,
+                ) {
+                    openSessionSwitcher(activity)
                 },
             )
-            addRaChip(
-                actionChip(R.string.play_hud_save) {
-                    showOrRunSlots(save = true)
-                },
-            )
-            addRaChip(
-                actionChip(R.string.play_hud_load) {
-                    showOrRunSlots(save = false)
-                },
-            )
-            actions.addView(raChips)
-            hud.post {
-                if (!hud.isAttachedToWindow) return@post
-                enqueueRaChipWork(hud, app, probe = true)
+            hud.addView(chipScroll(tagActions = true))
+            slotStrip?.let { strip ->
+                if (!app.playHudExpanded) strip.visibility = View.GONE
+                hud.addView(strip)
             }
-        }
-        addChip(
-            actionChip(
-                R.string.play_hud_switcher,
-                chipTag = TAG_PLAY_HUD_SWITCHER,
-            ) {
-                openSessionSwitcher(activity)
-            },
-        )
-        hud.addView(actionsScroll)
-        slotStrip?.let { strip ->
-            if (!app.playHudExpanded) strip.visibility = View.GONE
-            hud.addView(strip)
         }
         return hud
     }

@@ -345,6 +345,8 @@
     <string name="play_hud_resume">Reprendre</string>
     <string name="play_hud_save">Sauver</string>
     <string name="play_hud_load">Charger</string>
+    <string name="cockpit_keyboard">Clavier</string>
+    <string name="cockpit_need_assist">Activez l’assistance saisie pour déplacer la souris.</string>
     <string name="session_switcher_title">Sessions</string>
     <string name="session_ring_empty">Aucune session récente</string>
     <string name="deck_add_rom_folder_done">Dossier ROM ajouté</string>
@@ -441,6 +443,7 @@
     <string name="settings_haptics">Vibreur</string>
     <string name="settings_input_assist">Assistance saisie</string>
     <string name="settings_input_assist_open_system">Ouvre les paramètres d’accessibilité du système</string>
+    <string name="settings_winlator_cockpit">Cockpit Winlator</string>
     <string name="settings_controller_lab">Lab Manette</string>
     <string name="settings_stick_deadzone">Zone morte du stick</string>
     <string name="settings_press_button">Appuyez sur un bouton…</string>

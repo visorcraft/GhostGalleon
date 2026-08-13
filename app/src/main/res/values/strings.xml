@@ -366,6 +366,8 @@
     <string name="play_hud_resume">Resume</string>
     <string name="play_hud_save">Save</string>
     <string name="play_hud_load">Load</string>
+    <string name="cockpit_keyboard">Keyboard</string>
+    <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
     <string name="session_switcher_title">Sessions</string>
     <string name="session_ring_empty">No recent sessions</string>
     <string name="deck_add_rom_folder_done">ROM folder added</string>
@@ -470,6 +472,7 @@
     <string name="settings_haptics">Haptics</string>
     <string name="settings_input_assist">Input assist</string>
     <string name="settings_input_assist_open_system">Opens system Accessibility settings</string>
+    <string name="settings_winlator_cockpit">Winlator cockpit</string>
     <string name="settings_controller_lab">Controller lab</string>
     <string name="settings_stick_deadzone">Stick deadzone</string>
     <string name="settings_press_button">Press a button…</string>

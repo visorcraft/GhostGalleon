@@ -345,6 +345,8 @@
     <string name="play_hud_resume">Reanudar</string>
     <string name="play_hud_save">Guardar</string>
     <string name="play_hud_load">Cargar</string>
+    <string name="cockpit_keyboard">Teclado</string>
+    <string name="cockpit_need_assist">Activa Asistencia de entrada para mover el ratón.</string>
     <string name="session_switcher_title">Sesiones</string>
     <string name="session_ring_empty">No hay sesiones recientes</string>
     <string name="deck_add_rom_folder_done">Carpeta ROM añadida</string>
@@ -441,6 +443,7 @@
     <string name="settings_haptics">Hápticos</string>
     <string name="settings_input_assist">Asistencia de entrada</string>
     <string name="settings_input_assist_open_system">Abre los ajustes de Accesibilidad del sistema</string>
+    <string name="settings_winlator_cockpit">Cabina Winlator</string>
     <string name="settings_controller_lab">Laboratorio de controladores</string>
     <string name="settings_stick_deadzone">Zona muerta del stick</string>
     <string name="settings_press_button">Pulsa un botón…</string>
