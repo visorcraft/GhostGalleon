@@ -66,6 +66,22 @@ class RaFetcherTest {
     }
 
     @Test
+    fun `fetchProgressJson returns raw body`() {
+        val body = """{"ID":99,"Title":"Demo","Achievements":{}}"""
+        val json = RaFetcher.fetchProgressJson(
+            username = "u",
+            apiKey = "k",
+            gameId = 99,
+            titleHint = null,
+            fetchUrl = { body },
+        )
+        assertEquals(body, json)
+        assertNull(
+            RaFetcher.fetchProgressJson("", "k", 1, null) { error("no net") },
+        )
+    }
+
+    @Test
     fun `fetchProgress uses inject seam and parseProgress`() {
         val body = """
             {"ID":99,"Title":"Demo","NumAwardedToUser":3,"NumAchievements":10}

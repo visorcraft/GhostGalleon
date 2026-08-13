@@ -67,6 +67,27 @@ object RaFetcher {
     }
 
     /**
+     * Raw [progressUrl] body, or null on blank credentials / resolve / HTTP
+     * miss. [fetchUrl] injects HTTP for host tests. When [gameId] is null,
+     * resolves via console game list + title match using [platformId] /
+     * [titleHint].
+     */
+    fun fetchProgressJson(
+        username: String,
+        apiKey: String,
+        gameId: Int?,
+        titleHint: String?,
+        platformId: String? = null,
+        fetchUrl: (String) -> String? = ::httpGet,
+    ): String? {
+        if (username.isBlank() || apiKey.isBlank()) return null
+        val id = gameId
+            ?: resolveGameId(apiKey, titleHint, platformId, fetchUrl)
+            ?: return null
+        return fetchUrl(progressUrl(username, apiKey, id))
+    }
+
+    /**
      * Fetch and parse progress. [fetchUrl] injects HTTP for host tests.
      * When [gameId] is null, resolves via console game list + title match
      * using [platformId] / [titleHint].
@@ -79,11 +100,9 @@ object RaFetcher {
         platformId: String? = null,
         fetchUrl: (String) -> String? = ::httpGet,
     ): RaProgress {
-        if (username.isBlank() || apiKey.isBlank()) return RaProgress()
-        val id = gameId
-            ?: resolveGameId(apiKey, titleHint, platformId, fetchUrl)
-            ?: return RaProgress()
-        val body = fetchUrl(progressUrl(username, apiKey, id)) ?: return RaProgress()
+        val body = fetchProgressJson(
+            username, apiKey, gameId, titleHint, platformId, fetchUrl,
+        ) ?: return RaProgress()
         return RetroAchievements.parseProgress(body)
     }
 

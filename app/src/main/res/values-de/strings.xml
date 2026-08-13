@@ -349,6 +349,7 @@
     <string name="play_hud_load">Laden</string>
     <string name="play_hud_tracker">Tracker</string>
     <string name="play_hud_cinema">Kino</string>
+    <string name="play_hud_theater">Freigeschaltet · %1$s</string>
     <string name="cockpit_keyboard">Tastatur</string>
     <string name="cockpit_need_assist">Eingabehilfe aktivieren, um die Maus zu bewegen.</string>
     <string name="session_switcher_title">Sitzungen</string>
@@ -474,6 +475,7 @@
     <string name="confirm_yield_on_keep_player">Beide Panels gehen an das Spiel. Die Play-HUD wird ausgeblendet.</string>
     <string name="settings_ra_network_commands">Mit RetroArch sprechen</string>
     <string name="settings_ra_cinema">Zustandskino</string>
+    <string name="settings_ra_theater">Errungenschaftstheater</string>
     <string name="settings_ra_handoff_save">Vor dem Wechsel speichern</string>
     <string name="settings_ram_lenses">RAM-Linsen</string>
     <string name="settings_ram_trackers">RAM-Tracker</string>

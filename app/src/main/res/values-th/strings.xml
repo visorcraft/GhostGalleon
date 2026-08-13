@@ -349,6 +349,7 @@
     <string name="play_hud_load">โหลด</string>
     <string name="play_hud_tracker">ตัวติดตาม</string>
     <string name="play_hud_cinema">โรงภาพยนตร์</string>
+    <string name="play_hud_theater">ปลดล็อก · %1$s</string>
     <string name="cockpit_keyboard">คีย์บอร์ด</string>
     <string name="cockpit_need_assist">เปิดตัวช่วยอินพุตเพื่อขยับเมาส์</string>
     <string name="session_switcher_title">เซสชัน</string>
@@ -473,6 +474,7 @@
     <string name="confirm_yield_on_keep_player">ทั้งสองแผงจะไปที่เกม HUD เล่นจะถูกซ่อน</string>
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
     <string name="settings_ra_cinema">โรงภาพยนตร์สถานะ</string>
+    <string name="settings_ra_theater">โรงละครความสำเร็จ</string>
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
     <string name="settings_ram_lenses">เลนส์ RAM</string>
     <string name="settings_ram_trackers">ตัวติดตาม RAM</string>

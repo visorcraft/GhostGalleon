@@ -47,6 +47,8 @@ import com.visorcraft.ghostgalleon.input.InputOwner
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
+import com.visorcraft.ghostgalleon.library.RaCheevo
+import com.visorcraft.ghostgalleon.library.RaTheaterSnap
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
@@ -128,6 +130,12 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_LENS = "play_hud_lens"
     private const val TAG_PLAY_HUD_TRACKER = "play_hud_tracker"
     private const val TAG_PLAY_HUD_CINEMA = "play_hud_cinema"
+    private const val TAG_PLAY_HUD_THEATER = "play_hud_theater"
+    private const val TAG_PLAY_HUD_THEATER_PROGRESS = "play_hud_theater_progress"
+    private const val TAG_PLAY_HUD_THEATER_NEXT = "play_hud_theater_next"
+    private const val TAG_PLAY_HUD_THEATER_TICKER = "play_hud_theater_ticker"
+    private const val TAG_PLAY_HUD_THEATER_BADGE = "play_hud_theater_badge"
+    private const val TAG_PLAY_HUD_THEATER_LETTER = "play_hud_theater_letter"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
@@ -2325,6 +2333,86 @@ object CompanionPanel {
                 )
             },
         )
+        hud.addView(
+            LinearLayout(activity).apply {
+                tag = TAG_PLAY_HUD_THEATER
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                contentDescription = activity.getString(R.string.settings_ra_theater)
+                setPadding(0, dp(6), 0, 0)
+                val badgeSize = dp(if (compact) 28 else 32)
+                addView(
+                    FrameLayout(activity).apply {
+                        background = TileBackgrounds.chip(activity)
+                        addView(
+                            ImageView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_BADGE
+                                scaleType = ImageView.ScaleType.CENTER_CROP
+                                visibility = View.GONE
+                            },
+                            FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            ),
+                        )
+                        addView(
+                            TextView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_LETTER
+                                gravity = Gravity.CENTER
+                                setTextColor(settings.accentColor)
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                            },
+                            FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            ),
+                        )
+                    },
+                    LinearLayout.LayoutParams(badgeSize, badgeSize).apply {
+                        marginEnd = dp(8)
+                    },
+                )
+                addView(
+                    LinearLayout(activity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(
+                            TextView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_PROGRESS
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                                setTextColor(0xCCFFFFFF.toInt())
+                                maxLines = 1
+                                ellipsize = android.text.TextUtils.TruncateAt.END
+                            },
+                        )
+                        addView(
+                            TextView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_NEXT
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                                setTextColor(0xBBFFFFFF.toInt())
+                                maxLines = 1
+                                ellipsize = android.text.TextUtils.TruncateAt.END
+                            },
+                        )
+                        addView(
+                            TextView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_TICKER
+                                visibility = View.GONE
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                                setTextColor(settings.accentColor)
+                                maxLines = 1
+                                ellipsize = android.text.TextUtils.TruncateAt.END
+                            },
+                        )
+                    },
+                    LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f,
+                    ),
+                )
+            },
+        )
         // buildPlayHud is only called when playHostAllowed is true.
         val cockpit = CockpitPolicy.cockpitAllowed(
             playHostAllowed = true,
@@ -2881,6 +2969,146 @@ object CompanionPanel {
     internal fun hidePlayHudCinema(root: View?) {
         val strip = root?.findViewWithTag<View>(TAG_PLAY_HUD_CINEMA) ?: return
         if (strip.visibility != View.GONE) strip.visibility = View.GONE
+    }
+
+    /**
+     * KEEP achievement theater. HTTP poll only; Talk to RetroArch is not
+     * required. Hide on yield / exclusive surfaces.
+     * @return next delay ms when the block is shown, else null.
+     */
+    fun tickPlayHudTheater(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+        val block = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_THEATER)
+        if (block == null) return null
+        val settings = app.settings
+        val surface = app.sessionSurface
+        val creds = !settings.raUsername.isNullOrBlank() &&
+            !settings.raApiKey.isNullOrBlank()
+        if (surface == null ||
+            !settings.raTheaterEnabled ||
+            !creds ||
+            DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy)
+        ) {
+            hidePlayHudTheater(root)
+            return null
+        }
+        val playHost = cinemaPlayHostAllowed(app, activity, surface)
+        if (!playHost || !HostSurfacePolicy.showsTheater(app.hostSurface)) {
+            hidePlayHudTheater(root)
+            return null
+        }
+        val rom = selectedRom(surface.key, emptyList(), app)
+        val romId = rom?.id ?: SlotKey.romId(surface.key)
+        if (romId.isNullOrBlank()) {
+            hidePlayHudTheater(root)
+            return null
+        }
+        app.requestTheaterPoll(romId, rom?.name, rom?.platformId)
+        val snap = app.theaterSnapFor(romId)
+        if (snap == null) {
+            hidePlayHudTheater(root)
+            val last = if (app.theaterRomId == romId) app.theaterLastPollMs else 0L
+            val interval = settings.raTheaterPollMs.toLong().coerceAtLeast(30_000L)
+            val rem = interval - (SystemClock.elapsedRealtime() - last)
+            return rem.coerceIn(1_000L, interval)
+        }
+        paintPlayHudTheater(block, app, activity, snap)
+        return 1_000L
+    }
+
+    internal fun hidePlayHudTheater(root: View?) {
+        val block = root?.findViewWithTag<View>(TAG_PLAY_HUD_THEATER) ?: return
+        if (block.visibility != View.GONE) block.visibility = View.GONE
+    }
+
+    private fun paintPlayHudTheater(
+        block: ViewGroup,
+        app: GhostGalleonApp,
+        activity: Context,
+        snap: RaTheaterSnap,
+    ) {
+        val progressTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_PROGRESS)
+        val nextTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_NEXT)
+        val tickerTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_TICKER)
+        val badge = block.findViewWithTag<ImageView>(TAG_PLAY_HUD_THEATER_BADGE)
+        val letter = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_LETTER)
+        val progressText = activity.resolveText(snap.progress.label)
+        if (progressTv != null && progressTv.text?.toString() != progressText) {
+            progressTv.text = progressText
+        }
+        val nextTitle = snap.nextLocked?.title.orEmpty()
+        if (nextTv != null && nextTv.text?.toString() != nextTitle) {
+            nextTv.text = nextTitle
+        }
+        if (nextTv != null) {
+            val vis = if (nextTitle.isEmpty()) View.GONE else View.VISIBLE
+            if (nextTv.visibility != vis) nextTv.visibility = vis
+        }
+        val now = SystemClock.elapsedRealtime()
+        val tickerTitle = app.theaterTickerTitle
+        val tickerOn = !tickerTitle.isNullOrBlank() && now < app.theaterTickerUntilMs
+        if (tickerTv != null) {
+            if (tickerOn) {
+                val line = activity.getString(R.string.play_hud_theater, tickerTitle)
+                if (tickerTv.text?.toString() != line) tickerTv.text = line
+                if (tickerTv.visibility != View.VISIBLE) tickerTv.visibility = View.VISIBLE
+            } else if (tickerTv.visibility != View.GONE) {
+                tickerTv.visibility = View.GONE
+            }
+        }
+        val cheevo: RaCheevo? = when {
+            tickerOn -> snap.items.firstOrNull { it.title == tickerTitle }
+                ?: snap.lastUnlock
+            else -> snap.nextLocked ?: snap.lastUnlock
+        }
+        paintTheaterBadge(app, badge, letter, cheevo)
+        if (block.visibility != View.VISIBLE) block.visibility = View.VISIBLE
+    }
+
+    private fun paintTheaterBadge(
+        app: GhostGalleonApp,
+        badge: ImageView?,
+        letter: TextView?,
+        cheevo: RaCheevo?,
+    ) {
+        if (badge == null || letter == null) return
+        val title = cheevo?.title.orEmpty()
+        val initial = title.firstOrNull()?.uppercaseChar()?.toString().orEmpty()
+        if (letter.text?.toString() != initial) letter.text = initial
+        val name = cheevo?.badgeName
+        if (name.isNullOrBlank()) {
+            ArtCache.dropDisplayed(badge)
+            badge.setImageDrawable(null)
+            badge.tag = null
+            if (badge.visibility != View.GONE) badge.visibility = View.GONE
+            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
+            if (letter.visibility != letterVis) letter.visibility = letterVis
+            return
+        }
+        val key = app.theaterBadgeKey(name)
+        if (badge.tag == key && badge.drawable != null) {
+            if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
+            if (letter.visibility != View.GONE) letter.visibility = View.GONE
+            return
+        }
+        val bytes = app.artCache.readDiskBytes(key)
+        val bmp = if (bytes != null && bytes.isNotEmpty()) {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } else {
+            null
+        }
+        if (bmp != null) {
+            badge.tag = key
+            ArtCache.showDisplayed(badge, bmp)
+            if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
+            if (letter.visibility != View.GONE) letter.visibility = View.GONE
+        } else {
+            ArtCache.dropDisplayed(badge)
+            badge.setImageDrawable(null)
+            badge.tag = null
+            if (badge.visibility != View.GONE) badge.visibility = View.GONE
+            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
+            if (letter.visibility != letterVis) letter.visibility = letterVis
+        }
     }
 
     private fun trackerPaintAllowed(

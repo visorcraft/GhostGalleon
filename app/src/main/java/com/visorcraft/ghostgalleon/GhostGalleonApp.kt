@@ -20,6 +20,8 @@ import com.visorcraft.ghostgalleon.library.PlayStats
 import com.visorcraft.ghostgalleon.library.RaFetcher
 import com.visorcraft.ghostgalleon.library.RaProgress
 import com.visorcraft.ghostgalleon.library.RaProgressGate
+import com.visorcraft.ghostgalleon.library.RaTheater
+import com.visorcraft.ghostgalleon.library.RaTheaterSnap
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
@@ -535,6 +537,14 @@ class GhostGalleonApp : Application() {
     var cinemaLastCaptureMs: Long = 0L
     var cinemaPinnedSlot: Int? = null
 
+    // Process-only achievement theater. Not persisted.
+    var theaterSnap: RaTheaterSnap? = null
+    var theaterLastPollMs: Long = 0L
+    var theaterAttempted: Set<String> = emptySet()
+    var theaterRomId: String? = null
+    var theaterTickerTitle: String? = null
+    var theaterTickerUntilMs: Long = 0L
+
     fun claimHost() {
         hostClaimed = true
     }
@@ -740,15 +750,50 @@ class GhostGalleonApp : Application() {
         ) {
             return
         }
+        startRaProgressFetch(romId.trim(), user, key, titleHint, platformId, theater = false)
+    }
+
+    /**
+     * KEEP theater poll. One HTTP attempt per romId per process until
+     * [RaTheater.pollDue]. Shares the RA in-flight set; does not toast.
+     */
+    fun requestTheaterPoll(romId: String, titleHint: String?, platformId: String? = null) {
+        val user = settings.raUsername?.trim().orEmpty()
+        val key = settings.raApiKey?.trim().orEmpty()
+        if (user.isEmpty() || key.isEmpty()) return
         val id = romId.trim()
+        if (id.isEmpty()) return
+        if (id in raFetchInFlight) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val last = if (theaterRomId == id) theaterLastPollMs else 0L
+        val due = RaTheater.pollDue(last, now, settings.raTheaterPollMs.toLong())
+        if (id in theaterAttempted && !due) return
+        if (!due) return
+        startRaProgressFetch(id, user, key, titleHint, platformId, theater = true)
+    }
+
+    fun theaterSnapFor(romId: String): RaTheaterSnap? =
+        theaterSnap.takeIf { theaterRomId == romId }
+
+    fun theaterBadgeKey(badgeName: String): String = "ra-badge-$badgeName"
+
+    private fun startRaProgressFetch(
+        id: String,
+        user: String,
+        key: String,
+        titleHint: String?,
+        platformId: String?,
+        theater: Boolean,
+    ) {
         raFetchInFlight = raFetchInFlight + id
         raFetchAttempted = raFetchAttempted + id
+        if (theater) theaterAttempted = theaterAttempted + id
         val cachedGameId = raProgressByRomId[id]?.gameId
-        val platform = platformId
-            ?: romById[id]?.platformId
+            ?: theaterSnap?.takeIf { theaterRomId == id }?.progress?.gameId
+        val platform = platformId ?: romById[id]?.platformId
         RA_IO.execute {
-            val progress = try {
-                RaFetcher.fetchProgress(
+            val body = try {
+                RaFetcher.fetchProgressJson(
                     username = user,
                     apiKey = key,
                     gameId = cachedGameId,
@@ -756,12 +801,96 @@ class GhostGalleonApp : Application() {
                     platformId = platform,
                 )
             } catch (_: Exception) {
-                RaProgress()
+                null
             }
+            val snap = RaTheater.parse(body)
             Handler(Looper.getMainLooper()).post {
                 raFetchInFlight = raFetchInFlight - id
-                if (!progress.isEmpty) putRaProgress(id, progress)
+                val stamp = android.os.SystemClock.elapsedRealtime()
+                if (theater || sessionRomId() == id) {
+                    applyTheaterSnap(id, snap, stamp, hadBody = body != null)
+                }
+                if (!snap.progress.isEmpty) putRaProgress(id, snap.progress)
             }
+        }
+    }
+
+    private fun applyTheaterSnap(
+        romId: String,
+        snap: RaTheaterSnap,
+        nowMs: Long,
+        hadBody: Boolean,
+    ) {
+        if (theaterRomId != romId) {
+            theaterRomId = romId
+            theaterSnap = null
+            theaterTickerTitle = null
+            theaterTickerUntilMs = 0L
+        }
+        theaterLastPollMs = nowMs
+        theaterAttempted = theaterAttempted + romId
+        if (!hadBody) return
+        if (snap.progress.isEmpty && snap.nextLocked == null && snap.unlockedIds.isEmpty()) {
+            return
+        }
+        val prev = theaterSnap
+        if (prev != null &&
+            prev.unlockedIds == snap.unlockedIds &&
+            prev.nextLocked?.id == snap.nextLocked?.id &&
+            prev.progress.numAwarded == snap.progress.numAwarded &&
+            prev.progress.numPossible == snap.progress.numPossible
+        ) {
+            return
+        }
+        if (prev != null) {
+            val newly = RaTheater.newlyUnlocked(prev.unlockedIds, snap.unlockedIds)
+            if (newly.isNotEmpty()) {
+                theaterTickerTitle = newly.firstNotNullOfOrNull { unlockId ->
+                    snap.items.firstOrNull { it.id == unlockId }?.title
+                } ?: snap.lastUnlock?.title
+                theaterTickerUntilMs = nowMs + THEATER_TICKER_MS
+            }
+        }
+        theaterSnap = snap
+        prefetchTheaterBadges(snap)
+    }
+
+    private fun sessionRomId(): String? =
+        sessionSurface?.key?.let { SlotKey.romId(it) }
+
+    private fun prefetchTheaterBadges(snap: RaTheaterSnap) {
+        val names = linkedSetOf<String>()
+        snap.nextLocked?.badgeName?.let(names::add)
+        snap.lastUnlock?.badgeName?.let(names::add)
+        for (name in names) {
+            val key = theaterBadgeKey(name)
+            if (artCache.diskHas(key)) continue
+            RA_IO.execute {
+                val bytes = fetchTheaterBadgeBytes(name) ?: return@execute
+                if (bytes.isNotEmpty()) artCache.writeDiskBytes(key, bytes)
+            }
+        }
+    }
+
+    private fun fetchTheaterBadgeBytes(badgeName: String): ByteArray? {
+        return try {
+            val url = java.net.URL(
+                "https://media.retroachievements.org/Badge/$badgeName.png",
+            )
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 8_000
+                readTimeout = 12_000
+                requestMethod = "GET"
+                instanceFollowRedirects = true
+            }
+            try {
+                if (conn.responseCode !in 200..299) return null
+                conn.inputStream.use { it.readBytes() }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -1432,6 +1561,15 @@ class GhostGalleonApp : Application() {
         cinemaLastSlot = null
         cinemaLastCaptureMs = 0L
         cinemaPinnedSlot = null
+        clearTheaterState()
+    }
+
+    private fun clearTheaterState() {
+        theaterSnap = null
+        theaterRomId = null
+        theaterLastPollMs = 0L
+        theaterTickerTitle = null
+        theaterTickerUntilMs = 0L
     }
 
     private fun endOpenSession(nowMs: Long) {
@@ -1831,5 +1969,6 @@ class GhostGalleonApp : Application() {
         const val SETTINGS_SAVE_DEBOUNCE_MS = 180L
         const val SAMPLE_CHUNK_BYTES = 64 * 1024
         const val IDENT_TAG = "GGIdent"
+        const val THEATER_TICKER_MS = 4_000L
     }
 }

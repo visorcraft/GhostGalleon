@@ -17,6 +17,7 @@ data class RaTheaterSnap(
     val nextLocked: RaCheevo?,
     val lastUnlock: RaCheevo?,
     val unlockedIds: Set<Int>,
+    val items: List<RaCheevo> = emptyList(),
 )
 
 /**
@@ -42,6 +43,7 @@ object RaTheater {
                 nextLocked = nextLocked(items),
                 lastUnlock = lastUnlock,
                 unlockedIds = unlockedIds,
+                items = items,
             )
         } catch (_: Exception) {
             emptySnap()
@@ -63,6 +65,7 @@ object RaTheater {
             nextLocked = null,
             lastUnlock = null,
             unlockedIds = emptySet(),
+            items = emptyList(),
         )
 
     private fun parseAchievements(root: JSONObject): List<RaCheevo> {

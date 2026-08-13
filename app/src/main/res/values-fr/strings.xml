@@ -349,6 +349,7 @@
     <string name="play_hud_load">Charger</string>
     <string name="play_hud_tracker">Traceur</string>
     <string name="play_hud_cinema">Cinéma</string>
+    <string name="play_hud_theater">Débloqué · %1$s</string>
     <string name="cockpit_keyboard">Clavier</string>
     <string name="cockpit_need_assist">Activez l’assistance saisie pour déplacer la souris.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -473,6 +474,7 @@
     <string name="confirm_yield_on_keep_player">Les deux panneaux iront au jeu. Le HUD de jeu sera masqué.</string>
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_cinema">Cinéma d\'états</string>
+    <string name="settings_ra_theater">Théâtre des succès</string>
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
     <string name="settings_ram_lenses">Lentilles RAM</string>
     <string name="settings_ram_trackers">Traceurs RAM</string>
