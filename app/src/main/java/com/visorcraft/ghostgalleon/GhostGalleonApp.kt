@@ -28,6 +28,8 @@ import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
 import com.visorcraft.ghostgalleon.display.DisplayTopology
 import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
+import com.visorcraft.ghostgalleon.input.InputAssistPolicy
+import com.visorcraft.ghostgalleon.input.InputAssistService
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
@@ -50,6 +52,8 @@ import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.CompanionActivity
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.ui.DisplayRole
+import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
 import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
 import com.visorcraft.ghostgalleon.library.AppEntry
@@ -445,6 +449,46 @@ class GhostGalleonApp : Application() {
     // True while optional InputAssistService is bound by the system.
     @Volatile
     var inputAssistConnected: Boolean = false
+
+    // Bound assist instance for launch-display pointer inject (null when unbound).
+    @Volatile
+    var inputAssistService: InputAssistService? = null
+
+    /**
+     * Absolute pointer on the session launch display via assist gestures.
+     * No-ops unless assist is connected, [InputAssistPolicy.mayInjectPointer]
+     * is true, display-targeted gestures exist, and the session does not own
+     * the companion display. Never targets the play-host display.
+     */
+    fun injectLaunchPointer(normX: Float, normY: Float, down: Boolean) {
+        if (!InputAssistService.supportsDisplayGesture()) return
+        val service = inputAssistService ?: return
+        if (!inputAssistConnected) return
+        val surface = sessionSurface ?: return
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface.policy,
+            surface.greedy,
+        )
+        if (sessionOwns) return
+        val launchId = surface.launchDisplayId ?: return
+        val dual = displayConfig.mode == SurfaceMode.DUAL
+        val hostId = displayConfig.allIds.firstOrNull { it != launchId }
+        val allowed = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = launchId,
+        )
+        if (!InputAssistPolicy.mayInjectPointer(
+                assistConnected = true,
+                playHostAllowed = allowed,
+                sessionOwnsCompanion = false,
+                playerId = surface.playerId,
+            )
+        ) return
+        service.injectOnLaunchDisplay(normX, normY, down, launchId)
+    }
 
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
     @Volatile

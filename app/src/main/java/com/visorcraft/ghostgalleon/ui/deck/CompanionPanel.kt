@@ -41,6 +41,7 @@ import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.art.ArtTile
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
+import com.visorcraft.ghostgalleon.input.InputAssistService
 import com.visorcraft.ghostgalleon.input.InputOwner
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.CollectionsOps
@@ -2275,6 +2276,7 @@ object CompanionPanel {
             playerId = surface.playerId,
             cockpitEnabled = settings.winlatorCockpit,
         )
+        // Pad/mouse inject needs assist + policy + display-targeted gestures.
         val mayPointer = InputAssistPolicy.mayInjectPointer(
             assistConnected = app.inputAssistConnected,
             playHostAllowed = true,
@@ -2283,7 +2285,14 @@ object CompanionPanel {
                 surface.greedy,
             ),
             playerId = surface.playerId,
-        )
+        ) && InputAssistService.supportsDisplayGesture()
+        // Default center of launch display until the pad is touched.
+        val padPoint = floatArrayOf(0.5f, 0.5f)
+        fun tapLaunchPad() {
+            if (!mayPointer) return
+            app.injectLaunchPointer(padPoint[0], padPoint[1], true)
+            app.injectLaunchPointer(padPoint[0], padPoint[1], false)
+        }
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -2361,10 +2370,10 @@ object CompanionPanel {
                         ?.showSoftInput(imeHost, InputMethodManager.SHOW_IMPLICIT)
                 }
             })
-            // Mouse buttons are no-ops until Task 15.
-            addChip(actionChip(label = "LMB", enabled = mayPointer))
-            addChip(actionChip(label = "RMB", enabled = mayPointer))
-            addChip(actionChip(label = "MMB", enabled = mayPointer))
+            // Touch taps on the launch display (assist); not true mouse buttons.
+            addChip(actionChip(label = "LMB", enabled = mayPointer) { tapLaunchPad() })
+            addChip(actionChip(label = "RMB", enabled = mayPointer) { tapLaunchPad() })
+            addChip(actionChip(label = "MMB", enabled = mayPointer) { tapLaunchPad() })
             addChip(
                 actionChip(
                     labelRes = R.string.play_hud_switcher,
@@ -2400,7 +2409,6 @@ object CompanionPanel {
                     ),
                 )
             }
-            val padPoint = floatArrayOf(0f, 0f)
             val trackpad = View(activity).apply {
                 tag = TAG_PLAY_HUD_TRACKPAD
                 setTag(R.id.cockpit_pad_point, padPoint)
@@ -2410,12 +2418,21 @@ object CompanionPanel {
                     setColor(0x22FFFFFF)
                     setStroke(dp(1), 0x44FFFFFF)
                 }
-                // Record normalized 0..1 only — inject is Task 15.
                 setOnTouchListener { v, event ->
                     val w = v.width.coerceAtLeast(1).toFloat()
                     val h = v.height.coerceAtLeast(1).toFloat()
                     padPoint[0] = (event.x / w).coerceIn(0f, 1f)
                     padPoint[1] = (event.y / h).coerceIn(0f, 1f)
+                    if (mayPointer) {
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN,
+                            MotionEvent.ACTION_MOVE,
+                            -> app.injectLaunchPointer(padPoint[0], padPoint[1], true)
+                            MotionEvent.ACTION_UP,
+                            MotionEvent.ACTION_CANCEL,
+                            -> app.injectLaunchPointer(padPoint[0], padPoint[1], false)
+                        }
+                    }
                     true
                 }
             }
