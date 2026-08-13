@@ -1,13 +1,22 @@
 package com.visorcraft.ghostgalleon.ui
 
 import android.app.ActivityOptions
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.view.View
+import android.widget.TextView
 import androidx.lifecycle.Lifecycle
+import com.visorcraft.ghostgalleon.GhostGalleonApp
+import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.AndroidDisplayProbe
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.library.SessionMath
+import com.visorcraft.ghostgalleon.library.SessionTracker
 
 /**
  * Secondary panel (Sugar bottom by default). SECONDARY_HOME redelivery must
@@ -21,6 +30,13 @@ class CompanionActivity : BaseDeckActivity() {
     private var didRedirect = false
     /** True after a successful [app.tryClaimCompanionSeat]. */
     private var holdsCompanionSeat = false
+    private val playHudHandler = Handler(Looper.getMainLooper())
+    private val playHudTick = object : Runnable {
+        override fun run() {
+            tickPlayHudClock(window.decorView, app, this@CompanionActivity)
+            playHudHandler.postDelayed(this, 1000L)
+        }
+    }
 
     override fun skipExitCascade(): Boolean = true
 
@@ -153,17 +169,25 @@ class CompanionActivity : BaseDeckActivity() {
     }
 
     override fun onDestroy() {
+        playHudHandler.removeCallbacks(playHudTick)
         releaseSeat()
         super.onDestroy()
     }
 
     override fun onResume() {
         if (sessionOwnsCompanionDisplay()) {
+            playHudHandler.removeCallbacks(playHudTick)
             closeQuietly()
             super.onResume()
             return
         }
         super.onResume()
+        playHudHandler.post(playHudTick)
+    }
+
+    override fun onPause() {
+        playHudHandler.removeCallbacks(playHudTick)
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -176,4 +200,15 @@ class CompanionActivity : BaseDeckActivity() {
         // never open the drawer — SECONDARY_HOME redelivery storms would
         // flash/glitch All-apps and thrash paints.
     }
+}
+
+/** In-place KEEP clock. No SETTINGS / SELECTION / notifyChanged. */
+internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Context) {
+    val clock = root?.findViewWithTag<TextView>("play_hud_clock") ?: return
+    val session = app.openSession ?: return
+    val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
+    clock.text = activity.getString(
+        if (session.isActive) R.string.format_session else R.string.format_session_paused,
+        activity.resolveText(SessionMath.formatPlaytime(elapsed)),
+    )
 }
