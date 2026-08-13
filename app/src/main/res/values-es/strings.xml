@@ -446,6 +446,8 @@
     <string name="settings_default_players">Reproductores predeterminados</string>
     <string name="settings_system_defaults">Valores predeterminados del sistema</string>
     <string name="settings_player_uses_both_screens">Usa ambas pantallas</string>
+    <string name="settings_ra_network_commands">Hablar con RetroArch</string>
+    <string name="settings_ra_network_commands_help">En RetroArch: Ajustes → Red → Comandos de red ACTIVADOS, puerto 55355.</string>
     <string name="settings_ra_username">Usuario de RetroAchievements</string>
     <string name="settings_ra_username_hint">Usuario RA</string>
     <string name="settings_ra_username_cleared">Usuario RA borrado</string>

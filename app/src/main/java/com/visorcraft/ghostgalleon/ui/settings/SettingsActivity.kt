@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -37,6 +38,7 @@ import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlayerTemplate
+import com.visorcraft.ghostgalleon.rom.RaCfg
 import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.TreeLabels
 import com.visorcraft.ghostgalleon.rom.playerSettingsLabel
@@ -893,6 +895,49 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    /** First ON: mutate RA cfg if writable; otherwise show paste lines. Toggle stays on. */
+    private fun applyRaNetworkCommandsOn() {
+        val path = Platforms.ALL.asSequence()
+            .flatMap { it.players.asSequence() }
+            .mapNotNull { it.extras["CONFIGFILE"] }
+            .firstOrNull()
+        val file = path?.let(::File)?.takeIf { it.canWrite() }
+        if (file == null) {
+            app.updateSettings(app.settings.copy(raNetworkCommands = true))
+            showRaNetworkCommandsHelp()
+            return
+        }
+        try {
+            val src = file.readText()
+            val (out, changed) = RaCfg.enableNetworkCommands(src)
+            if (changed) {
+                file.writeText(out)
+                Log.i("GGSession", "ra-cmd enabled")
+            }
+            app.updateSettings(
+                app.settings.copy(
+                    raNetworkCommands = true,
+                    raNetworkCmdPort = RaCfg.readPort(out),
+                ),
+            )
+        } catch (_: Exception) {
+            app.updateSettings(app.settings.copy(raNetworkCommands = true))
+            showRaNetworkCommandsHelp()
+        }
+    }
+
+    private fun showRaNetworkCommandsHelp() {
+        val paste = """
+            |network_cmd_enable = "true"
+            |network_cmd_port = "55355"
+        """.trimMargin()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_ra_network_commands)
+            .setMessage(getString(R.string.settings_ra_network_commands_help) + "\n\n" + paste)
+            .setPositiveButton(R.string.action_ok, null)
+            .show()
+    }
+
     /**
      * Demo path: parse a tiny embedded RA progress payload for the currently
      * selected ROM (or first library ROM) so the hero RA line can be verified.
@@ -1358,7 +1403,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
-            "library rom folder rescan hidden collections players"),
+            "library rom folder rescan hidden collections players retroarch network commands talk"),
         SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
             "artwork backup export import steamgriddb retroachievements scrape pack"),
         SettingsJump(SettingsCatalog.PAGE_STATS, getString(R.string.settings_page_stats),
@@ -2268,6 +2313,13 @@ class SettingsActivity : AppCompatActivity() {
         })
         libraryCard.addView(playersRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        toggle(libraryCard, getString(R.string.settings_ra_network_commands), s.raNetworkCommands) { on ->
+            if (on) {
+                applyRaNetworkCommandsOn()
+            } else {
+                app.updateSettings(app.settings.copy(raNetworkCommands = false))
+            }
+        }
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
