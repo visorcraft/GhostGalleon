@@ -74,7 +74,6 @@ import android.provider.DocumentsContract
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.visorcraft.ghostgalleon.rom.ArcadeTitles
-import com.visorcraft.ghostgalleon.rom.FerryKind
 import com.visorcraft.ghostgalleon.rom.FerryOffer
 import com.visorcraft.ghostgalleon.rom.FerryRefuse
 import com.visorcraft.ghostgalleon.rom.SaveDoc
@@ -1528,8 +1527,20 @@ class GhostGalleonApp : Application() {
     }
 
     /**
-     * Copy [offer] on [ROM_IO]. Prefer `*.tmp` beside dest then rename;
-     * write in place when rename is impossible.
+     * Whether granted RA save/state trees have a classified doc for [from].
+     * Callback runs on the main thread.
+     */
+    fun hasFerryDocs(from: RomEntry, onReady: (Boolean) -> Unit) {
+        ROM_IO.execute {
+            val found = listFerryDocs(from).isNotEmpty()
+            mainHandler.post { onReady(found) }
+        }
+    }
+
+    /**
+     * Copy [offer] on [ROM_IO]. Write `toName` beside the source
+     * (`fromUri` parent) as `*.tmp` then rename; in place when rename
+     * is impossible.
      */
     fun ferryCopy(offer: FerryOffer) {
         ROM_IO.execute {
@@ -1642,8 +1653,7 @@ class GhostGalleonApp : Application() {
     private fun copyFerryOffer(offer: FerryOffer): Boolean {
         openFerryInput(offer.fromUri)?.use { input ->
             val bytes = input.readBytes()
-            if (tryWriteBesideSource(offer.fromUri, offer.toName, bytes)) return true
-            return tryWriteFallback(offer.kind, offer.toName, bytes)
+            return tryWriteBesideSource(offer.fromUri, offer.toName, bytes)
         }
         return false
     }
@@ -1665,32 +1675,13 @@ class GhostGalleonApp : Application() {
 
     private fun tryWriteBesideSource(fromUri: String, destName: String, bytes: ByteArray): Boolean {
         fileParent(fromUri)?.let { parent ->
-            if (writeFerryFile(parent, destName, bytes)) return true
+            if (runCatching { writeFerryFile(parent, destName, bytes) }.getOrDefault(false)) {
+                return true
+            }
         }
         safParent(fromUri)?.let { parent ->
-            if (writeFerryDocument(parent, destName, bytes)) return true
-        }
-        return false
-    }
-
-    private fun tryWriteFallback(kind: FerryKind, destName: String, bytes: ByteArray): Boolean {
-        val folder = if (kind == FerryKind.RA_SRM) "saves" else "states"
-        raExternalDir()?.let { external ->
-            val dir = File(external, folder)
-            if (writeFerryFile(dir, destName, bytes)) return true
-        }
-        for (treeUri in settings.romTreeUris) {
-            for (dir in listGrantedRaFolders(treeUri)) {
-                val name = dir.name.orEmpty()
-                val target = when {
-                    name.equals(folder, ignoreCase = true) -> dir
-                    name.equals("RetroArch", ignoreCase = true) ->
-                        dir.listFiles().firstOrNull {
-                            it.isDirectory && it.name.equals(folder, ignoreCase = true)
-                        }
-                    else -> null
-                } ?: continue
-                if (writeFerryDocument(target, destName, bytes)) return true
+            if (runCatching { writeFerryDocument(parent, destName, bytes) }.getOrDefault(false)) {
+                return true
             }
         }
         return false
@@ -1707,28 +1698,44 @@ class GhostGalleonApp : Application() {
         return parent.takeIf { it.isDirectory }
     }
 
+    /** Tree-capable parent of [fromUri], or null when no grant covers it. */
     private fun safParent(fromUri: String): DocumentFile? {
         val uri = runCatching { Uri.parse(fromUri) }.getOrNull() ?: return null
-        runCatching { DocumentFile.fromSingleUri(this, uri)?.parentFile }
-            .getOrNull()
-            ?.let { return it }
         val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
             ?: StoragePaths.documentId(fromUri)
             ?: return null
         val treeUri = settings.romTreeUris.firstOrNull { tree ->
-            val treeId = runCatching {
-                DocumentsContract.getTreeDocumentId(Uri.parse(tree))
-            }.getOrNull() ?: StoragePaths.documentId(tree) ?: return@firstOrNull false
+            val treeId = treeDocumentId(tree) ?: return@firstOrNull false
             docId == treeId || docId.startsWith("$treeId/")
         } ?: return null
+        val treeParsed = Uri.parse(treeUri)
+        val treeId = treeDocumentId(treeUri) ?: return null
         val slash = docId.lastIndexOf('/')
-        val parentId = if (slash <= 0) {
-            DocumentsContract.getTreeDocumentId(Uri.parse(treeUri))
-        } else {
-            docId.substring(0, slash)
+        val parentId = if (slash <= 0 || docId == treeId) treeId else docId.substring(0, slash)
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeParsed, parentId)
+        runCatching { DocumentFile.fromTreeUri(this, parentUri)?.takeIf { it.isDirectory } }
+            .getOrNull()
+            ?.let { return it }
+        return walkTreeTo(treeParsed, treeId, parentId)
+    }
+
+    private fun treeDocumentId(treeUri: String): String? =
+        runCatching { DocumentsContract.getTreeDocumentId(Uri.parse(treeUri)) }.getOrNull()
+            ?: StoragePaths.documentId(treeUri)
+
+    private fun walkTreeTo(treeUri: Uri, treeId: String, parentId: String): DocumentFile? {
+        val root = runCatching { DocumentFile.fromTreeUri(this, treeUri) }.getOrNull()
+            ?: return null
+        val relative = if (parentId == treeId) "" else parentId.removePrefix("$treeId/").trim('/')
+        if (relative.isEmpty()) {
+            return runCatching { root.takeIf { it.isDirectory } }.getOrNull()
         }
-        val parentUri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUri), parentId)
-        return runCatching { DocumentFile.fromSingleUri(this, parentUri) }.getOrNull()
+        var dir = root
+        for (seg in relative.split('/')) {
+            dir = runCatching { dir.findFile(seg)?.takeIf { it.isDirectory } }.getOrNull()
+                ?: return null
+        }
+        return dir
     }
 
     private fun writeFerryFile(parent: File, destName: String, bytes: ByteArray): Boolean {
@@ -1754,19 +1761,21 @@ class GhostGalleonApp : Application() {
         destName: String,
         bytes: ByteArray,
     ): Boolean {
-        if (!parent.canWrite()) return false
-        val tmpName = "$destName.tmp"
-        parent.findFile(tmpName)?.delete()
-        val tmp = parent.createFile("application/octet-stream", tmpName)
-            ?: return writeFerryDocumentInPlace(parent, destName, bytes)
-        if (!writeDocumentBytes(tmp, bytes)) {
+        return runCatching {
+            if (!parent.canWrite()) return@runCatching false
+            val tmpName = "$destName.tmp"
+            parent.findFile(tmpName)?.delete()
+            val tmp = parent.createFile("application/octet-stream", tmpName)
+                ?: return@runCatching writeFerryDocumentInPlace(parent, destName, bytes)
+            if (!writeDocumentBytes(tmp, bytes)) {
+                tmp.delete()
+                return@runCatching writeFerryDocumentInPlace(parent, destName, bytes)
+            }
+            parent.findFile(destName)?.delete()
+            if (tmp.renameTo(destName)) return@runCatching true
             tmp.delete()
-            return writeFerryDocumentInPlace(parent, destName, bytes)
-        }
-        parent.findFile(destName)?.delete()
-        if (tmp.renameTo(destName)) return true
-        tmp.delete()
-        return writeFerryDocumentInPlace(parent, destName, bytes)
+            writeFerryDocumentInPlace(parent, destName, bytes)
+        }.getOrDefault(false)
     }
 
     private fun writeFerryDocumentInPlace(

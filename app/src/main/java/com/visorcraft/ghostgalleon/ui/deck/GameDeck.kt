@@ -2615,6 +2615,13 @@ class GameDeck(
                 }
         }
         val dialog = builder.show()
+        if (rom != null && ferryPeers.isNotEmpty()) {
+            val ferryBtn = dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)
+            ferryBtn.visibility = View.GONE
+            app().hasFerryDocs(rom) { readable ->
+                if (dialog.isShowing && readable) ferryBtn.visibility = View.VISIBLE
+            }
+        }
         val fullHash = GameDetails.copyableHash(identity)
         if (fullHash != null) {
             dialog.findViewById<TextView>(android.R.id.message)?.setOnLongClickListener {
@@ -2665,7 +2672,10 @@ class GameDeck(
             return
         }
         app().loadFerryOffers(from, to, refuse) { offers ->
-            if (offers.isEmpty()) return@loadFerryOffers
+            if (offers.isEmpty()) {
+                Toast.makeText(activity, R.string.ferry_dest_unwritable, Toast.LENGTH_SHORT).show()
+                return@loadFerryOffers
+            }
             if (offers.size == 1) {
                 confirmSaveFerry(from, to, offers[0])
             } else {
