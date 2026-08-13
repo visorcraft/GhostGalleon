@@ -2163,6 +2163,7 @@ object CompanionPanel {
         })
         addChip(actionChip(R.string.play_hud_reclaim) {
             app.noteReturnToLauncher()
+            hud.visibility = View.GONE
             if (app.liveCompanion() == null) {
                 (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
             }
