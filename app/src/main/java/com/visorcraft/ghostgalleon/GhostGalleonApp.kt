@@ -34,12 +34,15 @@ import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRing
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.settings.DataMigrator
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SettingsStore
+import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.CompanionActivity
@@ -838,8 +841,19 @@ class GhostGalleonApp : Application() {
         openSession = SessionTracker.onDeviceWake(s, nowMs)
     }
 
-    fun beginSession(surface: SessionSurface) {
+    fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
+        val title = SlotKey.romId(surface.key)?.let { romEntry(it)?.name } ?: surface.key
+        val entry = SessionRingEntry(
+            key = surface.key,
+            playerId = surface.playerId,
+            packageName = surface.packageName,
+            policy = surface.policy,
+            launchedAtMs = nowMs,
+            title = title,
+        )
+        settings = settings.copy(sessionRing = SessionRing.push(settings.sessionRing, entry))
+        scheduleSettingsSave(settings)
         if (surface.policy == SessionPolicy.YIELD_BOTH) {
             liveCompanions().forEach { it.closeQuietly() }
         }
