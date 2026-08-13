@@ -89,16 +89,24 @@ object RaTheater {
     private fun parseCheevo(o: JSONObject): RaCheevo? {
         val id = o.optInt("ID", 0)
         if (id <= 0) return null
-        val earned = o.optString("DateEarned", "").trim()
-        val hardcore = o.optString("DateEarnedHardcore", "").trim()
-        val badge = o.optString("BadgeName", "").trim()
         return RaCheevo(
             id = id,
             title = o.optString("Title", ""),
             description = o.optString("Description", ""),
             points = o.optInt("Points", 0),
-            unlocked = earned.isNotEmpty() || hardcore.isNotEmpty(),
-            badgeName = badge.ifEmpty { null },
+            unlocked = hasDate(o, "DateEarned") || hasDate(o, "DateEarnedHardcore"),
+            badgeName = stringOrNull(o, "BadgeName"),
         )
+    }
+
+    /** org.json optString turns JSON null into the literal "null". */
+    private fun hasDate(o: JSONObject, key: String): Boolean {
+        if (!o.has(key) || o.isNull(key)) return false
+        return o.optString(key, "").trim().isNotEmpty()
+    }
+
+    private fun stringOrNull(o: JSONObject, key: String): String? {
+        if (!o.has(key) || o.isNull(key)) return null
+        return o.optString(key, "").trim().ifEmpty { null }
     }
 }

@@ -39,4 +39,24 @@ class RaTheaterTest {
         assertTrue(empty.unlockedIds.isEmpty())
         assertTrue(RaTheater.parse(null).progress.isEmpty)
     }
+
+    @Test
+    fun `json null dates stay locked and array shape works`() {
+        val json = """
+          {
+            "ID": 1, "Title": "Game", "NumAwardedToUser": 1, "NumAchievements": 3,
+            "Achievements": [
+              {"ID":10,"Title":"A","Description":"d","Points":5,"DateEarned":null,"DateEarnedHardcore":null,"BadgeName":null},
+              {"ID":11,"Title":"B","Description":"e","Points":10,"DateEarnedHardcore":"2020-02-02","BadgeName":"002"},
+              {"ID":0,"Title":"Skip","Description":"x","Points":1}
+            ]
+          }
+        """.trimIndent()
+        val snap = RaTheater.parse(json)
+        assertEquals("A", snap.nextLocked?.title)
+        assertEquals("B", snap.lastUnlock?.title)
+        assertEquals(setOf(11), snap.unlockedIds)
+        assertNull(snap.nextLocked?.badgeName)
+        assertEquals("002", snap.lastUnlock?.badgeName)
+    }
 }
