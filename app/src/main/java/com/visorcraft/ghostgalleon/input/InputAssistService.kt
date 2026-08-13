@@ -158,7 +158,11 @@ class InputAssistService : AccessibilityService() {
         }
 
         val builder = GestureDescription.Builder().addStroke(stroke)
-        applyDisplayId(builder, launchDisplayId)
+        if (!applyDisplayId(builder, launchDisplayId)) {
+            // Fail closed: never dispatch without a targeted display.
+            activeStroke = null
+            return
+        }
         dispatchGesture(builder.build(), null, null)
     }
 
@@ -246,12 +250,14 @@ class InputAssistService : AccessibilityService() {
             }
         }
 
-        private fun applyDisplayId(builder: GestureDescription.Builder, displayId: Int) {
-            val method = setDisplayIdMethod ?: return
-            try {
+        /** @return true when [displayId] was applied; false → skip dispatch. */
+        private fun applyDisplayId(builder: GestureDescription.Builder, displayId: Int): Boolean {
+            val method = setDisplayIdMethod ?: return false
+            return try {
                 method.invoke(builder, displayId)
+                true
             } catch (_: Throwable) {
-                // Missing overload: caller already gated on supportsDisplayGesture.
+                false
             }
         }
     }

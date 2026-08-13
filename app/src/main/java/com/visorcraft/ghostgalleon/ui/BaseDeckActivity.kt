@@ -1396,10 +1396,10 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
         )
     )
     if (!allowed) return
-    // Switcher chrome needs HOST pad; yield already returned above.
+    // Resolve host first; only claim when switcher chrome can attach.
+    val host = sessionSwitcherHost(activity) ?: return
     app.claimHost()
     app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
-    val host = sessionSwitcherHost(activity) ?: return
     fun releaseSwitcherHost() {
         app.releaseHost()
         app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
@@ -1445,8 +1445,21 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                         if (plan.prep != HandoffPrep.RA_PAUSE_SAVE) {
                             finish()
                         } else {
+                            val launched = java.util.concurrent.atomic.AtomicBoolean(false)
+                            val mainHandler = Handler(Looper.getMainLooper())
+                            fun finishOnce() {
+                                if (launched.compareAndSet(false, true)) finish()
+                            }
+                            val budget = Runnable {
+                                Log.i(
+                                    "GGHandoff",
+                                    "prep budget ms=${SessionHandoff.PREP_BUDGET_MS}",
+                                )
+                                finishOnce()
+                            }
+                            mainHandler.postDelayed(budget, SessionHandoff.PREP_BUDGET_MS)
                             val started = SystemClock.elapsedRealtime()
-                            app.enqueueRaUdp(
+                            val enqueued = app.enqueueRaUdp(
                                 work = { client ->
                                     val port = app.settings.raNetworkCmdPort
                                     val status = client.status(port)
@@ -1454,11 +1467,16 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                                     client.saveState(port)
                                 },
                                 onMain = {
+                                    mainHandler.removeCallbacks(budget)
                                     val used = SystemClock.elapsedRealtime() - started
                                     Log.i("GGHandoff", "prep ms=$used")
-                                    finish()
+                                    finishOnce()
                                 },
-                            ) || run { finish(); true }
+                            )
+                            if (!enqueued) {
+                                mainHandler.removeCallbacks(budget)
+                                finishOnce()
+                            }
                         }
                     }
                 }

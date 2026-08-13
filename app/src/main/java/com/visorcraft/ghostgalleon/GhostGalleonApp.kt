@@ -1017,7 +1017,16 @@ class GhostGalleonApp : Application() {
 
     private fun computeIdentity(entry: RomEntry): RomIdentity {
         val size = romByteSize(entry)
-        val algo = RomIdentities.chooseAlgo(size ?: 0L, entry.platformId)
+        // Unknown SAF length must never chooseAlgo(0) → full-stream sha1 buffer.
+        val algo = if (size == null || size < 0L) {
+            when (entry.platformId) {
+                "psvita", "vita" -> RomIdentities.ALGO_SFO_TITLE
+                "arcade" -> RomIdentities.ALGO_DAT_CRC
+                else -> RomIdentities.ALGO_SHA256_SAMPLE
+            }
+        } else {
+            RomIdentities.chooseAlgo(size, entry.platformId)
+        }
         return when (algo) {
             RomIdentities.ALGO_SFO_TITLE -> computeSfoTitle(entry)
             RomIdentities.ALGO_DAT_CRC -> computeDatCrc(entry)

@@ -2666,8 +2666,8 @@ object CompanionPanel {
         val rom = selectedRom(surface.key, emptyList(), app)
         val romId = rom?.id ?: SlotKey.romId(surface.key)
         val platformId = rom?.platformId
-        // Task 20 identity hash optional; romId match still works with hash=null.
-        val match = LensCatalog.match(app.lenses, romId, hash = null, platformId = platformId)
+        val identityHash = app.romIdentities[romId]?.takeIf { it.ready }?.hash
+        val match = LensCatalog.match(app.lenses, romId, hash = identityHash, platformId = platformId)
         if (match == null ||
             !LensCatalog.acceptable(match) ||
             match.id in app.lensDisabledThisProcess
@@ -2708,6 +2708,14 @@ object CompanionPanel {
                     }
                     return@enqueueRaUdp
                 }
+                // Drop stale replies if rematch changed the active lens.
+                val still = LensCatalog.match(
+                    app.lenses,
+                    romId,
+                    hash = app.romIdentities[romId]?.takeIf { it.ready }?.hash,
+                    platformId = platformId,
+                )
+                if (still?.id != s.lensId) return@enqueueRaUdp
                 app.noteLensSuccess(s.lensId)
                 if (lensView.text?.toString() != s.text) {
                     lensView.text = s.text
