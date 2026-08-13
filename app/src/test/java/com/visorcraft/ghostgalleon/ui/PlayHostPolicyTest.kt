@@ -47,4 +47,29 @@ class PlayHostPolicyTest {
             PlayHostPolicy.playHostAllowed(true, null, false, 1, 0),
         )
     }
+
+    @Test
+    fun `oracleMaySample table`() {
+        assertTrue(
+            PlayHostPolicy.oracleMaySample(
+                dualMode = true,
+                ownsCompanionDisplay = false,
+                windowDisplayId = 1,
+                launchDisplayId = 0,
+                sessionOpen = true,
+            ),
+        )
+        assertFalse(
+            PlayHostPolicy.oracleMaySample(true, false, 0, 0, sessionOpen = true),
+        )
+        assertFalse(
+            PlayHostPolicy.oracleMaySample(true, true, 1, 0, sessionOpen = true),
+        )
+        assertFalse(
+            PlayHostPolicy.oracleMaySample(false, false, 1, 0, false),
+        )
+        assertTrue(
+            PlayHostPolicy.oracleMaySample(true, false, 1, 0, sessionOpen = false),
+        )
+    }
 }
