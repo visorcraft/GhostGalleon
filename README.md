@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.12.0-informational" alt="0.12.0" />
+  <img src="https://img.shields.io/badge/version-0.12.1-informational" alt="0.12.1" />
 </p>
 
 ---
