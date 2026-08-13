@@ -2811,14 +2811,7 @@ object CompanionPanel {
             hidePlayHudCinema(root)
             return null
         }
-        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
-        val playHost = PlayHostPolicy.playHostAllowed(
-            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
-            policy = surface.policy,
-            greedy = surface.greedy,
-            hostDisplayId = hostId,
-            launchDisplayId = surface.launchDisplayId,
-        )
+        val playHost = cinemaPlayHostAllowed(app, activity, surface)
         val raPlayer = SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)
         val slotsLive = app.raCommandClient?.slotStripAllowed() ?: true
         if (!playHost ||
@@ -2858,7 +2851,14 @@ object CompanionPanel {
             work = { c -> saved = c.saveStateSlot(port, next) },
             onMain = {
                 if (!strip.isAttachedToWindow) return@enqueueRaUdp
-                if (app.sessionSurface?.key != surfaceKey) return@enqueueRaUdp
+                val live = app.sessionSurface
+                if (live == null || live.key != surfaceKey) return@enqueueRaUdp
+                if (DualPaintPolicy.sessionOwnsCompanionDisplay(live.policy, live.greedy) ||
+                    !cinemaPlayHostAllowed(app, activity, live)
+                ) {
+                    hidePlayHudCinema(root)
+                    return@enqueueRaUdp
+                }
                 if (!saved || app.raCommandClient?.slotStripAllowed() == false) {
                     if (app.raCommandClient?.slotStripAllowed() == false) {
                         hidePlayHudCinema(root)
@@ -2868,10 +2868,10 @@ object CompanionPanel {
                 val stamp = SystemClock.elapsedRealtime()
                 app.cinemaLastSlot = next
                 app.cinemaLastCaptureMs = stamp
-                val thumbName = cinemaThumbFile(raStatesDir(surface), next)?.name
+                val thumbName = cinemaThumbFile(raStatesDir(live), next)?.name
                 app.cinemaFrames = (app.cinemaFrames.filter { it.slot != next } +
                     CinemaFrame(next, stamp, thumbName)).takeLast(4)
-                paintPlayHudCinema(strip, app, activity, surface)
+                paintPlayHudCinema(strip, app, activity, live)
             },
         )
         if (!enqueued) return 1_000L
@@ -3163,6 +3163,24 @@ object CompanionPanel {
         return cell
     }
 
+    private fun cinemaPlayHostAllowed(
+        app: GhostGalleonApp,
+        activity: Context,
+        surface: SessionSurface,
+    ): Boolean {
+        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
+        return PlayHostPolicy.playHostAllowed(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = surface.launchDisplayId,
+        )
+    }
+
+    private fun cinemaPaintKey(frames: List<CinemaFrame>): String =
+        frames.joinToString(",") { "${it.slot}:${it.savedAtMs}:${it.thumbKey ?: ""}" }
+
     private fun paintPlayHudCinema(
         strip: ViewGroup,
         app: GhostGalleonApp,
@@ -3170,6 +3188,13 @@ object CompanionPanel {
         surface: SessionSurface,
     ) {
         val row = (strip.getChildAt(0) as? LinearLayout) ?: return
+        val key = cinemaPaintKey(app.cinemaFrames)
+        if (strip.visibility == View.VISIBLE &&
+            row.childCount == CinemaPolicy.BAND.count() &&
+            (row.tag as? String) == key
+        ) {
+            return
+        }
         val density = strip.resources.displayMetrics.density
         val dp = { v: Int -> (v * density).toInt() }
         val compact = strip.rootView.height > 0 && strip.rootView.height < 500f * density
@@ -3179,6 +3204,7 @@ object CompanionPanel {
         val port = settings.raNetworkCmdPort
         val surfaceKey = surface.key
         row.removeAllViews()
+        row.tag = key
         for (slot in CinemaPolicy.BAND) {
             val thumbFile = cinemaThumbFile(statesDir, slot)
             val bmp = thumbFile?.let { decodeSlotThumb(it, cell) }

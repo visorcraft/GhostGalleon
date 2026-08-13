@@ -396,13 +396,14 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
+    // Cinema SAVE_STATE_SLOT takes the single UDP flight when due.
+    val cinemaDelay = CompanionPanel.tickPlayHudCinema(root, app, activity)
     val lensDelay = if (app.settings.ramLensesEnabled) {
         CompanionPanel.tickPlayHudLens(root, app, activity)
     } else {
         CompanionPanel.hidePlayHudTracker(root)
         null
     }
-    val cinemaDelay = CompanionPanel.tickPlayHudCinema(root, app, activity)
     val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
         watchRa = app.settings.raNetworkCommands,
