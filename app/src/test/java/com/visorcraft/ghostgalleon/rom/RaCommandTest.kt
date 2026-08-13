@@ -48,6 +48,7 @@ class RaCommandTest {
             clockMs = { 0L },
         )
         assertFalse(c.probe(55355, nowMs = 0L))
+        assertFalse(c.isLinkUp())
     }
 
     @Test
@@ -61,6 +62,7 @@ class RaCommandTest {
             clockMs = { 0L },
         )
         assertTrue(c.probe(RaCommand.DEFAULT_PORT, nowMs = 0L))
+        assertTrue(c.isLinkUp())
     }
 
     @Test
@@ -160,6 +162,7 @@ class RaCommandTest {
         assertTrue(c.probe(55355, nowMs = 0L))
         mode = "down"
         assertEquals(RaStatus.UNKNOWN, c.status(55355))
+        assertFalse(c.isLinkUp())
         // Rate-limit still applies while down after the last VERSION at t=0.
         assertFalse(c.probe(55355, nowMs = 100L))
         mode = "up"

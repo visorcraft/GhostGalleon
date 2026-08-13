@@ -337,6 +337,10 @@
     <string name="play_hud_end">สิ้นสุดเซสชัน</string>
     <string name="play_hud_reclaim">คืนหน้า HOME</string>
     <string name="play_hud_switcher">เซสชัน</string>
+    <string name="play_hud_pause">หยุดชั่วคราว</string>
+    <string name="play_hud_resume">เล่นต่อ</string>
+    <string name="play_hud_save">บันทึก</string>
+    <string name="play_hud_load">โหลด</string>
     <string name="session_switcher_title">เซสชัน</string>
     <string name="session_ring_empty">ไม่มีเซสชันล่าสุด</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>

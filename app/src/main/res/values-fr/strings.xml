@@ -337,6 +337,10 @@
     <string name="play_hud_end">Terminer la session</string>
     <string name="play_hud_reclaim">Récupérer l’accueil</string>
     <string name="play_hud_switcher">Sessions</string>
+    <string name="play_hud_pause">Pause</string>
+    <string name="play_hud_resume">Reprendre</string>
+    <string name="play_hud_save">Sauver</string>
+    <string name="play_hud_load">Charger</string>
     <string name="session_switcher_title">Sessions</string>
     <string name="session_ring_empty">Aucune session récente</string>
     <string name="deck_add_rom_folder_done">Dossier ROM ajouté</string>

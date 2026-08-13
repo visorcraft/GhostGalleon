@@ -23,6 +23,7 @@ import com.visorcraft.ghostgalleon.library.SessionTracker
 import com.visorcraft.ghostgalleon.rom.OracleTally
 import com.visorcraft.ghostgalleon.rom.OracleTallyLogic
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.ui.deck.CompanionPanel
 
 /**
  * Secondary panel (Sugar bottom by default). SECONDARY_HOME redelivery must
@@ -359,4 +360,5 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         if (session.isActive) R.string.format_session else R.string.format_session_paused,
         activity.resolveText(SessionMath.formatPlaytime(elapsed)),
     )
+    CompanionPanel.tickPlayHudRa(root, app, activity)
 }

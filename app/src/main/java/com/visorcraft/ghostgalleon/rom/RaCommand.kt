@@ -37,6 +37,8 @@ class RaCommandClient(
     private var lastProbeMs: Long = Long.MIN_VALUE / 2
     private var linkUp: Boolean = false
 
+    fun isLinkUp(): Boolean = linkUp
+
     fun probe(port: Int, nowMs: Long): Boolean {
         // While up, caller uses status(); keep returning true without re-sending VERSION.
         if (linkUp) return true

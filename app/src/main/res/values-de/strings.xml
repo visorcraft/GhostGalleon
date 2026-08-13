@@ -337,6 +337,10 @@
     <string name="play_hud_end">Sitzung beenden</string>
     <string name="play_hud_reclaim">HOME zurückholen</string>
     <string name="play_hud_switcher">Sitzungen</string>
+    <string name="play_hud_pause">Pause</string>
+    <string name="play_hud_resume">Fortsetzen</string>
+    <string name="play_hud_save">Speichern</string>
+    <string name="play_hud_load">Laden</string>
     <string name="session_switcher_title">Sitzungen</string>
     <string name="session_ring_empty">Keine letzten Sitzungen</string>
     <string name="deck_add_rom_folder_done">ROM-Ordner hinzugefügt</string>

@@ -30,6 +30,8 @@ import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaUdpTransport
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
@@ -426,6 +428,21 @@ class GhostGalleonApp : Application() {
 
     // Process-only KEEP play HUD chrome. Expanded shows the actions row.
     var playHudExpanded: Boolean = true
+
+    // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
+    @Volatile
+    var raCommandClient: RaCommandClient? = null
+        private set
+
+    fun ensureRaCommandClient(): RaCommandClient {
+        raCommandClient?.let { return it }
+        synchronized(this) {
+            raCommandClient?.let { return it }
+            return RaCommandClient(RaUdpTransport()) {
+                android.os.SystemClock.elapsedRealtime()
+            }.also { raCommandClient = it }
+        }
+    }
 
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
     @Volatile

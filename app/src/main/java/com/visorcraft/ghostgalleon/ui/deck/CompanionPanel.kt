@@ -14,6 +14,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -47,6 +48,8 @@ import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.isInstalled
@@ -101,6 +104,9 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
+    private const val TAG_PLAY_HUD_RA = "play_hud_ra"
+    private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
+    private const val RA_PACKAGE = "com.retroarch.aarch64"
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
     const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
 
@@ -2219,6 +2225,51 @@ object CompanionPanel {
                 )
             }
         })
+        if (raHudEligible(settings.raNetworkCommands, surface)) {
+            val raChips = LinearLayout(activity).apply {
+                tag = TAG_PLAY_HUD_RA
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                isBaselineAligned = false
+                visibility = View.GONE
+                if (actions.childCount > 0) setPadding(dp(12), 0, 0, 0)
+            }
+            fun addRaChip(chip: View) {
+                if (raChips.childCount > 0) {
+                    raChips.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+                }
+                raChips.addView(chip)
+            }
+            fun runRa(command: (RaCommandClient, Int) -> Unit) {
+                val client = app.ensureRaCommandClient()
+                val port = app.settings.raNetworkCmdPort
+                command(client, port)
+                applyRaChipState(hud, client, port, probe = false)
+            }
+            addRaChip(
+                actionChip(R.string.play_hud_pause, chipTag = TAG_PLAY_HUD_PAUSE) {
+                    runRa { client, port -> client.pauseToggle(port) }
+                },
+            )
+            addRaChip(
+                actionChip(R.string.play_hud_save) {
+                    runRa { client, port -> client.saveState(port) }
+                },
+            )
+            addRaChip(
+                actionChip(R.string.play_hud_load) {
+                    runRa { client, port -> client.loadState(port) }
+                },
+            )
+            actions.addView(raChips)
+            hud.post {
+                if (!hud.isAttachedToWindow) return@post
+                val client = app.ensureRaCommandClient()
+                applyRaChipState(
+                    hud, client, app.settings.raNetworkCmdPort, probe = true,
+                )
+            }
+        }
         addChip(
             actionChip(
                 R.string.play_hud_switcher,
@@ -2229,5 +2280,61 @@ object CompanionPanel {
         )
         hud.addView(actions)
         return hud
+    }
+
+    fun tickPlayHudRa(root: View?, app: GhostGalleonApp, activity: Context) {
+        val group = root?.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+        val surface = app.sessionSurface
+        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
+        val allowed = surface != null &&
+            raHudEligible(app.settings.raNetworkCommands, surface) &&
+            PlayHostPolicy.playHostAllowed(
+                dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                policy = surface.policy,
+                greedy = surface.greedy,
+                hostDisplayId = hostId,
+                launchDisplayId = surface.launchDisplayId,
+            )
+        if (!allowed) {
+            group.visibility = View.GONE
+            return
+        }
+        val client = app.ensureRaCommandClient()
+        if (client.isLinkUp()) return
+        applyRaChipState(root, client, app.settings.raNetworkCmdPort, probe = true)
+    }
+
+    private fun raHudEligible(raNetworkCommands: Boolean, surface: SessionSurface): Boolean {
+        if (!raNetworkCommands) return false
+        val playerId = surface.playerId.orEmpty()
+        return playerId.startsWith("ra-") || surface.packageName == RA_PACKAGE
+    }
+
+    private fun applyRaChipState(
+        root: View,
+        client: RaCommandClient,
+        port: Int,
+        probe: Boolean,
+    ) {
+        val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
+        val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
+        if (!probe && !client.isLinkUp()) {
+            group.visibility = View.GONE
+            return
+        }
+        if (probe && !client.probe(port, SystemClock.elapsedRealtime())) {
+            group.visibility = View.GONE
+            return
+        }
+        val status = client.status(port)
+        if (!client.isLinkUp()) {
+            group.visibility = View.GONE
+            return
+        }
+        pause.setText(
+            if (status == RaStatus.PAUSED) R.string.play_hud_resume
+            else R.string.play_hud_pause,
+        )
+        group.visibility = View.VISIBLE
     }
 }
