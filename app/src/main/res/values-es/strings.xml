@@ -40,6 +40,8 @@
     <string name="action_open_settings">Abrir ajustes</string>
     <string name="action_toggle_favorite">Favorito</string>
     <string name="action_show_details">Detalles</string>
+    <string name="action_open_session_switcher">Selector de sesión</string>
+    <string name="action_toggle_play_hud">HUD de juego</string>
     <string name="action_open_with">Abrir con…</string>
     <string name="action_page_left">Página izquierda (L1)</string>
     <string name="action_page_right">Página derecha (R1)</string>
@@ -332,6 +334,9 @@
     <string name="deck_only_one_display">Solo una pantalla — intercambio no disponible</string>
     <string name="deck_restart_bottom_panel">Reiniciando panel inferior…</string>
     <string name="session_yields_both_screens">Este juego usa ambas pantallas</string>
+    <string name="play_hud_end">Terminar sesión</string>
+    <string name="play_hud_reclaim">Recuperar INICIO</string>
+    <string name="play_hud_switcher">Sesiones</string>
     <string name="deck_add_rom_folder_done">Carpeta ROM añadida</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>

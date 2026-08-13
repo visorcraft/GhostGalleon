@@ -40,6 +40,8 @@
     <string name="action_open_settings">เปิดการตั้งค่า</string>
     <string name="action_toggle_favorite">รายการโปรด</string>
     <string name="action_show_details">รายละเอียด</string>
+    <string name="action_open_session_switcher">สลับเซสชัน</string>
+    <string name="action_toggle_play_hud">HUD เล่นเกม</string>
     <string name="action_open_with">เปิดด้วย…</string>
     <string name="action_page_left">หน้าซ้าย (L1)</string>
     <string name="action_page_right">หน้าขวา (R1)</string>
@@ -332,6 +334,9 @@
     <string name="deck_only_one_display">มีหน้าจอเดียว — ไม่สามารถสลับได้</string>
     <string name="deck_restart_bottom_panel">กำลังรีสตาร์ทพาเนลด้านล่าง…</string>
     <string name="session_yields_both_screens">เกมนี้ใช้ทั้งสองหน้าจอ</string>
+    <string name="play_hud_end">สิ้นสุดเซสชัน</string>
+    <string name="play_hud_reclaim">คืนหน้า HOME</string>
+    <string name="play_hud_switcher">เซสชัน</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>

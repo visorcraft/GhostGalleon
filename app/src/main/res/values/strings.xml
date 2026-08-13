@@ -40,6 +40,8 @@
     <string name="action_open_settings">Open settings</string>
     <string name="action_toggle_favorite">Favorite</string>
     <string name="action_show_details">Details</string>
+    <string name="action_open_session_switcher">Session switcher</string>
+    <string name="action_toggle_play_hud">Play HUD</string>
     <string name="action_open_with">Open with…</string>
     <string name="action_page_left">Page left (L1)</string>
     <string name="action_page_right">Page right (R1)</string>
@@ -353,6 +355,9 @@
     <string name="deck_only_one_display">Only one display — swap unavailable</string>
     <string name="deck_restart_bottom_panel">Restarting bottom panel…</string>
     <string name="session_yields_both_screens">This game uses both screens</string>
+    <string name="play_hud_end">End session</string>
+    <string name="play_hud_reclaim">Reclaim HOME</string>
+    <string name="play_hud_switcher">Sessions</string>
     <string name="deck_add_rom_folder_done">ROM folder added</string>
 
     <!-- Built-in names -->
