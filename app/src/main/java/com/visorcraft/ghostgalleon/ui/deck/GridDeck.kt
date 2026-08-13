@@ -901,6 +901,10 @@ class GridDeck(
         EntryActions.playerProfile(activity, rom)
     }
 
+    private fun showScreensPlotMenu(rom: RomEntry) {
+        EntryActions.screensPlot(activity, rom)
+    }
+
     private fun createFolderAt(slot: Int) {
         val app = activity.application as GhostGalleonApp
         val id = Folders.nextId(app.settings.folders)
@@ -1064,6 +1068,11 @@ class GridDeck(
                     val id = SlotKey.romId(k) ?: return@let
                     val rom = roms.firstOrNull { it.id == id } ?: return@let
                     showPlayerProfileMenu(rom)
+                }
+                SlotMenu.Choice.SCREENS -> key?.let { k ->
+                    val id = SlotKey.romId(k) ?: return@let
+                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    showScreensPlotMenu(rom)
                 }
                 SlotMenu.Choice.SET_ART -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let
@@ -1262,6 +1271,9 @@ class GridDeck(
 
     private fun showGridDetails(key: String) {
         val rom = SlotKey.romId(key)?.let { id -> roms.firstOrNull { it.id == id } }
+        val identity = rom?.let {
+            (activity.application as GhostGalleonApp).romIdentities[it.id]
+        }
         val title = when {
             rom != null -> rom.name
             else -> settings.customNames[key]
@@ -1289,6 +1301,7 @@ class GridDeck(
                 collections = com.visorcraft.ghostgalleon.library.GameDetails
                     .collectionsContaining(settings.collections, key),
                 nowMs = System.currentTimeMillis(),
+                identity = identity,
             ),
         )
         val related = if (rom != null) gridRelatedOptions(key) else emptyList()
@@ -1307,7 +1320,34 @@ class GridDeck(
                     showGridBrowseRelated(key)
                 }
         }
-        builder.show()
+        val dialog = builder.show()
+        val fullHash = com.visorcraft.ghostgalleon.library.GameDetails.copyableHash(identity)
+        if (fullHash != null) {
+            dialog.findViewById<TextView>(android.R.id.message)?.setOnLongClickListener {
+                copyGridHashToClipboard(fullHash)
+                true
+            }
+        }
+    }
+
+    private fun copyGridHashToClipboard(hash: String) {
+        val text = hash.trim().ifEmpty { return }
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager
+        if (clipboard == null) {
+            Toast.makeText(activity, R.string.deck_clipboard_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText(
+                activity.getString(
+                    R.string.identity_hash,
+                    com.visorcraft.ghostgalleon.rom.IdentityStack.shortHash(text),
+                ),
+                text,
+            ),
+        )
+        Toast.makeText(activity, R.string.action_copy, Toast.LENGTH_SHORT).show()
     }
 
     private fun openAppInfo(packageName: String) {

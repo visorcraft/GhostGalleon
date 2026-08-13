@@ -3,13 +3,15 @@ package com.visorcraft.ghostgalleon.settings
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.text
+import com.visorcraft.ghostgalleon.input.InputOwner
 
 enum class Action {
     NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT,
     CONFIRM, BACK, SWAP_SCREENS, TOGGLE_MODE,
     OPEN_SETTINGS, PAGE_PREV, PAGE_NEXT,
     OPEN_QUICK_PANEL, SEARCH_LIBRARY, TOGGLE_FAVORITE, SHOW_DETAILS,
-    OPEN_SESSION_SWITCHER, TOGGLE_PLAY_HUD, NONE
+    OPEN_SESSION_SWITCHER, TOGGLE_PLAY_HUD,
+    CLAIM_HOST, RELEASE_HOST, NONE
 }
 
 // User-facing labels for the settings/remap UI: raw enum names must never
@@ -32,5 +34,13 @@ fun Action.label(): UiText = text(when (this) {
     Action.SHOW_DETAILS -> R.string.action_show_details
     Action.OPEN_SESSION_SWITCHER -> R.string.action_open_session_switcher
     Action.TOGGLE_PLAY_HUD -> R.string.action_toggle_play_hud
+    Action.CLAIM_HOST -> R.string.action_claim_host
+    Action.RELEASE_HOST -> R.string.action_release_host
     Action.NONE -> R.string.action_none
 })
+
+fun InputOwner.hint(): UiText? = when (this) {
+    InputOwner.GAME -> text(R.string.input_owner_game)
+    InputOwner.HOST -> text(R.string.input_owner_host)
+    InputOwner.NONE -> null
+}

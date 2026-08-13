@@ -7,6 +7,8 @@ import com.visorcraft.ghostgalleon.i18n.joinText
 import com.visorcraft.ghostgalleon.i18n.localizedListText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.rom.HeroDetail
+import com.visorcraft.ghostgalleon.rom.IdentityStack
+import com.visorcraft.ghostgalleon.rom.RomIdentity
 
 /** Pure detail-sheet model and translation-safe text. */
 object GameDetails {
@@ -28,6 +30,7 @@ object GameDetails {
         val favorite: Boolean = false,
         val collections: List<String> = emptyList(),
         val nowMs: Long = 0L,
+        val identity: RomIdentity? = null,
     )
 
     data class RelatedOption(
@@ -89,6 +92,7 @@ object GameDetails {
             lines += text(R.string.details_rating, it)
         }
         lines += text(R.string.details_key, input.key)
+        appendIdentity(lines, input.identity)
         lines += dynamicText("")
         lines += text(
             R.string.details_last_played,
@@ -109,6 +113,25 @@ object GameDetails {
             },
         )
         return joinText(lines, "\n")
+    }
+
+    /** Full content hash when ready (for clipboard); null otherwise. */
+    fun copyableHash(identity: RomIdentity?): String? =
+        identity?.takeIf { it.ready }?.hash?.takeIf { it.isNotBlank() }
+
+    private fun appendIdentity(lines: MutableList<UiText>, identity: RomIdentity?) {
+        if (identity == null) return
+        lines += dynamicText("")
+        if (!identity.ready) {
+            lines += text(R.string.identity_not_ready)
+            return
+        }
+        identity.algo.trim().takeIf { it.isNotEmpty() }?.let { lines += dynamicText(it) }
+        identity.hash?.trim()?.takeIf { it.isNotEmpty() }?.let { hash ->
+            lines += text(R.string.identity_hash, IdentityStack.shortHash(hash))
+        }
+        identity.groupId?.trim()?.takeIf { it.isNotEmpty() }?.let { lines += dynamicText(it) }
+        identity.discIndex?.let { lines += dynamicText(it.toString()) }
     }
 
     fun relatedOptions(

@@ -50,4 +50,23 @@ class PlatformPackExampleTest {
         assertEquals(SessionPolicy.YIELD_BOTH, players.getValue("melondualds").sessionPolicy)
         assertEquals(SessionPolicy.KEEP_COMPANION, players.getValue("other").sessionPolicy)
     }
+
+    @Test
+    fun `pack launchFace parses interactive and omitted is AUTO`() {
+        val json = """
+            {"schemaVersion":1,"platforms":[{
+              "id":"snes","displayName":"SNES","shortName":"SNES",
+              "folderNames":["snes"],"extensions":["smc"],
+              "players":[
+                {"id":"face-int","displayName":"I","component":"a.b/.C",
+                 "uriStyle":"URI","launchFace":"interactive"},
+                {"id":"face-def","displayName":"D","component":"c.d/.E","uriStyle":"URI"}
+              ]
+            }]}
+        """.trimIndent()
+        val parsed = PlatformPack.parse(json)!!
+        val players = parsed.platforms.first().players.associateBy { it.id }
+        assertEquals(LaunchFace.INTERACTIVE, players.getValue("face-int").launchFace)
+        assertEquals(LaunchFace.AUTO, players.getValue("face-def").launchFace)
+    }
 }

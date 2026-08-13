@@ -32,6 +32,7 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.library.PlayStats
 import com.visorcraft.ghostgalleon.library.SearchHistory
 import com.visorcraft.ghostgalleon.library.SessionMath
+import com.visorcraft.ghostgalleon.rom.IdentityStack
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
@@ -98,6 +99,7 @@ class GameDeck(
             q.genre.isNullOrBlank() &&
             q.developer.isNullOrBlank() &&
             q.yearDecade.isNullOrBlank()
+        val identities = app().romIdentities
         val memoKey = LibraryBrowse.browseRebuildKey(
             mode = q.mode.name,
             text = q.text,
@@ -115,7 +117,13 @@ class GameDeck(
             romCount = roms.size,
             appCount = library.visible(settings).size,
             nowBucket = System.currentTimeMillis() / LibraryBrowse.DAY_WINDOW_MS,
-        )
+        ) + "|stack=" + settings.stackClones +
+            if (settings.stackClones) {
+                "|idN=" + identities.size +
+                    "|idG=" + identities.values.count { !it.groupId.isNullOrBlank() }
+            } else {
+                ""
+            }
         if (memoKey == entriesMemoKey) return entriesMemo
         val launchablePlatformIds = resolveLaunchablePlatformIds()
         val browsed = LibraryBrowse.browseRoms(
@@ -394,9 +402,39 @@ class GameDeck(
             lastLaunchedMs = settings.lastLaunchedMs,
             playtimeMs = settings.playtimeMs,
         )
+        val stacked = if (settings.stackClones) {
+            stackCloneEntries(sorted, identities)
+        } else {
+            sorted
+        }
         entriesMemoKey = memoKey
-        entriesMemo = sorted
-        return sorted
+        entriesMemo = stacked
+        return stacked
+    }
+
+    /**
+     * Fold ROM carousel cards that share a non-null identity [groupId]
+     * into one primary (max lastLaunched, else first in list). Apps pass through.
+     */
+    private fun stackCloneEntries(
+        entries: List<CarouselEntry>,
+        identities: Map<String, com.visorcraft.ghostgalleon.rom.RomIdentity>,
+    ): List<CarouselEntry> {
+        val romIds = entries.mapNotNull { it.rom?.id }
+        if (romIds.isEmpty()) return entries
+        val launchByRomId = HashMap<String, Long>(romIds.size)
+        for (id in romIds) {
+            launchByRomId[id] = settings.lastLaunchedMs[SlotKey.rom(id)] ?: 0L
+        }
+        val primary = IdentityStack.primaryIds(
+            ids = romIds,
+            groupId = { identities[it]?.groupId },
+            lastLaunchedMs = launchByRomId,
+        ).toHashSet()
+        return entries.filter { entry ->
+            val rom = entry.rom ?: return@filter true
+            rom.id in primary
+        }
     }
 
     private val nav get() = CarouselNavigation(entries.size)
@@ -2319,6 +2357,10 @@ class GameDeck(
         EntryActions.playerProfile(activity, rom)
     }
 
+    private fun showScreensPlotMenu(rom: RomEntry) {
+        EntryActions.screensPlot(activity, rom)
+    }
+
     private fun setArtOverride(rom: RomEntry) {
         val host = activity as? com.visorcraft.ghostgalleon.ui.BaseDeckActivity
         if (host == null) {
@@ -2524,6 +2566,7 @@ class GameDeck(
     private fun showDetails(entry: CarouselEntry) {
         val key = entry.key
         val rom = entry.rom
+        val identity = rom?.let { app().romIdentities[it.id] }
         val input = GameDetails.Input(
             title = entry.label,
             key = key,
@@ -2539,6 +2582,7 @@ class GameDeck(
             favorite = key in settings.favorites,
             collections = GameDetails.collectionsContaining(settings.collections, key),
             nowMs = System.currentTimeMillis(),
+            identity = identity,
         )
         val body = activity.resolveText(GameDetails.body(input))
         val related = relatedOptionsFor(rom)
@@ -2558,7 +2602,31 @@ class GameDeck(
                     showBrowseRelatedDialog(related)
                 }
         }
-        builder.show()
+        val dialog = builder.show()
+        val fullHash = GameDetails.copyableHash(identity)
+        if (fullHash != null) {
+            dialog.findViewById<TextView>(android.R.id.message)?.setOnLongClickListener {
+                copyHashToClipboard(fullHash)
+                true
+            }
+        }
+    }
+
+    private fun copyHashToClipboard(hash: String) {
+        val text = hash.trim().ifEmpty { return }
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager
+        if (clipboard == null) {
+            Toast.makeText(activity, R.string.deck_clipboard_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText(
+                activity.getString(R.string.identity_hash, IdentityStack.shortHash(text)),
+                text,
+            ),
+        )
+        Toast.makeText(activity, R.string.action_copy, Toast.LENGTH_SHORT).show()
     }
 
     /** Related-filter options for a ROM, gated by browse-chrome chip flags. */
@@ -2670,6 +2738,7 @@ class GameDeck(
                 }
                 add(SlotMenu.Choice.OPEN_WITH)
                 add(SlotMenu.Choice.PLAYER)
+                add(SlotMenu.Choice.SCREENS)
                 add(SlotMenu.Choice.SET_ART)
                 add(SlotMenu.Choice.DOWNLOAD_ART)
                 add(SlotMenu.Choice.ADD_TO_GRID)
@@ -2701,6 +2770,7 @@ class GameDeck(
                 SlotMenu.Choice.RESET_NAME -> entry.rom?.let { resetRomName(it) }
                 SlotMenu.Choice.OPEN_WITH -> openWithMenu(entry)
                 SlotMenu.Choice.PLAYER -> entry.rom?.let { showPlayerProfileMenu(it) }
+                SlotMenu.Choice.SCREENS -> entry.rom?.let { showScreensPlotMenu(it) }
                 SlotMenu.Choice.SET_ART -> entry.rom?.let { setArtOverride(it) }
                 SlotMenu.Choice.DOWNLOAD_ART -> entry.rom?.let { requestMissingArtwork(activity, it) }
                 SlotMenu.Choice.ADD_TO_GRID -> addToGrid(key)

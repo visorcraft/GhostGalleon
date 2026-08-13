@@ -42,6 +42,10 @@
     <string name="action_show_details">Details</string>
     <string name="action_open_session_switcher">Session switcher</string>
     <string name="action_toggle_play_hud">Play HUD</string>
+    <string name="action_claim_host">Pad to launcher</string>
+    <string name="action_release_host">Pad to game</string>
+    <string name="input_owner_game">Pad → game</string>
+    <string name="input_owner_host">Pad → launcher</string>
     <string name="action_open_with">Open with…</string>
     <string name="action_page_left">Page left (L1)</string>
     <string name="action_page_right">Page right (R1)</string>
@@ -261,6 +265,8 @@
     <string name="details_collections">Collections: %1$s</string>
     <string name="details_title">Details</string>
     <string name="details_browse_related">Browse related</string>
+    <string name="identity_hash">Hash: %1$s</string>
+    <string name="identity_not_ready">Identity not ready</string>
 
     <!-- ROM launch errors -->
     <string name="rom_unknown_platform">Unknown platform: %1$s</string>
@@ -362,6 +368,8 @@
     <string name="play_hud_resume">Resume</string>
     <string name="play_hud_save">Save</string>
     <string name="play_hud_load">Load</string>
+    <string name="cockpit_keyboard">Keyboard</string>
+    <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
     <string name="session_switcher_title">Sessions</string>
     <string name="session_ring_empty">No recent sessions</string>
     <string name="deck_add_rom_folder_done">ROM folder added</string>
@@ -464,6 +472,9 @@
     <string name="settings_no_apps">No apps available</string>
     <string name="settings_dock_empty">Dock is empty</string>
     <string name="settings_haptics">Haptics</string>
+    <string name="settings_input_assist">Input assist</string>
+    <string name="settings_input_assist_open_system">Opens system Accessibility settings</string>
+    <string name="settings_winlator_cockpit">Winlator cockpit</string>
     <string name="settings_controller_lab">Controller lab</string>
     <string name="settings_stick_deadzone">Stick deadzone</string>
     <string name="settings_press_button">Press a button…</string>
@@ -479,7 +490,19 @@
     <string name="settings_default_players">Default players</string>
     <string name="settings_system_defaults">System defaults</string>
     <string name="settings_player_uses_both_screens">Uses both screens</string>
+    <string name="settings_stage_plot">Screens</string>
+    <string name="settings_package_yield">Uses both screens</string>
+    <string name="settings_stage_keep">Keep panel</string>
+    <string name="settings_stage_yield">Yield both</string>
+    <string name="settings_stage_face_interactive">Interactive</string>
+    <string name="settings_stage_face_other">Other</string>
+    <string name="confirm_keep_on_yield_player">This player is built for both screens. Ghost Galleon will keep a panel. melonDualDS / Azahar will not see the second display.</string>
+    <string name="confirm_yield_on_keep_player">Both panels will go to the game. The play HUD will hide.</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
+    <string name="settings_ra_handoff_save">Save before switching</string>
+    <string name="settings_ram_lenses">RAM lenses</string>
+    <string name="settings_import_lens_pack">Import lens pack</string>
+    <string name="settings_stack_clones">Stack clones</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

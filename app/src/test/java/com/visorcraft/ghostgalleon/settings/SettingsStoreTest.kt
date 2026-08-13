@@ -1,7 +1,9 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
+import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.state.UIMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -475,7 +477,7 @@ class SettingsStoreTest {
         raw.remove("raNetworkCommands")
         f.writeText(raw.toString())
         val loaded = SettingsStore(f).load()
-        assertEquals(9, loaded.schemaVersion)
+        assertEquals(10, loaded.schemaVersion)
         assertTrue(loaded.sessionRing.isEmpty())
         assertTrue(loaded.detectBlackCompanion)
         assertFalse(loaded.raNetworkCommands)
@@ -494,5 +496,51 @@ class SettingsStoreTest {
         assertEquals(listOf(entry), loaded.sessionRing)
         assertFalse(org.json.JSONObject(f.readText()).getJSONArray("sessionRing")
             .getJSONObject(0).has("greedy"))
+    }
+
+    @Test
+    fun `v10 owned-surface fields round-trip and missing keys default`() {
+        val f = tmp.root.resolve("cfg-v10/settings.json")
+        val plot = StagePlot(SessionPolicy.KEEP_COMPANION, LaunchFace.INTERACTIVE)
+        val s = Settings.DEFAULT.copy(
+            schemaVersion = 10,
+            inputHostTimeoutMs = 5000,
+            inputAssistEnabled = true,
+            raHandoffSave = false,
+            stagePlots = mapOf("snes:x.sfc" to plot),
+            packageYield = mapOf("com.example.dual" to true),
+            winlatorCockpit = false,
+            ramLensesEnabled = true,
+            ramLensPackUri = "content://lenses/pack.json",
+            stackClones = true,
+        )
+        SettingsStore(f).save(s)
+        val loaded = SettingsStore(f).load()
+        assertEquals(5000, loaded.inputHostTimeoutMs)
+        assertEquals(true, loaded.inputAssistEnabled)
+        assertEquals(false, loaded.raHandoffSave)
+        assertEquals(plot, loaded.stagePlots["snes:x.sfc"])
+        assertEquals(true, loaded.packageYield["com.example.dual"])
+        assertEquals(false, loaded.winlatorCockpit)
+        assertEquals(true, loaded.ramLensesEnabled)
+        assertEquals("content://lenses/pack.json", loaded.ramLensPackUri)
+        assertEquals(true, loaded.stackClones)
+        assertEquals(10, loaded.schemaVersion)
+
+        val raw = org.json.JSONObject(f.readText())
+        raw.put("schemaVersion", 9)
+        raw.remove("inputHostTimeoutMs")
+        raw.remove("raHandoffSave")
+        raw.remove("stagePlots")
+        raw.remove("packageYield")
+        raw.remove("stackClones")
+        f.writeText(raw.toString())
+        val migrated = SettingsStore(f).load()
+        assertEquals(8000, migrated.inputHostTimeoutMs)
+        assertEquals(true, migrated.raHandoffSave)
+        assertTrue(migrated.stagePlots.isEmpty())
+        assertTrue(migrated.packageYield.isEmpty())
+        assertEquals(false, migrated.stackClones)
+        assertEquals(10, migrated.schemaVersion)
     }
 }

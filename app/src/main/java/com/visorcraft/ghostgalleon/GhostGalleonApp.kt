@@ -28,6 +28,10 @@ import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
 import com.visorcraft.ghostgalleon.display.DisplayTopology
 import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
+import com.visorcraft.ghostgalleon.input.InputAssistPolicy
+import com.visorcraft.ghostgalleon.input.InputAssistService
+import com.visorcraft.ghostgalleon.rom.LensCatalog
+import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
@@ -50,14 +54,28 @@ import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.CompanionActivity
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.ui.DisplayRole
+import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
 import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import android.hardware.display.DisplayManager
+import android.net.Uri
+import android.util.Log
+import androidx.documentfile.provider.DocumentFile
+import com.visorcraft.ghostgalleon.rom.ArcadeTitles
+import com.visorcraft.ghostgalleon.rom.RomIdentities
+import com.visorcraft.ghostgalleon.rom.RomIdentity
+import com.visorcraft.ghostgalleon.rom.RomIdentityStore
+import com.visorcraft.ghostgalleon.rom.VitaSfo
+import com.visorcraft.ghostgalleon.rom.VitaTitles
+import com.visorcraft.ghostgalleon.rom.VitaVpk
 import org.json.JSONObject
 import java.io.File
+import java.io.InputStream
+import java.io.RandomAccessFile
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -177,6 +195,10 @@ class GhostGalleonApp : Application() {
 
     val romLibrary: RomLibrary by lazy {
         RomLibrary(File(filesDir, "rom_library.json"))
+    }
+
+    val romIdentityStore: RomIdentityStore by lazy {
+        RomIdentityStore(File(filesDir, "rom_identity.json"))
     }
 
     val platformPackStore: PlatformPackStore by lazy {
@@ -415,6 +437,14 @@ class GhostGalleonApp : Application() {
     var romById: Map<String, RomEntry> = emptyMap()
         private set
 
+    /**
+     * Content fingerprints beside [romEntries]. Filled on [ROM_IO] after
+     * the path index is ready; never blocks first paint.
+     */
+    @Volatile
+    var romIdentities: Map<String, RomIdentity> = emptyMap()
+        private set
+
     // Honest open session (pause while launcher focused / device asleep).
     // Exposed for Now Playing companion UI.
     @Volatile
@@ -429,6 +459,118 @@ class GhostGalleonApp : Application() {
 
     // Process-only KEEP play HUD chrome. Expanded shows the actions row.
     var playHudExpanded: Boolean = true
+
+    // Process-only RAM lens catalog (bundled assets + optional SAF pack).
+    @Volatile
+    var lenses: List<LensSpec> = emptyList()
+        private set
+
+    // Process-only: lenses that failed 3 times this process (no Settings write).
+    @Volatile
+    var lensDisabledThisProcess: Set<String> = emptySet()
+        private set
+
+    private val lensFailCounts = HashMap<String, Int>()
+
+    /** True once [id] reaches 3 consecutive failures this process. */
+    fun noteLensFailure(id: String): Boolean {
+        if (id.isEmpty() || id in lensDisabledThisProcess) return true
+        val n = (lensFailCounts[id] ?: 0) + 1
+        lensFailCounts[id] = n
+        if (n < 3) return false
+        lensDisabledThisProcess = lensDisabledThisProcess + id
+        return true
+    }
+
+    fun noteLensSuccess(id: String) {
+        if (id.isEmpty()) return
+        lensFailCounts.remove(id)
+    }
+
+    /**
+     * Load bundled assets/lenses JSON plus optional [Settings.ramLensPackUri]
+     * on a background thread. Invalid JSON is ignored. Does not notify decks.
+     */
+    fun reloadLenses() {
+        ROM_IO.execute {
+            val loaded = ArrayList<LensSpec>()
+            val names = runCatching {
+                assets.list("lenses")?.filter { it.endsWith(".json", ignoreCase = true) }
+            }.getOrNull().orEmpty()
+            for (name in names) {
+                val text = runCatching {
+                    assets.open("lenses/$name").bufferedReader().use { it.readText() }
+                }.getOrNull() ?: continue
+                loaded.addAll(LensCatalog.parse(text))
+            }
+            val packUri = settings.ramLensPackUri
+            if (!packUri.isNullOrBlank()) {
+                val text = runCatching {
+                    contentResolver.openInputStream(Uri.parse(packUri))
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                }.getOrNull()
+                if (text != null) loaded.addAll(LensCatalog.parse(text))
+            }
+            lenses = loaded
+        }
+    }
+
+    // Process-only pad owner flip (GAME ↔ HOST). Not persisted.
+    var hostClaimed: Boolean = false
+        private set
+
+    fun claimHost() {
+        hostClaimed = true
+    }
+
+    fun releaseHost() {
+        hostClaimed = false
+    }
+
+    // True while optional InputAssistService is bound by the system.
+    @Volatile
+    var inputAssistConnected: Boolean = false
+
+    // Bound assist instance for launch-display pointer inject (null when unbound).
+    @Volatile
+    var inputAssistService: InputAssistService? = null
+
+    /**
+     * Absolute pointer on the session launch display via assist gestures.
+     * No-ops unless assist is connected, [InputAssistPolicy.mayInjectPointer]
+     * is true, display-targeted gestures exist, and the session does not own
+     * the companion display. Never targets the play-host display.
+     */
+    fun injectLaunchPointer(normX: Float, normY: Float, down: Boolean) {
+        if (!InputAssistService.supportsDisplayGesture()) return
+        val service = inputAssistService ?: return
+        if (!inputAssistConnected) return
+        val surface = sessionSurface ?: return
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface.policy,
+            surface.greedy,
+        )
+        if (sessionOwns) return
+        val launchId = surface.launchDisplayId ?: return
+        val dual = displayConfig.mode == SurfaceMode.DUAL
+        val hostId = displayConfig.allIds.firstOrNull { it != launchId }
+        val allowed = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = launchId,
+        )
+        if (!InputAssistPolicy.mayInjectPointer(
+                assistConnected = true,
+                playHostAllowed = allowed,
+                sessionOwnsCompanion = false,
+                playerId = surface.playerId,
+            )
+        ) return
+        service.injectOnLaunchDisplay(normX, normY, down, launchId)
+    }
 
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
     @Volatile
@@ -813,6 +955,323 @@ class GhostGalleonApp : Application() {
         contentEpoch++
         invalidateDrawerListCache()
         deckState.notifyChanged()
+        scheduleIdentityRefresh(entries)
+    }
+
+    /**
+     * Compute missing [RomIdentity] rows on [ROM_IO], persist the sidecar,
+     * then post one identity map + selection refresh on the main thread.
+     * Ready rows are kept; failures stay `ready=false` without crashing.
+     */
+    private fun scheduleIdentityRefresh(entries: List<RomEntry> = romEntries) {
+        val snapshot = entries
+        ROM_IO.execute { refreshIdentities(snapshot) }
+    }
+
+    private fun refreshIdentities(entries: List<RomEntry>) {
+        val prior = try {
+            romIdentityStore.load()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        val next = LinkedHashMap<String, RomIdentity>(entries.size.coerceAtLeast(prior.size))
+        var ready = 0
+        var fail = 0
+        for (entry in entries) {
+            val kept = prior[entry.id]
+            if (kept != null && kept.ready) {
+                next[entry.id] = kept
+                ready++
+                continue
+            }
+            val computed = try {
+                computeIdentity(entry)
+            } catch (_: Exception) {
+                notReady(entry)
+            }
+            next[entry.id] = computed
+            if (computed.ready) ready++ else fail++
+        }
+        try {
+            romIdentityStore.save(next)
+        } catch (_: Exception) {
+            // Keep in-memory map even if disk write fails.
+        }
+        Log.i(IDENT_TAG, "ready=$ready fail=$fail")
+        mainHandler.post {
+            romIdentities = next
+            deckState.notifySelectionRefresh()
+        }
+    }
+
+    private fun notReady(entry: RomEntry, algo: String = RomIdentities.ALGO_SHA1_PAYLOAD): RomIdentity =
+        RomIdentity(
+            romId = entry.id,
+            algo = algo,
+            hash = null,
+            headerTitle = null,
+            groupId = null,
+            discIndex = null,
+            ready = false,
+        )
+
+    private fun computeIdentity(entry: RomEntry): RomIdentity {
+        val size = romByteSize(entry)
+        // Unknown SAF length must never chooseAlgo(0) → full-stream sha1 buffer.
+        val algo = if (size == null || size < 0L) {
+            when (entry.platformId) {
+                "psvita", "vita" -> RomIdentities.ALGO_SFO_TITLE
+                "arcade" -> RomIdentities.ALGO_DAT_CRC
+                else -> RomIdentities.ALGO_SHA256_SAMPLE
+            }
+        } else {
+            RomIdentities.chooseAlgo(size, entry.platformId)
+        }
+        return when (algo) {
+            RomIdentities.ALGO_SFO_TITLE -> computeSfoTitle(entry)
+            RomIdentities.ALGO_DAT_CRC -> computeDatCrc(entry)
+            RomIdentities.ALGO_SHA256_SAMPLE -> computeSample(entry, size)
+            else -> computeSha1Payload(entry)
+        }
+    }
+
+    private fun computeSfoTitle(entry: RomEntry): RomIdentity {
+        val algo = RomIdentities.ALGO_SFO_TITLE
+        val fromId = entry.id.removePrefix("psvita:").substringBefore('/')
+        if (VitaTitles.isTitleId(fromId)) {
+            val id = fromId.uppercase()
+            return RomIdentity(
+                romId = entry.id,
+                algo = algo,
+                hash = id,
+                headerTitle = entry.name,
+                groupId = id,
+                discIndex = null,
+                ready = true,
+            )
+        }
+        val info = readVitaSfo(entry) ?: return notReady(entry, algo)
+        val titleId = info.titleId?.takeIf { it.isNotBlank() }
+            ?: return notReady(entry, algo)
+        return RomIdentity(
+            romId = entry.id,
+            algo = algo,
+            hash = titleId,
+            headerTitle = info.title ?: entry.name,
+            groupId = titleId,
+            discIndex = null,
+            ready = true,
+        )
+    }
+
+    private fun readVitaSfo(entry: RomEntry): VitaSfo.Info? {
+        val name = entry.uri.substringAfterLast('/').substringBefore('?')
+            .lowercase()
+        val pathName = entry.path?.substringAfterLast('/')?.lowercase().orEmpty()
+        val fileName = if (name.isNotEmpty()) name else pathName
+        return runCatching {
+            openRomStream(entry)?.use { stream ->
+                when {
+                    fileName.endsWith(".vpk") || fileName.endsWith(".zip") ->
+                        VitaVpk.paramSfo(stream)?.let { VitaSfo.parse(it) }
+                    fileName.equals("param.sfo", ignoreCase = true) ||
+                        fileName.endsWith("param.sfo") ->
+                        VitaSfo.parse(stream.readBytes())
+                    else -> {
+                        // Eboot / folder dumps: try whole stream as SFO, else VPK.
+                        val bytes = stream.readBytes()
+                        VitaSfo.parse(bytes)
+                            ?: bytes.inputStream().use { VitaVpk.paramSfo(it)?.let { b -> VitaSfo.parse(b) } }
+                    }
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun computeDatCrc(entry: RomEntry): RomIdentity {
+        val algo = RomIdentities.ALGO_DAT_CRC
+        val stem = ArcadeTitles.stemOf(entry).trim().lowercase()
+        if (stem.isEmpty()) return notReady(entry, algo)
+        // Zip short-name is the DAT key; CRC is not stored in our DAT parse.
+        val title = ArcadeTitles.displayName(stem)
+        return RomIdentity(
+            romId = entry.id,
+            algo = algo,
+            hash = stem,
+            headerTitle = title.takeIf { !it.equals(stem, ignoreCase = true) } ?: entry.name,
+            groupId = stem,
+            discIndex = null,
+            ready = true,
+        )
+    }
+
+    private fun computeSha1Payload(entry: RomEntry): RomIdentity {
+        val algo = RomIdentities.ALGO_SHA1_PAYLOAD
+        val bytes = runCatching {
+            openRomStream(entry)?.use { it.readBytes() }
+        }.getOrNull() ?: return notReady(entry, algo)
+        val payload = RomIdentities.stripInes(bytes)
+        val hash = RomIdentities.sha1Hex(payload)
+        return RomIdentity(
+            romId = entry.id,
+            algo = algo,
+            hash = hash,
+            headerTitle = null,
+            groupId = hash,
+            discIndex = null,
+            ready = true,
+        )
+    }
+
+    private fun computeSample(entry: RomEntry, size: Long?): RomIdentity {
+        val algo = RomIdentities.ALGO_SHA256_SAMPLE
+        val total = size ?: return notReady(entry, algo)
+        if (total <= 0L) return notReady(entry, algo)
+        val chunks = readSampleChunks(entry, total) ?: return notReady(entry, algo)
+        val hash = RomIdentities.sampleSha256(total, chunks.first, chunks.second, chunks.third)
+        return RomIdentity(
+            romId = entry.id,
+            algo = algo,
+            hash = hash,
+            headerTitle = null,
+            groupId = hash,
+            discIndex = null,
+            ready = true,
+        )
+    }
+
+    private fun romByteSize(entry: RomEntry): Long? {
+        entry.path?.let { p ->
+            val f = File(p)
+            if (f.isFile) {
+                val n = f.length()
+                if (n >= 0L) return n
+            }
+        }
+        return runCatching {
+            DocumentFile.fromSingleUri(this, Uri.parse(entry.uri))
+                ?.length()
+                ?.takeIf { it >= 0L }
+        }.getOrNull()
+    }
+
+    private fun openRomStream(entry: RomEntry): InputStream? {
+        entry.path?.let { p ->
+            val f = File(p)
+            if (f.isFile) return f.inputStream()
+        }
+        return runCatching {
+            contentResolver.openInputStream(Uri.parse(entry.uri))
+        }.getOrNull()
+    }
+
+    private fun readSampleChunks(
+        entry: RomEntry,
+        size: Long,
+    ): Triple<ByteArray, ByteArray, ByteArray>? {
+        val chunk = SAMPLE_CHUNK_BYTES
+        val headLen = minOf(chunk.toLong(), size).toInt()
+        val tailLen = minOf(chunk.toLong(), size).toInt()
+        val midStart = ((size - chunk.toLong()).coerceAtLeast(0L) / 2L)
+        val midLen = minOf(chunk.toLong(), (size - midStart).coerceAtLeast(0L)).toInt()
+        entry.path?.let { p ->
+            val f = File(p)
+            if (f.isFile) {
+                return runCatching {
+                    RandomAccessFile(f, "r").use { raf ->
+                        val head = ByteArray(headLen)
+                        raf.seek(0L)
+                        raf.readFully(head)
+                        val mid = ByteArray(midLen)
+                        if (midLen > 0) {
+                            raf.seek(midStart)
+                            raf.readFully(mid)
+                        }
+                        val tail = ByteArray(tailLen)
+                        if (tailLen > 0) {
+                            raf.seek((size - tailLen).coerceAtLeast(0L))
+                            raf.readFully(tail)
+                        }
+                        Triple(head, mid, tail)
+                    }
+                }.getOrNull()
+            }
+        }
+        return runCatching {
+            openRomStream(entry)?.use { stream ->
+                val head = stream.readNBytesCompat(headLen)
+                if (head.size < headLen && size > headLen) return@use null
+                val skipMid = midStart - headLen.toLong()
+                if (skipMid > 0) {
+                    var left = skipMid
+                    while (left > 0) {
+                        val n = stream.skip(left)
+                        if (n <= 0) break
+                        left -= n
+                    }
+                }
+                val mid = if (midLen > 0 && midStart >= headLen) {
+                    stream.readNBytesCompat(midLen)
+                } else if (midLen > 0 && midStart < headLen) {
+                    // Mid overlaps head on tiny files; re-open for exact windows.
+                    return@use null
+                } else {
+                    ByteArray(0)
+                }
+                val afterMid = midStart + midLen
+                val tailStart = (size - tailLen).coerceAtLeast(0L)
+                val skipTail = tailStart - afterMid
+                if (skipTail > 0) {
+                    var left = skipTail
+                    while (left > 0) {
+                        val n = stream.skip(left)
+                        if (n <= 0) break
+                        left -= n
+                    }
+                }
+                val tail = stream.readNBytesCompat(tailLen)
+                Triple(head, mid, tail)
+            }
+        }.getOrNull() ?: runCatching {
+            // SAF streams that cannot skip: buffer whole file only if ≤ SMALL_MAX
+            // is wrong for sample path (file is large). Re-open three times.
+            val head = openRomStream(entry)?.use { it.readNBytesCompat(headLen) }
+                ?: return null
+            val mid = openRomStream(entry)?.use { s ->
+                s.skipFully(midStart)
+                s.readNBytesCompat(midLen)
+            } ?: return null
+            val tail = openRomStream(entry)?.use { s ->
+                s.skipFully((size - tailLen).coerceAtLeast(0L))
+                s.readNBytesCompat(tailLen)
+            } ?: return null
+            Triple(head, mid, tail)
+        }.getOrNull()
+    }
+
+    private fun InputStream.readNBytesCompat(n: Int): ByteArray {
+        if (n <= 0) return ByteArray(0)
+        val out = ByteArray(n)
+        var off = 0
+        while (off < n) {
+            val r = read(out, off, n - off)
+            if (r < 0) break
+            off += r
+        }
+        return if (off == n) out else out.copyOf(off)
+    }
+
+    private fun InputStream.skipFully(n: Long) {
+        var left = n
+        while (left > 0) {
+            val skipped = skip(left)
+            if (skipped > 0) {
+                left -= skipped
+                continue
+            }
+            if (read() < 0) break
+            left--
+        }
     }
 
     /** O(1) ROM by id from the process snapshot (falls back to linear scan). */
@@ -898,6 +1357,7 @@ class GhostGalleonApp : Application() {
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
+        hostClaimed = false
         val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
         val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
             null
@@ -918,14 +1378,21 @@ class GhostGalleonApp : Application() {
         if (surface.policy == SessionPolicy.YIELD_BOTH) {
             liveCompanions().forEach { it.closeQuietly() }
         }
+        // Ownership / surface change: re-apply FLAG_NOT_FOCUSABLE on every live deck
+        // (companion stays resumed on secondary and would otherwise keep a stale flag).
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     fun markSessionGreedy() {
         sessionSurface = sessionSurface?.copy(greedy = true)
+        hostClaimed = false
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     fun clearSessionSurface() {
         sessionSurface = null
+        hostClaimed = false
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     private fun endOpenSession(nowMs: Long) {
@@ -1026,12 +1493,16 @@ class GhostGalleonApp : Application() {
         seedColdStartSelection()
         // PM query off the UI thread before decks paint.
         prewarmAppLibrary()
-        // 20k-title TSV + rematch stay off the first paint.
+        // 20k-title TSV + rematch + identity sidecar stay off the first paint.
         ROM_IO.execute {
             loadBundledArcadeTitles()
             loadArcadeDatOverlay()
             rematchArcadeLibraryOffPaint()
+            // Path index is already live; hashes never gate first paint.
+            refreshIdentities(romEntries)
         }
+        // Bundled + optional SAF lens pack; zero bundled games is fine.
+        reloadLenses()
         registerPackageChangeReceiver()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
@@ -1319,5 +1790,7 @@ class GhostGalleonApp : Application() {
         // Slightly longer debounce: bulk multi-select / favorite storms
         // coalesce into fewer disk writes without feeling laggy on pause flush.
         const val SETTINGS_SAVE_DEBOUNCE_MS = 180L
+        const val SAMPLE_CHUNK_BYTES = 64 * 1024
+        const val IDENT_TAG = "GGIdent"
     }
 }

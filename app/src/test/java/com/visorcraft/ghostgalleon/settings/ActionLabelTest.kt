@@ -2,8 +2,10 @@ package com.visorcraft.ghostgalleon.settings
 
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.text
+import com.visorcraft.ghostgalleon.input.InputOwner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ActionLabelTest {
@@ -31,5 +33,18 @@ class ActionLabelTest {
     fun `play surface actions have user-friendly labels`() {
         assertEquals(text(R.string.action_open_session_switcher), Action.OPEN_SESSION_SWITCHER.label())
         assertEquals(text(R.string.action_toggle_play_hud), Action.TOGGLE_PLAY_HUD.label())
+    }
+
+    @Test
+    fun `input owner actions have user-friendly labels`() {
+        assertEquals(text(R.string.action_claim_host), Action.CLAIM_HOST.label())
+        assertEquals(text(R.string.action_release_host), Action.RELEASE_HOST.label())
+    }
+
+    @Test
+    fun `input owner chips have user-friendly labels`() {
+        assertEquals(text(R.string.input_owner_game), InputOwner.GAME.hint())
+        assertEquals(text(R.string.input_owner_host), InputOwner.HOST.hint())
+        assertNull(InputOwner.NONE.hint())
     }
 }

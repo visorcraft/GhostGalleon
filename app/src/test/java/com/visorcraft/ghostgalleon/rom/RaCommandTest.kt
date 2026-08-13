@@ -216,4 +216,27 @@ class RaCommandTest {
         mode = "up"
         assertTrue(c.probe(55355, nowMs = 5000L))
     }
+
+    @Test
+    fun `encode READ_CORE_RAM rejects bad length and write is absent`() {
+        assertArrayEquals(
+            "READ_CORE_RAM 7EF340 16\n".toByteArray(Charsets.US_ASCII),
+            RaCommand.encodeReadCoreRam(0x7EF340, 16),
+        )
+        assertEquals(null, RaCommand.encodeReadCoreRam(0, 0))
+        assertEquals(null, RaCommand.encodeReadCoreRam(0, 257))
+        assertEquals(null, RaCommand.encodeReadCoreRam(-1, 8))
+        assertEquals(0, RaCommand::class.java.methods.count { it.name.contains("Write", ignoreCase = true) })
+    }
+
+    @Test
+    fun `parse RAM reply`() {
+        val bytes = RaCommand.parseRamReply("READ_CORE_RAM 00 01 02 03", 4)
+        assertArrayEquals(byteArrayOf(0, 1, 2, 3), bytes)
+        assertEquals(null, RaCommand.parseRamReply(null, 4))
+        assertEquals(null, RaCommand.parseRamReply("00 01", 4))
+        // Live RetroArch echoes the address after the verb.
+        val withAddr = RaCommand.parseRamReply("READ_CORE_RAM 7EF340 00 01 02 03", 4)
+        assertArrayEquals(byteArrayOf(0, 1, 2, 3), withAddr)
+    }
 }

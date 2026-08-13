@@ -38,6 +38,7 @@ class SlotMenu(
         UNFAVORITE(R.string.action_unfavorite),
         OPEN_WITH(R.string.action_open_with),
         PLAYER(R.string.action_player),
+        SCREENS(R.string.settings_stage_plot),
         SET_ART(R.string.action_set_artwork),
         DOWNLOAD_ART(R.string.action_download_artwork),
         ADD_TO_GRID(R.string.action_add_to_grid),
@@ -293,6 +294,7 @@ class SlotMenu(
                     if (hasCustomName) add(Row.Item(Choice.RESET_NAME))
                     add(Row.Item(Choice.OPEN_WITH))
                     add(Row.Item(Choice.PLAYER))
+                    add(Row.Item(Choice.SCREENS))
                     add(Row.Item(Choice.SET_ART))
                     add(Row.Item(Choice.DOWNLOAD_ART))
                     add(Row.Item(Choice.HIDE, destructive = true))

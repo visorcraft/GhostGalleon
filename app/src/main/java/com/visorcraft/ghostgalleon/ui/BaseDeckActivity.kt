@@ -22,6 +22,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -35,6 +36,8 @@ import com.visorcraft.ghostgalleon.display.CompanionHeroStyle
 import com.visorcraft.ghostgalleon.display.LayoutMetricsResolver
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.display.SurfaceMode
+import com.visorcraft.ghostgalleon.input.InputOwner
+import com.visorcraft.ghostgalleon.input.InputOwnerPolicy
 import com.visorcraft.ghostgalleon.input.KeyMap
 import com.visorcraft.ghostgalleon.input.NavRepeater
 import com.visorcraft.ghostgalleon.library.AppLibrary
@@ -46,8 +49,10 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
+import com.visorcraft.ghostgalleon.rom.HandoffPrep
+import com.visorcraft.ghostgalleon.rom.RaStatus
+import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionRing
-import com.visorcraft.ghostgalleon.rom.SessionSwitch
 import com.visorcraft.ghostgalleon.rom.SwitchToResult
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.deck.AppIconLoader
@@ -189,6 +194,75 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     /** Re-arm KEEP HUD clock after a full rebuild (clock may have just appeared). */
     protected open fun onContentRebuilt() {}
+
+    private val hostTimeoutHandler = Handler(Looper.getMainLooper())
+    private val hostTimeoutRunnable = Runnable {
+        app.releaseHost()
+        applyPlayHostFocusLock()
+    }
+    /** True when this window is the KEEP play host (may claim pad on touch). */
+    private var playHostTouchClaimEnabled = false
+
+    /**
+     * Apply or clear [WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE] so the KEEP
+     * game keeps the pad while the play host stays touchable. Never sets
+     * FLAG_NOT_TOUCHABLE.
+     */
+    internal fun applyPlayHostFocusLock() {
+        val surface = app.sessionSurface
+        val dual = app.displayConfig.mode == SurfaceMode.DUAL
+        val allowed = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            hostDisplayId = currentDisplayId(),
+            launchDisplayId = surface?.launchDisplayId,
+        )
+        val base = InputOwnerPolicy.inputOwner(
+            dualMode = dual,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            playHostAllowed = allowed,
+        )
+        val owner = InputOwnerPolicy.effectiveOwner(base, app.hostClaimed)
+        val lock = InputOwnerPolicy.focusLockAllowed(owner, allowed)
+        val w = window ?: return
+        val params = w.attributes
+        if (lock) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        } else {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        }
+        w.attributes = params
+        playHostTouchClaimEnabled = allowed
+        val content = findViewById<View>(android.R.id.content)
+        if (allowed) {
+            content?.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    app.claimHost()
+                    applyPlayHostFocusLock()
+                }
+                false
+            }
+        } else {
+            content?.setOnTouchListener(null)
+        }
+        CompanionPanel.bindOwnerHint(w.decorView, owner)
+        if (owner == InputOwner.HOST) armHostTimeout() else disarmHostTimeout()
+        Log.i("GGInput", "owner=$owner host=${javaClass.simpleName} lock=$lock")
+    }
+
+    private fun armHostTimeout() {
+        hostTimeoutHandler.removeCallbacks(hostTimeoutRunnable)
+        hostTimeoutHandler.postDelayed(
+            hostTimeoutRunnable,
+            settings.inputHostTimeoutMs.toLong(),
+        )
+    }
+
+    private fun disarmHostTimeout() {
+        hostTimeoutHandler.removeCallbacks(hostTimeoutRunnable)
+    }
 
     private var rendering: Boolean = false
     /** True while [renderFromState] is inside setContentView. Oracle skips these ticks. */
@@ -332,6 +406,19 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        // Play-host touches (incl. HUD chips) claim HOST; keys only reach us
+        // after claim (focus-lock drops them while GAME). Re-arm idle timeout.
+        if (!playHostTouchClaimEnabled) return
+        if (!app.hostClaimed) {
+            app.claimHost()
+            applyPlayHostFocusLock()
+        } else {
+            armHostTimeout()
+        }
+    }
+
     override fun onPause() {
         // A held direction whose key-up gets lost (focus change, activity
         // switch) must not repeat forever.
@@ -339,6 +426,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         resetAxisEngagement()
         orientationController.stop()
         deckState.removeListener(stateListener)
+        disarmHostTimeout()
         // Debounced settings may still be in flight — flush before we
         // background so process death cannot drop a favorite/dock edit.
         app.flushSettingsNow()
@@ -494,6 +582,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     protected open fun skipExitCascade(): Boolean = false
 
     override fun onDestroy() {
+        disarmHostTimeout()
         if (isFinishing && !isChangingConfigurations && !skipExitCascade()) {
             app.requestExitAll(this)
         }
@@ -1165,6 +1254,24 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
+                // Play host moves with the swap — drop HOST claim and re-apply
+                // flags on every live deck (not only the activity that handled SWAP).
+                app.releaseHost()
+                app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+            }
+            true
+        }
+        Action.CLAIM_HOST -> {
+            if (repeatCount == 0) {
+                app.claimHost()
+                applyPlayHostFocusLock()
+            }
+            true
+        }
+        Action.RELEASE_HOST -> {
+            if (repeatCount == 0) {
+                app.releaseHost()
+                applyPlayHostFocusLock()
             }
             true
         }
@@ -1289,23 +1396,31 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
         )
     )
     if (!allowed) return
+    // Resolve host first; only claim when switcher chrome can attach.
     val host = sessionSwitcherHost(activity) ?: return
+    app.claimHost()
+    app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+    fun releaseSwitcherHost() {
+        app.releaseHost()
+        app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+    }
     fun attach() {
         SessionSwitcherView.attach(
             host,
             app.settings.sessionRing,
             onPick = { target ->
                 val current = app.sessionSurface
-                when (
-                    SessionSwitch.decide(
-                        current?.key,
-                        current?.playerId,
-                        current?.policy,
-                        current?.greedy == true,
-                        target,
-                    )
-                ) {
-                    SwitchToResult.NO_OP -> SessionSwitcherView.detach(host)
+                val plan = SessionHandoff.plan(
+                    current,
+                    target,
+                    app.settings.raNetworkCommands,
+                    app.settings.raHandoffSave,
+                )
+                when (plan.result) {
+                    SwitchToResult.NO_OP -> {
+                        SessionSwitcherView.detach(host)
+                        releaseSwitcherHost()
+                    }
                     SwitchToResult.REFUSE_YIELD -> {
                         Toast.makeText(
                             activity,
@@ -1313,16 +1428,56 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                             Toast.LENGTH_SHORT,
                         ).show()
                         SessionSwitcherView.detach(host)
+                        releaseSwitcherHost()
                     }
                     SwitchToResult.LAUNCH -> {
+                        // Leave claim until beginSession resets hostClaimed.
                         SessionSwitcherView.detach(host)
-                        launchSlotKey(
-                            activity,
-                            app.deckState,
-                            app.romEntries,
-                            target.key,
-                            playerId = target.playerId,
-                        )
+                        val finish = {
+                            launchSlotKey(
+                                activity,
+                                app.deckState,
+                                app.romEntries,
+                                target.key,
+                                playerId = target.playerId,
+                            )
+                        }
+                        if (plan.prep != HandoffPrep.RA_PAUSE_SAVE) {
+                            finish()
+                        } else {
+                            val launched = java.util.concurrent.atomic.AtomicBoolean(false)
+                            val mainHandler = Handler(Looper.getMainLooper())
+                            fun finishOnce() {
+                                if (launched.compareAndSet(false, true)) finish()
+                            }
+                            val budget = Runnable {
+                                Log.i(
+                                    "GGHandoff",
+                                    "prep budget ms=${SessionHandoff.PREP_BUDGET_MS}",
+                                )
+                                finishOnce()
+                            }
+                            mainHandler.postDelayed(budget, SessionHandoff.PREP_BUDGET_MS)
+                            val started = SystemClock.elapsedRealtime()
+                            val enqueued = app.enqueueRaUdp(
+                                work = { client ->
+                                    val port = app.settings.raNetworkCmdPort
+                                    val status = client.status(port)
+                                    if (status == RaStatus.PLAYING) client.pauseToggle(port)
+                                    client.saveState(port)
+                                },
+                                onMain = {
+                                    mainHandler.removeCallbacks(budget)
+                                    val used = SystemClock.elapsedRealtime() - started
+                                    Log.i("GGHandoff", "prep ms=$used")
+                                    finishOnce()
+                                },
+                            )
+                            if (!enqueued) {
+                                mainHandler.removeCallbacks(budget)
+                                finishOnce()
+                            }
+                        }
                     }
                 }
             },
@@ -1335,7 +1490,10 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                 )
                 attach()
             },
-            onClose = { SessionSwitcherView.detach(host) },
+            onClose = {
+                SessionSwitcherView.detach(host)
+                releaseSwitcherHost()
+            },
         )
     }
     attach()

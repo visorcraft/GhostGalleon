@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
@@ -95,6 +96,7 @@ class SettingsActivity : AppCompatActivity() {
         Action.OPEN_QUICK_PANEL,
         Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
         Action.OPEN_SESSION_SWITCHER, Action.TOGGLE_PLAY_HUD,
+        Action.CLAIM_HOST, Action.RELEASE_HOST,
     )
 
     private var captureTarget: Action? = null
@@ -110,6 +112,7 @@ class SettingsActivity : AppCompatActivity() {
     private var hiddenValue: TextView? = null
     private var hiddenRomsValue: TextView? = null
     private var dockValue: TextView? = null
+    private var packageYieldValue: TextView? = null
 
     private fun appLabel(packageName: String): String =
         appLibrary.all(app.settings).firstOrNull { it.packageName == packageName }
@@ -276,6 +279,8 @@ class SettingsActivity : AppCompatActivity() {
         dockValue?.text =
             if (dock.isEmpty()) getString(R.string.label_empty)
             else dock.joinToString(" · ", transform = ::dockEntryLabel)
+        val yieldCount = app.settings.packageYield.count { it.value }
+        packageYieldValue?.text = formatNumber(yieldCount)
     }
 
     private fun modalRow(label: String, chip: String, onChip: () -> Unit): View =
@@ -433,6 +438,53 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Per-package YIELD_BOTH overrides for Android apps (no launch face). */
+    private fun showPackageYieldDialog() {
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(8), pad, dp(8))
+        }
+        fun yieldChip(on: Boolean): String =
+            if (on) getString(R.string.label_yes) else getString(R.string.label_no)
+        fun rebuild() {
+            list.removeAllViews()
+            val apps = appLibrary.visible(app.settings)
+                .sortedBy { it.label.lowercase() }
+            if (apps.isEmpty()) {
+                list.addView(modalEmpty(getString(R.string.settings_no_apps)))
+                return
+            }
+            apps.forEach { entry ->
+                val pkg = entry.packageName
+                val on = app.settings.packageYield[pkg] == true
+                list.addView(
+                    modalRow(entry.label, yieldChip(on)) {
+                        val live = app.settings
+                        val next = if (live.packageYield[pkg] == true) {
+                            live.packageYield - pkg
+                        } else {
+                            live.packageYield + (pkg to true)
+                        }
+                        app.updateSettings(live.copy(packageYield = next))
+                        refreshAppsRows()
+                        rebuild()
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(56),
+                    ),
+                )
+            }
+        }
+        rebuild()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_package_yield)
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton(R.string.action_close, null)
+            .show()
+    }
+
     private val platformPackLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
@@ -458,6 +510,20 @@ class SettingsActivity : AppCompatActivity() {
                 ).show()
                 refreshSettingsUi()
             }
+        }
+
+    private val lensPackLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            app.updateSettings(app.settings.copy(ramLensPackUri = uri.toString()))
+            app.reloadLenses()
+            Toast.makeText(this, R.string.settings_import_lens_pack, Toast.LENGTH_SHORT).show()
+            refreshSettingsUi()
         }
 
     private val exportLauncher =
@@ -2058,12 +2124,44 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
         appsCard.addView(dockRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        val packageYieldRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener { showPackageYieldDialog() }
+        }
+        packageYieldRow.addView(
+            rowLabel(getString(R.string.settings_package_yield)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        packageYieldValue = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        }
+        packageYieldRow.addView(packageYieldValue)
+        appsCard.addView(
+            packageYieldRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
         refreshAppsRows()
         addSection(SettingsPage.APPS, getString(R.string.settings_page_apps), appsCard)
 
         val controlsCard = sectionCard()
         toggle(controlsCard, getString(R.string.settings_haptics), s.haptics) {
             app.updateSettings(app.settings.copy(haptics = it))
+        }
+        toggle(controlsCard, getString(R.string.settings_input_assist), s.inputAssistEnabled) { on ->
+            app.updateSettings(app.settings.copy(inputAssistEnabled = on))
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        controlsCard.addView(TextView(this).apply {
+            setText(R.string.settings_input_assist_open_system)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(0x66FFFFFF.toInt())
+            setPadding(0, 0, 0, dp(4))
+        })
+        toggle(controlsCard, getString(R.string.settings_winlator_cockpit), s.winlatorCockpit) {
+            app.updateSettings(app.settings.copy(winlatorCockpit = it))
         }
         val labRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2313,13 +2411,74 @@ class SettingsActivity : AppCompatActivity() {
         })
         libraryCard.addView(playersRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        var raHandoffSaveRow: View? = null
+        var raHandoffSaveSwitch: Switch? = null
+        fun refreshRaHandoffSaveEnabled() {
+            val talk = app.settings.raNetworkCommands
+            raHandoffSaveRow?.isEnabled = talk
+            raHandoffSaveRow?.alpha = if (talk) 1f else 0.5f
+            raHandoffSaveSwitch?.isEnabled = talk
+        }
+        toggle(libraryCard, getString(R.string.settings_stack_clones), s.stackClones) { on ->
+            app.updateSettings(app.settings.copy(stackClones = on))
+        }
         toggle(libraryCard, getString(R.string.settings_ra_network_commands), s.raNetworkCommands) { on ->
             if (on) {
                 applyRaNetworkCommandsOn()
             } else {
                 app.updateSettings(app.settings.copy(raNetworkCommands = false))
             }
+            refreshRaHandoffSaveEnabled()
         }
+        val handoffSwitch = accentSwitch(s.raHandoffSave) { on ->
+            if (!app.settings.raNetworkCommands) return@accentSwitch
+            app.updateSettings(app.settings.copy(raHandoffSave = on))
+        }
+        raHandoffSaveSwitch = handoffSwitch
+        val handoffRow = controlRow(
+            getString(R.string.settings_ra_handoff_save),
+            handoffSwitch,
+        )
+        raHandoffSaveRow = handoffRow
+        libraryCard.addView(
+            handoffRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
+        refreshRaHandoffSaveEnabled()
+        toggle(libraryCard, getString(R.string.settings_ram_lenses), s.ramLensesEnabled) { on ->
+            app.updateSettings(app.settings.copy(ramLensesEnabled = on))
+        }
+        val lensPackRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                lensPackLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+            }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(ramLensPackUri = null))
+                app.reloadLenses()
+                refreshSettingsUi()
+                true
+            }
+        }
+        lensPackRow.addView(
+            rowLabel(getString(R.string.settings_import_lens_pack)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        lensPackRow.addView(TextView(this).apply {
+            text = if (s.ramLensPackUri.isNullOrBlank()) {
+                getString(R.string.action_none)
+            } else {
+                getString(R.string.action_open)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(
+            lensPackRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

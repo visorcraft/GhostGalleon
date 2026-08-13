@@ -15,4 +15,6 @@
     <item name="media_bind_uri" type="id" />
     <!-- PlatformTile: last restyled platform id (keep default tag for find). -->
     <item name="platform_tile_id" type="id" />
+    <!-- Winlator cockpit trackpad: last normalized 0..1 point (float[2]). -->
+    <item name="cockpit_pad_point" type="id" />
 </resources>

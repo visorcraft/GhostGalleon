@@ -60,6 +60,8 @@ class CompanionActivity : BaseDeckActivity() {
     fun closeQuietly() {
         selfClosing = true
         releaseSeat()
+        // Clear focus-lock flag before the window goes away (owner NONE).
+        applyPlayHostFocusLock()
         finish()
     }
 
@@ -194,11 +196,13 @@ class CompanionActivity : BaseDeckActivity() {
         super.onResume()
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     override fun onContentRebuilt() {
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     private fun armPlayHudTick() {
@@ -392,9 +396,11 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
-    return PlayHostPolicy.playHudTickDelayMs(
+    val lensDelay = CompanionPanel.tickPlayHudLens(root, app, activity)
+    val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
         watchRa = app.settings.raNetworkCommands,
         raProbeMs = com.visorcraft.ghostgalleon.rom.RaCommand.PROBE_INTERVAL_MS,
     )
+    return if (lensDelay != null) minOf(base, lensDelay) else base
 }
