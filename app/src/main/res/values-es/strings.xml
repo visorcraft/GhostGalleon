@@ -337,6 +337,8 @@
     <string name="play_hud_end">Terminar sesión</string>
     <string name="play_hud_reclaim">Recuperar INICIO</string>
     <string name="play_hud_switcher">Sesiones</string>
+    <string name="session_switcher_title">Sesiones</string>
+    <string name="session_ring_empty">No hay sesiones recientes</string>
     <string name="deck_add_rom_folder_done">Carpeta ROM añadida</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>

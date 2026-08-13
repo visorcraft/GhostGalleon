@@ -48,6 +48,7 @@ import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -99,6 +100,26 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
+    /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
+    const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
+
+    fun sessionSwitcherHost(root: View): ViewGroup? =
+        root.findViewWithTag(TAG_SESSION_SWITCHER_HOST)
+
+    fun attachSessionSwitcher(
+        root: View,
+        entries: List<SessionRingEntry>,
+        onPick: (SessionRingEntry) -> Unit,
+        onRemove: (String) -> Unit,
+        onClose: () -> Unit,
+    ) {
+        val host = sessionSwitcherHost(root) ?: return
+        SessionSwitcherView.attach(host, entries, onPick, onRemove, onClose)
+    }
+
+    fun detachSessionSwitcher(root: View) {
+        sessionSwitcherHost(root)?.let { SessionSwitcherView.detach(it) }
+    }
 
     /**
      * Slot key companion Resume launches through [launchSlotKey].
@@ -1081,6 +1102,18 @@ object CompanionPanel {
         // rain in front) can span the WHOLE panel; all normal content lives
         // in the vertical `content` column, which carries TAG_PANEL_ROOT.
         val root = FrameLayout(context)
+        fun installSwitcherHost(): FrameLayout {
+            if (root.findViewWithTag<View>(TAG_SESSION_SWITCHER_HOST) == null) {
+                root.addView(
+                    FrameLayout(context).apply { tag = TAG_SESSION_SWITCHER_HOST },
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            }
+            return root
+        }
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             tag = TAG_PANEL_ROOT
@@ -1147,7 +1180,7 @@ object CompanionPanel {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ))
-                return root
+                return installSwitcherHost()
             }
             CompanionRole.PINNED_APP -> {
                 if (!CompanionRoleResolve.pinConflictsWithSession(pinPkg, app.sessionSurface)) {
@@ -1163,7 +1196,7 @@ object CompanionPanel {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     ))
-                    return root
+                    return installSwitcherHost()
                 }
                 // Pin is the open KEEP game — pause pin, show Now Playing / hero.
             }
@@ -1183,7 +1216,7 @@ object CompanionPanel {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     ))
-                    return root
+                    return installSwitcherHost()
                 }
                 // Fall through to hero when no session.
             }
@@ -1697,7 +1730,7 @@ object CompanionPanel {
         if (shouldHostSystemChromeIcons(activity)) {
             attachSystemChromeOverlay(root, context, activity, state)
         }
-        return root
+        return installSwitcherHost()
     }
 
     private fun roleChipRow(

@@ -337,6 +337,8 @@
     <string name="play_hud_end">สิ้นสุดเซสชัน</string>
     <string name="play_hud_reclaim">คืนหน้า HOME</string>
     <string name="play_hud_switcher">เซสชัน</string>
+    <string name="session_switcher_title">เซสชัน</string>
+    <string name="session_ring_empty">ไม่มีเซสชันล่าสุด</string>
     <string name="deck_add_rom_folder_done">เพิ่มโฟลเดอร์ ROM แล้ว</string>
     <string name="theme_ghost">Ghost</string>
     <string name="theme_threeds">Teal</string>
