@@ -206,7 +206,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
      * game keeps the pad while the play host stays touchable. Never sets
      * FLAG_NOT_TOUCHABLE.
      */
-    protected fun applyPlayHostFocusLock() {
+    internal fun applyPlayHostFocusLock() {
         val surface = app.sessionSurface
         val dual = app.displayConfig.mode == SurfaceMode.DUAL
         val allowed = PlayHostPolicy.playHostAllowed(

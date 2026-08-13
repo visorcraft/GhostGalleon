@@ -931,16 +931,21 @@ class GhostGalleonApp : Application() {
         if (surface.policy == SessionPolicy.YIELD_BOTH) {
             liveCompanions().forEach { it.closeQuietly() }
         }
+        // Ownership / surface change: re-apply FLAG_NOT_FOCUSABLE on every live deck
+        // (companion stays resumed on secondary and would otherwise keep a stale flag).
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     fun markSessionGreedy() {
         sessionSurface = sessionSurface?.copy(greedy = true)
         hostClaimed = false
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     fun clearSessionSurface() {
         sessionSurface = null
         hostClaimed = false
+        liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     private fun endOpenSession(nowMs: Long) {
