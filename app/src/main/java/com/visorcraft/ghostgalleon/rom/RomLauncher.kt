@@ -85,6 +85,8 @@ object LaunchSession {
         playerId = template.id,
         packageName = template.component.substringBefore('/'),
         launchDisplayId = launchDisplayId,
+        // Pack YIELD is an override; KEEP/omit stays null so forPlayerId still yields built-ins.
+        romOverride = template.sessionPolicy.takeIf { it == SessionPolicy.YIELD_BOTH },
     )
 
     fun forApp(key: String, launchDisplayId: Int?): SessionSurface =

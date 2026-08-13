@@ -262,4 +262,34 @@ class RomLauncherTest {
         assertEquals("com.example.game", surface.key)
         assertEquals(1, surface.launchDisplayId)
     }
+
+    @Test
+    fun `unknown player id with pack YIELD_BOTH yields at launch`() {
+        val template = PlayerTemplate(
+            id = "pack-dual",
+            displayName = "Pack Dual",
+            component = "com.pack.dual/com.pack.dual.Emu",
+            action = null,
+            uriStyle = UriStyle.URI,
+            sessionPolicy = SessionPolicy.YIELD_BOTH,
+        )
+        val surface = LaunchSession.forRom("rom:foo:a.bin", template, 0)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals("pack-dual", surface.playerId)
+    }
+
+    @Test
+    fun `melondualds with default KEEP field still yields via player id`() {
+        val template = PlayerTemplate(
+            id = "melondualds",
+            displayName = "melonDualDS",
+            component = "me.magnum.melondualds/me.magnum.melondualds.ui.EmulatorActivity",
+            action = "android.intent.action.VIEW",
+            uriStyle = UriStyle.URI,
+        )
+        assertEquals(SessionPolicy.KEEP_COMPANION, template.sessionPolicy)
+        val surface = LaunchSession.forRom("rom:nds:a.nds", template, 0)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals("melondualds", surface.playerId)
+    }
 }
