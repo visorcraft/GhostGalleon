@@ -3,10 +3,13 @@ package com.visorcraft.ghostgalleon.ui
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.PixelCopy
 import android.view.View
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
@@ -17,6 +20,9 @@ import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
+import com.visorcraft.ghostgalleon.rom.OracleTally
+import com.visorcraft.ghostgalleon.rom.OracleTallyLogic
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
 
 /**
  * Secondary panel (Sugar bottom by default). SECONDARY_HOME redelivery must
@@ -37,6 +43,7 @@ class CompanionActivity : BaseDeckActivity() {
             playHudHandler.postDelayed(this, 1000L)
         }
     }
+    private val oracle = PixelOracle(this) { isFullRenderInFlight }
 
     override fun skipExitCascade(): Boolean = true
 
@@ -170,6 +177,7 @@ class CompanionActivity : BaseDeckActivity() {
 
     override fun onDestroy() {
         playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
         releaseSeat()
         super.onDestroy()
     }
@@ -177,16 +185,19 @@ class CompanionActivity : BaseDeckActivity() {
     override fun onResume() {
         if (sessionOwnsCompanionDisplay()) {
             playHudHandler.removeCallbacks(playHudTick)
+            oracle.stop()
             closeQuietly()
             super.onResume()
             return
         }
         super.onResume()
         playHudHandler.post(playHudTick)
+        oracle.start()
     }
 
     override fun onPause() {
         playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
         super.onPause()
     }
 
@@ -199,6 +210,143 @@ class CompanionActivity : BaseDeckActivity() {
         // All-apps is Main-only (AGENTS + DualPaintPolicy). Companion must
         // never open the drawer — SECONDARY_HOME redelivery storms would
         // flash/glitch All-apps and thrash paints.
+    }
+}
+
+/**
+ * 32×32 PixelCopy of this activity's [android.view.Window] (never Display).
+ * One copy in flight; dest bitmap reused. Heal via [MainActivity.restartCompanionPanel].
+ */
+internal class PixelOracle(
+    private val activity: BaseDeckActivity,
+    private val renderInFlight: () -> Boolean,
+) {
+    private val handler = Handler(Looper.getMainLooper())
+    private val pixels = IntArray(SIZE * SIZE)
+    private var dest: Bitmap? = null
+    private var copyPending = false
+    private var tally = OracleTally()
+    private val tick = Runnable { onTick() }
+
+    fun start() {
+        handler.removeCallbacks(tick)
+        handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
+    }
+
+    fun stop() {
+        handler.removeCallbacks(tick)
+    }
+
+    private fun onTick() {
+        handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
+        if (activity.isFinishing || activity.isDestroyed) return
+        if (copyPending) return
+        if (renderInFlight()) return
+        val app = activity.application as GhostGalleonApp
+        if (!app.settings.detectBlackCompanion) return
+        val surface = app.sessionSurface
+        val windowId = activity.currentDisplayId()
+        val may = PlayHostPolicy.oracleMaySample(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            ownsCompanionDisplay = DualPaintPolicy.sessionOwnsCompanionDisplay(
+                surface?.policy,
+                surface?.greedy == true,
+            ),
+            windowDisplayId = windowId,
+            launchDisplayId = surface?.launchDisplayId,
+            sessionOpen = surface != null,
+        )
+        if (!may) return
+        val bmp = destBitmap() ?: return
+        val win = activity.window ?: return
+        if (win.peekDecorView() == null) return
+        copyPending = true
+        try {
+            PixelCopy.request(win, bmp, { result -> onCopyFinished(result, bmp, windowId) }, handler)
+        } catch (_: RuntimeException) {
+            copyPending = false
+            onCopyFinished(PixelCopy.ERROR_UNKNOWN, bmp, windowId)
+        }
+    }
+
+    private fun onCopyFinished(result: Int, bmp: Bitmap, windowId: Int?) {
+        copyPending = false
+        if (activity.isFinishing || activity.isDestroyed) return
+        val failed = result != PixelCopy.SUCCESS
+        if (failed && !copyFailLogged) {
+            copyFailLogged = true
+            Log.w(ORACLE_TAG, "PixelCopy failed result=$result")
+        }
+        val luma = if (failed || bmp.isRecycled) null else maxLuma(bmp)
+        val now = SystemClock.uptimeMillis()
+        val (next, requestHeal) = OracleTallyLogic.onSample(
+            tally, maxLuma = luma, copyFailed = failed, nowMs = now,
+        )
+        tally = next
+        if (!requestHeal) return
+        Log.i(ORACLE_TAG, "miss n=3 display=$windowId maxLuma=$luma")
+        maybeHeal(windowId)
+    }
+
+    private fun maybeHeal(windowId: Int?) {
+        val app = activity.application as GhostGalleonApp
+        val surface = app.sessionSurface
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+                surface?.policy,
+                surface?.greedy == true,
+            )
+        ) {
+            return
+        }
+        if (surface?.policy == SessionPolicy.KEEP_COMPANION &&
+            !PlayHostPolicy.playHostAllowed(
+                dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                policy = surface.policy,
+                greedy = surface.greedy,
+                hostDisplayId = windowId,
+                launchDisplayId = surface.launchDisplayId,
+            )
+        ) {
+            return
+        }
+        val main = activity as? MainActivity
+            ?: app.liveDeckActivities().filterIsInstance<MainActivity>().firstOrNull()
+        if (main == null || main.isFinishing || main.isDestroyed) return
+        Log.i(ORACLE_TAG, "heal reason=oracle-black")
+        main.restartCompanionPanel("oracle-black")
+    }
+
+    private fun destBitmap(): Bitmap? {
+        val existing = dest
+        if (existing != null && !existing.isRecycled &&
+            existing.width == SIZE && existing.height == SIZE &&
+            existing.config == Bitmap.Config.RGB_565
+        ) {
+            return existing
+        }
+        if (existing != null && !existing.isRecycled) existing.recycle()
+        return runCatching {
+            Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.RGB_565)
+        }.getOrNull()?.also { dest = it }
+    }
+
+    private fun maxLuma(bmp: Bitmap): Int {
+        bmp.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
+        var max = 0
+        for (c in pixels) {
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            val luma = (r + r + b + g + g + g) / 6
+            if (luma > max) max = luma
+        }
+        return max
+    }
+
+    companion object {
+        const val ORACLE_TAG = "GGOracle"
+        private const val SIZE = 32
+        private var copyFailLogged = false
     }
 }
 

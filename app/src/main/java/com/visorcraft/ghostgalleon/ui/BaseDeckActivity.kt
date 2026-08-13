@@ -176,6 +176,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
 
     private var rendering: Boolean = false
+    /** True while [renderFromState] is inside setContentView. Oracle skips these ticks. */
+    protected val isFullRenderInFlight: Boolean get() = rendering
     private var lastFullRenderUptimeMs: Long = 0L
     private var fullRenderCount: Int = 0
     // When allowFullRender coalesces/blocks a SETTINGS rebuild, retry after

@@ -24,6 +24,7 @@ class MainActivity : BaseDeckActivity() {
             playHudHandler.postDelayed(this, 1000L)
         }
     }
+    private val oracle = PixelOracle(this) { isFullRenderInFlight }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,15 +68,18 @@ class MainActivity : BaseDeckActivity() {
             app.clearSessionSurface()
         }
         playHudHandler.post(playHudTick)
+        oracle.start()
     }
 
     override fun onPause() {
         playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
         super.onPause()
     }
 
     override fun onDestroy() {
         playHudHandler.removeCallbacks(playHudTick)
+        oracle.stop()
         super.onDestroy()
     }
 
