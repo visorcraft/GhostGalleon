@@ -125,7 +125,7 @@ class RaCommandClient(
         if (slot !in RaStateSlots.SLOTS && !CinemaPolicy.inBand(slot)) return false
         val text = requestText(port, "$verb $slot", dropLinkOnTimeout = false)
         val ok = RaCommand.parseSlotReply(text)
-        if (!ok) slotStripAllowed = false
+        if (!ok && slot in RaStateSlots.SLOTS) slotStripAllowed = false
         return ok
     }
 

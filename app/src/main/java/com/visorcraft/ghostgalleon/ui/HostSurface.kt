@@ -23,14 +23,16 @@ object HostSurfacePolicy {
     }
 
     /**
-     * Play-host touches may claim HOST only off SEAT. Independent of
-     * [com.visorcraft.ghostgalleon.input.InputOwnerPolicy.applyIsNoop]
+     * Play-host touches may claim HOST only off SEAT and HELPER.
+     * Independent of [com.visorcraft.ghostgalleon.input.InputOwnerPolicy.applyIsNoop]
      * (that triple ignores [hostSurface]).
      */
     fun playHostTouchClaimEnabled(
         playHostAllowed: Boolean,
         hostSurface: HostSurface,
-    ): Boolean = playHostAllowed && hostSurface != HostSurface.SEAT
+    ): Boolean = playHostAllowed &&
+        hostSurface != HostSurface.SEAT &&
+        hostSurface != HostSurface.HELPER
 
     fun shouldClaimPlayHostTouch(
         playHostAllowed: Boolean,

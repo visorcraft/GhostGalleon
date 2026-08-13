@@ -186,12 +186,29 @@ object CompanionPanel {
     fun isSeatChromeTag(tag: Any?): Boolean =
         tag == TAG_PLAY_HUD_SEAT || tag == TAG_PLAY_HUD_SEAT_CHIP
 
+    fun isHelperChromeTag(tag: Any?): Boolean =
+        tag == TAG_PLAY_HUD_HELPER ||
+            tag == TAG_PLAY_HUD_HELPER_BODY ||
+            tag == TAG_PLAY_HUD_HELPER_CHIP
+
     /** True when [ev] lands on the Seat chip or the SEAT body (incl. cluster). */
     fun isSeatChromeHit(root: View?, ev: MotionEvent): Boolean {
         if (root == null) return false
         return containsRaw(root.findViewWithTag(TAG_PLAY_HUD_SEAT_CHIP), ev) ||
             containsRaw(root.findViewWithTag(TAG_PLAY_HUD_SEAT), ev)
     }
+
+    /** True when [ev] lands on the Helper chip, body, or embed host. */
+    fun isHelperChromeHit(root: View?, ev: MotionEvent): Boolean {
+        if (root == null) return false
+        return containsRaw(root.findViewWithTag(TAG_PLAY_HUD_HELPER_CHIP), ev) ||
+            containsRaw(root.findViewWithTag(TAG_PLAY_HUD_HELPER_BODY), ev) ||
+            containsRaw(root.findViewWithTag(TAG_PLAY_HUD_HELPER), ev)
+    }
+
+    /** Seat or Helper chrome: ACTION_DOWN must not claim HOST. */
+    fun isNoClaimChromeHit(root: View?, ev: MotionEvent): Boolean =
+        isSeatChromeHit(root, ev) || isHelperChromeHit(root, ev)
 
     private fun containsRaw(view: View?, ev: MotionEvent): Boolean {
         if (view == null || !view.isShown) return false
@@ -364,6 +381,7 @@ object CompanionPanel {
         if (on) {
             if (helperChipKind(app) != HelperChipKind.ENABLED) return
             app.hostSurface = HostSurface.HELPER
+            app.releaseHost()
             var toasted = false
             app.liveDeckActivities().forEach { deck ->
                 deck.applyPlayHostFocusLock()
@@ -3346,6 +3364,11 @@ object CompanionPanel {
             hidePlayHudTracker(root)
             return null
         }
+        if (HostSurfacePolicy.exclusive(app.hostSurface)) {
+            lensView.visibility = View.GONE
+            hidePlayHudTracker(root)
+            return null
+        }
         val surface = app.sessionSurface
         if (surface == null ||
             DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy) ||
@@ -3519,10 +3542,13 @@ object CompanionPanel {
                     hidePlayHudCinema(root)
                     return@enqueueRaUdp
                 }
-                if (!saved || app.raCommandClient?.slotStripAllowed() == false) {
-                    if (app.raCommandClient?.slotStripAllowed() == false) {
-                        hidePlayHudCinema(root)
-                    }
+                if (!saved) {
+                    hidePlayHudCinema(root)
+                    app.cinemaLastCaptureMs = SystemClock.elapsedRealtime()
+                    return@enqueueRaUdp
+                }
+                if (app.raCommandClient?.slotStripAllowed() == false) {
+                    hidePlayHudCinema(root)
                     return@enqueueRaUdp
                 }
                 val stamp = SystemClock.elapsedRealtime()

@@ -196,6 +196,29 @@ class RaCommandTest {
     }
 
     @Test
+    fun `cinema band timeout does not hide the user slot strip`() {
+        val seen = mutableListOf<String>()
+        val c = RaCommandClient(
+            transport = { _, payload, _ ->
+                seen += payload.toString(Charsets.US_ASCII).trim()
+                null
+            },
+            clockMs = { 0L },
+        )
+        assertTrue(c.slotStripAllowed())
+        assertFalse(c.saveStateSlot(55355, 9))
+        assertTrue(c.slotStripAllowed())
+        assertFalse(c.loadStateSlot(55355, 12))
+        assertTrue(c.slotStripAllowed())
+        assertFalse(c.saveStateSlot(55355, 2))
+        assertFalse(c.slotStripAllowed())
+        assertEquals(
+            listOf("SAVE_STATE_SLOT 9", "LOAD_STATE_SLOT 12", "SAVE_STATE_SLOT 2"),
+            seen,
+        )
+    }
+
+    @Test
     fun `slot command ACK keeps the strip allowed`() {
         val seen = mutableListOf<String>()
         val c = RaCommandClient(

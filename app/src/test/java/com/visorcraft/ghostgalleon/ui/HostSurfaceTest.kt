@@ -52,8 +52,10 @@ class HostSurfaceTest {
         assertTrue(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.HUD))
         assertTrue(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.TRACKER))
         assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.SEAT))
+        assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.HELPER))
         assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(false, HostSurface.HUD))
         assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(false, HostSurface.SEAT))
+        assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(false, HostSurface.HELPER))
     }
 
     @Test
@@ -77,5 +79,23 @@ class HostSurfaceTest {
         assertTrue(CompanionPanel.isSeatChromeTag("play_hud_seat_chip"))
         assertFalse(CompanionPanel.isSeatChromeTag("play_hud_pause"))
         assertFalse(CompanionPanel.isSeatChromeTag(null))
+    }
+
+    @Test
+    fun `helper chip and host never claim HOST`() {
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.HELPER, false),
+        )
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.HELPER, true),
+        )
+        assertTrue(CompanionPanel.isHelperChromeTag("play_hud_helper"))
+        assertTrue(CompanionPanel.isHelperChromeTag("play_hud_helper_chip"))
+        assertTrue(CompanionPanel.isHelperChromeTag("play_hud_helper_body"))
+        assertFalse(CompanionPanel.isHelperChromeTag("play_hud_pause"))
+        assertFalse(CompanionPanel.isHelperChromeTag("play_hud_seat"))
+        assertFalse(CompanionPanel.isHelperChromeTag(null))
+        assertFalse(CompanionPanel.isSeatChromeTag("play_hud_helper"))
+        assertFalse(CompanionPanel.isSeatChromeTag("play_hud_helper_chip"))
     }
 }

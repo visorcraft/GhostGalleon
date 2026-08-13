@@ -203,7 +203,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
     /** True when this window is the KEEP play host (may claim pad on touch). */
     private var playHostTouchClaimEnabled = false
-    /** Seat chip/body hit on the current ACTION_DOWN (cleared after dispatch). */
+    /** Seat/Helper chrome hit on the current ACTION_DOWN (cleared after dispatch). */
     private var lastDownIsSeatChrome = false
     private var lastFocusLock: Boolean? = null
     private var lastInputOwner: InputOwner? = null
@@ -234,7 +234,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         val lock = InputOwnerPolicy.focusLockAllowed(owner, allowed)
         val w = window ?: return
         // Surface is not part of applyIsNoop; refresh even when lock/owner/allowed
-        // are unchanged so leave-SEAT re-arms HUD claims and enter-SEAT disarms.
+        // are unchanged so leave-SEAT/HELPER re-arms HUD claims and enter disarms.
         playHostTouchClaimEnabled = HostSurfacePolicy.playHostTouchClaimEnabled(
             allowed,
             app.hostSurface,
@@ -263,7 +263,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     HostSurfacePolicy.shouldClaimPlayHostTouch(
                         playHostAllowed = true,
                         hostSurface = app.hostSurface,
-                        downTargetIsSeatChrome = CompanionPanel.isSeatChromeHit(
+                        downTargetIsSeatChrome = CompanionPanel.isNoClaimChromeHit(
                             w.decorView,
                             event,
                         ),
@@ -438,7 +438,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            lastDownIsSeatChrome = CompanionPanel.isSeatChromeHit(window?.decorView, ev)
+            lastDownIsSeatChrome = CompanionPanel.isNoClaimChromeHit(window?.decorView, ev)
         }
         val handled = super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -449,8 +449,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     override fun onUserInteraction() {
         super.onUserInteraction()
-        // Play-host touches (incl. HUD chips) claim HOST; seat chip/body do
-        // not. Keys only reach us after claim (focus-lock drops them while GAME).
+        // Play-host touches (incl. HUD chips) claim HOST; seat/helper chrome
+        // do not. Keys only reach us after claim (focus-lock drops them while GAME).
         if (!HostSurfacePolicy.shouldClaimPlayHostTouch(
                 playHostAllowed = playHostTouchClaimEnabled,
                 hostSurface = app.hostSurface,
