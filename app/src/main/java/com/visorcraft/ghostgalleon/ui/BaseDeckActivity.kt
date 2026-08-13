@@ -1187,9 +1187,11 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 )
                 if (allowed) {
                     app.playHudExpanded = !app.playHudExpanded
-                    val vis = if (app.playHudExpanded) View.VISIBLE else View.GONE
-                    window.decorView.findViewWithTag<View>("play_hud_actions")
-                        ?.visibility = vis
+                    val root = window.decorView
+                    root.findViewWithTag<View>("play_hud_actions")
+                        ?.visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
+                    root.findViewWithTag<View>("play_hud_slots")
+                        ?.visibility = View.GONE
                 }
             }
             true

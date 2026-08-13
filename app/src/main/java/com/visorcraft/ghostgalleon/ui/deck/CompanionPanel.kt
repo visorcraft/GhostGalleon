@@ -2315,7 +2315,10 @@ object CompanionPanel {
             },
         )
         hud.addView(actions)
-        slotStrip?.let { hud.addView(it) }
+        slotStrip?.let { strip ->
+            if (!app.playHudExpanded) strip.visibility = View.GONE
+            hud.addView(strip)
+        }
         return hud
     }
 
