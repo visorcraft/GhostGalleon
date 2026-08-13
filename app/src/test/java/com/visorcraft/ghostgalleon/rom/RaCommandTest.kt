@@ -235,5 +235,8 @@ class RaCommandTest {
         assertArrayEquals(byteArrayOf(0, 1, 2, 3), bytes)
         assertEquals(null, RaCommand.parseRamReply(null, 4))
         assertEquals(null, RaCommand.parseRamReply("00 01", 4))
+        // Live RetroArch echoes the address after the verb.
+        val withAddr = RaCommand.parseRamReply("READ_CORE_RAM 7EF340 00 01 02 03", 4)
+        assertArrayEquals(byteArrayOf(0, 1, 2, 3), withAddr)
     }
 }

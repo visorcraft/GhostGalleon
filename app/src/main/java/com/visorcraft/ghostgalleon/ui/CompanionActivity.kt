@@ -396,9 +396,11 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
         clock.text = next
     }
     CompanionPanel.tickPlayHudRa(root, app, activity)
-    return PlayHostPolicy.playHudTickDelayMs(
+    val lensDelay = CompanionPanel.tickPlayHudLens(root, app, activity)
+    val base = PlayHostPolicy.playHudTickDelayMs(
         elapsed,
         watchRa = app.settings.raNetworkCommands,
         raProbeMs = com.visorcraft.ghostgalleon.rom.RaCommand.PROBE_INTERVAL_MS,
     )
+    return if (lensDelay != null) minOf(base, lensDelay) else base
 }

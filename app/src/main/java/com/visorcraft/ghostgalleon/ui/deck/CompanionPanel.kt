@@ -53,12 +53,16 @@ import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.CockpitPolicy
 import com.visorcraft.ghostgalleon.rom.HeroDetail
+import com.visorcraft.ghostgalleon.rom.LensBlock
+import com.visorcraft.ghostgalleon.rom.LensCatalog
+import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
 import com.visorcraft.ghostgalleon.rom.RaStateSlots
 import com.visorcraft.ghostgalleon.rom.RaStatus
+import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.isInstalled
@@ -114,6 +118,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD = "play_hud"
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
     private const val TAG_PLAY_HUD_OWNER = "play_hud_owner"
+    private const val TAG_PLAY_HUD_LENS = "play_hud_lens"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
@@ -122,6 +127,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_COCKPIT = "play_hud_cockpit"
     private const val TAG_PLAY_HUD_TRACKPAD = "play_hud_trackpad"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
+    private const val LENS_MAX_INTERVAL_MS = 200L
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
     const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
 
@@ -2270,6 +2276,17 @@ object CompanionPanel {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
         })
+        // Opt-in RAM lens under the clock. Tick controls visibility; GONE until match.
+        hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_LENS
+            visibility = View.GONE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+            setTextColor(0xCCFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, 0)
+            maxLines = 8
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
         // buildPlayHud is only called when playHostAllowed is true.
         val cockpit = CockpitPolicy.cockpitAllowed(
             playHostAllowed = true,
@@ -2615,10 +2632,133 @@ object CompanionPanel {
         enqueueRaChipWork(root, app, probe = true)
     }
 
+    /**
+     * READ_CORE_RAM lens tick. In-place [TextView.setText] only.
+     * Never starts when [DualPaintPolicy.sessionOwnsCompanionDisplay].
+     * @return next interval ms when a lens is active, else null.
+     */
+    fun tickPlayHudLens(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+        val lensView = root?.findViewWithTag<TextView>(TAG_PLAY_HUD_LENS) ?: return null
+        val surface = app.sessionSurface
+        val settings = app.settings
+        if (surface == null ||
+            DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy) ||
+            !settings.raNetworkCommands ||
+            !settings.ramLensesEnabled
+        ) {
+            lensView.visibility = View.GONE
+            return null
+        }
+        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
+        val playHost = PlayHostPolicy.playHostAllowed(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = surface.launchDisplayId,
+        )
+        if (!playHost ||
+            !SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)
+        ) {
+            lensView.visibility = View.GONE
+            return null
+        }
+        val rom = selectedRom(surface.key, emptyList(), app)
+        val romId = rom?.id ?: SlotKey.romId(surface.key)
+        val platformId = rom?.platformId
+        // Task 20 identity hash optional; romId match still works with hash=null.
+        val match = LensCatalog.match(app.lenses, romId, hash = null, platformId = platformId)
+        if (match == null ||
+            !LensCatalog.acceptable(match) ||
+            match.id in app.lensDisabledThisProcess
+        ) {
+            lensView.visibility = View.GONE
+            return null
+        }
+        lensView.visibility = View.VISIBLE
+        val interval = minOf(match.intervalMs.coerceAtLeast(1L), LENS_MAX_INTERVAL_MS)
+        val port = settings.raNetworkCmdPort
+        var snap: LensReadSnap? = null
+        // Drop when a datagram is already in flight; never stack. Interval
+        // still schedules the next attempt after one completed UDP.
+        app.enqueueRaUdp(
+            work = { client ->
+                val blocks = ArrayList<ByteArray>(match.blocks.size)
+                var ok = true
+                for (block in match.blocks) {
+                    val bytes = client.readCoreRam(port, block.address, block.length)
+                    if (bytes == null) {
+                        ok = false
+                        break
+                    }
+                    blocks.add(bytes)
+                }
+                snap = LensReadSnap(
+                    lensId = match.id,
+                    ok = ok,
+                    text = if (ok) formatLensText(match, blocks) else null,
+                )
+            },
+            onMain = {
+                if (!lensView.isAttachedToWindow) return@enqueueRaUdp
+                val s = snap
+                if (s == null || !s.ok || s.text == null) {
+                    if (s != null && app.noteLensFailure(s.lensId)) {
+                        lensView.visibility = View.GONE
+                    }
+                    return@enqueueRaUdp
+                }
+                app.noteLensSuccess(s.lensId)
+                if (lensView.text?.toString() != s.text) {
+                    lensView.text = s.text
+                }
+            },
+        )
+        return interval
+    }
+
+    private class LensReadSnap(
+        val lensId: String,
+        val ok: Boolean,
+        val text: String?,
+    )
+
     private fun raHudEligible(raNetworkCommands: Boolean, surface: SessionSurface): Boolean {
         if (!raNetworkCommands) return false
         val playerId = surface.playerId.orEmpty()
         return playerId.startsWith("ra-") || surface.packageName == RA_PACKAGE
+    }
+
+    private fun formatLensText(spec: LensSpec, blocks: List<ByteArray>): String {
+        val sb = StringBuilder(spec.title)
+        for (i in spec.blocks.indices) {
+            val block = spec.blocks[i]
+            val data = blocks.getOrNull(i) ?: continue
+            sb.append('\n')
+            sb.append(formatLensBlock(block, data))
+        }
+        return sb.toString()
+    }
+
+    private fun formatLensBlock(block: LensBlock, data: ByteArray): String {
+        return when (block.format.lowercase()) {
+            "bitfield" -> {
+                if (block.labels.isEmpty()) {
+                    data.joinToString(" ") { b -> "%02X".format(b.toInt() and 0xFF) }
+                } else {
+                    val on = ArrayList<String>()
+                    for ((idx, label) in block.labels.withIndex()) {
+                        val bi = idx / 8
+                        val bit = idx % 8
+                        if (bi < data.size && (data[bi].toInt() and (1 shl bit)) != 0) {
+                            on.add(label)
+                        }
+                    }
+                    if (on.isEmpty()) "—" else on.joinToString(" ")
+                }
+            }
+            else -> data.joinToString(" ") { b -> "%02X".format(b.toInt() and 0xFF) }
+        }
     }
 
     private class RaChipSnap(

@@ -498,6 +498,8 @@
     <string name="confirm_yield_on_keep_player">Both panels will go to the game. The play HUD will hide.</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
     <string name="settings_ra_handoff_save">Save before switching</string>
+    <string name="settings_ram_lenses">RAM lenses</string>
+    <string name="settings_import_lens_pack">Import lens pack</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

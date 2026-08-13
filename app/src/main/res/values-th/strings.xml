@@ -469,6 +469,8 @@
     <string name="confirm_yield_on_keep_player">ทั้งสองแผงจะไปที่เกม HUD เล่นจะถูกซ่อน</string>
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
+    <string name="settings_ram_lenses">เลนส์ RAM</string>
+    <string name="settings_import_lens_pack">นำเข้าแพ็คเลนส์</string>
     <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>
     <string name="settings_ra_username">ชื่อผู้ใช้ RetroAchievements</string>
     <string name="settings_ra_username_hint">ชื่อผู้ใช้ RA</string>

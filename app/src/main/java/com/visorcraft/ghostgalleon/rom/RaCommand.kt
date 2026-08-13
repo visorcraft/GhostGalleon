@@ -31,13 +31,22 @@ object RaCommand {
     }
 
     fun parseRamReply(reply: String?, expectedLen: Int): ByteArray? {
-        if (reply == null) return null
+        if (reply == null || expectedLen < 0) return null
         val tokens = reply.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        val hex = if (tokens.firstOrNull().equals("READ_CORE_RAM", ignoreCase = true)) {
+        val afterVerb = if (tokens.firstOrNull().equals("READ_CORE_RAM", ignoreCase = true)) {
             tokens.drop(1)
         } else {
             tokens
         }
+        parseHexTokens(afterVerb, expectedLen)?.let { return it }
+        // Live RetroArch often echoes the address: READ_CORE_RAM <addr> <b1>…
+        if (afterVerb.size == expectedLen + 1) {
+            return parseHexTokens(afterVerb.drop(1), expectedLen)
+        }
+        return null
+    }
+
+    private fun parseHexTokens(hex: List<String>, expectedLen: Int): ByteArray? {
         if (hex.size != expectedLen) return null
         return try {
             ByteArray(hex.size) { i -> hex[i].toInt(radix = 16).toByte() }
@@ -96,6 +105,17 @@ class RaCommandClient(
     fun saveStateSlot(port: Int, slot: Int): Boolean = sendSlot(port, "SAVE_STATE_SLOT", slot)
 
     fun loadStateSlot(port: Int, slot: Int): Boolean = sendSlot(port, "LOAD_STATE_SLOT", slot)
+
+    /**
+     * Read-only core RAM peek. Timeouts do not clear [linkUp] (same as SLOT).
+     * Returns null on encode reject, timeout, or parse failure.
+     */
+    fun readCoreRam(port: Int, address: Int, length: Int): ByteArray? {
+        val payload = RaCommand.encodeReadCoreRam(address, length) ?: return null
+        val bytes = transport.send(port, payload, RaCommand.TIMEOUT_MS) ?: return null
+        linkUp = true
+        return RaCommand.parseRamReply(bytes.toString(Charsets.US_ASCII), length)
+    }
 
     /**
      * SLOT commands reply when the build supports them. Timeout once →

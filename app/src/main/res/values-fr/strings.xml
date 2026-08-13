@@ -469,6 +469,8 @@
     <string name="confirm_yield_on_keep_player">Les deux panneaux iront au jeu. Le HUD de jeu sera masqué.</string>
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
+    <string name="settings_ram_lenses">Lentilles RAM</string>
+    <string name="settings_import_lens_pack">Importer un pack de lentilles</string>
     <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>
     <string name="settings_ra_username">Nom d\'utilisateur RetroAchievements</string>
     <string name="settings_ra_username_hint">Nom RA</string>

@@ -30,6 +30,8 @@ import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputAssistService
+import com.visorcraft.ghostgalleon.rom.LensCatalog
+import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
@@ -60,6 +62,7 @@ import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
@@ -433,6 +436,62 @@ class GhostGalleonApp : Application() {
 
     // Process-only KEEP play HUD chrome. Expanded shows the actions row.
     var playHudExpanded: Boolean = true
+
+    // Process-only RAM lens catalog (bundled assets + optional SAF pack).
+    @Volatile
+    var lenses: List<LensSpec> = emptyList()
+        private set
+
+    // Process-only: lenses that failed 3 times this process (no Settings write).
+    @Volatile
+    var lensDisabledThisProcess: Set<String> = emptySet()
+        private set
+
+    private val lensFailCounts = HashMap<String, Int>()
+
+    /** True once [id] reaches 3 consecutive failures this process. */
+    fun noteLensFailure(id: String): Boolean {
+        if (id.isEmpty() || id in lensDisabledThisProcess) return true
+        val n = (lensFailCounts[id] ?: 0) + 1
+        lensFailCounts[id] = n
+        if (n < 3) return false
+        lensDisabledThisProcess = lensDisabledThisProcess + id
+        return true
+    }
+
+    fun noteLensSuccess(id: String) {
+        if (id.isEmpty()) return
+        lensFailCounts.remove(id)
+    }
+
+    /**
+     * Load bundled assets/lenses JSON plus optional [Settings.ramLensPackUri]
+     * on a background thread. Invalid JSON is ignored. Does not notify decks.
+     */
+    fun reloadLenses() {
+        ROM_IO.execute {
+            val loaded = ArrayList<LensSpec>()
+            val names = runCatching {
+                assets.list("lenses")?.filter { it.endsWith(".json", ignoreCase = true) }
+            }.getOrNull().orEmpty()
+            for (name in names) {
+                val text = runCatching {
+                    assets.open("lenses/$name").bufferedReader().use { it.readText() }
+                }.getOrNull() ?: continue
+                loaded.addAll(LensCatalog.parse(text))
+            }
+            val packUri = settings.ramLensPackUri
+            if (!packUri.isNullOrBlank()) {
+                val text = runCatching {
+                    contentResolver.openInputStream(Uri.parse(packUri))
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                }.getOrNull()
+                if (text != null) loaded.addAll(LensCatalog.parse(text))
+            }
+            lenses = loaded
+        }
+    }
 
     // Process-only pad owner flip (GAME ↔ HOST). Not persisted.
     var hostClaimed: Boolean = false
@@ -1100,6 +1159,8 @@ class GhostGalleonApp : Application() {
             loadArcadeDatOverlay()
             rematchArcadeLibraryOffPaint()
         }
+        // Bundled + optional SAF lens pack; zero bundled games is fine.
+        reloadLenses()
         registerPackageChangeReceiver()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {

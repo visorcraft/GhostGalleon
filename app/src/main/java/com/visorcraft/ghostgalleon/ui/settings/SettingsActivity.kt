@@ -512,6 +512,20 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+    private val lensPackLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            app.updateSettings(app.settings.copy(ramLensPackUri = uri.toString()))
+            app.reloadLenses()
+            Toast.makeText(this, R.string.settings_import_lens_pack, Toast.LENGTH_SHORT).show()
+            refreshSettingsUi()
+        }
+
     private val exportLauncher =
         registerForActivityResult(
             ActivityResultContracts.CreateDocument("application/json")
@@ -2428,6 +2442,40 @@ class SettingsActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
         )
         refreshRaHandoffSaveEnabled()
+        toggle(libraryCard, getString(R.string.settings_ram_lenses), s.ramLensesEnabled) { on ->
+            app.updateSettings(app.settings.copy(ramLensesEnabled = on))
+        }
+        val lensPackRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            setOnClickListener {
+                lensPackLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+            }
+            setOnLongClickListener {
+                app.updateSettings(app.settings.copy(ramLensPackUri = null))
+                app.reloadLenses()
+                refreshSettingsUi()
+                true
+            }
+        }
+        lensPackRow.addView(
+            rowLabel(getString(R.string.settings_import_lens_pack)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        lensPackRow.addView(TextView(this).apply {
+            text = if (s.ramLensPackUri.isNullOrBlank()) {
+                getString(R.string.action_none)
+            } else {
+                getString(R.string.action_open)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(accent)
+        })
+        libraryCard.addView(
+            lensPackRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+        )
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

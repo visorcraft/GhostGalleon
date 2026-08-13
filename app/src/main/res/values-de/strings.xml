@@ -470,6 +470,8 @@
     <string name="confirm_yield_on_keep_player">Beide Panels gehen an das Spiel. Die Play-HUD wird ausgeblendet.</string>
     <string name="settings_ra_network_commands">Mit RetroArch sprechen</string>
     <string name="settings_ra_handoff_save">Vor dem Wechsel speichern</string>
+    <string name="settings_ram_lenses">RAM-Linsen</string>
+    <string name="settings_import_lens_pack">Linsenpaket importieren</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Einstellungen → Netzwerk → Netzwerkbefehle EIN, Port 55355.</string>
     <string name="settings_ra_username">RetroAchievements-Benutzername</string>
     <string name="settings_ra_username_hint">RA-Benutzername</string>
