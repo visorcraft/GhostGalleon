@@ -25,6 +25,7 @@ import android.view.ViewOutlineProvider
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -56,6 +57,8 @@ import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.LensBlock
 import com.visorcraft.ghostgalleon.rom.LensCatalog
 import com.visorcraft.ghostgalleon.rom.LensSpec
+import com.visorcraft.ghostgalleon.rom.TrackerCatalog
+import com.visorcraft.ghostgalleon.rom.TrackerKind
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
@@ -79,6 +82,8 @@ import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.HostSurface
+import com.visorcraft.ghostgalleon.ui.HostSurfacePolicy
 import com.visorcraft.ghostgalleon.ui.MainActivity
 import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
 import com.visorcraft.ghostgalleon.ui.openSessionSwitcher
@@ -119,6 +124,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
     private const val TAG_PLAY_HUD_OWNER = "play_hud_owner"
     private const val TAG_PLAY_HUD_LENS = "play_hud_lens"
+    private const val TAG_PLAY_HUD_TRACKER = "play_hud_tracker"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
@@ -2288,6 +2294,13 @@ object CompanionPanel {
             maxLines = 8
             ellipsize = android.text.TextUtils.TruncateAt.END
         })
+        hud.addView(GridLayout(activity).apply {
+            tag = TAG_PLAY_HUD_TRACKER
+            visibility = View.GONE
+            columnCount = 8
+            contentDescription = activity.getString(R.string.play_hud_tracker)
+            setPadding(0, dp(6), 0, 0)
+        })
         // buildPlayHud is only called when playHostAllowed is true.
         val cockpit = CockpitPolicy.cockpitAllowed(
             playHostAllowed = true,
@@ -2634,20 +2647,28 @@ object CompanionPanel {
     }
 
     /**
-     * READ_CORE_RAM lens tick. In-place [TextView.setText] only.
+     * READ_CORE_RAM lens tick. In-place [TextView.setText] / tracker alpha only.
      * Never starts when [DualPaintPolicy.sessionOwnsCompanionDisplay].
      * @return next interval ms when a lens is active, else null.
      */
     fun tickPlayHudLens(root: View?, app: GhostGalleonApp, activity: Context): Long? {
         val settings = app.settings
-        if (!settings.ramLensesEnabled) return null
-        val lensView = root?.findViewWithTag<TextView>(TAG_PLAY_HUD_LENS) ?: return null
+        if (!settings.ramLensesEnabled) {
+            hidePlayHudTracker(root)
+            return null
+        }
+        val lensView = root?.findViewWithTag<TextView>(TAG_PLAY_HUD_LENS)
+        if (lensView == null) {
+            hidePlayHudTracker(root)
+            return null
+        }
         val surface = app.sessionSurface
         if (surface == null ||
             DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy) ||
             !settings.raNetworkCommands
         ) {
             lensView.visibility = View.GONE
+            hidePlayHudTracker(root)
             return null
         }
         val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
@@ -2662,6 +2683,7 @@ object CompanionPanel {
             !SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)
         ) {
             lensView.visibility = View.GONE
+            hidePlayHudTracker(root)
             return null
         }
         val rom = selectedRom(surface.key, emptyList(), app)
@@ -2674,9 +2696,16 @@ object CompanionPanel {
             match.id in app.lensDisabledThisProcess
         ) {
             lensView.visibility = View.GONE
+            hidePlayHudTracker(root)
             return null
         }
-        lensView.visibility = View.VISIBLE
+        val paintTracker = trackerPaintAllowed(match, settings, app.hostSurface)
+        if (paintTracker) {
+            lensView.visibility = View.GONE
+        } else {
+            lensView.visibility = View.VISIBLE
+            hidePlayHudTracker(root)
+        }
         val interval = minOf(match.intervalMs.coerceAtLeast(1L), LENS_MAX_INTERVAL_MS)
         val port = settings.raNetworkCmdPort
         var snap: LensReadSnap? = null
@@ -2698,6 +2727,7 @@ object CompanionPanel {
                     lensId = match.id,
                     ok = ok,
                     text = if (ok) formatLensText(match, blocks) else null,
+                    blocks = if (ok) blocks else emptyList(),
                 )
             },
             onMain = {
@@ -2706,6 +2736,7 @@ object CompanionPanel {
                 if (s == null || !s.ok || s.text == null) {
                     if (s != null && app.noteLensFailure(s.lensId)) {
                         lensView.visibility = View.GONE
+                        hidePlayHudTracker(root)
                     }
                     return@enqueueRaUdp
                 }
@@ -2718,18 +2749,128 @@ object CompanionPanel {
                 )
                 if (still?.id != s.lensId) return@enqueueRaUdp
                 app.noteLensSuccess(s.lensId)
-                if (lensView.text?.toString() != s.text) {
-                    lensView.text = s.text
+                if (trackerPaintAllowed(still, app.settings, app.hostSurface)) {
+                    lensView.visibility = View.GONE
+                    paintPlayHudTracker(root, still, s.blocks)
+                } else {
+                    if (lensView.text?.toString() != s.text) {
+                        lensView.text = s.text
+                    }
+                    if (lensView.visibility != View.VISIBLE) lensView.visibility = View.VISIBLE
+                    hidePlayHudTracker(root)
                 }
             },
         )
         return interval
     }
 
+    internal fun hidePlayHudTracker(root: View?) {
+        val grid = root?.findViewWithTag<View>(TAG_PLAY_HUD_TRACKER) ?: return
+        if (grid.visibility != View.GONE) grid.visibility = View.GONE
+    }
+
+    private fun trackerPaintAllowed(
+        spec: LensSpec,
+        settings: Settings,
+        hostSurface: HostSurface,
+    ): Boolean =
+        spec.surface == "tracker" &&
+            settings.ramTrackersEnabled &&
+            TrackerCatalog.acceptable(spec) &&
+            HostSurfacePolicy.showsTracker(hostSurface) &&
+            spec.widgets.any { it.kind != TrackerKind.LINE }
+
+    private fun paintPlayHudTracker(root: View?, spec: LensSpec, blocks: List<ByteArray>) {
+        val grid = root?.findViewWithTag<GridLayout>(TAG_PLAY_HUD_TRACKER) ?: return
+        val cells = trackerCells(spec, blocks)
+        if (cells.isEmpty()) {
+            if (grid.visibility != View.GONE) grid.visibility = View.GONE
+            return
+        }
+        val cols = spec.widgets.firstOrNull { it.cols > 0 }?.cols ?: 8
+        if (grid.columnCount != cols) grid.columnCount = cols
+        if (grid.childCount != cells.size) {
+            grid.removeAllViews()
+            val ctx = grid.context
+            val pad = (4 * ctx.resources.displayMetrics.density).toInt()
+            for (cell in cells) {
+                grid.addView(
+                    TextView(ctx).apply {
+                        text = cellLabel(cell)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                        setTextColor(0xCCFFFFFF.toInt())
+                        gravity = Gravity.CENTER
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(pad, pad, pad, pad)
+                    },
+                )
+            }
+        } else {
+            for (i in cells.indices) {
+                val tv = grid.getChildAt(i) as? TextView ?: continue
+                val label = cellLabel(cells[i])
+                if (tv.text?.toString() != label) tv.text = label
+            }
+        }
+        for (i in cells.indices) {
+            val tv = grid.getChildAt(i) as? TextView ?: continue
+            val cell = cells[i]
+            val on = when (cell.kind) {
+                TrackerKind.METER -> TrackerCatalog.meterValue(cell.bytes) > 0
+                else -> TrackerCatalog.bitOn(cell.bytes, cell.bitIndex)
+            }
+            val nextAlpha = if (on) 1f else 0.25f
+            if (tv.alpha != nextAlpha) tv.alpha = nextAlpha
+        }
+        if (grid.visibility != View.VISIBLE) grid.visibility = View.VISIBLE
+    }
+
+    private class TrackerCell(
+        val label: String,
+        val kind: TrackerKind,
+        val bytes: ByteArray,
+        val bitIndex: Int,
+    )
+
+    private fun cellLabel(cell: TrackerCell): String =
+        if (cell.kind == TrackerKind.METER && cell.label.isEmpty()) {
+            TrackerCatalog.meterValue(cell.bytes).toString()
+        } else {
+            cell.label
+        }
+
+    private fun trackerCells(spec: LensSpec, blocks: List<ByteArray>): List<TrackerCell> {
+        val out = ArrayList<TrackerCell>()
+        for (w in spec.widgets) {
+            val bytes = blocks.getOrNull(w.blockIndex) ?: continue
+            when (w.kind) {
+                TrackerKind.BITS, TrackerKind.GRID -> {
+                    if (w.labels.isEmpty()) {
+                        for (i in 0 until bytes.size * 8) {
+                            out.add(TrackerCell((i + 1).toString(), w.kind, bytes, i))
+                        }
+                    } else {
+                        for ((i, label) in w.labels.withIndex()) {
+                            out.add(TrackerCell(label, w.kind, bytes, i))
+                        }
+                    }
+                }
+                TrackerKind.METER -> {
+                    val label = w.labels.firstOrNull().orEmpty()
+                    out.add(TrackerCell(label, w.kind, bytes, 0))
+                }
+                TrackerKind.LINE -> { }
+            }
+        }
+        return out
+    }
+
     private class LensReadSnap(
         val lensId: String,
         val ok: Boolean,
         val text: String?,
+        val blocks: List<ByteArray> = emptyList(),
     )
 
     private fun raHudEligible(raNetworkCommands: Boolean, surface: SessionSurface): Boolean {

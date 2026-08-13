@@ -347,6 +347,7 @@
     <string name="play_hud_resume">Reanudar</string>
     <string name="play_hud_save">Guardar</string>
     <string name="play_hud_load">Cargar</string>
+    <string name="play_hud_tracker">Rastreador</string>
     <string name="cockpit_keyboard">Teclado</string>
     <string name="cockpit_need_assist">Activa Asistencia de entrada para mover el ratón.</string>
     <string name="session_switcher_title">Sesiones</string>
@@ -472,6 +473,7 @@
     <string name="settings_ra_network_commands">Hablar con RetroArch</string>
     <string name="settings_ra_handoff_save">Guardar antes de cambiar</string>
     <string name="settings_ram_lenses">Lentes de RAM</string>
+    <string name="settings_ram_trackers">Rastreadores de RAM</string>
     <string name="settings_import_lens_pack">Importar pack de lentes</string>
     <string name="settings_stack_clones">Agrupar clones</string>
     <string name="settings_ra_network_commands_help">En RetroArch: Ajustes → Red → Comandos de red ACTIVADOS, puerto 55355.</string>

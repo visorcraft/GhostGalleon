@@ -347,6 +347,7 @@
     <string name="play_hud_resume">Reprendre</string>
     <string name="play_hud_save">Sauver</string>
     <string name="play_hud_load">Charger</string>
+    <string name="play_hud_tracker">Traceur</string>
     <string name="cockpit_keyboard">Clavier</string>
     <string name="cockpit_need_assist">Activez l’assistance saisie pour déplacer la souris.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -472,6 +473,7 @@
     <string name="settings_ra_network_commands">Parler à RetroArch</string>
     <string name="settings_ra_handoff_save">Enregistrer avant de changer</string>
     <string name="settings_ram_lenses">Lentilles RAM</string>
+    <string name="settings_ram_trackers">Traceurs RAM</string>
     <string name="settings_import_lens_pack">Importer un pack de lentilles</string>
     <string name="settings_stack_clones">Empiler les clones</string>
     <string name="settings_ra_network_commands_help">Dans RetroArch : Paramètres → Réseau → Commandes réseau activées, port 55355.</string>

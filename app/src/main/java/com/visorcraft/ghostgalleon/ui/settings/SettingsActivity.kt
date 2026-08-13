@@ -2449,6 +2449,9 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(ramLensesEnabled = on))
             app.reloadLenses()
         }
+        toggle(libraryCard, getString(R.string.settings_ram_trackers), s.ramTrackersEnabled) { on ->
+            app.updateSettings(app.settings.copy(ramTrackersEnabled = on))
+        }
         val lensPackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

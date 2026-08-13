@@ -368,6 +368,7 @@
     <string name="play_hud_resume">Resume</string>
     <string name="play_hud_save">Save</string>
     <string name="play_hud_load">Load</string>
+    <string name="play_hud_tracker">Tracker</string>
     <string name="cockpit_keyboard">Keyboard</string>
     <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -501,6 +502,7 @@
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
     <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ram_lenses">RAM lenses</string>
+    <string name="settings_ram_trackers">RAM trackers</string>
     <string name="settings_import_lens_pack">Import lens pack</string>
     <string name="settings_stack_clones">Stack clones</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>

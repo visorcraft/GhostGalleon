@@ -55,6 +55,7 @@ import com.visorcraft.ghostgalleon.ui.CompanionActivity
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.ui.DisplayRole
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.HostSurface
 import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
 import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
@@ -523,6 +524,9 @@ class GhostGalleonApp : Application() {
     // Process-only pad owner flip (GAME ↔ HOST). Not persisted.
     var hostClaimed: Boolean = false
         private set
+
+    // Process-only play-host chrome. Not persisted.
+    var hostSurface: HostSurface = HostSurface.HUD
 
     fun claimHost() {
         hostClaimed = true
@@ -1373,6 +1377,7 @@ class GhostGalleonApp : Application() {
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
         hostClaimed = false
+        hostSurface = HostSurface.HUD
         val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
         val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
             null
@@ -1401,12 +1406,14 @@ class GhostGalleonApp : Application() {
     fun markSessionGreedy() {
         sessionSurface = sessionSurface?.copy(greedy = true)
         hostClaimed = false
+        hostSurface = HostSurface.HUD
         liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
     fun clearSessionSurface() {
         sessionSurface = null
         hostClaimed = false
+        hostSurface = HostSurface.HUD
         liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
