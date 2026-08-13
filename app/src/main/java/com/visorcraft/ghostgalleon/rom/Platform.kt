@@ -45,6 +45,7 @@ data class PlayerTemplate(
     // NEW_TASK-only.
     val flags: Int = Intent.FLAG_ACTIVITY_NEW_TASK,
     val sessionPolicy: SessionPolicy = SessionPolicy.KEEP_COMPANION,
+    val launchFace: LaunchFace = LaunchFace.AUTO,
 )
 
 data class Platform(

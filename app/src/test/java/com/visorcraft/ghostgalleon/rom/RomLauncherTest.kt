@@ -292,4 +292,66 @@ class RomLauncherTest {
         assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
         assertEquals("melondualds", surface.playerId)
     }
+
+    @Test
+    fun `forRom plot maps INTERACTIVE face to interactive display id`() {
+        val template = Platforms.SNES.player.copy(launchFace = LaunchFace.INTERACTIVE)
+        val surface = LaunchSession.forRom(
+            key = "rom:snes:x.smc",
+            template = template,
+            entryId = "snes:x.smc",
+            stagePlots = emptyMap(),
+            packageYield = emptyMap(),
+            interactiveId = 1,
+            companionId = 2,
+            topologyLaunchId = 0,
+        )
+        assertEquals(1, surface.launchDisplayId)
+        assertEquals(SessionPolicy.KEEP_COMPANION, surface.policy)
+        assertEquals(LaunchFace.INTERACTIVE, template.launchFace)
+    }
+
+    @Test
+    fun `forRom YIELD ignores pack launch face`() {
+        val template = Platforms.NDS.player.copy(launchFace = LaunchFace.INTERACTIVE)
+        val surface = LaunchSession.forRom(
+            key = "rom:nds:a.nds",
+            template = template,
+            entryId = "nds:a.nds",
+            stagePlots = emptyMap(),
+            packageYield = emptyMap(),
+            interactiveId = 1,
+            companionId = 2,
+            topologyLaunchId = 0,
+        )
+        assertEquals(0, surface.launchDisplayId)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+    }
+
+    @Test
+    fun `forRom rom stage plot wins over pack face`() {
+        val template = Platforms.SNES.player.copy(launchFace = LaunchFace.INTERACTIVE)
+        val surface = LaunchSession.forRom(
+            key = "rom:snes:x.smc",
+            template = template,
+            entryId = "snes:x.smc",
+            stagePlots = mapOf(
+                "snes:x.smc" to StagePlot(SessionPolicy.KEEP_COMPANION, LaunchFace.COMPANION),
+            ),
+            packageYield = emptyMap(),
+            interactiveId = 1,
+            companionId = 2,
+            topologyLaunchId = 0,
+        )
+        assertEquals(2, surface.launchDisplayId)
+        assertEquals(SessionPolicy.KEEP_COMPANION, surface.policy)
+    }
+
+    @Test
+    fun `forApp packageYield yields both`() {
+        val surface = LaunchSession.forApp("com.example.game", 1, packageYield = true)
+        assertEquals(SessionPolicy.YIELD_BOTH, surface.policy)
+        assertEquals(1, surface.launchDisplayId)
+        assertNull(surface.playerId)
+    }
 }

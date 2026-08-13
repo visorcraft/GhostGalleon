@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.LaunchSession
+import com.visorcraft.ghostgalleon.rom.PlayerTemplate
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLauncher
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -45,10 +46,17 @@ interface Deck {
 
 // Dual-screen launch model: apps open on the topology launch display
 // (non-interactive panel) when dual; same-display fallback for single.
-internal fun launchOnOtherDisplay(activity: Activity, state: DeckState, intent: Intent) {
+// [launchDisplayId] overrides topology when non-null (stage-plot face).
+internal fun launchOnOtherDisplay(
+    activity: Activity,
+    state: DeckState,
+    intent: Intent,
+    launchDisplayId: Int? = null,
+) {
     val app = activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp
     val topo = app?.displayConfig
-    val launchId = topo?.launchDisplayId
+    val launchId = launchDisplayId
+        ?: topo?.launchDisplayId
         ?: run {
             // Soft fallback without topology: any display that is not primary.
             val dm = activity.getSystemService(DisplayManager::class.java)
@@ -95,20 +103,32 @@ internal fun launchSlotKey(
                 settings?.romProfiles.orEmpty(),
                 settings?.defaultPlayers?.get(entry.platformId),
             )
+            val topo = app?.displayConfig
+            val stagePlots = settings?.stagePlots.orEmpty()
+            val packageYield = settings?.packageYield.orEmpty()
+            val interactiveId = topo?.primaryDisplayId ?: state.primaryDisplayId
+            val companionId = topo?.companionDisplayId
+            val topologyLaunchId = topo?.launchDisplayId
+            fun surfaceFor(template: PlayerTemplate) =
+                LaunchSession.forRom(
+                    key = key,
+                    template = template,
+                    entryId = entry.id,
+                    stagePlots = stagePlots,
+                    packageYield = packageYield,
+                    interactiveId = interactiveId,
+                    companionId = companionId,
+                    topologyLaunchId = topologyLaunchId,
+                )
             val template = RomLauncher.launch(
                 activity, state, entry,
                 playerId = playerId,
                 preferredPlayerId = preferred,
+                resolveLaunchDisplayId = { surfaceFor(it).launchDisplayId },
             )
             if (template != null && app != null) {
                 app.noteLaunch(key)
-                app.beginSession(
-                    LaunchSession.forRom(
-                        key,
-                        template,
-                        app.displayConfig.launchDisplayId,
-                    ),
-                )
+                app.beginSession(surfaceFor(template))
             }
         } else {
             Toast.makeText(activity, R.string.deck_rom_missing, Toast.LENGTH_SHORT).show()
@@ -117,11 +137,13 @@ internal fun launchSlotKey(
     }
     activity.packageManager.getLaunchIntentForPackage(key)
         ?.let {
-            launchOnOtherDisplay(activity, state, it)
+            val pkgYield = app?.settings?.packageYield?.get(key) == true
+            val launchId = app?.displayConfig?.launchDisplayId
+            launchOnOtherDisplay(activity, state, it, launchId)
             if (app != null) {
                 app.noteLaunch(key)
                 app.beginSession(
-                    LaunchSession.forApp(key, app.displayConfig.launchDisplayId),
+                    LaunchSession.forApp(key, launchId, packageYield = pkgYield),
                 )
             }
         }

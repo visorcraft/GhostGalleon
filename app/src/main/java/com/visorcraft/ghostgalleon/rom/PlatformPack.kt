@@ -122,6 +122,9 @@ object PlatformPack {
         val sessionPolicy = SessionPolicy.parse(
             if (o.has("sessionPolicy")) o.optString("sessionPolicy") else null,
         )
+        val launchFace = StagePlot.parse(
+            if (o.has("launchFace")) o.optString("launchFace") else null,
+        )
         return PlayerTemplate(
             id = id,
             displayName = o.optString("displayName", id).ifBlank { id },
@@ -132,6 +135,7 @@ object PlatformPack {
             grantRead = grantRead,
             flags = flags,
             sessionPolicy = sessionPolicy,
+            launchFace = launchFace,
         )
     }
 

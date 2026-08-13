@@ -80,21 +80,68 @@ object LaunchSession {
         key: String,
         template: PlayerTemplate,
         launchDisplayId: Int?,
+        packageYield: Boolean = false,
+        romOverride: SessionPolicy? =
+            template.sessionPolicy.takeIf { it == SessionPolicy.YIELD_BOTH },
     ): SessionSurface = SessionSurface.forLaunch(
         key = key,
         playerId = template.id,
         packageName = template.component.substringBefore('/'),
         launchDisplayId = launchDisplayId,
+        packageYield = packageYield,
         // Pack YIELD is an override; KEEP/omit stays null so forPlayerId still yields built-ins.
-        romOverride = template.sessionPolicy.takeIf { it == SessionPolicy.YIELD_BOTH },
+        romOverride = romOverride,
     )
 
-    fun forApp(key: String, launchDisplayId: Int?): SessionSurface =
+    /**
+     * Resolve stage plot (rom > pack > packageYield > player) and map launch face
+     * to a topology display id. YIELD always uses [topologyLaunchId].
+     */
+    fun forRom(
+        key: String,
+        template: PlayerTemplate,
+        entryId: String,
+        stagePlots: Map<String, StagePlot>,
+        packageYield: Map<String, Boolean>,
+        interactiveId: Int?,
+        companionId: Int?,
+        topologyLaunchId: Int?,
+    ): SessionSurface {
+        val builtIn = SessionPolicy.forPlayerId(template.id)
+        val romPlot = stagePlots[entryId]
+        val packPlot = StagePlot(
+            template.sessionPolicy.takeIf { it == SessionPolicy.YIELD_BOTH },
+            template.launchFace,
+        ).takeIf { it.policy != null || template.launchFace != LaunchFace.AUTO }
+        val pkgYield = packageYield[template.component.substringBefore('/')] == true
+        val plot = StagePlots.resolve(romPlot, packPlot, pkgYield, template.id)
+        val launchId = StagePlots.launchDisplayId(
+            plot.launchFace,
+            plot.policy ?: builtIn,
+            interactiveId = interactiveId,
+            companionId = companionId,
+            launchId = topologyLaunchId,
+        )
+        return forRom(
+            key = key,
+            template = template,
+            launchDisplayId = launchId,
+            packageYield = pkgYield,
+            romOverride = plot.policy,
+        )
+    }
+
+    fun forApp(
+        key: String,
+        launchDisplayId: Int?,
+        packageYield: Boolean = false,
+    ): SessionSurface =
         SessionSurface.forLaunch(
             key = key,
             playerId = null,
             packageName = key,
             launchDisplayId = launchDisplayId,
+            packageYield = packageYield,
         )
 }
 
@@ -115,6 +162,7 @@ object RomLauncher {
         entry: RomEntry,
         playerId: String? = null,
         preferredPlayerId: String? = null,
+        resolveLaunchDisplayId: (PlayerTemplate) -> Int? = { null },
     ): PlayerTemplate? {
         val platform = Platforms.byId(entry.platformId)
         if (platform == null) {
@@ -165,7 +213,12 @@ object RomLauncher {
                     if (plan.grantRead) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
             return try {
-                launchOnOtherDisplay(activity, state, intent)
+                launchOnOtherDisplay(
+                    activity,
+                    state,
+                    intent,
+                    resolveLaunchDisplayId(template),
+                )
                 template
             } catch (e: ActivityNotFoundException) {
                 continue
