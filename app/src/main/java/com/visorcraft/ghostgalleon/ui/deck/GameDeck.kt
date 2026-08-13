@@ -2611,15 +2611,22 @@ class GameDeck(
                 setPadding(pad, pad / 2, pad, pad / 2)
             }
             bodyView = message
-            val helperPkg = settings.romHelpers[rom.id]
+            val helperValue = TextView(activity).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(settings.accentColor)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                gravity = Gravity.END
+            }
+            bindRomHelperValue(helperValue, rom.id)
             val helperRow = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(pad, 0, pad, pad)
                 isFocusable = true
-                setOnClickListener { showRomHelperPicker(rom.id) }
+                setOnClickListener { showRomHelperPicker(rom.id, helperValue) }
                 setOnLongClickListener {
-                    clearRomHelper(rom.id)
+                    clearRomHelper(rom.id, helperValue)
                     true
                 }
             }
@@ -2632,15 +2639,7 @@ class GameDeck(
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
             helperRow.addView(
-                TextView(activity).apply {
-                    text = helperPkg?.let { helperAppLabel(it) }
-                        ?: activity.getString(R.string.action_none)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    setTextColor(settings.accentColor)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    gravity = Gravity.END
-                },
+                helperValue,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
             )
             val content = LinearLayout(activity).apply {
@@ -2687,6 +2686,12 @@ class GameDeck(
     private fun helperAppLabel(packageName: String): String =
         library.byPackage(settings)[packageName]?.label ?: packageName
 
+    private fun bindRomHelperValue(value: TextView, romId: String) {
+        val pkg = app().settings.romHelpers[romId]
+        value.text = pkg?.let { helperAppLabel(it) }
+            ?: activity.getString(R.string.action_none)
+    }
+
     private fun helperPickerApps() = library.visible(settings)
         .sortedBy { it.label.lowercase() }
         .filter { entry ->
@@ -2697,12 +2702,13 @@ class GameDeck(
                 )
         }
 
-    private fun clearRomHelper(romId: String) {
+    private fun clearRomHelper(romId: String, value: TextView) {
         val live = app().settings
         app().updateSettings(live.copy(romHelpers = live.romHelpers - romId))
+        bindRomHelperValue(value, romId)
     }
 
-    private fun showRomHelperPicker(romId: String) {
+    private fun showRomHelperPicker(romId: String, value: TextView) {
         val apps = helperPickerApps()
         if (apps.isEmpty()) {
             Toast.makeText(activity, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
@@ -2715,9 +2721,10 @@ class GameDeck(
                 val pkg = apps[which].packageName
                 val live = app().settings
                 app().updateSettings(live.copy(romHelpers = live.romHelpers + (romId to pkg)))
+                bindRomHelperValue(value, romId)
             }
             .setNeutralButton(R.string.action_clear) { _, _ ->
-                clearRomHelper(romId)
+                clearRomHelper(romId, value)
             }
             .setNegativeButton(R.string.action_cancel, null)
             .show()
