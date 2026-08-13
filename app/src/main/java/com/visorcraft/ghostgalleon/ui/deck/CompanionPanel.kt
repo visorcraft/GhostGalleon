@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -145,6 +146,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_COCKPIT = "play_hud_cockpit"
     private const val TAG_PLAY_HUD_TRACKPAD = "play_hud_trackpad"
     private const val TAG_PLAY_HUD_SEAT = "play_hud_seat"
+    private const val TAG_PLAY_HUD_SEAT_CHIP = "play_hud_seat_chip"
     private const val TAG_PLAY_HUD_SEAT_CLUSTER = "play_hud_seat_cluster"
     private const val TAG_PLAY_HUD_SEAT_HINT = "play_hud_seat_hint"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
@@ -166,6 +168,30 @@ object CompanionPanel {
         val text = tv.context.resolveText(hint)
         if (tv.visibility != View.VISIBLE) tv.visibility = View.VISIBLE
         if (tv.text?.toString() != text) tv.text = text
+    }
+
+    fun isSeatChromeTag(tag: Any?): Boolean =
+        tag == TAG_PLAY_HUD_SEAT || tag == TAG_PLAY_HUD_SEAT_CHIP
+
+    /** True when [ev] lands on the Seat chip or the SEAT body (incl. cluster). */
+    fun isSeatChromeHit(root: View?, ev: MotionEvent): Boolean {
+        if (root == null) return false
+        return containsRaw(root.findViewWithTag(TAG_PLAY_HUD_SEAT_CHIP), ev) ||
+            containsRaw(root.findViewWithTag(TAG_PLAY_HUD_SEAT), ev)
+    }
+
+    private fun containsRaw(view: View?, ev: MotionEvent): Boolean {
+        if (view == null || !view.isShown) return false
+        val visible = Rect()
+        if (!view.getLocalVisibleRect(visible)) return false
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val x = ev.rawX.toInt()
+        val y = ev.rawY.toInt()
+        return x >= loc[0] + visible.left &&
+            x < loc[0] + visible.right &&
+            y >= loc[1] + visible.top &&
+            y < loc[1] + visible.bottom
     }
 
     /**
@@ -2914,7 +2940,10 @@ object CompanionPanel {
             }
             if (seatChrome) {
                 addChip(
-                    actionChip(labelRes = R.string.play_hud_seat) {
+                    actionChip(
+                        labelRes = R.string.play_hud_seat,
+                        chipTag = TAG_PLAY_HUD_SEAT_CHIP,
+                    ) {
                         setSeatActive(app, true)
                     },
                 )

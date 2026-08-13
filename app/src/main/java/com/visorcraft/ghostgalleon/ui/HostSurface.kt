@@ -21,4 +21,21 @@ object HostSurfacePolicy {
         if (cockpit) return false
         return surface != HostSurface.SEAT
     }
+
+    /**
+     * Play-host touches may claim HOST only off SEAT. Independent of
+     * [com.visorcraft.ghostgalleon.input.InputOwnerPolicy.applyIsNoop]
+     * (that triple ignores [hostSurface]).
+     */
+    fun playHostTouchClaimEnabled(
+        playHostAllowed: Boolean,
+        hostSurface: HostSurface,
+    ): Boolean = playHostAllowed && hostSurface != HostSurface.SEAT
+
+    fun shouldClaimPlayHostTouch(
+        playHostAllowed: Boolean,
+        hostSurface: HostSurface,
+        downTargetIsSeatChrome: Boolean,
+    ): Boolean = playHostTouchClaimEnabled(playHostAllowed, hostSurface) &&
+        !downTargetIsSeatChrome
 }

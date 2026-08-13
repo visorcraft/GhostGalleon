@@ -1,5 +1,8 @@
 package com.visorcraft.ghostgalleon.ui
 
+import com.visorcraft.ghostgalleon.input.InputOwner
+import com.visorcraft.ghostgalleon.input.InputOwnerPolicy
+import com.visorcraft.ghostgalleon.ui.deck.CompanionPanel
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,5 +39,43 @@ class HostSurfaceTest {
         assertTrue(HostSurfacePolicy.helperAllowed(HostSurface.HUD, cockpit = false))
         assertFalse(HostSurfacePolicy.seatAllowed(HostSurface.HELPER, cockpit = false))
         assertFalse(HostSurfacePolicy.helperAllowed(HostSurface.SEAT, cockpit = false))
+    }
+
+    @Test
+    fun `applyIsNoop ignores surface so touch-claim flag is applied independently`() {
+        assertTrue(
+            InputOwnerPolicy.applyIsNoop(
+                true, InputOwner.GAME, true,
+                true, InputOwner.GAME, true,
+            ),
+        )
+        assertTrue(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.HUD))
+        assertTrue(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.TRACKER))
+        assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(true, HostSurface.SEAT))
+        assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(false, HostSurface.HUD))
+        assertFalse(HostSurfacePolicy.playHostTouchClaimEnabled(false, HostSurface.SEAT))
+    }
+
+    @Test
+    fun `seat chip and body never claim HOST`() {
+        assertTrue(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.HUD, false),
+        )
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.HUD, true),
+        )
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.SEAT, false),
+        )
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(true, HostSurface.SEAT, true),
+        )
+        assertFalse(
+            HostSurfacePolicy.shouldClaimPlayHostTouch(false, HostSurface.HUD, false),
+        )
+        assertTrue(CompanionPanel.isSeatChromeTag("play_hud_seat"))
+        assertTrue(CompanionPanel.isSeatChromeTag("play_hud_seat_chip"))
+        assertFalse(CompanionPanel.isSeatChromeTag("play_hud_pause"))
+        assertFalse(CompanionPanel.isSeatChromeTag(null))
     }
 }

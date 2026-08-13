@@ -202,6 +202,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
     /** True when this window is the KEEP play host (may claim pad on touch). */
     private var playHostTouchClaimEnabled = false
+    /** Seat chip/body hit on the current ACTION_DOWN (cleared after dispatch). */
+    private var lastDownIsSeatChrome = false
     private var lastFocusLock: Boolean? = null
     private var lastInputOwner: InputOwner? = null
     private var lastPlayHostAllowed: Boolean? = null
@@ -230,6 +232,12 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         val owner = InputOwnerPolicy.effectiveOwner(base, app.hostClaimed)
         val lock = InputOwnerPolicy.focusLockAllowed(owner, allowed)
         val w = window ?: return
+        // Surface is not part of applyIsNoop; refresh even when lock/owner/allowed
+        // are unchanged so leave-SEAT re-arms HUD claims and enter-SEAT disarms.
+        playHostTouchClaimEnabled = HostSurfacePolicy.playHostTouchClaimEnabled(
+            allowed,
+            app.hostSurface,
+        )
         if (InputOwnerPolicy.applyIsNoop(
                 lastFocusLock, lastInputOwner, lastPlayHostAllowed,
                 lock, owner, allowed,
@@ -247,12 +255,18 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         }
         w.attributes = params
-        playHostTouchClaimEnabled = allowed && app.hostSurface != HostSurface.SEAT
         val content = findViewById<View>(android.R.id.content)
         if (allowed) {
             content?.setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN &&
-                    app.hostSurface != HostSurface.SEAT
+                    HostSurfacePolicy.shouldClaimPlayHostTouch(
+                        playHostAllowed = true,
+                        hostSurface = app.hostSurface,
+                        downTargetIsSeatChrome = CompanionPanel.isSeatChromeHit(
+                            w.decorView,
+                            event,
+                        ),
+                    )
                 ) {
                     app.claimHost()
                     applyPlayHostFocusLock()
@@ -421,11 +435,29 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            lastDownIsSeatChrome = CompanionPanel.isSeatChromeHit(window?.decorView, ev)
+        }
+        val handled = super.dispatchTouchEvent(ev)
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            lastDownIsSeatChrome = false
+        }
+        return handled
+    }
+
     override fun onUserInteraction() {
         super.onUserInteraction()
-        // Play-host touches (incl. HUD chips) claim HOST; keys only reach us
-        // after claim (focus-lock drops them while GAME). Re-arm idle timeout.
-        if (!playHostTouchClaimEnabled) return
+        // Play-host touches (incl. HUD chips) claim HOST; seat chip/body do
+        // not. Keys only reach us after claim (focus-lock drops them while GAME).
+        if (!HostSurfacePolicy.shouldClaimPlayHostTouch(
+                playHostAllowed = playHostTouchClaimEnabled,
+                hostSurface = app.hostSurface,
+                downTargetIsSeatChrome = lastDownIsSeatChrome,
+            )
+        ) {
+            return
+        }
         if (!app.hostClaimed) {
             app.claimHost()
             applyPlayHostFocusLock()
