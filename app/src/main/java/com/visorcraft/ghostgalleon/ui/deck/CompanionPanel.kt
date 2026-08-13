@@ -64,6 +64,7 @@ import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
 import com.visorcraft.ghostgalleon.ui.MainActivity
 import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
+import com.visorcraft.ghostgalleon.ui.openSessionSwitcher
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
@@ -2222,8 +2223,9 @@ object CompanionPanel {
             actionChip(
                 R.string.play_hud_switcher,
                 chipTag = TAG_PLAY_HUD_SWITCHER,
-                visibility = View.GONE,
-            ),
+            ) {
+                openSessionSwitcher(activity)
+            },
         )
         hud.addView(actions)
         return hud

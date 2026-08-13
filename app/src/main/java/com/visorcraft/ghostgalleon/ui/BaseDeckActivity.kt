@@ -46,6 +46,9 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.state.UIMode
+import com.visorcraft.ghostgalleon.rom.SessionRing
+import com.visorcraft.ghostgalleon.rom.SessionSwitch
+import com.visorcraft.ghostgalleon.rom.SwitchToResult
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.deck.AppIconLoader
 import com.visorcraft.ghostgalleon.ui.deck.AppPicker
@@ -55,6 +58,7 @@ import com.visorcraft.ghostgalleon.ui.deck.Deck
 import com.visorcraft.ghostgalleon.ui.deck.GameDeck
 import com.visorcraft.ghostgalleon.ui.deck.GridDeck
 import com.visorcraft.ghostgalleon.ui.deck.QuickPanel
+import com.visorcraft.ghostgalleon.ui.deck.SessionSwitcherView
 import com.visorcraft.ghostgalleon.ui.deck.launchOnOtherDisplay
 import com.visorcraft.ghostgalleon.ui.deck.launchSlotKey
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
@@ -850,6 +854,22 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         dismissSetup()
     }
 
+    private fun routeSessionSwitcherAction(action: Action): Boolean {
+        if (SessionSwitcherView.overlay(window.decorView) != null) {
+            SessionSwitcherView.handleAction(window.decorView, action)
+            return true
+        }
+        for (other in app.liveDeckActivities()) {
+            if (other === this) continue
+            val root = other.window.decorView
+            if (SessionSwitcherView.overlay(root) != null) {
+                SessionSwitcherView.handleAction(root, action)
+                return true
+            }
+        }
+        return false
+    }
+
     protected open fun handleAction(action: Action): Boolean {
         // First-run setup: primary hosts the card; input may land elsewhere.
         if (setupOverlay != null || app.setupBlockingInput) {
@@ -870,6 +890,14 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 app.primaryDeckActivity()?.let { host ->
                     if (host !== this) host.runOnUiThread { host.dismissSetupPublic() }
                 }
+            }
+            return true
+        }
+        if (routeSessionSwitcherAction(action)) {
+            when (action) {
+                Action.NAV_UP, Action.NAV_DOWN, Action.CONFIRM ->
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                else -> {}
             }
             return true
         }
@@ -1165,7 +1193,10 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             true
         }
         Action.OPEN_SESSION_SWITCHER -> {
-            // Task 10 fills this. Swallow for now so remap does not crash.
+            if (repeatCount == 0) {
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                openSessionSwitcher(this)
+            }
             true
         }
         Action.BACK -> when {
@@ -1179,6 +1210,91 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         else -> handleAction(action) || fallThrough()
     }
 
+}
+
+/** Session switcher overlay host: play-HUD parent, else the window decor. */
+internal fun sessionSwitcherHost(activity: AppCompatActivity): ViewGroup? {
+    val decor = activity.window?.decorView as? ViewGroup ?: return null
+    return CompanionPanel.sessionSwitcherHost(decor) ?: decor
+}
+
+/**
+ * Open the session switcher on [activity] when idle or this activity is the
+ * KEEP play host. Yield / greedy toast and return; SINGLE is a no-op.
+ */
+internal fun openSessionSwitcher(activity: AppCompatActivity) {
+    val app = activity.application as? GhostGalleonApp ?: return
+    val surface = app.sessionSurface
+    if (DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface?.policy,
+            surface?.greedy == true,
+        )
+    ) {
+        Toast.makeText(
+            activity,
+            R.string.session_yields_both_screens,
+            Toast.LENGTH_SHORT,
+        ).show()
+        return
+    }
+    val dual = app.displayConfig.mode == SurfaceMode.DUAL
+    val allowed = dual && (
+        surface == null || PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = activity.currentDisplayId(),
+            launchDisplayId = surface.launchDisplayId,
+        )
+    )
+    if (!allowed) return
+    val host = sessionSwitcherHost(activity) ?: return
+    fun attach() {
+        SessionSwitcherView.attach(
+            host,
+            app.settings.sessionRing,
+            onPick = { target ->
+                val current = app.sessionSurface
+                when (
+                    SessionSwitch.decide(
+                        current?.key,
+                        current?.playerId,
+                        current?.policy,
+                        current?.greedy == true,
+                        target,
+                    )
+                ) {
+                    SwitchToResult.NO_OP -> SessionSwitcherView.detach(host)
+                    SwitchToResult.REFUSE_YIELD -> Toast.makeText(
+                        activity,
+                        R.string.session_yields_both_screens,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    SwitchToResult.LAUNCH -> {
+                        SessionSwitcherView.detach(host)
+                        launchSlotKey(
+                            activity,
+                            app.deckState,
+                            app.romEntries,
+                            target.key,
+                            playerId = target.playerId,
+                        )
+                    }
+                }
+            },
+            onRemove = { key ->
+                app.updateSettings(
+                    app.settings.copy(
+                        sessionRing = SessionRing.remove(app.settings.sessionRing, key),
+                    ),
+                    notify = false,
+                )
+                attach()
+            },
+            onClose = { SessionSwitcherView.detach(host) },
+        )
+    }
+    attach()
 }
 
 /** Apply the active theme's fontScale to this activity's configuration. */
