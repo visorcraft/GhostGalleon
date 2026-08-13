@@ -60,6 +60,8 @@ class CompanionActivity : BaseDeckActivity() {
     fun closeQuietly() {
         selfClosing = true
         releaseSeat()
+        // Clear focus-lock flag before the window goes away (owner NONE).
+        applyPlayHostFocusLock()
         finish()
     }
 
@@ -194,11 +196,13 @@ class CompanionActivity : BaseDeckActivity() {
         super.onResume()
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     override fun onContentRebuilt() {
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     private fun armPlayHudTick() {

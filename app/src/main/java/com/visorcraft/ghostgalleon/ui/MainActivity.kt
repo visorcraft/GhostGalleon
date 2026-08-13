@@ -69,11 +69,13 @@ class MainActivity : BaseDeckActivity() {
         }
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     override fun onContentRebuilt() {
         armPlayHudTick()
         oracle.start()
+        applyPlayHostFocusLock()
     }
 
     private fun armPlayHudTick() {

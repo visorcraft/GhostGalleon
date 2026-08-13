@@ -38,6 +38,7 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.art.ArtTile
+import com.visorcraft.ghostgalleon.input.InputOwner
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
@@ -64,6 +65,7 @@ import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.hint
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
@@ -106,6 +108,7 @@ object CompanionPanel {
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
     private const val TAG_PLAY_HUD = "play_hud"
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
+    private const val TAG_PLAY_HUD_OWNER = "play_hud_owner"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
@@ -117,6 +120,18 @@ object CompanionPanel {
 
     fun sessionSwitcherHost(root: View): ViewGroup? =
         root.findViewWithTag(TAG_SESSION_SWITCHER_HOST)
+
+    /** In-place pad-owner hint on the KEEP play HUD (`play_hud_owner`). */
+    fun bindOwnerHint(root: View, owner: InputOwner) {
+        val tv = root.findViewWithTag<TextView>(TAG_PLAY_HUD_OWNER) ?: return
+        val hint = owner.hint()
+        if (hint == null) {
+            tv.visibility = View.GONE
+            return
+        }
+        tv.visibility = View.VISIBLE
+        tv.text = tv.context.resolveText(hint)
+    }
 
     fun attachSessionSwitcher(
         root: View,
@@ -2233,6 +2248,14 @@ object CompanionPanel {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 16f)
             setTextColor(0x99FFFFFF.toInt())
             gravity = Gravity.CENTER
+        })
+        hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_OWNER
+            visibility = View.GONE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 14f)
+            setTextColor(0xBBFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
         })
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL

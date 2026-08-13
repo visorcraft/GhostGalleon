@@ -22,6 +22,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -35,6 +36,8 @@ import com.visorcraft.ghostgalleon.display.CompanionHeroStyle
 import com.visorcraft.ghostgalleon.display.LayoutMetricsResolver
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.display.SurfaceMode
+import com.visorcraft.ghostgalleon.input.InputOwner
+import com.visorcraft.ghostgalleon.input.InputOwnerPolicy
 import com.visorcraft.ghostgalleon.input.KeyMap
 import com.visorcraft.ghostgalleon.input.NavRepeater
 import com.visorcraft.ghostgalleon.library.AppLibrary
@@ -190,6 +193,75 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     /** Re-arm KEEP HUD clock after a full rebuild (clock may have just appeared). */
     protected open fun onContentRebuilt() {}
 
+    private val hostTimeoutHandler = Handler(Looper.getMainLooper())
+    private val hostTimeoutRunnable = Runnable {
+        app.releaseHost()
+        applyPlayHostFocusLock()
+    }
+    /** True when this window is the KEEP play host (may claim pad on touch). */
+    private var playHostTouchClaimEnabled = false
+
+    /**
+     * Apply or clear [WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE] so the KEEP
+     * game keeps the pad while the play host stays touchable. Never sets
+     * FLAG_NOT_TOUCHABLE.
+     */
+    protected fun applyPlayHostFocusLock() {
+        val surface = app.sessionSurface
+        val dual = app.displayConfig.mode == SurfaceMode.DUAL
+        val allowed = PlayHostPolicy.playHostAllowed(
+            dualMode = dual,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            hostDisplayId = currentDisplayId(),
+            launchDisplayId = surface?.launchDisplayId,
+        )
+        val base = InputOwnerPolicy.inputOwner(
+            dualMode = dual,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            playHostAllowed = allowed,
+        )
+        val owner = InputOwnerPolicy.effectiveOwner(base, app.hostClaimed)
+        val lock = InputOwnerPolicy.focusLockAllowed(owner, allowed)
+        val w = window ?: return
+        val params = w.attributes
+        if (lock) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        } else {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        }
+        w.attributes = params
+        playHostTouchClaimEnabled = allowed
+        val content = findViewById<View>(android.R.id.content)
+        if (allowed) {
+            content?.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    app.claimHost()
+                    applyPlayHostFocusLock()
+                }
+                false
+            }
+        } else {
+            content?.setOnTouchListener(null)
+        }
+        CompanionPanel.bindOwnerHint(w.decorView, owner)
+        if (owner == InputOwner.HOST) armHostTimeout() else disarmHostTimeout()
+        Log.i("GGInput", "owner=$owner host=${javaClass.simpleName} lock=$lock")
+    }
+
+    private fun armHostTimeout() {
+        hostTimeoutHandler.removeCallbacks(hostTimeoutRunnable)
+        hostTimeoutHandler.postDelayed(
+            hostTimeoutRunnable,
+            settings.inputHostTimeoutMs.toLong(),
+        )
+    }
+
+    private fun disarmHostTimeout() {
+        hostTimeoutHandler.removeCallbacks(hostTimeoutRunnable)
+    }
+
     private var rendering: Boolean = false
     /** True while [renderFromState] is inside setContentView. Oracle skips these ticks. */
     protected val isFullRenderInFlight: Boolean get() = rendering
@@ -332,6 +404,19 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        // Play-host touches (incl. HUD chips) claim HOST; keys only reach us
+        // after claim (focus-lock drops them while GAME). Re-arm idle timeout.
+        if (!playHostTouchClaimEnabled) return
+        if (!app.hostClaimed) {
+            app.claimHost()
+            applyPlayHostFocusLock()
+        } else {
+            armHostTimeout()
+        }
+    }
+
     override fun onPause() {
         // A held direction whose key-up gets lost (focus change, activity
         // switch) must not repeat forever.
@@ -339,6 +424,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         resetAxisEngagement()
         orientationController.stop()
         deckState.removeListener(stateListener)
+        disarmHostTimeout()
         // Debounced settings may still be in flight — flush before we
         // background so process death cannot drop a favorite/dock edit.
         app.flushSettingsNow()
@@ -494,6 +580,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     protected open fun skipExitCascade(): Boolean = false
 
     override fun onDestroy() {
+        disarmHostTimeout()
         if (isFinishing && !isChangingConfigurations && !skipExitCascade()) {
             app.requestExitAll(this)
         }

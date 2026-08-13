@@ -430,6 +430,18 @@ class GhostGalleonApp : Application() {
     // Process-only KEEP play HUD chrome. Expanded shows the actions row.
     var playHudExpanded: Boolean = true
 
+    // Process-only pad owner flip (GAME ↔ HOST). Not persisted.
+    var hostClaimed: Boolean = false
+        private set
+
+    fun claimHost() {
+        hostClaimed = true
+    }
+
+    fun releaseHost() {
+        hostClaimed = false
+    }
+
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
     @Volatile
     var raCommandClient: RaCommandClient? = null
@@ -898,6 +910,7 @@ class GhostGalleonApp : Application() {
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {
         sessionSurface = surface
+        hostClaimed = false
         val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
         val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
             null
@@ -922,10 +935,12 @@ class GhostGalleonApp : Application() {
 
     fun markSessionGreedy() {
         sessionSurface = sessionSurface?.copy(greedy = true)
+        hostClaimed = false
     }
 
     fun clearSessionSurface() {
         sessionSurface = null
+        hostClaimed = false
     }
 
     private fun endOpenSession(nowMs: Long) {
