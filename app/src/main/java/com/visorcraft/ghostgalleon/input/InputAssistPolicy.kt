@@ -17,4 +17,17 @@ object InputAssistPolicy {
         val id = playerId?.trim().orEmpty()
         return id == "winlator" || id == "winlator-main"
     }
+
+    fun mayInjectSeat(
+        assistConnected: Boolean,
+        playHostAllowed: Boolean,
+        sessionOwnsCompanion: Boolean,
+        playerIsRa: Boolean,
+        seatEnabled: Boolean,
+    ): Boolean =
+        assistConnected &&
+            playHostAllowed &&
+            !sessionOwnsCompanion &&
+            playerIsRa &&
+            seatEnabled
 }

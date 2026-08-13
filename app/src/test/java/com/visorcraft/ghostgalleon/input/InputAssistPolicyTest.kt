@@ -36,4 +36,14 @@ class InputAssistPolicyTest {
             InputAssistPolicy.mayInjectPointer(true, false, false, "winlator"),
         )
     }
+
+    @Test
+    fun `seat inject only for KEEP RA play host`() {
+        assertTrue(InputAssistPolicy.mayInjectSeat(true, true, false, true, true))
+        assertFalse(InputAssistPolicy.mayInjectSeat(true, true, true, true, true))
+        assertFalse(InputAssistPolicy.mayInjectSeat(false, true, false, true, true))
+        assertFalse(InputAssistPolicy.mayInjectSeat(true, false, false, true, true))
+        assertFalse(InputAssistPolicy.mayInjectSeat(true, true, false, false, true))
+        assertFalse(InputAssistPolicy.mayInjectSeat(true, true, false, true, false))
+    }
 }
