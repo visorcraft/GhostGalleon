@@ -41,6 +41,7 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformLook
@@ -51,6 +52,7 @@ import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.rom.SelectionStrip
+import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.Settings
@@ -59,6 +61,8 @@ import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
+import com.visorcraft.ghostgalleon.ui.MainActivity
+import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
@@ -91,6 +95,10 @@ object CompanionPanel {
     private const val TAG_STRIP_DETAIL = "strip_detail"
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
+    private const val TAG_PLAY_HUD = "play_hud"
+    private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
+    private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
+    private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
 
     /**
      * Slot key companion Resume launches through [launchSlotKey].
@@ -1105,6 +1113,29 @@ object CompanionPanel {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { bottomMargin = dp(8) })
 
+        val surface = app.sessionSurface
+        val hostId = activity.currentDisplayId()
+        val playHud = PlayHostPolicy.playHostAllowed(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            policy = surface?.policy,
+            greedy = surface?.greedy == true,
+            hostDisplayId = hostId,
+            launchDisplayId = surface?.launchDisplayId,
+        )
+        fun sessionCard(
+            session: com.visorcraft.ghostgalleon.library.OpenSession,
+            compact: Boolean,
+        ): View =
+            if (playHud && surface != null) {
+                buildPlayHud(
+                    activity, library, roms, settings, session, surface, toDp, compact,
+                )
+            } else {
+                buildNowPlayingCard(
+                    activity, library, roms, settings, session, toDp, compact,
+                )
+            }
+
         when (effectiveRole) {
             CompanionRole.PERF_HUD -> {
                 content.addView(buildPerfHud(context, settings, toDp), LinearLayout.LayoutParams(
@@ -1141,9 +1172,7 @@ object CompanionPanel {
                 val session = app.openSession
                 if (session != null) {
                     content.addView(
-                        buildNowPlayingCard(
-                            activity, library, roms, settings, session, toDp, compact = false,
-                        ),
+                        sessionCard(session, compact = false),
                         LinearLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1164,9 +1193,7 @@ object CompanionPanel {
         // Compact Now Playing banner when a session is open.
         app.openSession?.let { session ->
             content.addView(
-                buildNowPlayingCard(
-                    activity, library, roms, settings, session, toDp, compact = true,
-                ),
+                sessionCard(session, compact = true),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2037,5 +2064,133 @@ object CompanionPanel {
         })
         nowPlaying.addView(actions)
         return nowPlaying
+    }
+
+    private fun buildPlayHud(
+        activity: AppCompatActivity,
+        library: AppLibrary,
+        roms: List<RomEntry>,
+        settings: Settings,
+        session: com.visorcraft.ghostgalleon.library.OpenSession,
+        surface: SessionSurface,
+        dp: (Int) -> Int,
+        compact: Boolean,
+    ): View {
+        val app = activity.application as GhostGalleonApp
+        val hud = LinearLayout(activity).apply {
+            tag = TAG_PLAY_HUD
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = TileBackgrounds.card(activity)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        hud.addView(TextView(activity).apply {
+            setText(R.string.label_now_playing)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            letterSpacing = 0.12f
+            gravity = Gravity.CENTER
+        })
+        val label = resumeLabel(surface.key, library, roms, settings, app)
+        hud.addView(TextView(activity).apply {
+            text = label
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            maxLines = if (compact) 1 else 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        val playerName = Platforms.ALL.flatMap { it.players }
+            .firstOrNull { it.id == surface.playerId }
+            ?.displayName
+            .orEmpty()
+        hud.addView(TextView(activity).apply {
+            text = playerName
+            visibility = if (playerName.isEmpty()) View.GONE else View.VISIBLE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 14f)
+            setTextColor(0xBBFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
+        hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_CLOCK
+            text = activity.getString(
+                if (session.isActive) R.string.format_session else R.string.format_session_paused,
+                activity.resolveText(SessionMath.formatPlaytime(elapsed)),
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 16f)
+            setTextColor(0x99FFFFFF.toInt())
+            gravity = Gravity.CENTER
+        })
+        val actions = LinearLayout(activity).apply {
+            tag = TAG_PLAY_HUD_ACTIONS
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            isBaselineAligned = false
+            setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+        }
+        fun actionChip(
+            labelRes: Int,
+            chipTag: Any? = null,
+            filled: Boolean = false,
+            visibility: Int = View.VISIBLE,
+            onClick: (() -> Unit)? = null,
+        ): TextView = TextView(activity).apply {
+            tag = chipTag
+            setText(labelRes)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(if (filled) Color.BLACK else Color.WHITE)
+            if (filled) {
+                background = TileBackgrounds.selected(activity, settings.accentColor)
+            }
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            this.visibility = visibility
+            if (onClick != null) setOnClickListener { onClick() }
+        }
+        fun addChip(chip: View) {
+            if (actions.childCount > 0 && chip.visibility != View.GONE) {
+                actions.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+            }
+            actions.addView(chip)
+        }
+        addChip(actionChip(R.string.action_swap, filled = true) {
+            app.swapInteractiveDisplay()
+        })
+        addChip(actionChip(R.string.play_hud_end) {
+            app.clearOpenSession()
+        })
+        addChip(actionChip(R.string.play_hud_reclaim) {
+            app.noteReturnToLauncher()
+            if (app.liveCompanion() == null) {
+                (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
+            }
+        })
+        addChip(
+            actionChip(
+                if (surface.key in settings.favorites) R.string.action_unfavorite
+                else R.string.action_favorite,
+            ) {
+                EntryActions.toggleFavorite(activity, surface.key)
+            },
+        )
+        addChip(actionChip(R.string.action_open_with) {
+            val rom = selectedRom(surface.key, roms, app) ?: return@actionChip
+            EntryActions.openWith(activity, rom) { playerId ->
+                launchSlotKey(
+                    activity, app.deckState, roms, surface.key, playerId = playerId,
+                )
+            }
+        })
+        addChip(
+            actionChip(
+                R.string.play_hud_switcher,
+                chipTag = TAG_PLAY_HUD_SWITCHER,
+                visibility = View.GONE,
+            ),
+        )
+        hud.addView(actions)
+        return hud
     }
 }

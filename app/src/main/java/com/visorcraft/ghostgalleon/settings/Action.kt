@@ -34,9 +34,3 @@ fun Action.label(): UiText = text(when (this) {
     Action.TOGGLE_PLAY_HUD -> R.string.action_toggle_play_hud
     Action.NONE -> R.string.action_none
 })
-
-internal val PLAY_HUD_LABELS = intArrayOf(
-    R.string.play_hud_end,
-    R.string.play_hud_reclaim,
-    R.string.play_hud_switcher,
-)
