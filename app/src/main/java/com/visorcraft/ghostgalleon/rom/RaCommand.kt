@@ -60,6 +60,27 @@ class RaCommandClient(
 
     fun loadState(port: Int): Boolean = sendFireAndForget(port, "LOAD_STATE")
 
+    /** Process-only: hide the slot strip after one failed SLOT command. */
+    private var slotStripAllowed: Boolean = true
+
+    fun slotStripAllowed(): Boolean = slotStripAllowed
+
+    fun saveStateSlot(port: Int, slot: Int): Boolean = sendSlot(port, "SAVE_STATE_SLOT", slot)
+
+    fun loadStateSlot(port: Int, slot: Int): Boolean = sendSlot(port, "LOAD_STATE_SLOT", slot)
+
+    /**
+     * SLOT commands reply when the build supports them. Timeout once →
+     * hide the strip; callers fall back to SAVE_STATE / LOAD_STATE.
+     */
+    private fun sendSlot(port: Int, verb: String, slot: Int): Boolean {
+        if (slot !in RaStateSlots.SLOTS) return false
+        val text = requestText(port, "$verb $slot", dropLinkOnTimeout = false)
+        val ok = RaCommand.parseSlotReply(text)
+        if (!ok) slotStripAllowed = false
+        return ok
+    }
+
     /**
      * RetroArch does not reply to PAUSE_TOGGLE / SAVE_STATE / LOAD_STATE.
      * Timeout is success; only VERSION / GET_STATUS may clear [linkUp].

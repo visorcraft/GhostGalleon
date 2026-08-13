@@ -154,6 +154,44 @@ class RaCommandTest {
     }
 
     @Test
+    fun `slot commands encode the slot and first timeout hides the strip`() {
+        val seen = mutableListOf<String>()
+        val c = RaCommandClient(
+            transport = { _, payload, _ ->
+                seen += payload.toString(Charsets.US_ASCII).trim()
+                null
+            },
+            clockMs = { 0L },
+        )
+        assertTrue(c.slotStripAllowed())
+        assertFalse(c.loadStateSlot(55355, 3))
+        assertFalse(c.slotStripAllowed())
+        assertTrue(c.loadState(55355))
+        assertFalse(c.saveStateSlot(55355, 2))
+        assertTrue(c.saveState(55355))
+        assertEquals(
+            listOf("LOAD_STATE_SLOT 3", "LOAD_STATE", "SAVE_STATE_SLOT 2", "SAVE_STATE"),
+            seen,
+        )
+    }
+
+    @Test
+    fun `slot command ACK keeps the strip allowed`() {
+        val seen = mutableListOf<String>()
+        val c = RaCommandClient(
+            transport = { _, payload, _ ->
+                seen += payload.toString(Charsets.US_ASCII).trim()
+                payload
+            },
+            clockMs = { 0L },
+        )
+        assertTrue(c.saveStateSlot(55355, 2))
+        assertTrue(c.loadStateSlot(55355, 8))
+        assertTrue(c.slotStripAllowed())
+        assertEquals(listOf("SAVE_STATE_SLOT 2", "LOAD_STATE_SLOT 8"), seen)
+    }
+
+    @Test
     fun `client status timeout drops link so probe can run again`() {
         var mode = "up"
         val c = RaCommandClient(

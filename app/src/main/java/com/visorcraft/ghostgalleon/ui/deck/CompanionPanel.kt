@@ -4,6 +4,7 @@ import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
@@ -22,6 +23,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -49,6 +51,7 @@ import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaStateSlots
 import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
@@ -71,6 +74,7 @@ import com.visorcraft.ghostgalleon.ui.openSessionSwitcher
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
+import java.io.File
 
 object CompanionPanel {
 
@@ -106,6 +110,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
     private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
+    private const val TAG_PLAY_HUD_SLOTS = "play_hud_slots"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
     const val TAG_SESSION_SWITCHER_HOST = "session_switcher_host"
@@ -2225,6 +2230,7 @@ object CompanionPanel {
                 )
             }
         })
+        var slotStrip: View? = null
         if (raHudEligible(settings.raNetworkCommands, surface)) {
             val raChips = LinearLayout(activity).apply {
                 tag = TAG_PLAY_HUD_RA
@@ -2246,6 +2252,36 @@ object CompanionPanel {
                 command(client, port)
                 applyRaChipState(hud, client, port, probe = false)
             }
+            var slotSaveMode = false
+            val builtSlots = buildRaSlotStrip(
+                activity, settings, surface, dp, compact,
+            ) { slot ->
+                val client = app.ensureRaCommandClient()
+                val port = app.settings.raNetworkCmdPort
+                val save = slotSaveMode
+                val ok = if (save) client.saveStateSlot(port, slot)
+                else client.loadStateSlot(port, slot)
+                if (!ok) {
+                    if (save) client.saveState(port) else client.loadState(port)
+                }
+                applyRaChipState(hud, client, port, probe = false)
+            }
+            slotStrip = builtSlots
+            fun showOrRunSlots(save: Boolean) {
+                val client = app.ensureRaCommandClient()
+                val port = app.settings.raNetworkCmdPort
+                if (!client.slotStripAllowed()) {
+                    if (save) client.saveState(port) else client.loadState(port)
+                    applyRaChipState(hud, client, port, probe = false)
+                    return
+                }
+                if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
+                    builtSlots.visibility = View.GONE
+                    return
+                }
+                slotSaveMode = save
+                builtSlots.visibility = View.VISIBLE
+            }
             addRaChip(
                 actionChip(R.string.play_hud_pause, chipTag = TAG_PLAY_HUD_PAUSE) {
                     runRa { client, port -> client.pauseToggle(port) }
@@ -2253,12 +2289,12 @@ object CompanionPanel {
             )
             addRaChip(
                 actionChip(R.string.play_hud_save) {
-                    runRa { client, port -> client.saveState(port) }
+                    showOrRunSlots(save = true)
                 },
             )
             addRaChip(
                 actionChip(R.string.play_hud_load) {
-                    runRa { client, port -> client.loadState(port) }
+                    showOrRunSlots(save = false)
                 },
             )
             actions.addView(raChips)
@@ -2279,6 +2315,7 @@ object CompanionPanel {
             },
         )
         hud.addView(actions)
+        slotStrip?.let { hud.addView(it) }
         return hud
     }
 
@@ -2297,6 +2334,7 @@ object CompanionPanel {
             )
         if (!allowed) {
             group.visibility = View.GONE
+            root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.visibility = View.GONE
             return
         }
         val client = app.ensureRaCommandClient()
@@ -2318,17 +2356,22 @@ object CompanionPanel {
     ) {
         val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
         val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
-        if (!probe && !client.isLinkUp()) {
+        val slots = root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)
+        fun hideRa() {
             group.visibility = View.GONE
+            slots?.visibility = View.GONE
+        }
+        if (!probe && !client.isLinkUp()) {
+            hideRa()
             return
         }
         if (probe && !client.probe(port, SystemClock.elapsedRealtime())) {
-            group.visibility = View.GONE
+            hideRa()
             return
         }
         val status = client.status(port)
         if (!client.isLinkUp()) {
-            group.visibility = View.GONE
+            hideRa()
             return
         }
         pause.setText(
@@ -2336,5 +2379,110 @@ object CompanionPanel {
             else R.string.play_hud_pause,
         )
         group.visibility = View.VISIBLE
+        if (!client.slotStripAllowed()) slots?.visibility = View.GONE
+    }
+
+    private fun buildRaSlotStrip(
+        activity: AppCompatActivity,
+        settings: Settings,
+        surface: SessionSurface,
+        dp: (Int) -> Int,
+        compact: Boolean,
+        onPick: (Int) -> Unit,
+    ): View {
+        val cell = dp(if (compact) 36 else 44)
+        val statesDir = raStatesDir(surface)
+        val pngNames = statesDir?.let { RaStateSlots.pngNamesIn(it) }.orEmpty()
+        val thumbs = RaStateSlots.thumbsBySlot(pngNames)
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            isBaselineAligned = false
+        }
+        for (slot in RaStateSlots.slotLabels(pngNames)) {
+            val thumbName = thumbs[slot]
+            val bmp = if (statesDir != null && thumbName != null) {
+                decodeSlotThumb(File(statesDir, thumbName), cell)
+            } else {
+                null
+            }
+            row.addView(raSlotCell(activity, settings, slot, bmp, cell, dp, onPick))
+        }
+        return HorizontalScrollView(activity).apply {
+            tag = TAG_PLAY_HUD_SLOTS
+            visibility = View.GONE
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, dp(8), 0, 0)
+            addView(
+                row,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { gravity = Gravity.CENTER_HORIZONTAL },
+            )
+        }
+    }
+
+    private fun raSlotCell(
+        activity: AppCompatActivity,
+        settings: Settings,
+        slot: Int,
+        thumb: Bitmap?,
+        sizePx: Int,
+        dp: (Int) -> Int,
+        onPick: (Int) -> Unit,
+    ): View {
+        val cell = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                if (slot > RaStateSlots.SLOTS.first()) marginStart = dp(6)
+            }
+            background = TileBackgrounds.chip(activity)
+            setOnClickListener { onPick(slot) }
+        }
+        if (thumb != null) {
+            cell.addView(ImageView(activity).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageBitmap(thumb)
+            })
+        }
+        cell.addView(TextView(activity).apply {
+            text = slot.toString()
+            setTextColor(if (thumb != null) Color.WHITE else settings.accentColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            if (thumb != null) setBackgroundColor(0x66000000)
+        })
+        return cell
+    }
+
+    private fun raStatesDir(surface: SessionSurface): File? {
+        val players = Platforms.ALL.flatMap { it.players }
+        val extras = players.firstOrNull { it.id == surface.playerId }?.extras
+            ?: players.firstOrNull { it.id.startsWith("ra-") }?.extras
+        val external = extras?.get("EXTERNAL")?.trim().orEmpty()
+        if (external.isEmpty()) return null
+        return File("$external/states")
+    }
+
+    private fun decodeSlotThumb(file: File, targetPx: Int): Bitmap? {
+        if (!file.isFile || !file.canRead()) return null
+        return runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            var sample = 1
+            val w = bounds.outWidth
+            val h = bounds.outHeight
+            while (w / sample > targetPx * 2 && h / sample > targetPx * 2) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+        }.getOrNull()
     }
 }
