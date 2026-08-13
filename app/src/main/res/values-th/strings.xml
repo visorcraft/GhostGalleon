@@ -348,6 +348,7 @@
     <string name="play_hud_save">บันทึก</string>
     <string name="play_hud_load">โหลด</string>
     <string name="play_hud_tracker">ตัวติดตาม</string>
+    <string name="play_hud_cinema">โรงภาพยนตร์</string>
     <string name="cockpit_keyboard">คีย์บอร์ด</string>
     <string name="cockpit_need_assist">เปิดตัวช่วยอินพุตเพื่อขยับเมาส์</string>
     <string name="session_switcher_title">เซสชัน</string>
@@ -471,6 +472,7 @@
     <string name="confirm_keep_on_yield_player">โปรแกรมเล่นนี้ออกแบบมาสำหรับทั้งสองหน้าจอ Ghost Galleon จะเก็บแผงหนึ่งไว้ melonDualDS / Azahar จะไม่เห็นหน้าจอที่สอง</string>
     <string name="confirm_yield_on_keep_player">ทั้งสองแผงจะไปที่เกม HUD เล่นจะถูกซ่อน</string>
     <string name="settings_ra_network_commands">พูดคุยกับ RetroArch</string>
+    <string name="settings_ra_cinema">โรงภาพยนตร์สถานะ</string>
     <string name="settings_ra_handoff_save">บันทึกก่อนสลับ</string>
     <string name="settings_ram_lenses">เลนส์ RAM</string>
     <string name="settings_ram_trackers">ตัวติดตาม RAM</string>

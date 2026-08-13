@@ -2445,6 +2445,9 @@ class SettingsActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
         )
         refreshRaHandoffSaveEnabled()
+        toggle(libraryCard, getString(R.string.settings_ra_cinema), s.raCinemaEnabled) { on ->
+            app.updateSettings(app.settings.copy(raCinemaEnabled = on))
+        }
         toggle(libraryCard, getString(R.string.settings_ram_lenses), s.ramLensesEnabled) { on ->
             app.updateSettings(app.settings.copy(ramLensesEnabled = on))
             app.reloadLenses()

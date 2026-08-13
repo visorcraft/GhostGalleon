@@ -369,6 +369,7 @@
     <string name="play_hud_save">Save</string>
     <string name="play_hud_load">Load</string>
     <string name="play_hud_tracker">Tracker</string>
+    <string name="play_hud_cinema">Cinema</string>
     <string name="cockpit_keyboard">Keyboard</string>
     <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
     <string name="session_switcher_title">Sessions</string>
@@ -500,6 +501,7 @@
     <string name="confirm_keep_on_yield_player">This player is built for both screens. Ghost Galleon will keep a panel. melonDualDS / Azahar will not see the second display.</string>
     <string name="confirm_yield_on_keep_player">Both panels will go to the game. The play HUD will hide.</string>
     <string name="settings_ra_network_commands">Talk to RetroArch</string>
+    <string name="settings_ra_cinema">State cinema</string>
     <string name="settings_ra_handoff_save">Save before switching</string>
     <string name="settings_ram_lenses">RAM lenses</string>
     <string name="settings_ram_trackers">RAM trackers</string>

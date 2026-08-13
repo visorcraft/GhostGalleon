@@ -178,6 +178,24 @@ class RaCommandTest {
     }
 
     @Test
+    fun `slot commands accept cinema band and reject outside 1-12`() {
+        val seen = mutableListOf<String>()
+        val c = RaCommandClient(
+            transport = { _, payload, _ ->
+                seen += payload.toString(Charsets.US_ASCII).trim()
+                payload
+            },
+            clockMs = { 0L },
+        )
+        assertTrue(c.saveStateSlot(55355, 9))
+        assertTrue(c.loadStateSlot(55355, 12))
+        assertFalse(c.saveStateSlot(55355, 0))
+        assertFalse(c.loadStateSlot(55355, 13))
+        assertTrue(c.slotStripAllowed())
+        assertEquals(listOf("SAVE_STATE_SLOT 9", "LOAD_STATE_SLOT 12"), seen)
+    }
+
+    @Test
     fun `slot command ACK keeps the strip allowed`() {
         val seen = mutableListOf<String>()
         val c = RaCommandClient(

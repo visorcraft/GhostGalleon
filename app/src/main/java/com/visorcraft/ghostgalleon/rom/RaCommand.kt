@@ -122,7 +122,7 @@ class RaCommandClient(
      * hide the strip; callers fall back to SAVE_STATE / LOAD_STATE.
      */
     private fun sendSlot(port: Int, verb: String, slot: Int): Boolean {
-        if (slot !in RaStateSlots.SLOTS) return false
+        if (slot !in RaStateSlots.SLOTS && !CinemaPolicy.inBand(slot)) return false
         val text = requestText(port, "$verb $slot", dropLinkOnTimeout = false)
         val ok = RaCommand.parseSlotReply(text)
         if (!ok) slotStripAllowed = false

@@ -30,6 +30,7 @@ import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
 import com.visorcraft.ghostgalleon.input.InputAssistService
+import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.rom.LensCatalog
 import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
@@ -527,6 +528,12 @@ class GhostGalleonApp : Application() {
 
     // Process-only play-host chrome. Not persisted.
     var hostSurface: HostSurface = HostSurface.HUD
+
+    // Process-only cinema ring. Not persisted.
+    var cinemaFrames: List<CinemaFrame> = emptyList()
+    var cinemaLastSlot: Int? = null
+    var cinemaLastCaptureMs: Long = 0L
+    var cinemaPinnedSlot: Int? = null
 
     fun claimHost() {
         hostClaimed = true
@@ -1378,6 +1385,7 @@ class GhostGalleonApp : Application() {
         sessionSurface = surface
         hostClaimed = false
         hostSurface = HostSurface.HUD
+        clearCinemaRing()
         val romName = SlotKey.romId(surface.key)?.let { romEntry(it)?.name }
         val appLabel = if (romName != null || SlotKey.isRom(surface.key)) {
             null
@@ -1407,6 +1415,7 @@ class GhostGalleonApp : Application() {
         sessionSurface = sessionSurface?.copy(greedy = true)
         hostClaimed = false
         hostSurface = HostSurface.HUD
+        clearCinemaRing()
         liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
 
@@ -1414,7 +1423,15 @@ class GhostGalleonApp : Application() {
         sessionSurface = null
         hostClaimed = false
         hostSurface = HostSurface.HUD
+        clearCinemaRing()
         liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
+    }
+
+    private fun clearCinemaRing() {
+        cinemaFrames = emptyList()
+        cinemaLastSlot = null
+        cinemaLastCaptureMs = 0L
+        cinemaPinnedSlot = null
     }
 
     private fun endOpenSession(nowMs: Long) {

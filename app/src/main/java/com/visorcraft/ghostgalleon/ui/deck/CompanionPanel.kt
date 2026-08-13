@@ -52,6 +52,8 @@ import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.rom.CinemaFrame
+import com.visorcraft.ghostgalleon.rom.CinemaPolicy
 import com.visorcraft.ghostgalleon.rom.CockpitPolicy
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.LensBlock
@@ -125,6 +127,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_OWNER = "play_hud_owner"
     private const val TAG_PLAY_HUD_LENS = "play_hud_lens"
     private const val TAG_PLAY_HUD_TRACKER = "play_hud_tracker"
+    private const val TAG_PLAY_HUD_CINEMA = "play_hud_cinema"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
@@ -2301,6 +2304,27 @@ object CompanionPanel {
             contentDescription = activity.getString(R.string.play_hud_tracker)
             setPadding(0, dp(6), 0, 0)
         })
+        hud.addView(
+            HorizontalScrollView(activity).apply {
+                tag = TAG_PLAY_HUD_CINEMA
+                visibility = View.GONE
+                contentDescription = activity.getString(R.string.play_hud_cinema)
+                isHorizontalScrollBarEnabled = false
+                setPadding(0, dp(6), 0, 0)
+                addView(
+                    LinearLayout(activity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER
+                        isBaselineAligned = false
+                    },
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER,
+                    ),
+                )
+            },
+        )
         // buildPlayHud is only called when playHostAllowed is true.
         val cockpit = CockpitPolicy.cockpitAllowed(
             playHostAllowed = true,
@@ -2769,6 +2793,96 @@ object CompanionPanel {
         if (grid.visibility != View.GONE) grid.visibility = View.GONE
     }
 
+    /**
+     * Auto-ring reserved savestate slots 9–12. In-place strip only.
+     * Never starts when [DualPaintPolicy.sessionOwnsCompanionDisplay].
+     * @return next interval ms when cinema is shown, else null.
+     */
+    fun tickPlayHudCinema(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+        val strip = root?.findViewWithTag<ViewGroup>(TAG_PLAY_HUD_CINEMA)
+        if (strip == null) return null
+        val settings = app.settings
+        val surface = app.sessionSurface
+        if (surface == null ||
+            !settings.raCinemaEnabled ||
+            !settings.raNetworkCommands ||
+            DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy)
+        ) {
+            hidePlayHudCinema(root)
+            return null
+        }
+        val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
+        val playHost = PlayHostPolicy.playHostAllowed(
+            dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+            policy = surface.policy,
+            greedy = surface.greedy,
+            hostDisplayId = hostId,
+            launchDisplayId = surface.launchDisplayId,
+        )
+        val raPlayer = SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)
+        val slotsLive = app.raCommandClient?.slotStripAllowed() ?: true
+        if (!playHost ||
+            !raPlayer ||
+            !slotsLive ||
+            !HostSurfacePolicy.showsCinema(app.hostSurface)
+        ) {
+            hidePlayHudCinema(root)
+            return null
+        }
+        paintPlayHudCinema(strip, app, activity, surface)
+        val interval = CinemaPolicy.clampInterval(settings.raCinemaIntervalMs.toLong())
+        val now = SystemClock.elapsedRealtime()
+        val due = CinemaPolicy.shouldCapture(
+            enabled = settings.raCinemaEnabled,
+            playHostAllowed = playHost,
+            raPlayer = raPlayer,
+            slotsLive = slotsLive,
+            lastCaptureMs = app.cinemaLastCaptureMs,
+            nowMs = now,
+            intervalMs = settings.raCinemaIntervalMs.toLong(),
+        )
+        if (!due) {
+            val rem = interval - (now - app.cinemaLastCaptureMs)
+            return rem.coerceIn(1_000L, interval)
+        }
+        val client = app.raCommandClient
+        if (client == null || !client.isLinkUp()) {
+            return 1_000L
+        }
+        val next = CinemaPolicy.nextSlot(app.cinemaLastSlot)
+        if (!CinemaPolicy.inBand(next)) return interval
+        val port = settings.raNetworkCmdPort
+        val surfaceKey = surface.key
+        var saved = false
+        val enqueued = app.enqueueRaUdp(
+            work = { c -> saved = c.saveStateSlot(port, next) },
+            onMain = {
+                if (!strip.isAttachedToWindow) return@enqueueRaUdp
+                if (app.sessionSurface?.key != surfaceKey) return@enqueueRaUdp
+                if (!saved || app.raCommandClient?.slotStripAllowed() == false) {
+                    if (app.raCommandClient?.slotStripAllowed() == false) {
+                        hidePlayHudCinema(root)
+                    }
+                    return@enqueueRaUdp
+                }
+                val stamp = SystemClock.elapsedRealtime()
+                app.cinemaLastSlot = next
+                app.cinemaLastCaptureMs = stamp
+                val thumbName = cinemaThumbFile(raStatesDir(surface), next)?.name
+                app.cinemaFrames = (app.cinemaFrames.filter { it.slot != next } +
+                    CinemaFrame(next, stamp, thumbName)).takeLast(4)
+                paintPlayHudCinema(strip, app, activity, surface)
+            },
+        )
+        if (!enqueued) return 1_000L
+        return interval
+    }
+
+    internal fun hidePlayHudCinema(root: View?) {
+        val strip = root?.findViewWithTag<View>(TAG_PLAY_HUD_CINEMA) ?: return
+        if (strip.visibility != View.GONE) strip.visibility = View.GONE
+    }
+
     private fun trackerPaintAllowed(
         spec: LensSpec,
         settings: Settings,
@@ -3047,6 +3161,111 @@ object CompanionPanel {
             if (thumb != null) setBackgroundColor(0x66000000)
         })
         return cell
+    }
+
+    private fun paintPlayHudCinema(
+        strip: ViewGroup,
+        app: GhostGalleonApp,
+        activity: Context,
+        surface: SessionSurface,
+    ) {
+        val row = (strip.getChildAt(0) as? LinearLayout) ?: return
+        val density = strip.resources.displayMetrics.density
+        val dp = { v: Int -> (v * density).toInt() }
+        val compact = strip.rootView.height > 0 && strip.rootView.height < 500f * density
+        val cell = dp(if (compact) 36 else 44)
+        val statesDir = raStatesDir(surface)
+        val settings = app.settings
+        val port = settings.raNetworkCmdPort
+        val surfaceKey = surface.key
+        row.removeAllViews()
+        for (slot in CinemaPolicy.BAND) {
+            val thumbFile = cinemaThumbFile(statesDir, slot)
+            val bmp = thumbFile?.let { decodeSlotThumb(it, cell) }
+            row.addView(
+                cinemaSlotCell(
+                    activity,
+                    settings,
+                    slot,
+                    bmp,
+                    cell,
+                    dp,
+                    first = slot == CinemaPolicy.BAND.first,
+                    onTap = { picked ->
+                        if (CinemaPolicy.inBand(picked)) {
+                            app.enqueueRaUdp(
+                                work = { client -> client.loadStateSlot(port, picked) },
+                                onMain = {
+                                    if (app.sessionSurface?.key != surfaceKey) return@enqueueRaUdp
+                                    if (app.raCommandClient?.slotStripAllowed() == false) {
+                                        hidePlayHudCinema(strip)
+                                    }
+                                },
+                            )
+                        }
+                    },
+                    onPin = { pinned ->
+                        if (CinemaPolicy.inBand(pinned)) app.cinemaPinnedSlot = pinned
+                    },
+                ),
+            )
+        }
+        if (strip.visibility != View.VISIBLE) strip.visibility = View.VISIBLE
+    }
+
+    private fun cinemaSlotCell(
+        activity: Context,
+        settings: Settings,
+        slot: Int,
+        thumb: Bitmap?,
+        sizePx: Int,
+        dp: (Int) -> Int,
+        first: Boolean,
+        onTap: (Int) -> Unit,
+        onPin: (Int) -> Unit,
+    ): View {
+        val cell = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                if (!first) marginStart = dp(6)
+            }
+            background = TileBackgrounds.chip(activity)
+            setOnClickListener { onTap(slot) }
+            setOnLongClickListener {
+                onPin(slot)
+                true
+            }
+        }
+        if (thumb != null) {
+            cell.addView(ImageView(activity).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageBitmap(thumb)
+            })
+        }
+        cell.addView(TextView(activity).apply {
+            text = slot.toString()
+            setTextColor(if (thumb != null) Color.WHITE else settings.accentColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            if (thumb != null) setBackgroundColor(0x66000000)
+        })
+        return cell
+    }
+
+    private fun cinemaThumbFile(statesDir: File?, slot: Int): File? {
+        if (statesDir == null) return null
+        val suffix = ".state$slot.png"
+        val name = RaStateSlots.pngNamesIn(statesDir).firstOrNull {
+            it.endsWith(suffix, ignoreCase = true)
+        } ?: return null
+        return File(statesDir, name)
     }
 
     private fun raStatesDir(surface: SessionSurface): File? {
