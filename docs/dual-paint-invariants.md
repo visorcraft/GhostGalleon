@@ -14,6 +14,10 @@ How a launched game shares the two panels (yield DS/3DS, keep companion
 for single-surface players):
 [`split-session-ownership.md`](split-session-ownership.md).
 
+KEEP play HUD, session switcher, pixel oracle, RetroArch commands
+(only on a Ghost Galleon display that is not the launch display):
+[`keep-play-surface.md`](keep-play-surface.md).
+
 ## Policy constants
 
 | Constant | Value | Role |
