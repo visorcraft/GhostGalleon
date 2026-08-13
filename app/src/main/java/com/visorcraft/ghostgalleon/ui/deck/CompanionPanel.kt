@@ -3056,8 +3056,9 @@ object CompanionPanel {
             }
         }
         val cheevo: RaCheevo? = when {
-            tickerOn -> snap.items.firstOrNull { it.title == tickerTitle }
-                ?: snap.lastUnlock
+            tickerOn -> app.theaterTickerId?.let { id ->
+                snap.items.firstOrNull { it.id == id }
+            } ?: snap.lastUnlock
             else -> snap.nextLocked ?: snap.lastUnlock
         }
         paintTheaterBadge(app, badge, letter, cheevo)
@@ -3078,16 +3079,29 @@ object CompanionPanel {
         if (name.isNullOrBlank()) {
             ArtCache.dropDisplayed(badge)
             badge.setImageDrawable(null)
-            badge.tag = null
+            badge.setTag(R.id.theater_badge_key, null)
             if (badge.visibility != View.GONE) badge.visibility = View.GONE
             val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
             if (letter.visibility != letterVis) letter.visibility = letterVis
             return
         }
         val key = app.theaterBadgeKey(name)
-        if (badge.tag == key && badge.drawable != null) {
+        val bound = badge.getTag(R.id.theater_badge_key) as? String
+        if (bound == key && badge.drawable != null) {
             if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
             if (letter.visibility != View.GONE) letter.visibility = View.GONE
+            return
+        }
+        if (bound == "$key!") {
+            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
+            if (badge.visibility != View.GONE) badge.visibility = View.GONE
+            if (letter.visibility != letterVis) letter.visibility = letterVis
+            return
+        }
+        if (!app.artCache.diskHas(key)) {
+            if (badge.visibility != View.GONE) badge.visibility = View.GONE
+            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
+            if (letter.visibility != letterVis) letter.visibility = letterVis
             return
         }
         val bytes = app.artCache.readDiskBytes(key)
@@ -3097,14 +3111,14 @@ object CompanionPanel {
             null
         }
         if (bmp != null) {
-            badge.tag = key
+            badge.setTag(R.id.theater_badge_key, key)
             ArtCache.showDisplayed(badge, bmp)
             if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
             if (letter.visibility != View.GONE) letter.visibility = View.GONE
         } else {
             ArtCache.dropDisplayed(badge)
             badge.setImageDrawable(null)
-            badge.tag = null
+            badge.setTag(R.id.theater_badge_key, "$key!")
             if (badge.visibility != View.GONE) badge.visibility = View.GONE
             val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
             if (letter.visibility != letterVis) letter.visibility = letterVis

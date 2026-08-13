@@ -17,4 +17,6 @@
     <item name="platform_tile_id" type="id" />
     <!-- Winlator cockpit trackpad: last normalized 0..1 point (float[2]). -->
     <item name="cockpit_pad_point" type="id" />
+    <!-- KEEP theater badge: ArtCache key last bound (keep find-tag). -->
+    <item name="theater_badge_key" type="id" />
 </resources>

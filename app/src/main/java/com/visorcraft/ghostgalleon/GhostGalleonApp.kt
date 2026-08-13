@@ -543,6 +543,7 @@ class GhostGalleonApp : Application() {
     var theaterAttempted: Set<String> = emptySet()
     var theaterRomId: String? = null
     var theaterTickerTitle: String? = null
+    var theaterTickerId: Int? = null
     var theaterTickerUntilMs: Long = 0L
 
     fun claimHost() {
@@ -807,8 +808,10 @@ class GhostGalleonApp : Application() {
             Handler(Looper.getMainLooper()).post {
                 raFetchInFlight = raFetchInFlight - id
                 val stamp = android.os.SystemClock.elapsedRealtime()
-                if (theater || sessionRomId() == id) {
+                if (theater) {
                     applyTheaterSnap(id, snap, stamp, hadBody = body != null)
+                } else if (body != null && sessionRomId() == id) {
+                    applyTheaterSnap(id, snap, stamp, hadBody = true)
                 }
                 if (!snap.progress.isEmpty) putRaProgress(id, snap.progress)
             }
@@ -825,6 +828,7 @@ class GhostGalleonApp : Application() {
             theaterRomId = romId
             theaterSnap = null
             theaterTickerTitle = null
+            theaterTickerId = null
             theaterTickerUntilMs = 0L
         }
         theaterLastPollMs = nowMs
@@ -837,17 +841,18 @@ class GhostGalleonApp : Application() {
         if (prev != null &&
             prev.unlockedIds == snap.unlockedIds &&
             prev.nextLocked?.id == snap.nextLocked?.id &&
-            prev.progress.numAwarded == snap.progress.numAwarded &&
-            prev.progress.numPossible == snap.progress.numPossible
+            prev.lastUnlock?.id == snap.lastUnlock?.id &&
+            RaProgressGate.isSameProgress(prev.progress, snap.progress)
         ) {
             return
         }
         if (prev != null) {
             val newly = RaTheater.newlyUnlocked(prev.unlockedIds, snap.unlockedIds)
             if (newly.isNotEmpty()) {
-                theaterTickerTitle = newly.firstNotNullOfOrNull { unlockId ->
-                    snap.items.firstOrNull { it.id == unlockId }?.title
-                } ?: snap.lastUnlock?.title
+                val unlockId = newly.first()
+                theaterTickerId = unlockId
+                theaterTickerTitle = snap.items.firstOrNull { it.id == unlockId }?.title
+                    ?: snap.lastUnlock?.title
                 theaterTickerUntilMs = nowMs + THEATER_TICKER_MS
             }
         }
@@ -1569,6 +1574,7 @@ class GhostGalleonApp : Application() {
         theaterRomId = null
         theaterLastPollMs = 0L
         theaterTickerTitle = null
+        theaterTickerId = null
         theaterTickerUntilMs = 0L
     }
 
