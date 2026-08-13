@@ -46,7 +46,7 @@ object RomIdentities {
     }
 
     fun chooseAlgo(size: Long, platformId: String): String = when {
-        platformId == "vita" -> ALGO_SFO_TITLE
+        platformId == "psvita" || platformId == "vita" -> ALGO_SFO_TITLE
         platformId == "arcade" -> ALGO_DAT_CRC
         size > SMALL_MAX_BYTES -> ALGO_SHA256_SAMPLE
         else -> ALGO_SHA1_PAYLOAD

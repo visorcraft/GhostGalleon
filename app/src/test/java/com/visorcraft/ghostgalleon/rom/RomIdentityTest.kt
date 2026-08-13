@@ -56,9 +56,14 @@ class RomIdentityTest {
     @Test
     fun `chooseAlgo table`() {
         assertEquals(RomIdentities.ALGO_SFO_TITLE, RomIdentities.chooseAlgo(1L, "vita"))
+        assertEquals(RomIdentities.ALGO_SFO_TITLE, RomIdentities.chooseAlgo(1L, "psvita"))
         assertEquals(
             RomIdentities.ALGO_SFO_TITLE,
             RomIdentities.chooseAlgo(RomIdentities.SMALL_MAX_BYTES + 1, "vita"),
+        )
+        assertEquals(
+            RomIdentities.ALGO_SFO_TITLE,
+            RomIdentities.chooseAlgo(RomIdentities.SMALL_MAX_BYTES + 1, "psvita"),
         )
         assertEquals(RomIdentities.ALGO_DAT_CRC, RomIdentities.chooseAlgo(1L, "arcade"))
         assertEquals(
