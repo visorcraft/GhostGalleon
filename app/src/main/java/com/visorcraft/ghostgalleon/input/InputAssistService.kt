@@ -41,6 +41,7 @@ class InputAssistService : AccessibilityService() {
         app.inputAssistConnected = true
         app.inputAssistService = this
         logFilterState(computeMayFilter())
+        app.refreshSeatChrome()
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
@@ -50,6 +51,7 @@ class InputAssistService : AccessibilityService() {
         app.inputAssistConnected = false
         activeStroke = null
         logFilterState(false)
+        app.refreshSeatChrome()
         return super.onUnbind(intent)
     }
 
@@ -59,6 +61,7 @@ class InputAssistService : AccessibilityService() {
         }
         app.inputAssistConnected = false
         activeStroke = null
+        app.refreshSeatChrome()
         super.onDestroy()
     }
 

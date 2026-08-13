@@ -62,6 +62,7 @@ import com.visorcraft.ghostgalleon.ui.DisplayRole
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
 import com.visorcraft.ghostgalleon.ui.HostSurface
 import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
+import com.visorcraft.ghostgalleon.ui.deck.CompanionPanel
 import com.visorcraft.ghostgalleon.ui.deck.PickerItem
 import com.visorcraft.ghostgalleon.ui.deck.PickerItems
 import com.visorcraft.ghostgalleon.library.AppEntry
@@ -639,6 +640,13 @@ class GhostGalleonApp : Application() {
         val size = service.launchDisplaySize(launchId) ?: return
         val (x, y) = SecondSeatPolicy.point(anchor, size.first, size.second)
         service.injectSeatTap(x, y, down, launchId)
+    }
+
+    /** In-place seat hint/cluster after assist bind or unbind. */
+    fun refreshSeatChrome() {
+        liveDeckActivities().forEach { deck ->
+            CompanionPanel.applySeatChrome(deck.window?.decorView, this)
+        }
     }
 
     // Process-only RetroArch UDP client. Transport stays out of RaCommand.kt.
