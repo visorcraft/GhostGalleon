@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.state.UIMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,7 +36,7 @@ class SettingsStore(private val file: File) {
     }
 
     companion object {
-        const val CURRENT_SCHEMA = 8
+        const val CURRENT_SCHEMA = 9
 
         // Internal (not private) so SettingsBundle can pack/unpack settings
         // through the exact same codec the on-disk file uses; same-module
@@ -175,6 +177,10 @@ class SettingsStore(private val file: File) {
                 .filter { it.isNotEmpty() },
             stickDeadzone = o.optInt("stickDeadzone", 50).coerceIn(20, 80),
             layoutSeeded = o.optBoolean("layoutSeeded", false),
+            sessionRing = o.optJSONArray("sessionRing").toSessionRing(),
+            detectBlackCompanion = o.optBoolean("detectBlackCompanion", true),
+            raNetworkCommands = o.optBoolean("raNetworkCommands", false),
+            raNetworkCmdPort = o.optInt("raNetworkCmdPort", 55355).let { if (it in 1..65535) it else 55355 },
             schemaVersion = CURRENT_SCHEMA,
         )
         }
@@ -293,7 +299,39 @@ class SettingsStore(private val file: File) {
             .put("searchHistory", JSONArray(s.searchHistory))
             .put("stickDeadzone", s.stickDeadzone)
             .put("layoutSeeded", s.layoutSeeded)
+            .put("sessionRing", JSONArray().apply {
+                s.sessionRing.forEach { e ->
+                    put(JSONObject()
+                        .put("key", e.key)
+                        .put("playerId", e.playerId ?: JSONObject.NULL)
+                        .put("packageName", e.packageName)
+                        .put("policy", e.policy.name)
+                        .put("launchedAtMs", e.launchedAtMs)
+                        .put("title", e.title))
+                }
+            })
+            .put("detectBlackCompanion", s.detectBlackCompanion)
+            .put("raNetworkCommands", s.raNetworkCommands)
+            .put("raNetworkCmdPort", s.raNetworkCmdPort)
             .put("schemaVersion", CURRENT_SCHEMA)
+        }
+
+        private fun JSONArray?.toSessionRing(): List<SessionRingEntry> {
+            if (this == null) return emptyList()
+            return (0 until length()).mapNotNull { i ->
+                val o = optJSONObject(i) ?: return@mapNotNull null
+                val key = o.optString("key").trim()
+                if (key.isEmpty()) return@mapNotNull null
+                SessionRingEntry(
+                    key = key,
+                    playerId = if (o.isNull("playerId")) null
+                    else o.optString("playerId").trim().ifEmpty { null },
+                    packageName = o.optString("packageName"),
+                    policy = SessionPolicy.parse(o.optString("policy")),
+                    launchedAtMs = o.optLong("launchedAtMs"),
+                    title = o.optString("title").ifBlank { key },
+                )
+            }
         }
 
         private fun JSONArray?.toStringList(): List<String> {
