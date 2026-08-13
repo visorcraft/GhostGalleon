@@ -1090,6 +1090,5 @@ No fourth session type. `OpenSession` stays playtime.
 process-only chrome on the play host. Stage plot still feeds
 `forLaunch` only.
 
-Task-by-task implementation plan: not written yet. Ask for it
-the same way owned-surface was planned
-([`superpowers/plans/2026-08-13-owned-surface.md`](superpowers/plans/2026-08-13-owned-surface.md)).
+Task-by-task implementation plan (all phases):
+[`superpowers/plans/2026-08-13-play-host-depth.md`](superpowers/plans/2026-08-13-play-host-depth.md).
