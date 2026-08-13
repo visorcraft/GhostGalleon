@@ -421,6 +421,9 @@ class GhostGalleonApp : Application() {
     var sessionSurface: SessionSurface? = null
         private set
 
+    // Process-only KEEP play HUD chrome. Expanded shows the actions row.
+    var playHudExpanded: Boolean = true
+
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
     @Volatile
     private var raProgressByRomId: Map<String, com.visorcraft.ghostgalleon.library.RaProgress> =

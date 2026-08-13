@@ -2130,6 +2130,7 @@ object CompanionPanel {
             gravity = Gravity.CENTER
             isBaselineAligned = false
             setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+            visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
         }
         fun actionChip(
             labelRes: Int,

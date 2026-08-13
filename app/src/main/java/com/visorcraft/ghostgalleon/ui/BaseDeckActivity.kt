@@ -1145,6 +1145,29 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             }
             true
         }
+        Action.TOGGLE_PLAY_HUD -> {
+            if (repeatCount == 0) {
+                val surface = app.sessionSurface
+                val allowed = PlayHostPolicy.playHostAllowed(
+                    dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                    policy = surface?.policy,
+                    greedy = surface?.greedy == true,
+                    hostDisplayId = currentDisplayId(),
+                    launchDisplayId = surface?.launchDisplayId,
+                )
+                if (allowed) {
+                    app.playHudExpanded = !app.playHudExpanded
+                    val vis = if (app.playHudExpanded) View.VISIBLE else View.GONE
+                    window.decorView.findViewWithTag<View>("play_hud_actions")
+                        ?.visibility = vis
+                }
+            }
+            true
+        }
+        Action.OPEN_SESSION_SWITCHER -> {
+            // Task 10 fills this. Swallow for now so remap does not crash.
+            true
+        }
         Action.BACK -> when {
             // Decks get BACK first: an open picker/menu or an active tile
             // move consumes it (close/cancel). Otherwise the home-role
