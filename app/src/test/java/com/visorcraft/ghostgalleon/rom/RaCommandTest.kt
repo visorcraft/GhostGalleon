@@ -135,14 +135,22 @@ class RaCommandTest {
     }
 
     @Test
-    fun `client commands return false on timeout`() {
+    fun `client fire-and-forget timeout is success and keeps linkUp`() {
         val c = RaCommandClient(
-            transport = { _, _, _ -> null },
+            transport = { _, payload, _ ->
+                val cmd = payload.toString(Charsets.US_ASCII).trim()
+                if (cmd == "VERSION") "1.19.0".toByteArray(Charsets.US_ASCII) else null
+            },
             clockMs = { 0L },
         )
-        assertFalse(c.pauseToggle(55355))
-        assertFalse(c.saveState(55355))
-        assertFalse(c.loadState(55355))
+        assertTrue(c.probe(55355, nowMs = 0L))
+        assertTrue(c.isLinkUp())
+        assertTrue(c.pauseToggle(55355))
+        assertTrue(c.isLinkUp())
+        assertTrue(c.saveState(55355))
+        assertTrue(c.isLinkUp())
+        assertTrue(c.loadState(55355))
+        assertTrue(c.isLinkUp())
     }
 
     @Test

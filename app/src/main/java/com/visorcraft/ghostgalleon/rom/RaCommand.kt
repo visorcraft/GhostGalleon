@@ -54,19 +54,29 @@ class RaCommandClient(
         return RaCommand.parseStatus(text)
     }
 
-    fun pauseToggle(port: Int): Boolean =
-        RaCommand.parseSlotReply(requestText(port, "PAUSE_TOGGLE"))
+    fun pauseToggle(port: Int): Boolean = sendFireAndForget(port, "PAUSE_TOGGLE")
 
-    fun saveState(port: Int): Boolean =
-        RaCommand.parseSlotReply(requestText(port, "SAVE_STATE"))
+    fun saveState(port: Int): Boolean = sendFireAndForget(port, "SAVE_STATE")
 
-    fun loadState(port: Int): Boolean =
-        RaCommand.parseSlotReply(requestText(port, "LOAD_STATE"))
+    fun loadState(port: Int): Boolean = sendFireAndForget(port, "LOAD_STATE")
 
-    private fun requestText(port: Int, command: String): String? {
+    /**
+     * RetroArch does not reply to PAUSE_TOGGLE / SAVE_STATE / LOAD_STATE.
+     * Timeout is success; only VERSION / GET_STATUS may clear [linkUp].
+     */
+    private fun sendFireAndForget(port: Int, command: String): Boolean {
+        val text = requestText(port, command, dropLinkOnTimeout = false)
+        return text == null || RaCommand.parseSlotReply(text)
+    }
+
+    private fun requestText(
+        port: Int,
+        command: String,
+        dropLinkOnTimeout: Boolean = true,
+    ): String? {
         val bytes = transport.send(port, RaCommand.encode(command), RaCommand.TIMEOUT_MS)
         if (bytes == null) {
-            linkUp = false
+            if (dropLinkOnTimeout) linkUp = false
             return null
         }
         linkUp = true
