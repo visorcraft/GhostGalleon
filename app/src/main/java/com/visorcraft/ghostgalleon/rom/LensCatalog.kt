@@ -18,6 +18,8 @@ data class LensSpec(
     val romIds: Set<String>,
     val intervalMs: Long,
     val blocks: List<LensBlock>,
+    val surface: String = "line",
+    val widgets: List<TrackerWidget> = emptyList(),
 )
 
 object LensCatalog {
@@ -90,6 +92,8 @@ object LensCatalog {
             romIds = stringSet(match, "romId", "romIds"),
             intervalMs = o.optLong("intervalMs", 200L),
             blocks = parseBlocks(o.optJSONArray("blocks")),
+            surface = o.optString("surface", "line").trim().ifBlank { "line" },
+            widgets = parseWidgets(o.optJSONArray("widgets")),
         )
     }
 
@@ -113,6 +117,33 @@ object LensCatalog {
                     address = address,
                     length = b.optInt("length", 0),
                     format = b.optString("format", "bytes").ifBlank { "bytes" },
+                    labels = labels,
+                ),
+            )
+        }
+        return out
+    }
+
+    private fun parseWidgets(arr: JSONArray?): List<TrackerWidget> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<TrackerWidget>(arr.length())
+        for (i in 0 until arr.length()) {
+            val w = arr.optJSONObject(i) ?: continue
+            if (!w.has("block") || w.isNull("block")) continue
+            val labelsArr = w.optJSONArray("labels")
+            val labels = if (labelsArr == null) {
+                emptyList()
+            } else {
+                (0 until labelsArr.length()).mapNotNull { j ->
+                    if (labelsArr.isNull(j)) null
+                    else labelsArr.optString(j, "").trim().takeIf { it.isNotEmpty() }
+                }
+            }
+            out.add(
+                TrackerWidget(
+                    kind = TrackerCatalog.parseKind(stringOrNull(w, "kind")),
+                    blockIndex = w.optInt("block"),
+                    cols = w.optInt("cols"),
                     labels = labels,
                 ),
             )

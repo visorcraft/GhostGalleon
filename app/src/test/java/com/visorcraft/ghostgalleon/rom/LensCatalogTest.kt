@@ -67,4 +67,15 @@ class LensCatalogTest {
         assertTrue(LensCatalog.shouldLoad(enabled = true, packUri = null))
         assertTrue(LensCatalog.shouldLoad(enabled = false, packUri = "content://lenses/pack.json"))
     }
+
+    @Test
+    fun `parse surface and widgets with line default`() {
+        val json = """
+          [{"id":"line-only","title":"t","match":{"romId":["snes:a"]},"intervalMs":200,
+            "blocks":[{"address":"0x1","length":1,"format":"bytes","labels":[]}]}]
+        """.trimIndent()
+        val spec = LensCatalog.parse(json).single()
+        assertEquals("line", spec.surface)
+        assertTrue(spec.widgets.isEmpty())
+    }
 }
