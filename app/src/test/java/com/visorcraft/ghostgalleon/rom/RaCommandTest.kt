@@ -75,7 +75,9 @@ class RaCommandTest {
             },
             clockMs = { 0L },
         )
+        assertTrue(c.probeDue(0L))
         assertFalse(c.probe(55355, nowMs = 0L))
+        assertFalse(c.probeDue(4999L))
         assertFalse(c.probe(55355, nowMs = 4999L))
         assertEquals(1, sends)
         assertFalse(c.probe(55355, nowMs = 5000L))

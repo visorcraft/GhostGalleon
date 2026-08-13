@@ -41,6 +41,10 @@ class RaCommandClient(
 
     fun isLinkUp(): Boolean = linkUp
 
+    /** True when a VERSION probe should go on the wire (down + interval elapsed). */
+    fun probeDue(nowMs: Long): Boolean =
+        !linkUp && nowMs - lastProbeMs >= RaCommand.PROBE_INTERVAL_MS
+
     fun probe(port: Int, nowMs: Long): Boolean {
         // While up, caller uses status(); keep returning true without re-sending VERSION.
         if (linkUp) return true

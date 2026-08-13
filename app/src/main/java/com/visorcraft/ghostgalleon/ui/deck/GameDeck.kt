@@ -446,7 +446,6 @@ class GameDeck(
         settings = (activity.application as GhostGalleonApp).settings
         val oldEntries = entries
         installEntries(buildEntries())
-        applyRootWallpaper(root)
         val nextChrome = filterChromeStructureKey()
         if (nextChrome == chromeStructureKey && browseChipHandles.isNotEmpty()) {
             restyleBrowseChips()
@@ -471,6 +470,7 @@ class GameDeck(
             dockBar?.updateFocus(state.dockSlot, dockMove.index)
             return true
         }
+        applyRootWallpaper(root)
         val adapter = if (
             existing != null &&
             existing.cardSize == nextSize &&
@@ -724,6 +724,9 @@ class GameDeck(
             setHasFixedSize(true)
             setItemViewCacheSize(8)
             recycledViewPool.setMaxRecycledViews(0, 12)
+            // Selection payloads only mutate ring/scale — default animator
+            // fades those cells on every D-pad tick.
+            itemAnimator = null
             snapHelper.attachToRecyclerView(this)
             val pad = dp(16)
             setPadding(pad, pad, pad, pad)
@@ -2858,7 +2861,9 @@ class GameDeck(
         override fun getItemId(position: Int): Long =
             entries.getOrNull(position)?.key?.hashCode()?.toLong() ?: position.toLong()
 
-        inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root)
+        inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+            var metaView: TextView? = null
+        }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             // Transparent full-height slot so the card surface wraps the
@@ -3013,7 +3018,7 @@ class GameDeck(
                 favorite = entry.key in settings.favorites,
                 inDock = DockSlots.containsKey(settings.dockSlots, entry.key),
             )
-            card.addView(TextView(context).apply {
+            val metaTv = TextView(context).apply {
                 tag = "card_meta"
                 text = context.resolveText(meta)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
@@ -3021,7 +3026,9 @@ class GameDeck(
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(
+            }
+            holder.metaView = metaTv
+            card.addView(metaTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
@@ -3039,8 +3046,11 @@ class GameDeck(
         }
 
         private fun rebindCardMeta(holder: CardHolder, entry: CarouselEntry) {
-            val card = holder.root.getChildAt(0) as? LinearLayout ?: return
-            val metaView = card.findViewWithTag<TextView>("card_meta") ?: return
+            val metaView = holder.metaView
+                ?: (holder.root.getChildAt(0) as? LinearLayout)
+                    ?.findViewWithTag<TextView>("card_meta")
+                    ?.also { holder.metaView = it }
+                ?: return
             val meta = SessionMath.cardMetaLine(
                 settings.lastLaunchedMs[entry.key],
                 settings.playtimeMs[entry.key] ?: 0L,
@@ -3079,7 +3089,7 @@ class GameDeck(
             val cache = (activity.application as GhostGalleonApp).artCache
             val overrides = settings.artOverrides
             val epoch = entries.size
-            for (delta in listOf(-2, -1, 1, 2)) {
+            for (delta in PREFETCH_DELTAS) {
                 val i = center + delta
                 if (i !in entries.indices) continue
                 val rom = entries[i].rom ?: continue
@@ -3103,6 +3113,7 @@ class GameDeck(
         /** RecyclerView payload: only ring/scale/multi-select chrome. */
         const val PAYLOAD_SELECTION = "selection"
         const val TAG_GAME_WALLPAPER = "game_wallpaper"
+        val PREFETCH_DELTAS = intArrayOf(-2, -1, 1, 2)
     }
 
     private class EntryDiff(

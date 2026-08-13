@@ -40,8 +40,8 @@ class CompanionActivity : BaseDeckActivity() {
     private val playHudHandler = Handler(Looper.getMainLooper())
     private val playHudTick = object : Runnable {
         override fun run() {
-            tickPlayHudClock(window.decorView, app, this@CompanionActivity)
-            playHudHandler.postDelayed(this, 1000L)
+            val delay = tickPlayHudClock(hudRoot(), app, this@CompanionActivity)
+            if (delay != null) playHudHandler.postDelayed(this, delay)
         }
     }
     private val oracle = PixelOracle(this) { isFullRenderInFlight }
@@ -192,9 +192,22 @@ class CompanionActivity : BaseDeckActivity() {
             return
         }
         super.onResume()
-        playHudHandler.post(playHudTick)
+        armPlayHudTick()
         oracle.start()
     }
+
+    override fun onContentRebuilt() {
+        armPlayHudTick()
+        oracle.start()
+    }
+
+    private fun armPlayHudTick() {
+        playHudHandler.removeCallbacks(playHudTick)
+        playHudHandler.post(playHudTick)
+    }
+
+    private fun hudRoot(): View =
+        findViewById(android.R.id.content) ?: window.decorView
 
     override fun onPause() {
         playHudHandler.removeCallbacks(playHudTick)
@@ -231,6 +244,7 @@ internal class PixelOracle(
 
     fun start() {
         handler.removeCallbacks(tick)
+        if (!shouldSchedule()) return
         handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
     }
 
@@ -238,13 +252,23 @@ internal class PixelOracle(
         handler.removeCallbacks(tick)
     }
 
+    private fun shouldSchedule(): Boolean {
+        val app = activity.application as GhostGalleonApp
+        val displayId = activity.currentDisplayId() ?: 0
+        return PlayHostPolicy.oracleShouldSchedule(
+            detectEnabled = app.settings.detectBlackCompanion,
+            companionSurface = DisplayRole.roleFor(displayId, app.deckState) ==
+                DisplayRole.COMPANION,
+        )
+    }
+
     private fun onTick() {
-        handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
         if (activity.isFinishing || activity.isDestroyed) return
+        if (!shouldSchedule()) return
+        handler.postDelayed(tick, DualPaintPolicy.MIN_HEAL_GAP_MS)
         if (copyPending) return
         if (renderInFlight()) return
         val app = activity.application as GhostGalleonApp
-        if (!app.settings.detectBlackCompanion) return
         val surface = app.sessionSurface
         val windowId = activity.currentDisplayId()
         val may = PlayHostPolicy.oracleMaySample(
@@ -351,14 +375,26 @@ internal class PixelOracle(
     }
 }
 
-/** In-place KEEP clock. No SETTINGS / SELECTION / notifyChanged. */
-internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Context) {
-    val clock = root?.findViewWithTag<TextView>("play_hud_clock") ?: return
-    val session = app.openSession ?: return
+/**
+ * In-place KEEP clock. No SETTINGS / SELECTION / notifyChanged.
+ * @return next delay in ms, or null when no clock is bound (disarm).
+ */
+internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Context): Long? {
+    val clock = root?.findViewWithTag<TextView>("play_hud_clock") ?: return null
+    val session = app.openSession
+    if (session == null) return PlayHostPolicy.playHudClockDelayMs(0L)
     val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
-    clock.text = activity.getString(
+    val next = activity.getString(
         if (session.isActive) R.string.format_session else R.string.format_session_paused,
         activity.resolveText(SessionMath.formatPlaytime(elapsed)),
     )
+    if (PlayHostPolicy.playHudClockNeedsWrite(clock.text, next)) {
+        clock.text = next
+    }
     CompanionPanel.tickPlayHudRa(root, app, activity)
+    return PlayHostPolicy.playHudTickDelayMs(
+        elapsed,
+        watchRa = app.settings.raNetworkCommands,
+        raProbeMs = com.visorcraft.ghostgalleon.rom.RaCommand.PROBE_INTERVAL_MS,
+    )
 }

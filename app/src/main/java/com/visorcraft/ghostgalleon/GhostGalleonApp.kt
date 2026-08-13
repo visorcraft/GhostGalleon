@@ -869,22 +869,31 @@ class GhostGalleonApp : Application() {
 
     fun onSessionLauncherFocused(nowMs: Long = System.currentTimeMillis()) {
         val s = openSession ?: return
-        openSession = SessionTracker.onLauncherFocused(s, nowMs)
+        applyOpenSession(SessionTracker.onLauncherFocused(s, nowMs))
     }
 
     fun onSessionLauncherUnfocused(nowMs: Long = System.currentTimeMillis()) {
         val s = openSession ?: return
-        openSession = SessionTracker.onLauncherUnfocused(s, nowMs)
+        applyOpenSession(SessionTracker.onLauncherUnfocused(s, nowMs))
     }
 
     fun onSessionDeviceSleep(nowMs: Long = System.currentTimeMillis()) {
         val s = openSession ?: return
-        openSession = SessionTracker.onDeviceSleep(s, nowMs)
+        applyOpenSession(SessionTracker.onDeviceSleep(s, nowMs))
     }
 
     fun onSessionDeviceWake(nowMs: Long = System.currentTimeMillis()) {
         val s = openSession ?: return
-        openSession = SessionTracker.onDeviceWake(s, nowMs)
+        applyOpenSession(SessionTracker.onDeviceWake(s, nowMs))
+    }
+
+    /** In-place HUD clock when pause/resume flips; no SETTINGS rebuild. */
+    private fun applyOpenSession(next: OpenSession) {
+        val prev = openSession
+        openSession = next
+        if (prev != null && prev.isActive != next.isActive) {
+            deckState.notifySelectionRefresh()
+        }
     }
 
     fun beginSession(surface: SessionSurface, nowMs: Long = System.currentTimeMillis()) {

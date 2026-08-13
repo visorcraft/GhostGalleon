@@ -95,27 +95,35 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         if (change == DeckState.Change.SELECTION && ::currentDeck.isInitialized) {
             val role = DisplayRole.roleFor(currentDisplayId() ?: 0, deckState)
             val content = findViewById<ViewGroup>(android.R.id.content)
-            // updateSelection returns false when structure must rebuild (e.g.
-            // ROM↔app). Never treat deck-only success as enough when a hero
-            // strip is present and failed to update — that leaves a stale TOP_STRIP.
-            val stripPresent = content != null &&
-                content.findViewWithTag<View>(CompanionPanel.TAG_TOP_STRIP) != null
-            val panelUpdated = content != null && content.childCount > 0 &&
-                CompanionPanel.updateSelection(
-                    content, this, deckState, appLibrary, app.romEntries, settings)
             val updated = when (role) {
                 DisplayRole.PRIMARY -> {
                     val deckOk = currentDeck.updateSelection()
-                    when {
-                        stripPresent && !panelUpdated -> false
-                        stripPresent -> deckOk && panelUpdated
-                        else -> deckOk
+                    // Dual primary never hosts TOP_STRIP / hero — skip the
+                    // companion tree walk on every D-pad tick.
+                    if (app.displayConfig.mode != SurfaceMode.SINGLE) {
+                        deckOk
+                    } else {
+                        val panelUpdated = content != null && content.childCount > 0 &&
+                            CompanionPanel.updateSelection(
+                                content, this, deckState, appLibrary,
+                                app.romEntries, settings,
+                            )
+                        val stripPresent = content != null &&
+                            content.findViewWithTag<View>(CompanionPanel.TAG_TOP_STRIP) != null
+                        when {
+                            stripPresent && !panelUpdated -> false
+                            stripPresent -> deckOk && panelUpdated
+                            else -> deckOk
+                        }
                     }
                 }
                 // Full dual-screen companion is NOT the TOP_STRIP; in-place
                 // hero update is enough — do not fall through to full rebuild
                 // when panelUpdated is true.
-                DisplayRole.COMPANION -> panelUpdated
+                DisplayRole.COMPANION -> content != null && content.childCount > 0 &&
+                    CompanionPanel.updateSelection(
+                        content, this, deckState, appLibrary, app.romEntries, settings,
+                    )
             }
             if (updated) return
         }
@@ -135,11 +143,15 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 }
                 DisplayRole.PRIMARY -> {
                     if (currentDeck.applyBrowseChange()) {
-                        // Keep TOP_STRIP / hero in sync with any selection jump.
-                        val content = findViewById<ViewGroup>(android.R.id.content)
-                        if (content != null && content.childCount > 0) {
-                            CompanionPanel.updateSelection(
-                                content, this, deckState, appLibrary, app.romEntries, settings)
+                        // Keep TOP_STRIP in sync on single-display only.
+                        if (app.displayConfig.mode == SurfaceMode.SINGLE) {
+                            val content = findViewById<ViewGroup>(android.R.id.content)
+                            if (content != null && content.childCount > 0) {
+                                CompanionPanel.updateSelection(
+                                    content, this, deckState, appLibrary,
+                                    app.romEntries, settings,
+                                )
+                            }
                         }
                         return
                     }
@@ -174,6 +186,9 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
         renderFromState("state $change")
     }
+
+    /** Re-arm KEEP HUD clock after a full rebuild (clock may have just appeared). */
+    protected open fun onContentRebuilt() {}
 
     private var rendering: Boolean = false
     /** True while [renderFromState] is inside setContentView. Oracle skips these ticks. */
@@ -582,6 +597,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             appliedContentEpoch = app.contentEpoch
             paintedForDisplayId = displayId
             if (role == DisplayRole.PRIMARY) maybeShowSetup()
+            onContentRebuilt()
         } finally {
             rendering = false
         }

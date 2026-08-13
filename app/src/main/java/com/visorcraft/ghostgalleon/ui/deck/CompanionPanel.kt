@@ -309,14 +309,20 @@ object CompanionPanel {
         roms: List<RomEntry>,
         settings: Settings,
     ): Boolean {
+        // KEEP play HUD / PERF are the common companion KEEP surfaces —
+        // check them before TOP_STRIP so NAV does not walk the tree twice.
+        if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) {
+            val ctxApp = context.applicationContext as? GhostGalleonApp
+            if (ctxApp != null) {
+                com.visorcraft.ghostgalleon.ui.tickPlayHudClock(view, ctxApp, context)
+            }
+            return true
+        }
+        if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
         // Compact TOP_STRIP path: always selection-context, never full dual roles.
         if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
             return updateTopStrip(view, context, state, library, roms, settings)
         }
-        // KEEP full play HUD and PERF tab replace hero. Selection lives on
-        // the other display — do not rebuild Companion on every NAV.
-        if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) return true
-        if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
         // Resume chip: only touch an existing view (GONE/show). Never require
         // the chip to exist when resumeChip is on — content may omit it.
         view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
@@ -2390,11 +2396,12 @@ object CompanionPanel {
     }
 
     fun tickPlayHudRa(root: View?, app: GhostGalleonApp, activity: Context) {
+        if (!app.settings.raNetworkCommands) return
         val group = root?.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
         val surface = app.sessionSurface
         val hostId = (activity as? AppCompatActivity)?.currentDisplayId()
         val allowed = surface != null &&
-            raHudEligible(app.settings.raNetworkCommands, surface) &&
+            raHudEligible(true, surface) &&
             PlayHostPolicy.playHostAllowed(
                 dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
                 policy = surface.policy,
@@ -2409,6 +2416,11 @@ object CompanionPanel {
         }
         val client = app.raCommandClient
         if (client?.isLinkUp() == true) return
+        if (client != null &&
+            !client.probeDue(android.os.SystemClock.elapsedRealtime())
+        ) {
+            return
+        }
         enqueueRaChipWork(root, app, probe = true)
     }
 

@@ -20,8 +20,8 @@ class MainActivity : BaseDeckActivity() {
     private val playHudHandler = Handler(Looper.getMainLooper())
     private val playHudTick = object : Runnable {
         override fun run() {
-            tickPlayHudClock(window.decorView, app, this@MainActivity)
-            playHudHandler.postDelayed(this, 1000L)
+            val delay = tickPlayHudClock(hudRoot(), app, this@MainActivity)
+            if (delay != null) playHudHandler.postDelayed(this, delay)
         }
     }
     private val oracle = PixelOracle(this) { isFullRenderInFlight }
@@ -67,9 +67,22 @@ class MainActivity : BaseDeckActivity() {
             // Playtime stays on endOpenSession / noteReturnToLauncher.
             app.clearSessionSurface()
         }
-        playHudHandler.post(playHudTick)
+        armPlayHudTick()
         oracle.start()
     }
+
+    override fun onContentRebuilt() {
+        armPlayHudTick()
+        oracle.start()
+    }
+
+    private fun armPlayHudTick() {
+        playHudHandler.removeCallbacks(playHudTick)
+        playHudHandler.post(playHudTick)
+    }
+
+    private fun hudRoot(): android.view.View =
+        findViewById(android.R.id.content) ?: window.decorView
 
     override fun onPause() {
         playHudHandler.removeCallbacks(playHudTick)

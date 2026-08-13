@@ -27,10 +27,12 @@ object SystemInfoCollector {
     private var secondaryResolved: Boolean = false
     @Volatile
     private var cachedRamTotal: Long = -1L
+    private val memInfo = ActivityManager.MemoryInfo()
+    private val volumeUuid = Regex("[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}")
 
     fun collect(context: Context): SystemReadings {
         val am = context.getSystemService(ActivityManager::class.java)
-        val mem = ActivityManager.MemoryInfo()
+        val mem = memInfo
         am?.getMemoryInfo(mem)
         if (cachedRamTotal < 0L) cachedRamTotal = mem.totalMem
         val data = StatFs(Environment.getDataDirectory().absolutePath)
@@ -63,8 +65,7 @@ object SystemInfoCollector {
             internalTotalBytes = internalTotal,
             internalFreeBytes = internalFree,
             secondaryName = secondary?.first,
-            secondaryIsSd = secondary?.first
-                ?.matches(Regex("[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}")) == true,
+            secondaryIsSd = secondary?.first?.matches(volumeUuid) == true,
             secondaryTotalBytes = secondary?.second,
             secondaryFreeBytes = secondary?.third,
             batteryPercent = battery.percent,

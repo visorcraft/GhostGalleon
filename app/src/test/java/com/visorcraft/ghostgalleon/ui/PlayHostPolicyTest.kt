@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui
 
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +72,27 @@ class PlayHostPolicyTest {
         assertTrue(
             PlayHostPolicy.oracleMaySample(true, false, 1, 0, sessionOpen = false),
         )
+    }
+
+    @Test
+    fun `oracle ticks stay off when detect is off or the window is primary`() {
+        assertFalse(PlayHostPolicy.oracleShouldSchedule(detectEnabled = false, companionSurface = true))
+        assertFalse(PlayHostPolicy.oracleShouldSchedule(detectEnabled = true, companionSurface = false))
+        assertTrue(PlayHostPolicy.oracleShouldSchedule(detectEnabled = true, companionSurface = true))
+    }
+
+    @Test
+    fun `play HUD clock skips identical minute text`() {
+        assertFalse(PlayHostPolicy.playHudClockNeedsWrite("12m", "12m"))
+        assertTrue(PlayHostPolicy.playHudClockNeedsWrite("11m", "12m"))
+        assertTrue(PlayHostPolicy.playHudClockNeedsWrite(null, "12m"))
+    }
+
+    @Test
+    fun `play HUD ticker sleeps until the next minute unless RA is watched`() {
+        assertEquals(60_000L, PlayHostPolicy.playHudClockDelayMs(0L))
+        assertEquals(1_000L, PlayHostPolicy.playHudClockDelayMs(59_000L))
+        assertEquals(60_000L, PlayHostPolicy.playHudTickDelayMs(0L, watchRa = false, raProbeMs = 5_000L))
+        assertEquals(5_000L, PlayHostPolicy.playHudTickDelayMs(0L, watchRa = true, raProbeMs = 5_000L))
     }
 }
