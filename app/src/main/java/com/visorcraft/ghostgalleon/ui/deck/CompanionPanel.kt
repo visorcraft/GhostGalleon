@@ -54,11 +54,13 @@ import com.visorcraft.ghostgalleon.library.RaTheaterSnap
 import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
+import com.visorcraft.ghostgalleon.display.DevicePosture
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.rom.CinemaPolicy
 import com.visorcraft.ghostgalleon.rom.CockpitPolicy
+import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.LensBlock
 import com.visorcraft.ghostgalleon.rom.LensCatalog
@@ -74,6 +76,7 @@ import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.SessionHandoff
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
+import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -149,6 +152,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_SEAT_CHIP = "play_hud_seat_chip"
     private const val TAG_PLAY_HUD_SEAT_CLUSTER = "play_hud_seat_cluster"
     private const val TAG_PLAY_HUD_SEAT_HINT = "play_hud_seat_hint"
+    private const val TAG_PLAY_HUD_POSTURE = "play_hud_posture"
     private const val RA_PACKAGE = "com.retroarch.aarch64"
     private const val LENS_MAX_INTERVAL_MS = 200L
     /** Full-size overlay host on the panel FrameLayout (above HUD / hero). */
@@ -214,6 +218,15 @@ object CompanionPanel {
             deck.applyPlayHostFocusLock()
             applySeatChrome(deck.window?.decorView, app)
         }
+    }
+
+    /** In-place FLAT chip. Hidden when posture is not FLAT or the edge was not SHOW. */
+    fun applyPostureChip(root: View?, app: GhostGalleonApp) {
+        val chip = root?.findViewWithTag<View>(TAG_PLAY_HUD_POSTURE) ?: return
+        val show = app.postureYieldChipVisible &&
+            app.devicePosture == DevicePosture.FLAT
+        val vis = if (show) View.VISIBLE else View.GONE
+        if (chip.visibility != vis) chip.visibility = vis
     }
 
     fun applySeatChrome(root: View?, app: GhostGalleonApp) {
@@ -2508,6 +2521,27 @@ object CompanionPanel {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
         })
+        hud.addView(
+            TextView(activity).apply {
+                tag = TAG_PLAY_HUD_POSTURE
+                setText(R.string.posture_use_both_screens)
+                visibility = View.GONE
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(Color.BLACK)
+                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
+                gravity = Gravity.CENTER
+                isFocusable = true
+                setOnClickListener { confirmPostureYield(activity, app) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+            },
+        )
         // Opt-in RAM lens under the clock. Tick controls visibility; GONE until match.
         hud.addView(TextView(activity).apply {
             tag = TAG_PLAY_HUD_LENS
@@ -2965,7 +2999,43 @@ object CompanionPanel {
             }
             applySeatChrome(hud, app)
         }
+        applyPostureChip(hud, app)
         return hud
+    }
+
+    private fun confirmPostureYield(activity: AppCompatActivity, app: GhostGalleonApp) {
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.settings_stage_plot)
+            .setMessage(R.string.confirm_yield_on_keep_player)
+            .setPositiveButton(R.string.action_ok) { _, _ ->
+                app.dismissPostureYieldChip()
+                writePostureYieldPlot(app)
+            }
+            .setNegativeButton(R.string.action_cancel) { _, _ ->
+                app.dismissPostureYieldChip()
+            }
+            .setOnCancelListener { app.dismissPostureYieldChip() }
+            .show()
+    }
+
+    /** Stage-plot / package yield only. Never beginSession or assign policy. */
+    private fun writePostureYieldPlot(app: GhostGalleonApp) {
+        val surface = app.sessionSurface ?: return
+        val live = app.settings
+        val romId = SlotKey.romId(surface.key)
+        if (romId != null) {
+            app.updateSettings(
+                live.copy(
+                    stagePlots = live.stagePlots +
+                        (romId to StagePlot(SessionPolicy.YIELD_BOTH, LaunchFace.AUTO)),
+                ),
+            )
+            return
+        }
+        val pkg = surface.packageName
+        if (pkg.isNotBlank()) {
+            app.updateSettings(live.copy(packageYield = live.packageYield + (pkg to true)))
+        }
     }
 
     fun tickPlayHudRa(root: View?, app: GhostGalleonApp, activity: Context) {

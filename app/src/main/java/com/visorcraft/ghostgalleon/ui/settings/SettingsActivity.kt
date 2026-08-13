@@ -44,6 +44,7 @@ import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.rom.TreeLabels
 import com.visorcraft.ghostgalleon.rom.playerSettingsLabel
 import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.Action
@@ -1474,7 +1475,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun settingsSearchIndex(): List<SettingsJump> = listOf(
         SettingsJump(SettingsCatalog.PAGE_DISPLAY, getString(R.string.settings_page_display_grid),
-            "theme display grid chrome wallpaper columns icon card"),
+            "theme display grid chrome wallpaper columns icon card posture hinge flat yield"),
         SettingsJump(SettingsCatalog.PAGE_APPS, getString(R.string.settings_page_apps),
             "apps hidden packages dock"),
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
@@ -1763,6 +1764,25 @@ class SettingsActivity : AppCompatActivity() {
         displayCard.addView(resetDisplayRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_section_display), displayCard)
+
+        if (app.displayConfig.mode != SurfaceMode.SINGLE) {
+            val postureCard = sectionCard()
+            toggle(postureCard, getString(R.string.settings_posture), s.postureAware) { on ->
+                app.updateSettings(app.settings.copy(postureAware = on))
+            }
+            toggle(
+                postureCard,
+                getString(R.string.settings_posture_suggest_yield),
+                s.postureSuggestYield,
+            ) { on ->
+                app.updateSettings(app.settings.copy(postureSuggestYield = on))
+            }
+            addSection(
+                SettingsPage.DISPLAY_GRID,
+                getString(R.string.settings_posture),
+                postureCard,
+            )
+        }
 
         val chrome = s.browseChrome
         val chromeCard = sectionCard()

@@ -6,6 +6,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -26,8 +30,11 @@ import com.visorcraft.ghostgalleon.library.RetroAchievements
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.library.SessionTracker
 import com.visorcraft.ghostgalleon.display.AndroidDisplayProbe
+import com.visorcraft.ghostgalleon.display.DevicePosture
 import com.visorcraft.ghostgalleon.display.DeviceProfileCatalog
 import com.visorcraft.ghostgalleon.display.DisplayTopology
+import com.visorcraft.ghostgalleon.display.PostureEffect
+import com.visorcraft.ghostgalleon.display.PosturePolicy
 import com.visorcraft.ghostgalleon.display.ResolvedTopology
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.InputAssistPolicy
@@ -39,6 +46,7 @@ import com.visorcraft.ghostgalleon.rom.LensSpec
 import com.visorcraft.ghostgalleon.rom.PlatformPackStore
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RaCommandClient
+import com.visorcraft.ghostgalleon.rom.RaStatus
 import com.visorcraft.ghostgalleon.rom.RaUdpTransport
 import com.visorcraft.ghostgalleon.rom.RemountPolicy
 import com.visorcraft.ghostgalleon.rom.RomEntry
@@ -205,6 +213,85 @@ class GhostGalleonApp : Application() {
                 Handler(Looper.getMainLooper()).post { refreshDisplayConfig(debounce = true) }
             }
         }, Handler(Looper.getMainLooper()))
+    }
+
+    /**
+     * [Sensor.TYPE_HINGE_ANGLE] is 36 on API 30+. Missing sensor stays
+     * [DevicePosture.UNKNOWN]. No DeviceStateManager OEM ids in v1.
+     */
+    private fun registerHingeSensor() {
+        val sm = getSystemService(SensorManager::class.java) ?: return
+        val hinge = sm.getDefaultSensor(TYPE_HINGE_ANGLE) ?: return
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val deg = event.values.firstOrNull() ?: return
+                onHingeDegrees(deg)
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        sm.registerListener(listener, hinge, SensorManager.SENSOR_DELAY_UI, mainHandler)
+    }
+
+    private fun onHingeDegrees(deg: Float) {
+        applyDevicePosture(PosturePolicy.fromSensors(deg, null))
+    }
+
+    private fun applyDevicePosture(posture: DevicePosture) {
+        val previous = devicePosture
+        if (posture == previous) return
+        devicePosture = posture
+        val surface = sessionSurface
+        val sessionOwns = DualPaintPolicy.sessionOwnsCompanionDisplay(
+            surface?.policy,
+            surface?.greedy == true,
+        )
+        val keepRa = surface != null &&
+            settings.raNetworkCommands &&
+            SessionHandoff.isRaPlayer(surface.playerId, surface.packageName)
+        val effect = PosturePolicy.effect(
+            posture,
+            previous,
+            dualMode = displayConfig.mode == SurfaceMode.DUAL,
+            sessionOwnsCompanion = sessionOwns,
+            keepRaPlaying = keepRa,
+            suggestYieldEnabled = settings.postureSuggestYield,
+            postureAware = settings.postureAware,
+        )
+        Log.i("GGPosture", "posture=$posture effect=$effect")
+        // FLAT→CLOSED returns PAUSE, not HIDE. Hide unless this edge is SHOW.
+        postureYieldChipVisible =
+            posture == DevicePosture.FLAT && effect == PostureEffect.SHOW_YIELD_CHIP
+        refreshPostureChip()
+        if (effect == PostureEffect.PAUSE_IF_PLAYING) {
+            enqueuePosturePause()
+        }
+    }
+
+    /** Yield already owns both screens — do not pause via this path. */
+    private fun enqueuePosturePause() {
+        val surface = sessionSurface ?: return
+        if (DualPaintPolicy.sessionOwnsCompanionDisplay(surface.policy, surface.greedy)) {
+            return
+        }
+        val port = settings.raNetworkCmdPort
+        enqueueRaUdp(
+            work = { client ->
+                if (client.status(port) == RaStatus.PLAYING) client.pauseToggle(port)
+            },
+            onMain = {},
+        )
+    }
+
+    fun dismissPostureYieldChip() {
+        if (!postureYieldChipVisible) return
+        postureYieldChipVisible = false
+        refreshPostureChip()
+    }
+
+    fun refreshPostureChip() {
+        liveDeckActivities().forEach { deck ->
+            CompanionPanel.applyPostureChip(deck.window?.decorView, this)
+        }
     }
 
     val romLibrary: RomLibrary by lazy {
@@ -473,6 +560,14 @@ class GhostGalleonApp : Application() {
 
     // Process-only KEEP play HUD chrome. Expanded shows the actions row.
     var playHudExpanded: Boolean = true
+
+    // Process-only hinge bucket. Missing sensor stays UNKNOWN.
+    var devicePosture: DevicePosture = DevicePosture.UNKNOWN
+        private set
+
+    // In-place FLAT chip. Never a session policy write.
+    var postureYieldChipVisible: Boolean = false
+        private set
 
     // Process-only RAM lens catalog (bundled assets + optional SAF pack).
     @Volatile
@@ -2038,6 +2133,7 @@ class GhostGalleonApp : Application() {
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
         refreshDisplayConfig()
         registerDisplayListener()
+        registerHingeSensor()
         // Disk index before any deck paints or cold-start seed.
         loadRomIndexBlocking()
         // Cold-start hero seed: prefer Continue key when known, else slot 0.
@@ -2342,6 +2438,8 @@ class GhostGalleonApp : Application() {
         // Slightly longer debounce: bulk multi-select / favorite storms
         // coalesce into fewer disk writes without feeling laggy on pause flush.
         const val SETTINGS_SAVE_DEBOUNCE_MS = 180L
+        /** [Sensor.TYPE_HINGE_ANGLE] (API 30+). */
+        const val TYPE_HINGE_ANGLE = 36
         const val SAMPLE_CHUNK_BYTES = 64 * 1024
         const val IDENT_TAG = "GGIdent"
         const val FERRY_TAG = "GGFerry"

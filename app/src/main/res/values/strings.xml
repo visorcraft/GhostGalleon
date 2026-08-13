@@ -374,6 +374,7 @@
     <string name="play_hud_theater">Unlocked · %1$s</string>
     <string name="play_hud_seat">Seat</string>
     <string name="play_hud_back_to_hud">Back to HUD</string>
+    <string name="posture_use_both_screens">Use both screens?</string>
     <string name="seat_need_assist">Enable Input assist to use the second seat.</string>
     <string name="cockpit_keyboard">Keyboard</string>
     <string name="cockpit_need_assist">Enable Input assist to move the mouse.</string>
@@ -519,6 +520,8 @@
     <string name="settings_import_lens_pack">Import lens pack</string>
     <string name="settings_stack_clones">Stack clones</string>
     <string name="settings_save_ferry">Save ferry</string>
+    <string name="settings_posture">Posture</string>
+    <string name="settings_posture_suggest_yield">Suggest both screens when flat</string>
     <string name="settings_ra_network_commands_help">In RetroArch: Settings → Network → Network Commands ON, port 55355.</string>
     <string name="settings_ra_username">RetroAchievements username</string>
     <string name="settings_ra_username_hint">RA username</string>

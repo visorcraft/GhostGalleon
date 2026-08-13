@@ -353,6 +353,7 @@
     <string name="play_hud_theater">ปลดล็อก · %1$s</string>
     <string name="play_hud_seat">ที่นั่ง</string>
     <string name="play_hud_back_to_hud">กลับไปที่ HUD</string>
+    <string name="posture_use_both_screens">ใช้ทั้งสองหน้าจอ?</string>
     <string name="seat_need_assist">เปิดตัวช่วยอินพุตเพื่อใช้ที่นั่งที่สอง</string>
     <string name="cockpit_keyboard">คีย์บอร์ด</string>
     <string name="cockpit_need_assist">เปิดตัวช่วยอินพุตเพื่อขยับเมาส์</string>
@@ -490,6 +491,8 @@
     <string name="settings_import_lens_pack">นำเข้าแพ็คเลนส์</string>
     <string name="settings_stack_clones">ซ้อนโคลน</string>
     <string name="settings_save_ferry">เรือข้ามฟากเซฟ</string>
+    <string name="settings_posture">ท่าทาง</string>
+    <string name="settings_posture_suggest_yield">แนะนำทั้งสองหน้าจอเมื่อกางราบ</string>
     <string name="settings_ra_network_commands_help">ใน RetroArch: การตั้งค่า → เครือข่าย → คำสั่งเครือข่าย เปิด, พอร์ต 55355.</string>
     <string name="settings_ra_username">ชื่อผู้ใช้ RetroAchievements</string>
     <string name="settings_ra_username_hint">ชื่อผู้ใช้ RA</string>

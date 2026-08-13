@@ -724,6 +724,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 root.setBackgroundColor(0xFF000000.toInt())
             }
             setContentView(root)
+            CompanionPanel.applyPostureChip(root, app)
             // New view tree: listener + owner hint must be rebound.
             lastFocusLock = null
             lastInputOwner = null
