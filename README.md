@@ -67,13 +67,15 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 - **Portable display topology** — interactive vs companion vs launch from `DisplayManager` (no hard-coded 0/1). Profiles: Auto, One X Sugar, Generic dual, Single. Swap/Settings icons sit on the **physically larger** panel in DUAL.
 - **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin; also recovers a stuck pure-black secondary panel.
 - **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel. Hero uses a compact platform · play · player subline and readable action chips.
+- **Split-session ownership** — Dual-surface games (melonDualDS, Azahar) keep **both** screens. Single-surface games keep a live companion on the owned display.
+- **KEEP play host** — While a single-surface game runs, the owned panel is a play HUD (clock, session switcher, optional RetroArch Talk). Opt-in depth: RAM lenses / trackers, savestate cinema (slots 9–12), achievement theater, second-seat touch, helper embed, warm Continue. Save ferry and lid-close pause are on by default; cinema / theater / seat / lenses / warm-load stay **off** until you enable them.
 - **Global input** — gamepad, d-pad, stick, and touch route to the interactive deck regardless of focus; held directions auto-repeat. D-pad is remappable; stick deadzone is in Settings → Controls; Controller Lab can bind the last key.
 - **Swipe-up / re-HOME drawer** — all-apps + ROMs without reloading the deck.
 - **Quick Panel** — Select opens Wi‑Fi, Bluetooth, Display, Settings, Continue, Theme, Controller Lab, and Close; optional browse shortcuts follow Browse chrome settings.
 - **ROM library** — 21 built-in platforms (including Vita and Windows/Winlator), SAF tree grants only, offline-first art, hidden-ROM controls, and optional SteamGridDB/RetroAchievements integrations.
 - **Honest playtime** — sessions pause while the launcher is focused or the device sleeps.
 - **Themes** — Ghost, Teal, OLED Black, Neon; optional custom theme JSON.
-- **Performance-minded** — R8-minified release APK, single carousel snap path, DiffUtil browse updates, one-pass chip counts, JPEG tile cache + RGB_565 grid decode, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, dual-paint thrash guards (see [dual-paint invariants](docs/dual-paint-invariants.md)).
+- **Performance-minded** — R8-minified release APK, single carousel snap path, DiffUtil browse updates, one-pass chip counts, JPEG tile cache + RGB_565 grid decode, art load coalescing + throttled disk LRU, O(1) ROM/app maps, in-place selection/browse/chrome paths, dual-paint thrash guards, idle PixelCopy backoff, and KEEP HUD ticks that stay off until those surfaces are on (see [dual-paint invariants](docs/dual-paint-invariants.md)).
 - **Settings** — Display & Grid, Apps, Controls (Controller Lab), Library, Artwork & backup, Stats, System (topology diagnostics), About. Long-press the page menu to search.
 - **Export/import** — full settings, layout, and ROM-library JSON, plus a zip of the artwork cache.
 - **Localization** — complete English, Spanish, German, Thai, and French UI catalogs with Android per-app language support.
@@ -94,12 +96,19 @@ On the **One X Sugar**, Auto/Sugar prefers the **bottom** panel for interactive 
 
 **Settings → System** shows the resolved topology (e.g. `primary=1 companion=0 launch=0 secondaryHome=1 larger=0`) plus hardware readings. **Single-display** devices run in SINGLE mode.
 
-Split-session ownership (dual-surface games keep both panels; single-surface
-games keep a live companion) is specified in
-[`docs/split-session-ownership.md`](docs/split-session-ownership.md).
-The KEEP play surface (HUD, session switcher, pixel oracle, RetroArch
-link) is specified in
-[`docs/keep-play-surface.md`](docs/keep-play-surface.md).
+**KEEP vs yield.** melonDualDS and Azahar take both panels (`YIELD_BOTH`).
+Everyone else launches on the topology launch display; Ghost Galleon stays
+HOME on the owned display and can paint a play HUD there. Owned-surface
+input, stage plots, RAM lenses, and play-host depth (trackers, cinema,
+theater, second seat, save ferry, posture, helper, warm Continue) never
+run on a yielded dual-surface session.
+
+| Spec | What it covers |
+|------|----------------|
+| [Split-session ownership](docs/split-session-ownership.md) | KEEP vs yield; dual-surface games keep both screens |
+| [KEEP play surface](docs/keep-play-surface.md) | Play HUD, session switcher, pixel oracle, RetroArch Talk |
+| [Owned-surface](docs/owned-surface.md) | Focus lock, handoff, stage plots, cockpit, RAM lenses |
+| [Play-host depth](docs/play-host-depth.md) | Trackers, cinema, theater, seat, ferry, posture, helper, warm Continue |
 
 ---
 
@@ -180,12 +189,13 @@ Remap everything under Settings → Controls. Controller Lab is available for ca
 
 | Page | Contents |
 |------|----------|
-| **Display & Grid** | Orientation, hints, default mode, themes, wallpaper, device profile, interactive display, companion role, **Browse chrome** (Minimal / Custom / Full + per-feature toggles), grid layout |
-| **Apps** | Hidden apps, dock management |
-| **Controls** | Haptics, remappable keys, Controller Lab |
-| **Library** | ROM folders, Hidden ROMs, rescan, SteamGridDB, RetroAchievements, export/import, platform packs |
+| **Display & Grid** | Orientation, hints, default mode, themes, wallpaper, device profile, interactive display, companion role, posture (lid-close pause; optional yield chip), **Browse chrome** (Minimal / Custom / Full + per-feature toggles), grid layout |
+| **Apps** | Hidden apps, dock management, play-host helper package |
+| **Controls** | Haptics, remappable keys, Controller Lab, input assist, Winlator cockpit, second seat |
+| **Library** | ROM folders, Hidden ROMs, rescan, SteamGridDB, RetroAchievements, Talk to RetroArch, cinema / theater, warm Continue, save ferry, RAM lenses / trackers, export/import, platform packs |
+| **Artwork & backup** | Artwork cache, export/import zip |
 | **Stats** | Most played / recently played |
-| **System** | Topology (primary / companion / launch / secondaryHome / larger), hardware readings |
+| **System** | Topology (primary / companion / launch / secondaryHome / larger), hardware readings, detect-black companion |
 | **About** | Version, git SHA, credits, licenses |
 
 ---
@@ -243,7 +253,7 @@ git clone https://github.com/visorcraft/GhostGalleon.git
 cd GhostGalleon
 
 python3 scripts/i18n_audit.py --check
-./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 adb install --no-streaming -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -260,6 +270,8 @@ adb shell input keyevent HOME
 ```
 
 Release builds enable **R8 minify + resource shrink** (`app/proguard-rules.pro`).
+Ship-gate lint is `:app:lintVitalRelease` (`lintDebug` has known pre-existing
+findings and is not required to assemble).
 The One X Sugar can keep the old process alive and clear its HOME default during
 an update, so force-stop and restore HOME after every reinstall. Debug and release
 use different signing keys; switching between them requires uninstalling first.
@@ -283,6 +295,8 @@ device. Dual-screen paint rules live in
 Download the signed `app-release.apk` from the
 [GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
 On-device updates use Obtainium with GitHub releases as the source.
+Only the latest tag (`v0.12.2`) is kept on GitHub; older tags and
+release assets were removed.
 
 A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration
 (`-PbridgeBlackPearl=true`); normal users install only the
@@ -294,7 +308,9 @@ names, so migrated users must select their ROM folders again.
 ## Dual-screen recovery
 
 If one or both panels go **pure black** while the process is still running
-(often after heavy HOME / SECONDARY_HOME thrash or a stuck companion surface):
+(often after heavy HOME / SECONDARY_HOME thrash or a stuck companion surface),
+the idle pixel oracle will try to restart a black companion after three
+dark samples. If it stays black:
 
 1. Force-stop the app (system App Info, or `adb shell am force-stop com.visorcraft.ghostgalleon`), then press HOME.
 2. Press **X** once or twice to swap interactive / companion roles.
@@ -311,9 +327,10 @@ previous process alive across install. Paint thrash rules and agent checklist:
 
 - [Credits & attribution](CREDITS.md) and [third-party licenses](docs/credits-third-party.md) — also in-app under Settings → About.
 - [Dual-paint / black-screen invariants](docs/dual-paint-invariants.md) — dual-display paint thrash rules and recovery.
+- [Split-session ownership](docs/split-session-ownership.md), [KEEP play surface](docs/keep-play-surface.md), [owned-surface](docs/owned-surface.md), [play-host depth](docs/play-host-depth.md).
 - Complete [localization inventory](docs/localization-inventory.md) and translator checklist.
 - Example [platform packs](docs/platform-packs/).
-- [GitHub releases](https://github.com/visorcraft/GhostGalleon/releases)
+- [GitHub releases](https://github.com/visorcraft/GhostGalleon/releases) — only the latest tag is published.
 
 ---
 
