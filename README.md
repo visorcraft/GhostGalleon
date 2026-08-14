@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.12.2-informational" alt="0.12.2" />
+  <img src="https://img.shields.io/badge/version-0.12.3-informational" alt="0.12.3" />
 </p>
 
 ---
@@ -295,7 +295,7 @@ device. Dual-screen paint rules live in
 Download the signed `app-release.apk` from the
 [GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
 On-device updates use Obtainium with GitHub releases as the source.
-Only the latest tag (`v0.12.2`) is kept on GitHub; older tags and
+Only the latest tag (`v0.12.3`) is kept on GitHub; older tags and
 release assets were removed.
 
 A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration
