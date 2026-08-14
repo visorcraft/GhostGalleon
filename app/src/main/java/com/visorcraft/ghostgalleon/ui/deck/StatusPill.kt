@@ -88,15 +88,26 @@ object StatusPill {
         return pill
     }
 
-    /** Overlay params: top-end with small margin (interactive decks). */
-    fun overlayLayoutParams(context: Context): android.widget.FrameLayout.LayoutParams {
+    /**
+     * Overlay insets in dp. [flushCorner] is the companion large panel
+     * (true top-end); Grid/Game keep a slightly looser overlay.
+     */
+    fun overlayInsetDp(flushCorner: Boolean): Pair<Int, Int> =
+        if (flushCorner) 4 to 4 else 8 to 12
+
+    /** Overlay params: top-end. [flushCorner] hugs the companion corner. */
+    fun overlayLayoutParams(
+        context: Context,
+        flushCorner: Boolean = false,
+    ): android.widget.FrameLayout.LayoutParams {
+        val (top, end) = overlayInsetDp(flushCorner)
         return android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.TOP or Gravity.END,
         ).apply {
-            topMargin = context.dp(8)
-            marginEnd = context.dp(12)
+            topMargin = context.dp(top)
+            marginEnd = context.dp(end)
         }
     }
 

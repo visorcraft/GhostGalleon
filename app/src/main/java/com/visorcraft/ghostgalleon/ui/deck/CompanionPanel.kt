@@ -1760,6 +1760,7 @@ object CompanionPanel {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ))
+            attachCompanionStatusOverlay(root, context, settings)
             return installSwitcherHost()
         }
 
@@ -1776,6 +1777,7 @@ object CompanionPanel {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ))
+            attachCompanionStatusOverlay(root, context, settings)
             return installSwitcherHost()
         }
 
@@ -1788,18 +1790,6 @@ object CompanionPanel {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { bottomMargin = dp(12) },
             )
-        }
-
-        // Status pill (time + battery), top-right. Same Browse chrome flag as
-        // Grid/Game overlays — off under Minimal so lower/upper hero stays clean.
-        if (settings.browseChrome.deckStatusPill) {
-            val pillRow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END
-            }
-            pillRow.addView(StatusPill.build(context, compact = false))
-            content.addView(pillRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
         // Hero area.
@@ -2286,7 +2276,22 @@ object CompanionPanel {
         if (shouldHostSystemChromeIcons(activity)) {
             attachSystemChromeOverlay(root, context, activity, state)
         }
+        attachCompanionStatusOverlay(root, context, settings)
         return installSwitcherHost()
+    }
+
+    /** Time + battery on the companion window, true top-end — not in the padded column. */
+    private fun attachCompanionStatusOverlay(
+        root: FrameLayout,
+        context: Context,
+        settings: Settings,
+    ) {
+        if (!settings.browseChrome.deckStatusPill) return
+        if (root.findViewWithTag<View>(StatusPill.TAG) != null) return
+        root.addView(
+            StatusPill.build(context, compact = false),
+            StatusPill.overlayLayoutParams(context, flushCorner = true),
+        )
     }
 
     private fun roleChipRow(

@@ -33,4 +33,10 @@ class StatusPillTest {
             StatusPill.formatBatteryLabel(88, charging = false),
         )
     }
+
+    @Test
+    fun `flush companion overlay sits in the true corner`() {
+        assertEquals(8 to 12, StatusPill.overlayInsetDp(flushCorner = false))
+        assertEquals(4 to 4, StatusPill.overlayInsetDp(flushCorner = true))
+    }
 }
