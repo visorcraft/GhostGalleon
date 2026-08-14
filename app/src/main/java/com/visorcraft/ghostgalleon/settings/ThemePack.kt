@@ -56,6 +56,18 @@ object ThemePack {
         BUILTINS.firstOrNull { it.id.equals(id?.trim(), ignoreCase = true) } ?: GHOST
 
     /**
+     * Text on a filled chip. Light fills (OLED accent) keep black;
+     * mid/dark accents (Ghost, Teal, Neon) get white.
+     */
+    fun onFillTextColor(fill: Int): Int {
+        val r = (fill shr 16) and 0xFF
+        val g = (fill shr 8) and 0xFF
+        val b = fill and 0xFF
+        val luma = (r + r + b + g + g + g) / 6
+        return if (luma >= 150) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+    }
+
+    /**
      * Parse a theme pack JSON object. Accepts:
      * `{ "id":"…", "displayName":"…", "accentColor":"#FF2D95" or long,
      *    "cardRadiusDp":24, "panelLift":…, "chipIdle":…, "heroRain":true,

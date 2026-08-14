@@ -70,4 +70,15 @@ class ThemePackTest {
         )
         assertEquals(ThemePack.NEON, ThemePack.resolve(badCustom))
     }
+
+    @Test
+    fun `onFillTextColor is white on dark accents and black on OLED`() {
+        val white = 0xFFFFFFFF.toInt()
+        val black = 0xFF000000.toInt()
+        assertEquals(white, ThemePack.onFillTextColor(ThemePack.GHOST.accentColor))
+        assertEquals(white, ThemePack.onFillTextColor(ThemePack.THREEDS.accentColor))
+        assertEquals(white, ThemePack.onFillTextColor(ThemePack.NEON.accentColor))
+        assertEquals(black, ThemePack.onFillTextColor(ThemePack.OLED.accentColor))
+        assertEquals(white, ThemePack.onFillTextColor(0xFF1C1C22.toInt()))
+    }
 }

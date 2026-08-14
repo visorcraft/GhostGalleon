@@ -87,6 +87,7 @@ import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.Settings
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.hint
 import com.visorcraft.ghostgalleon.state.DeckState
@@ -508,8 +509,8 @@ object CompanionPanel {
             TextView(activity).apply {
                 setText(R.string.play_hud_back_to_hud)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.BLACK)
-                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+                background = TileBackgrounds.accentPill(activity, settings.accentColor)
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener { setHelperActive(app, false) }
             },
@@ -549,8 +550,8 @@ object CompanionPanel {
             TextView(activity).apply {
                 setText(R.string.play_hud_back_to_hud)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.BLACK)
-                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+                background = TileBackgrounds.accentPill(activity, settings.accentColor)
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener { setSeatActive(app, false) }
             },
@@ -2310,7 +2311,10 @@ object CompanionPanel {
             row.addView(TextView(context).apply {
                 setText(labelRes)
                 setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(12).toFloat())
-                setTextColor(if (current == role) Color.BLACK else Color.WHITE)
+                setTextColor(
+                    if (current == role) ThemePack.onFillTextColor(settings.accentColor)
+                    else Color.WHITE,
+                )
                 setBackgroundColor(
                     if (current == role) settings.accentColor
                     else TileBackgrounds.chipIdleColor(context))
@@ -2551,8 +2555,8 @@ object CompanionPanel {
     ): TextView = TextView(activity).apply {
         setText(labelRes)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(Color.BLACK)
-        background = TileBackgrounds.selected(activity, settings.accentColor)
+        setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+        background = TileBackgrounds.accentPill(activity, settings.accentColor)
         setPadding(dp(20), dp(12), dp(20), dp(12))
         gravity = Gravity.CENTER
         setOnClickListener { onClick() }
@@ -2640,8 +2644,8 @@ object CompanionPanel {
         actions.addView(TextView(activity).apply {
             setText(R.string.action_swap)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(Color.BLACK)
-            background = TileBackgrounds.selected(activity, settings.accentColor)
+            setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+            background = TileBackgrounds.accentPill(activity, settings.accentColor)
             setPadding(dp(16), dp(8), dp(16), dp(8))
             setOnClickListener {
                 (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
@@ -2769,8 +2773,8 @@ object CompanionPanel {
                 setText(R.string.posture_use_both_screens)
                 visibility = View.GONE
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.BLACK)
-                background = TileBackgrounds.selected(activity, settings.accentColor)
+                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+                background = TileBackgrounds.accentPill(activity, settings.accentColor)
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 gravity = Gravity.CENTER
                 isFocusable = true
@@ -2943,9 +2947,11 @@ object CompanionPanel {
             tag = chipTag
             if (labelRes != null) setText(labelRes) else text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(if (filled) Color.BLACK else Color.WHITE)
+            setTextColor(
+                if (filled) ThemePack.onFillTextColor(settings.accentColor) else Color.WHITE,
+            )
             if (filled) {
-                background = TileBackgrounds.selected(activity, settings.accentColor)
+                background = TileBackgrounds.accentPill(activity, settings.accentColor)
             }
             setPadding(dp(16), dp(8), dp(16), dp(8))
             this.visibility = visibility
