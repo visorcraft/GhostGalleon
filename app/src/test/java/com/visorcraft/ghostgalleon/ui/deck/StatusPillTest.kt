@@ -26,14 +26,10 @@ class StatusPillTest {
     }
 
     @Test
-    fun `formatBatteryLabel marks charging`() {
-        assertEquals(
-            text(R.string.battery_percent_charging, 88),
-            StatusPill.formatBatteryLabel(88, charging = true),
-        )
+    fun `formatBatteryLabel is percent only`() {
         assertEquals(
             text(R.string.system_battery_percent, 88),
-            StatusPill.formatBatteryLabel(88, charging = false),
+            StatusPill.formatBatteryLabel(88),
         )
     }
 
@@ -74,9 +70,11 @@ class StatusPillTest {
         )
         assertEquals(40, snap.percent)
         assertTrue(snap.charging)
+        assertEquals(StatusBattery.Glyph.CHARGING, snap.glyph)
+        assertEquals(2, snap.bars)
         assertEquals(
-            text(R.string.battery_percent_charging, 40),
-            StatusPill.formatBatteryLabel(snap.percent, snap.charging),
+            text(R.string.system_battery_percent, 40),
+            StatusPill.formatBatteryLabel(snap.percent),
         )
     }
 
@@ -90,17 +88,31 @@ class StatusPillTest {
         )
         assertEquals(38, snap.percent)
         assertFalse(snap.charging)
+        assertEquals(StatusBattery.Glyph.BATTERY, snap.glyph)
+        assertEquals(2, snap.bars)
         assertEquals(
             text(R.string.system_battery_percent, 38),
-            StatusPill.formatBatteryLabel(snap.percent, snap.charging),
+            StatusPill.formatBatteryLabel(snap.percent),
         )
     }
 
     @Test
     fun `battery label write is skipped when the visible text already matches`() {
-        assertFalse(StatusPill.batteryLabelNeedsWrite("38%⚡", "38%⚡"))
-        assertTrue(StatusPill.batteryLabelNeedsWrite("38%⚡", "40%⚡"))
-        assertTrue(StatusPill.batteryLabelNeedsWrite("38%", "38%⚡"))
+        assertFalse(StatusPill.batteryLabelNeedsWrite("38%", "38%"))
+        assertTrue(StatusPill.batteryLabelNeedsWrite("38%", "40%"))
         assertTrue(StatusPill.batteryLabelNeedsWrite(null, "40%"))
+    }
+
+    @Test
+    fun `plugged drain current becomes the net-drain bolt`() {
+        val snap = StatusPill.snapshotFrom(
+            level = 38,
+            scale = 100,
+            status = BatteryManager.BATTERY_STATUS_CHARGING,
+            plugged = BatteryManager.BATTERY_PLUGGED_AC,
+            currentUa = -400_000L,
+        )
+        assertTrue(snap.plugged)
+        assertEquals(StatusBattery.Glyph.NET_DRAIN, snap.glyph)
     }
 }

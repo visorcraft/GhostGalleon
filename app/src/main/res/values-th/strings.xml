@@ -172,7 +172,8 @@
     <string name="format_jump_to_letter">กระโดดไปที่ %1$s (%2$d)</string>
     <string name="format_search_query">\"%1$s\"</string>
     <string name="format_battery_accessibility">แบตเตอรี่ %1$s</string>
-    <string name="battery_percent_charging">%1$d%%⚡</string>
+    <string name="format_battery_charging_accessibility">แบตเตอรี่ %1$d เปอร์เซ็นต์ กำลังชาร์จ</string>
+    <string name="format_battery_net_drain_accessibility">แบตเตอรี่ %1$d เปอร์เซ็นต์ เสียบอยู่แต่กำลังลดลง</string>
     <string name="format_platform_badge">แพลตฟอร์ม · %1$s</string>
     <string name="format_genre_badge">แนว · %1$s</string>
     <string name="format_developer_badge">ผู้พัฒนา · %1$s</string>
