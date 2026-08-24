@@ -1,13 +1,11 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.os.BatteryManager
-import android.os.Build
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -40,7 +38,7 @@ object StatusPill {
     /** Warning red for plugged-in net drain; readable on OLED black. */
     const val NET_DRAIN_BOLT = 0xFFFF5252.toInt()
 
-    private const val PLUGGED_POLL_MS = 1_500L
+    internal const val PLUGGED_POLL_MS = 1_500L
 
     /** Learned CURRENT_NOW discharge sign. Shared by both pills. */
     internal var dischargeSign: Int = StatusBattery.AOSP_DISCHARGE_SIGN
@@ -64,12 +62,13 @@ object StatusPill {
         val padH = if (compact) 12 else 20
         val padV = if (compact) 4 else 8
         val gap = if (compact) 8 else 12
-        val iconDp = if (compact) 14 else 20
+        val iconDp = if (compact) 16 else 20
         val glyphPad = if (compact) 2 else 4
 
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
             background = TileBackgrounds.pill(context)
             setPadding(context.dp(padH), context.dp(padV), context.dp(padH), context.dp(padV))
             tag = TAG
@@ -115,6 +114,7 @@ object StatusPill {
             format24Hour = android.text.format.DateFormat.getBestDateTimePattern(locale, "Hm")
             tag = TAG_CLOCK
             contentDescription = context.getString(R.string.deck_clock)
+            includeFontPadding = false
             setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
             setTextColor(Color.WHITE)
         })
@@ -164,6 +164,7 @@ object StatusPill {
             status == BatteryManager.BATTERY_STATUS_FULL
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun snapshotFrom(
         level: Int,
         scale: Int,
@@ -175,11 +176,9 @@ object StatusPill {
         counterDelta: Long? = null,
     ): BatterySnapshot {
         val percent = percentFrom(level, scale, capacityProperty)
-        val pluggedIn = StatusBattery.isPlugged(plugged) ||
-            status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL
+        val pluggedIn = StatusBattery.isPlugged(plugged)
         val draining = StatusBattery.draining(currentUa, dischargeSign, counterDelta)
-        val glyph = StatusBattery.glyph(pluggedIn, draining)
+        val glyph = StatusBattery.glyph(pluggedIn, draining, percent)
         return BatterySnapshot(
             percent = percent,
             plugged = pluggedIn,
@@ -215,6 +214,12 @@ object StatusPill {
         return snapshotFromIntent(intent, capacity, currentUa, dischargeSign, delta)
     }
 
+    private data class AppliedChrome(
+        val percent: Int,
+        val glyph: StatusBattery.Glyph,
+        val bars: Int,
+    )
+
     internal fun applyBattery(pill: View, snapshot: BatterySnapshot) {
         val tv = pill.findViewWithTag<View>(TAG_BATTERY) as? TextView ?: return
         val bolt = pill.findViewWithTag<View>(TAG_BATTERY_BOLT) as? TextView
@@ -224,10 +229,25 @@ object StatusPill {
             tv.visibility = View.GONE
             bolt?.visibility = View.GONE
             icon?.visibility = View.GONE
+            pill.setTag(R.id.status_chrome, null)
+            return
+        }
+        val prev = pill.getTag(R.id.status_chrome) as? AppliedChrome
+        if (prev != null &&
+            !StatusBattery.chromeNeedsWrite(
+                prev.percent,
+                prev.glyph,
+                prev.bars,
+                snapshot.percent,
+                snapshot.glyph,
+                snapshot.bars,
+            )
+        ) {
             return
         }
         val resolved = ctx.resolveText(label)
-        val a11y = when (snapshot.glyph) {
+        tv.text = resolved
+        tv.contentDescription = when (snapshot.glyph) {
             StatusBattery.Glyph.CHARGING ->
                 ctx.getString(R.string.format_battery_charging_accessibility, snapshot.percent)
             StatusBattery.Glyph.NET_DRAIN ->
@@ -235,29 +255,21 @@ object StatusPill {
             StatusBattery.Glyph.BATTERY ->
                 ctx.getString(R.string.format_battery_accessibility, resolved)
         }
-        val skip = tv.visibility == View.VISIBLE &&
-            bolt != null &&
-            icon != null &&
-            !StatusBattery.chromeNeedsWrite(
-                previousPercent = tv.text.toString().filter { it.isDigit() }.toIntOrNull() ?: Int.MIN_VALUE,
-                previousGlyph = visibleGlyph(bolt, icon),
-                previousBars = icon.drawable?.level ?: Int.MIN_VALUE,
-                nextPercent = snapshot.percent,
-                nextGlyph = snapshot.glyph,
-                nextBars = snapshot.bars,
-            )
-        if (skip) return
-        tv.text = resolved
-        tv.contentDescription = a11y
         tv.visibility = View.VISIBLE
         when (snapshot.glyph) {
             StatusBattery.Glyph.BATTERY -> {
                 bolt?.visibility = View.GONE
-                icon?.isActivated = false
-                icon?.setImageResource(R.drawable.ic_status_battery)
-                icon?.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
-                icon?.setImageLevel(snapshot.bars)
-                icon?.visibility = View.VISIBLE
+                if (icon != null) {
+                    if (prev?.glyph != StatusBattery.Glyph.BATTERY) {
+                        icon.isActivated = false
+                        icon.setImageResource(R.drawable.ic_status_battery)
+                        icon.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
+                    }
+                    if (icon.drawable?.level != snapshot.bars) {
+                        icon.setImageLevel(snapshot.bars)
+                    }
+                    icon.visibility = View.VISIBLE
+                }
             }
             StatusBattery.Glyph.CHARGING -> {
                 icon?.visibility = View.GONE
@@ -267,19 +279,20 @@ object StatusPill {
             }
             StatusBattery.Glyph.NET_DRAIN -> {
                 bolt?.visibility = View.GONE
-                icon?.isActivated = true
-                icon?.setImageResource(R.drawable.ic_status_bolt)
-                icon?.setColorFilter(NET_DRAIN_BOLT, PorterDuff.Mode.SRC_IN)
-                icon?.visibility = View.VISIBLE
+                if (icon != null && prev?.glyph != StatusBattery.Glyph.NET_DRAIN) {
+                    icon.isActivated = true
+                    icon.setImageResource(R.drawable.ic_status_bolt)
+                    icon.setColorFilter(NET_DRAIN_BOLT, PorterDuff.Mode.SRC_IN)
+                    icon.visibility = View.VISIBLE
+                } else {
+                    icon?.visibility = View.VISIBLE
+                }
             }
         }
-    }
-
-    private fun visibleGlyph(bolt: TextView, icon: ImageView): StatusBattery.Glyph = when {
-        bolt.visibility == View.VISIBLE -> StatusBattery.Glyph.CHARGING
-        icon.visibility == View.VISIBLE && icon.isActivated -> StatusBattery.Glyph.NET_DRAIN
-        icon.visibility == View.VISIBLE -> StatusBattery.Glyph.BATTERY
-        else -> StatusBattery.Glyph.CHARGING
+        pill.setTag(
+            R.id.status_chrome,
+            AppliedChrome(snapshot.percent, snapshot.glyph, snapshot.bars),
+        )
     }
 
     private fun snapshotFromIntent(
@@ -300,70 +313,15 @@ object StatusPill {
     )
 
     private fun wireLiveBattery(pill: View) {
-        var shown: StatusBattery.Glyph? = null
-        var pending: StatusBattery.Glyph? = null
-        var hits = 0
-
-        fun applyLive() {
-            if (!pill.isAttachedToWindow) return
-            val raw = readBattery(pill.context)
-            val stabilized = StatusBattery.stabilize(
-                shown = shown ?: raw.glyph,
-                candidate = raw.glyph,
-                pending = pending,
-                hits = hits,
-            )
-            shown = stabilized.first
-            pending = stabilized.second
-            hits = stabilized.third
-            applyBattery(pill, raw.copy(glyph = shown!!))
-        }
-
-        val poll = object : Runnable {
-            override fun run() {
-                applyLive()
-                val plugged = shown != null && shown != StatusBattery.Glyph.BATTERY
-                if (pill.isAttachedToWindow && plugged) {
-                    pill.postDelayed(this, PLUGGED_POLL_MS)
-                }
-            }
-        }
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                if (!pill.isAttachedToWindow) return
-                if (intent.action != Intent.ACTION_BATTERY_CHANGED) return
-                pill.removeCallbacks(poll)
-                poll.run()
-            }
-        }
         pill.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
-                val app = v.context.applicationContext
-                runCatching { app.unregisterReceiver(receiver) }
-                registerBatteryReceiver(app, receiver)
-                pill.removeCallbacks(poll)
-                poll.run()
+                StatusBatteryWatch.attach(v)
             }
 
             override fun onViewDetachedFromWindow(v: View) {
-                pill.removeCallbacks(poll)
-                runCatching {
-                    v.context.applicationContext.unregisterReceiver(receiver)
-                }
+                StatusBatteryWatch.detach(v)
             }
         })
-    }
-
-    private fun registerBatteryReceiver(
-        context: Context,
-        receiver: BroadcastReceiver,
-    ): Intent? {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        return if (Build.VERSION.SDK_INT >= 33) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            context.registerReceiver(receiver, filter)
-        }
+        if (pill.isAttachedToWindow) StatusBatteryWatch.attach(pill)
     }
 }

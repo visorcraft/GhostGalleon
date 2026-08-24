@@ -115,4 +115,16 @@ class StatusPillTest {
         assertTrue(snap.plugged)
         assertEquals(StatusBattery.Glyph.NET_DRAIN, snap.glyph)
     }
+
+    @Test
+    fun `full pack on AC is charging not net-drain`() {
+        val snap = StatusPill.snapshotFrom(
+            level = 100,
+            scale = 100,
+            status = BatteryManager.BATTERY_STATUS_DISCHARGING,
+            plugged = BatteryManager.BATTERY_PLUGGED_AC,
+            currentUa = -400_000L,
+        )
+        assertEquals(StatusBattery.Glyph.CHARGING, snap.glyph)
+    }
 }

@@ -19,4 +19,6 @@
     <item name="cockpit_pad_point" type="id" />
     <!-- KEEP theater badge: ArtCache key last bound (keep find-tag). -->
     <item name="theater_badge_key" type="id" />
+    <!-- Status pill: last applied battery chrome (percent/glyph/bars). -->
+    <item name="status_chrome" type="id" />
 </resources>

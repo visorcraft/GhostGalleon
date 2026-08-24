@@ -27,8 +27,8 @@ android {
         applicationId = if (bridge) "com.visorcraft.blackpearl" else "com.visorcraft.ghostgalleon"
         minSdk = 26
         targetSdk = 34
-        versionCode = if (bridge) 12 else 36
-        versionName = if (bridge) "0.3.0-migrate" else "0.13.0"
+        versionCode = if (bridge) 12 else 37
+        versionName = if (bridge) "0.3.0-migrate" else "0.13.1"
         buildConfigField("boolean", "EXPORT_MIGRATE_ON_BOOT", if (bridge) "true" else "false")
 
         // Short git SHA shown on the About page (Grexa-style build chip).

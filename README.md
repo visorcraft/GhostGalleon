@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.13.0-informational" alt="0.13.0" />
+  <img src="https://img.shields.io/badge/version-0.13.1-informational" alt="0.13.1" />
 </p>
 
 ---
@@ -63,7 +63,7 @@ On dual-screen hardware one panel hosts the interactive deck (grid or carousel) 
 ### Highlights
 
 - **Grid Mode** — curated 3DS/Wii-style icon grid with dock, blank “+” slots, favorites, folders, pin/unpin to dock. Long-press opens a **sectioned, scrollable** context menu with **Remove from grid** near the top (Arrange → Dock → Library → Customize → More). **Search library** stays in Grid (adds to a blank slot when the title is not already pinned).
-- **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Browse chips update the carousel **in place** (no dual-panel flash). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, clock/battery, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full).
+- **Game Mode** — card carousel with a **minimal** default chip bar (All / Recent / Continue / Fav + platforms + Search/Select). Browse chips update the carousel **in place** (no dual-panel flash). Counts on chips, deep search, details sheets, multi-select bulk actions, and long-press menus for history/sort/related/collections. Power-user rails (Installed, Games, Top, Today, Week, Month, A–Z, New, Random, genre/developer/year chips, letter jump), launchable-only ROMs, Resume chip, and Quick Panel browse shortcuts are **opt-in** under Settings → Display & Grid → Browse chrome (Minimal / Custom / Full). **Clock / battery** (same chrome flag) is a live corner pill: percent tracks charge, a 4-bar icon when unplugged, lightning while charging, and a red bolt when plugged in but still draining.
 - **Portable display topology** — interactive vs companion vs launch from `DisplayManager` (no hard-coded 0/1). Profiles: Auto, One X Sugar, Generic dual, Single. Swap/Settings icons sit on the **physically larger** panel in DUAL.
 - **Live screen swap** — X (default) swaps interactive and companion roles with a sticky pin; also recovers a stuck pure-black secondary panel.
 - **Companion roles** — Hero, Now Playing, Perf HUD, or pinned app on the non-interactive panel. Hero uses a compact platform · play · player subline and readable action chips.
@@ -295,7 +295,7 @@ device. Dual-screen paint rules live in
 Download the signed `app-release.apk` from the
 [GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
 On-device updates use Obtainium with GitHub releases as the source.
-Only the latest tag (`v0.13.0`) is kept on GitHub; older tags and
+Only the latest tag (`v0.13.1`) is kept on GitHub; older tags and
 release assets were removed.
 
 A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration

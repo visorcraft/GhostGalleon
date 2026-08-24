@@ -45,7 +45,15 @@ class StatusBatteryTest {
     fun `plugged and net drain is the red bolt`() {
         assertEquals(
             StatusBattery.Glyph.NET_DRAIN,
-            StatusBattery.glyph(plugged = true, draining = true),
+            StatusBattery.glyph(plugged = true, draining = true, percent = 36),
+        )
+    }
+
+    @Test
+    fun `full pack stays charging even if current looks like drain`() {
+        assertEquals(
+            StatusBattery.Glyph.CHARGING,
+            StatusBattery.glyph(plugged = true, draining = true, percent = 100),
         )
     }
 

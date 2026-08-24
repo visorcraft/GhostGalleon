@@ -72,8 +72,13 @@ object StatusBattery {
         return counterDelta != null && counterDelta <= -counterNoise
     }
 
-    fun glyph(plugged: Boolean, draining: Boolean): Glyph = when {
+    /**
+     * [percent] 100 while plugged is always charging (trickle at full
+     * must not show the red drain bolt).
+     */
+    fun glyph(plugged: Boolean, draining: Boolean, percent: Int = -1): Glyph = when {
         !plugged -> Glyph.BATTERY
+        percent >= 100 -> Glyph.CHARGING
         draining -> Glyph.NET_DRAIN
         else -> Glyph.CHARGING
     }
