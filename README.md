@@ -6,7 +6,7 @@
 <p align="center"><i>Ghost Galleon Dual Screen Launcher</i></p>
 
 <p align="center">
-  <b>A dual-screen Android launcher built for the One X Sugar handheld.</b>
+  <b>A gamepad-first launcher for Android handhelds — dual-screen or single-display.</b>
   <br />
   Grid Mode (3DS/Wii-style icon grid + dock) and Game Mode (card carousel) across one or two displays,
   <br />
@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.13.2-informational" alt="0.13.2" />
+  <img src="https://img.shields.io/badge/version-0.13.3-informational" alt="0.13.3" />
 </p>
 
 ---
@@ -295,7 +295,7 @@ device. Dual-screen paint rules live in
 Download the signed `app-release.apk` from the
 [GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
 On-device updates use Obtainium with GitHub releases as the source.
-Only the latest tag (`v0.13.2`) is kept on GitHub; older tags and
+Only the latest tag (`v0.13.3`) is kept on GitHub; older tags and
 release assets were removed.
 
 A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration

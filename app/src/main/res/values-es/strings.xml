@@ -612,7 +612,7 @@
     <string name="controller_action_down">ABAJO</string>
     <string name="controller_action_up">ARRIBA</string>
     <string name="about_subtitle">Lanzador de doble pantalla Ghost Galleon</string>
-    <string name="about_description">Un lanzador Android de doble pantalla para el portátil One X Sugar.</string>
+    <string name="about_description">Un lanzador para consolas Android con control por mando — doble pantalla o pantalla única.</string>
     <string name="about_whats_inside">Qué hay dentro</string>
     <string name="about_version">v%1$s</string>
     <string name="about_android_api">Android · API %1$d</string>
