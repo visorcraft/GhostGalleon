@@ -262,6 +262,7 @@
     <string name="deck_all_apps">Todas las apps</string>
     <string name="deck_search_apps_roms">Buscar apps y ROMs</string>
     <string name="deck_hint_default">A Lanzar · B Volver · X Intercambiar · Y Modo · Start Ajustes</string>
+    <string name="deck_hint_default_single">A Lanzar · B Volver · Y Modo · Start Ajustes</string>
     <string name="deck_hint_dock">A Lanzar / Añadir · B Volver · Mantener Mover / Eliminar</string>
     <string name="deck_hint_move">Moviendo - A soltar · B cancelar</string>
     <string name="deck_hint_folder">A · Lanzar · Y / mantener pulsado · Eliminar · B · Cerrar</string>

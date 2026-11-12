@@ -283,6 +283,7 @@
     <string name="deck_all_apps">All apps</string>
     <string name="deck_search_apps_roms">Search apps &amp; ROMs</string>
     <string name="deck_hint_default">A Launch · B Back · X Swap · Y Mode · Start Settings</string>
+    <string name="deck_hint_default_single">A Launch · B Back · Y Mode · Start Settings</string>
     <string name="deck_hint_dock">A Launch / Add · B Back · Hold Move / Remove</string>
     <string name="deck_hint_move">Moving - A drop · B cancel</string>
     <string name="deck_hint_folder">A · Launch  ·  Y / long-press · Remove  ·  B · Close</string>

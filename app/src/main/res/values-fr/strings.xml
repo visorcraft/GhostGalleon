@@ -262,6 +262,7 @@
     <string name="deck_all_apps">Toutes les applications</string>
     <string name="deck_search_apps_roms">Rechercher applications et ROMs</string>
     <string name="deck_hint_default">A Lancer · B Retour · X Échanger · Y Mode · Start Paramètres</string>
+    <string name="deck_hint_default_single">A Lancer · B Retour · Y Mode · Start Paramètres</string>
     <string name="deck_hint_dock">A Lancer/Ajouter · B Retour · Maintenir Déplacer/Retirer</string>
     <string name="deck_hint_move">Déplacement - A Déposer · B Annuler</string>
     <string name="deck_hint_folder">A · Lancer  ·  Y/Appui long · Retirer  ·  B · Fermer</string>

@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3ddc84?logo=android&amp;logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/language-Kotlin-7f52ff?logo=kotlin&amp;logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/API-26%E2%80%9334-0b57a4" alt="API 26–34" />
-  <img src="https://img.shields.io/badge/version-0.13.1-informational" alt="0.13.1" />
+  <img src="https://img.shields.io/badge/version-0.13.2-informational" alt="0.13.2" />
 </p>
 
 ---
@@ -56,7 +56,7 @@
 
 ## What is Ghost Galleon?
 
-Ghost Galleon is a home-screen replacement for Android handhelds. It is **built and QA’d on the One X Sugar** (Android 14, top 2160×1080 + bottom 1240×1080) and also runs on **single-display** devices via Auto topology.
+Ghost Galleon is a home-screen replacement for Android handhelds. It is **built and QA’d on the One X Sugar** (Android 14, top 2160×1080 + bottom 1240×1080) and also runs on **single-display** devices via Auto topology — verified on the **AYN Odin 2 Portal** (Android 17, 1920×1080). On single-display devices the dual-screen chrome adapts: the swap overlay and the `X Swap` hint are hidden, and the Settings navigation scrolls to fit any panel height.
 
 On dual-screen hardware one panel hosts the interactive deck (grid or carousel) while the other shows a companion surface (hero preview, Now Playing, Perf HUD, or a pinned app). Ghost Galleon holds the Android **HOME** role (and **SECONDARY_HOME** on dual panels), is designed for full gamepad control, and supports swipe-up all-apps.
 
@@ -295,7 +295,7 @@ device. Dual-screen paint rules live in
 Download the signed `app-release.apk` from the
 [GitHub releases page](https://github.com/visorcraft/GhostGalleon/releases).
 On-device updates use Obtainium with GitHub releases as the source.
-Only the latest tag (`v0.13.1`) is kept on GitHub; older tags and
+Only the latest tag (`v0.13.2`) is kept on GitHub; older tags and
 release assets were removed.
 
 A one-shot **BlackPearl → Ghost Galleon** package bridge exists for data migration

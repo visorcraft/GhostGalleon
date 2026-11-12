@@ -262,6 +262,7 @@
     <string name="deck_all_apps">แอปทั้งหมด</string>
     <string name="deck_search_apps_roms">ค้นหาแอป &amp; ROM</string>
     <string name="deck_hint_default">A เปิด · B กลับ · X สลับ · Y โหมด · Start การตั้งค่า</string>
+    <string name="deck_hint_default_single">A เปิด · B กลับ · Y โหมด · Start การตั้งค่า</string>
     <string name="deck_hint_dock">A เปิด/เพิ่ม · B กลับ · กดค้าง ย้าย/ลบ</string>
     <string name="deck_hint_move">ย้ายอยู่ - A วาง · B ยกเลิก</string>
     <string name="deck_hint_folder">A เปิด · Y/กดค้าง ลบ · B ปิด</string>

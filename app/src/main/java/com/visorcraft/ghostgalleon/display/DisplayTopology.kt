@@ -146,7 +146,8 @@ object DisplayTopology {
 
     /**
      * Swap/Settings icons host on the physically larger panel in DUAL.
-     * SINGLE always shows them (only one surface).
+     * SINGLE always shows them (only one surface). (Swap itself is
+     * additionally DUAL-only — see `attachSystemChromeOverlay`.)
      */
     fun shouldShowSystemChromeIcons(
         mode: SurfaceMode,

@@ -262,6 +262,7 @@
     <string name="deck_all_apps">Alle Apps</string>
     <string name="deck_search_apps_roms">Apps &amp; ROMs durchsuchen</string>
     <string name="deck_hint_default">A Starten · B Zurück · X Tauschen · Y Modus · Start Einstellungen</string>
+    <string name="deck_hint_default_single">A Starten · B Zurück · Y Modus · Start Einstellungen</string>
     <string name="deck_hint_dock">A Starten / Hinzufügen · B Zurück · Halten Verschieben / Entfernen</string>
     <string name="deck_hint_move">Verschieben - A Ablegen · B Abbrechen</string>
     <string name="deck_hint_folder">A · Starten · Y / Lang · Entfernen · B · Schließen</string>

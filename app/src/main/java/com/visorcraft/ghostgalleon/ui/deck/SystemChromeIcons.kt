@@ -10,12 +10,13 @@ import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.DisplayTopology
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 
-/** Swap + Settings on the larger DUAL panel (or always in SINGLE). */
+/** Swap + Settings on the larger DUAL panel; SINGLE shows Settings only. */
 internal fun shouldHostSystemChromeIcons(activity: Activity): Boolean {
     val app = activity.application as? GhostGalleonApp ?: return true
     val topo = app.displayConfig
@@ -37,27 +38,33 @@ internal fun attachSystemChromeOverlay(
     val edge = context.dp(8)
     val bottom = context.dp(12)
 
-    val swap = iconButton(
-        context,
-        R.drawable.ic_swap,
-        context.getString(R.string.action_swap_screens),
-    ) {
-        val appCtx = activity.application as? GhostGalleonApp
-        if (appCtx != null && !appCtx.swapInteractiveDisplay()) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.deck_only_one_display),
-                Toast.LENGTH_SHORT,
-            ).show()
+    // Swap is a dual-display action; on SINGLE it can only ever toast
+    // "only one display" — hide it there instead of teasing a dead button.
+    val singleDisplay = (activity.application as? GhostGalleonApp)
+        ?.displayConfig?.mode == SurfaceMode.SINGLE
+    if (!singleDisplay) {
+        val swap = iconButton(
+            context,
+            R.drawable.ic_swap,
+            context.getString(R.string.action_swap_screens),
+        ) {
+            val appCtx = activity.application as? GhostGalleonApp
+            if (appCtx != null && !appCtx.swapInteractiveDisplay()) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.deck_only_one_display),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
+        root.addView(
+            swap,
+            FrameLayout.LayoutParams(size, size).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                setMargins(edge, 0, 0, bottom)
+            },
+        )
     }
-    root.addView(
-        swap,
-        FrameLayout.LayoutParams(size, size).apply {
-            gravity = Gravity.BOTTOM or Gravity.START
-            setMargins(edge, 0, 0, bottom)
-        },
-    )
 
     val settingsBtn = iconButton(
         context,

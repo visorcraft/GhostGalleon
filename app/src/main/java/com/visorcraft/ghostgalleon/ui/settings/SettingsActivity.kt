@@ -1423,6 +1423,9 @@ class SettingsActivity : AppCompatActivity() {
                 cornerRadius = dpF(20)
             }
         }
+        val items = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
         SettingsPage.entries.forEach { page ->
             val item = TextView(this).apply {
                 setText(page.titleRes)
@@ -1434,12 +1437,25 @@ class SettingsActivity : AppCompatActivity() {
                 setOnClickListener { selectPage(page) }
             }
             navItems[page] = item
-            blade.addView(item, LinearLayout.LayoutParams(
+            items.addView(item, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = dp(6) })
         }
         paintNav()
+        // Short panels (e.g. single-display 16:9 landscape) cannot fit all
+        // eight entries: the blade must scroll and follow focus, so the
+        // items below the fold (System/About) stay reachable at any height.
+        blade.addView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(items, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
         return blade
     }
 
