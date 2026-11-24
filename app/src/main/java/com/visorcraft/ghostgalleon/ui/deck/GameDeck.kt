@@ -2,11 +2,17 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -37,6 +43,7 @@ import com.visorcraft.ghostgalleon.rom.FerryOffer
 import com.visorcraft.ghostgalleon.rom.FerryRefuse
 import com.visorcraft.ghostgalleon.rom.IdentityStack
 import com.visorcraft.ghostgalleon.rom.LaunchReason
+import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.PlayerResolver
@@ -51,9 +58,14 @@ import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.GridSlots
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
+import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 class GameDeck(
     private val activity: AppCompatActivity,
@@ -452,6 +464,9 @@ class GameDeck(
     private val dockNav get() = DockNavigation(
         DockSlots.visibleCount(dockMove.working ?: settings.dockSlots), 0, 1)
     private var recycler: RecyclerView? = null
+    private var emptyStateView: View? = null
+    private var emptyMessageView: TextView? = null
+    private var emptyResetButton: TextView? = null
     private var dockBar: DockBar? = null
     private var hintView: TextView? = null
     private var rootView: FrameLayout? = null
@@ -460,6 +475,9 @@ class GameDeck(
     private var cardSizePx: Int = 0
     private var cardSpacingPx: Int = 0
     private var cellPaddingPx: Int = 0
+    /** Cached atmospheric backdrop for active platform filters (no alloc on NAV). */
+    private var cachedTintKey: String? = null
+    private var cachedTintBg: Drawable? = null
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
     private var letterChipViews: List<Pair<Char, TextView>> = emptyList()
     /** Last filter-chrome structure; equal → restyle chip colors only. */
@@ -477,6 +495,35 @@ class GameDeck(
 
     private fun romLabel(rom: RomEntry): String =
         com.visorcraft.ghostgalleon.settings.RomNames.display(rom, settings.romNames)
+
+    private fun resetToAllBrowse() {
+        val live = app().settings
+        val firstKey = library.curated(live).firstOrNull()?.packageName
+            ?: HiddenRoms.listed(roms, settings.hiddenRomIds)
+                .firstOrNull()?.let { SlotKey.rom(it.id) }
+        state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
+        if (firstKey != null) state.select(firstKey, force = true)
+    }
+
+    private fun syncEmptyState(context: Context) {
+        val rv = recycler ?: return
+        val emptyHost = emptyStateView ?: return
+        if (entries.isEmpty()) {
+            rv.visibility = View.GONE
+            emptyHost.visibility = View.VISIBLE
+            val q = state.libraryBrowse
+            emptyMessageView?.text = context.resolveText(GameDeckChromeLogic.emptyStateMessage(q))
+            val showReset = GameDeckChromeLogic.shouldShowResetAction(q)
+            emptyResetButton?.let { btn ->
+                btn.visibility = if (showReset) View.VISIBLE else View.GONE
+                btn.setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+                btn.background = TileBackgrounds.accentPill(context, settings.accentColor)
+            }
+        } else {
+            emptyHost.visibility = View.GONE
+            rv.visibility = View.VISIBLE
+        }
+    }
 
     /**
      * Rebuild carousel list + filter chrome in place (browse chips).
@@ -506,6 +553,8 @@ class GameDeck(
         val nextSpacing = cardSpacingPx.coerceAtLeast(dp(12))
         val nextPad = cellPaddingPx.coerceAtLeast(dp(8))
         cardSizePx = nextSize
+        applyRootWallpaper(root)
+        syncEmptyState(context)
         val existing = rv.adapter as? CardAdapter
         val sameCards = entries === oldEntries &&
             existing != null &&
@@ -518,7 +567,6 @@ class GameDeck(
             dockBar?.updateFocus(state.dockSlot, dockMove.index)
             return true
         }
-        applyRootWallpaper(root)
         val adapter = if (
             existing != null &&
             existing.cardSize == nextSize &&
@@ -538,8 +586,10 @@ class GameDeck(
         // Selection may be outside the new filter — keep key; scroll coerces.
         adapter.paintedSelectionKey = state.selectedKey
         adapter.paintedDockFocused = state.dockSlot != null
-        rv.scrollToPosition(selectedIndex())
-        rv.post { scrollSelectionToCenter(rv) }
+        if (entries.isNotEmpty()) {
+            rv.scrollToPosition(selectedIndex())
+            rv.post { scrollSelectionToCenter(rv) }
+        }
         dockBar?.updateFocus(state.dockSlot, dockMove.index)
         return true
     }
@@ -562,26 +612,73 @@ class GameDeck(
         return applyBrowseChange()
     }
 
+    private fun platformBackdrop(context: Context, platformId: String): Drawable {
+        val dm = context.resources.displayMetrics
+        val key = "$platformId|${dm.widthPixels}x${dm.heightPixels}"
+        cachedTintBg?.takeIf { cachedTintKey == key }?.let { return it }
+        val accent = PlatformLook.accentColor(platformId)
+        val liftBand = (0xFF shl 24) or
+            ((((accent shr 16) and 0xFF) * 22 / 100) shl 16) or
+            ((((accent shr 8) and 0xFF) * 22 / 100) shl 8) or
+            ((accent and 0xFF) * 22 / 100)
+        val vertical = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.BLACK, liftBand, Color.BLACK),
+        )
+        val radial = GradientDrawable().apply {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            colors = intArrayOf(
+                (accent and 0x00FFFFFF) or (0x3D shl 24),
+                Color.TRANSPARENT,
+            )
+            setGradientCenter(0.5f, 0.48f)
+            gradientRadius = maxOf(dm.widthPixels, dm.heightPixels) * 0.72f
+        }
+        return LayerDrawable(arrayOf(vertical, radial)).also {
+            cachedTintKey = key
+            cachedTintBg = it
+        }
+    }
+
     private fun applyRootWallpaper(root: FrameLayout) {
         val platformFilter = state.libraryBrowse.platformId
-        root.setBackgroundColor(
-            platformFilter
-                ?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
-                ?.let { com.visorcraft.ghostgalleon.rom.PlatformLook.wallpaperTint(it) }
-                ?: Color.BLACK,
-        )
-        // Same SAF wallpaper as Grid when configured (dimmed behind cards).
+            ?.takeIf { PlatformLook.hasFilter(it) }
+        if (platformFilter != null) {
+            root.background = platformBackdrop(root.context, platformFilter)
+        } else {
+            root.setBackgroundColor(Color.BLACK)
+        }
+        // Unified SAF wallpaper + top/bottom vignette scrim (shared with GridDeck).
         if (root.findViewWithTag<View>(TAG_GAME_WALLPAPER) == null) {
             val uri = settings.wallpaperUri
             if (!uri.isNullOrBlank()) {
                 val wallpaperView = ImageView(root.context).apply {
-                    tag = TAG_GAME_WALLPAPER
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     alpha = 0.35f
-                    setBackgroundColor(Color.BLACK)
+                }
+                val scrimView = View(root.context).apply {
+                    background = DeckWallpaper.scrimDrawable()
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                val layer = FrameLayout(root.context).apply {
+                    tag = TAG_GAME_WALLPAPER
+                    addView(
+                        wallpaperView,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    addView(
+                        scrimView,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
                 }
                 root.addView(
-                    wallpaperView,
+                    layer,
                     0,
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -640,11 +737,95 @@ class GameDeck(
     }
 
     private fun paintChip(tv: TextView, selected: Boolean) {
-        tv.setTextColor(if (selected) Color.BLACK else Color.WHITE)
-        tv.setBackgroundColor(
-            if (selected) settings.accentColor
-            else TileBackgrounds.chipIdleColor(tv.context),
+        tv.setTextColor(
+            if (selected) ThemePack.onFillTextColor(settings.accentColor)
+            else UiDimens.ALPHA_PRIMARY,
         )
+        TileBackgrounds.applyChipState(
+            view = tv,
+            selected = selected,
+            accent = settings.accentColor,
+            cornerRadiusDp = 16,
+        )
+    }
+
+    private fun buildActiveFilterStrip(context: Context, dp: (Int) -> Int): View? {
+        val active = GameDeckChromeLogic.activeFilters(state.libraryBrowse)
+        if (active.isEmpty()) return null
+        val surface = TileBackgrounds.surfaceColor(context)
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(2), dp(12), dp(4))
+        }
+        active.forEachIndexed { index, filter ->
+            if (index > 0) {
+                row.addView(View(context), LinearLayout.LayoutParams(dp(6), 1))
+            }
+            val (label, accent) = when (filter) {
+                is GameDeckChromeLogic.ActiveFilter.Platform ->
+                    context.getString(
+                        R.string.format_platform_badge,
+                        PlatformLook.filterBadge(filter.platformId),
+                    ) to PlatformLook.accentColor(filter.platformId)
+                is GameDeckChromeLogic.ActiveFilter.Genre ->
+                    context.getString(R.string.format_genre_badge, filter.value) to
+                        settings.accentColor
+                is GameDeckChromeLogic.ActiveFilter.Developer ->
+                    context.getString(R.string.format_developer_badge, filter.value) to
+                        settings.accentColor
+                is GameDeckChromeLogic.ActiveFilter.YearDecade ->
+                    context.getString(
+                        R.string.format_year_badge,
+                        context.resolveText(LibraryBrowse.decadeText(filter.decade)),
+                    ) to settings.accentColor
+                is GameDeckChromeLogic.ActiveFilter.Search ->
+                    context.getString(R.string.format_search_query, filter.queryText) to
+                        settings.accentColor
+            }
+            val textAccent = ThemePack.accentTextColor(accent, surface)
+            val pill = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = GradientDrawable().apply {
+                    setColor(TileBackgrounds.chipIdleColor(context))
+                    cornerRadius = context.dpF(14)
+                    setStroke(context.strokePx(1), (textAccent and 0x00FFFFFF) or (0x66 shl 24))
+                }
+                setPadding(dp(10), dp(4), dp(8), dp(4))
+                isClickable = true
+                contentDescription = context.getString(R.string.action_clear)
+                setOnClickListener {
+                    val next = GameDeckChromeLogic.clearFilter(state.libraryBrowse, filter)
+                    state.setLibraryBrowse(next, force = true)
+                }
+            }
+            pill.addView(TextView(context).apply {
+                text = label
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(textAccent)
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
+            })
+            pill.addView(
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_close)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) },
+            )
+            row.addView(pill)
+        }
+        return android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(20))
+            addView(row)
+        }
     }
 
     private fun rebuildFilterChrome(
@@ -654,62 +835,6 @@ class GameDeck(
     ) {
         browseChipHandles.clear()
         chrome.removeAllViews()
-        val q = state.libraryBrowse
-        q.platformId?.takeIf { com.visorcraft.ghostgalleon.rom.PlatformLook.hasFilter(it) }
-            ?.let { pid ->
-                chrome.addView(TextView(context).apply {
-                    text = context.getString(
-                        R.string.format_platform_badge,
-                        com.visorcraft.ghostgalleon.rom.PlatformLook.filterBadge(pid),
-                    )
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    setTextColor(com.visorcraft.ghostgalleon.rom.PlatformLook.accentColor(pid))
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(6), 0, 0)
-                }, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ))
-            }
-        q.genre?.trim()?.takeIf { it.isNotEmpty() }?.let { genre ->
-            chrome.addView(TextView(context).apply {
-                text = context.getString(R.string.format_genre_badge, genre)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(settings.accentColor)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(4), 0, 0)
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
-        q.developer?.trim()?.takeIf { it.isNotEmpty() }?.let { dev ->
-            chrome.addView(TextView(context).apply {
-                text = context.getString(R.string.format_developer_badge, dev)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(settings.accentColor)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(4), 0, 0)
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
-        q.yearDecade?.trim()?.takeIf { it.isNotEmpty() }?.let { decade ->
-            chrome.addView(TextView(context).apply {
-                text = context.getString(
-                    R.string.format_year_badge,
-                    context.resolveText(LibraryBrowse.decadeText(decade)),
-                )
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(settings.accentColor)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(4), 0, 0)
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
         chrome.addView(
             buildBrowseBar(context, dp),
             LinearLayout.LayoutParams(
@@ -717,6 +842,15 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
+        buildActiveFilterStrip(context, dp)?.let { strip ->
+            chrome.addView(
+                strip,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
         buildLetterJumpBar(context, dp)?.let { letterBar ->
             chrome.addView(
                 letterBar,
@@ -726,6 +860,76 @@ class GameDeck(
                 ),
             )
         }
+    }
+
+    private fun buildEmptyState(context: Context, dp: (Int) -> Int): View {
+        val host = FrameLayout(context).apply {
+            visibility = View.GONE
+        }
+        val card = OverlayPrimitives.modalCardContainer(
+            context = context,
+            padHorizontalDp = 24,
+            padVerticalDp = 20,
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        card.addView(
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_search)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setColorFilter(UiDimens.ALPHA_SUBTLE, PorterDuff.Mode.SRC_IN)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(dp(32), dp(32)).apply { bottomMargin = dp(8) },
+        )
+        val msg = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            gravity = Gravity.CENTER
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        emptyMessageView = msg
+        card.addView(
+            msg,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val resetBtn = TextView(context).apply {
+            setText(R.string.browse_clear_filters)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+            background = TileBackgrounds.accentPill(context, settings.accentColor)
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            isClickable = true
+            setOnClickListener { resetToAllBrowse() }
+        }
+        emptyResetButton = resetBtn
+        card.addView(
+            resetBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(14)
+            },
+        )
+        val cardW = OverlayPrimitives.responsiveCardWidth(context, maxDp = 360, widthFrac = 0.84f)
+        host.addView(
+            card,
+            FrameLayout.LayoutParams(
+                cardW,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+        emptyStateView = host
+        return host
     }
 
     override fun primaryView(context: Context): View {
@@ -782,7 +986,26 @@ class GameDeck(
             clipToPadding = false
         }
         recycler = rv
-        content.addView(rv, LinearLayout.LayoutParams(
+        val carouselArea = FrameLayout(context).apply {
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                rv,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                buildEmptyState(context, ::dp),
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        syncEmptyState(context)
+        content.addView(carouselArea, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (settings.showHints) {
             val hints = HintBar.build(context) as TextView
@@ -834,6 +1057,7 @@ class GameDeck(
     // animators that fight the next D-pad tick).
     private fun scrollSelectionToCenter(rv: RecyclerView) {
         rv.stopScroll()
+        if (entries.isEmpty()) return
         val lm = rv.layoutManager as? LinearLayoutManager ?: return
         val index = selectedIndex()
         val laidOut = lm.findViewByPosition(index)
@@ -881,6 +1105,19 @@ class GameDeck(
 
     private var paintedLetter: Char? = null
 
+    private fun paintLetterChip(tv: TextView, selected: Boolean) {
+        tv.setTextColor(
+            if (selected) ThemePack.onFillTextColor(settings.accentColor)
+            else UiDimens.ALPHA_PRIMARY,
+        )
+        TileBackgrounds.applyChipState(
+            view = tv,
+            selected = selected,
+            accent = settings.accentColor,
+            cornerRadiusDp = 12,
+        )
+    }
+
     private fun paintLetterJumpSelection() {
         if (letterChipViews.isEmpty()) return
         val selectedLetter = entries.getOrNull(selectedIndex())
@@ -889,12 +1126,7 @@ class GameDeck(
         if (selectedLetter == paintedLetter) return
         letterChipViews.forEach { (letter, tv) ->
             if (letter != selectedLetter && letter != paintedLetter) return@forEach
-            val on = letter == selectedLetter
-            tv.setTextColor(if (on) Color.BLACK else Color.WHITE)
-            tv.setBackgroundColor(
-                if (on) settings.accentColor
-                else TileBackgrounds.chipIdleColor(activity),
-            )
+            paintLetterChip(tv, letter == selectedLetter)
         }
         paintedLetter = selectedLetter
     }
@@ -983,12 +1215,9 @@ class GameDeck(
             val chip = TextView(context).apply {
                 text = chipLabel
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(if (on) Color.BLACK else Color.WHITE)
-                setBackgroundColor(
-                    if (on) settings.accentColor
-                    else TileBackgrounds.chipIdleColor(context),
-                )
-                setPadding(dp(10), dp(4), dp(10), dp(4))
+                paintLetterChip(this, on)
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(5), dp(10), dp(5))
                 contentDescription = context.getString(
                     R.string.format_jump_to_letter,
                     letter.toString(),
@@ -1005,19 +1234,24 @@ class GameDeck(
             row.addView(chip)
         }
         letterChipViews = chips
-        paintedLetter = null
+        paintedLetter = selectedLetter
         return android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(24))
             addView(row)
         }
     }
 
     // Browse chip row: All / Recent / Favorites + platform filters + search.
     private fun buildBrowseBar(context: Context, dp: (Int) -> Int): View {
+        val endPad = dp(
+            GameDeckChromeLogic.browseBarEndPadDp(settings.browseChrome.deckStatusPill),
+        )
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(4))
+            setPadding(dp(12), dp(8), endPad, dp(4))
         }
         fun chip(
             label: String,
@@ -1028,6 +1262,7 @@ class GameDeck(
             TextView(context).apply {
                 text = label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                gravity = Gravity.CENTER
                 paintChip(this, selected())
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 setOnClickListener { onClick() }
@@ -1487,9 +1722,11 @@ class GameDeck(
                 state.setMultiSelectEnabled(true)
             }
         })
-        // Horizontal scroll so many platforms don't crush the bar.
+        // Horizontal scroll with fading edge so many platforms never crush the bar.
         return android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(24))
             addView(row)
         }
     }
@@ -3186,8 +3423,12 @@ class GameDeck(
             entries.getOrNull(position)?.key?.hashCode()?.toLong() ?: position.toLong()
 
         inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+            var cardFrame: FrameLayout? = null
+            var multiBadge: ImageView? = null
             var metaView: TextView? = null
         }
+
+        private val cardWidthPx: Int = GameDeckChromeLogic.carouselCardWidthPx(cardSize, cellPadding)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             // Transparent full-height slot so the card surface wraps the
@@ -3199,7 +3440,7 @@ class GameDeck(
                 clipToPadding = false
             }
             slot.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                cardWidthPx,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ).apply {
                 marginStart = cardSpacing / 2
@@ -3245,28 +3486,61 @@ class GameDeck(
             payloads: MutableList<Any>,
         ) {
             if (payloads.isNotEmpty() && payloads.all { it == PAYLOAD_SELECTION }) {
-                if (applySelectionVisuals(holder, position)) return
+                if (applySelectionVisuals(holder, position, animate = true)) return
             }
             onBindViewHolder(holder, position)
         }
 
-        /** Mutate ring/scale only; false → full rebind needed. */
-        private fun applySelectionVisuals(holder: CardHolder, position: Int): Boolean {
+        private fun multiSelectForeground(): GradientDrawable {
+            val radiusDp = ThemePack.resolve(settings).cardRadiusDp
+            val accent = settings.accentColor
+            return GradientDrawable().apply {
+                setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
+                cornerRadius = context.dpF(radiusDp)
+                setStroke(context.strokePx(2), accent)
+            }
+        }
+
+        /** Mutate ring/scale/Z-lift/multi-select only; false → full rebind needed. */
+        private fun applySelectionVisuals(
+            holder: CardHolder,
+            position: Int,
+            animate: Boolean,
+        ): Boolean {
             val entry = entries.getOrNull(position) ?: return false
-            val card = holder.root.getChildAt(0) as? LinearLayout ?: return false
+            val cardFrame = holder.cardFrame
+                ?: (holder.root.getChildAt(0) as? FrameLayout)?.also { holder.cardFrame = it }
+                ?: return false
             val focused = entry.key == state.selectedKey && state.dockSlot == null
-            card.background = if (focused) {
+            val multiSelected = state.multiSelectEnabled && entry.key in state.multiSelectKeys
+            cardFrame.background = if (focused) {
                 TileBackgrounds.selected(context, settings.accentColor)
             } else {
                 TileBackgrounds.card(context)
             }
-            val scale = if (focused) 1.1f else 1f
-            card.scaleX = scale
-            card.scaleY = scale
-            if (state.multiSelectEnabled && entry.key in state.multiSelectKeys) {
-                card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
+            val targetScale = if (focused) FOCUS_SCALE else 1f
+            val targetAlpha = GameDeckChromeLogic.cardVisualAlpha(focused, multiSelected)
+            holder.root.translationZ = if (focused) context.dpF(8) else 0f
+            cardFrame.animate().cancel()
+            if (animate && cardFrame.isLaidOut) {
+                cardFrame.animate()
+                    .scaleX(targetScale)
+                    .scaleY(targetScale)
+                    .alpha(targetAlpha)
+                    .setDuration(FOCUS_ANIM_MS)
+                    .setInterpolator(FOCUS_INTERPOLATOR)
+                    .start()
             } else {
-                card.foreground = null
+                cardFrame.scaleX = targetScale
+                cardFrame.scaleY = targetScale
+                cardFrame.alpha = targetAlpha
+            }
+            if (multiSelected) {
+                cardFrame.foreground = multiSelectForeground()
+                holder.multiBadge?.visibility = View.VISIBLE
+            } else {
+                cardFrame.foreground = null
+                holder.multiBadge?.visibility = View.GONE
             }
             return true
         }
@@ -3275,31 +3549,27 @@ class GameDeck(
             val entry = entries[position]
             val prevKey = holder.root.getTag(R.id.carousel_entry_key) as? String
             // Same key + existing hierarchy: skip art rebuild (biggest fling cost).
-            if (prevKey == entry.key && holder.root.childCount > 0) {
-                applySelectionVisuals(holder, position)
+            if (prevKey == entry.key && holder.cardFrame != null && holder.root.childCount > 0) {
+                applySelectionVisuals(holder, position, animate = false)
                 rebindCardMeta(holder, entry)
                 wireCardClicks(holder, entry)
                 scheduleNeighborPrefetch(position)
                 return
             }
+            holder.cardFrame?.animate()?.cancel()
+            holder.cardFrame = null
+            holder.multiBadge = null
+            holder.metaView = null
             holder.root.removeAllViews()
             holder.root.setTag(R.id.carousel_entry_key, entry.key)
-            // While the dock holds focus the carousel shows NO ring — the
-            // focused dock slot carries it instead.
-            val focused = entry.key == state.selectedKey && state.dockSlot == null
-            val card = LinearLayout(context).apply {
+            val cardFrame = FrameLayout(context).apply {
+                clipChildren = false
+                clipToPadding = false
+            }
+            val body = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
-                background = if (focused) {
-                    TileBackgrounds.selected(context, settings.accentColor)
-                } else {
-                    TileBackgrounds.card(context)
-                }
-                if (focused) {
-                    scaleX = 1.1f
-                    scaleY = 1.1f
-                }
             }
             paintedSelectionKey = state.selectedKey
             paintedDockFocused = state.dockSlot != null
@@ -3321,18 +3591,20 @@ class GameDeck(
                     (activity.application as GhostGalleonApp).artCache,
                     settings, entry.appPackage!!, cardSize)
             }
-            card.addView(art, LinearLayout.LayoutParams(cardSize, cardSize))
-            card.addView(TextView(context).apply {
+            body.addView(art, LinearLayout.LayoutParams(cardSize, cardSize))
+            body.addView(TextView(context).apply {
                 text = entry.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.WHITE)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
+            ).apply { topMargin = context.dp(6) })
             // Playtime / last-played + Fav/Dock status (no extra chrome chips).
             val nowMs = System.currentTimeMillis()
             val meta = SessionMath.cardMetaLine(
@@ -3346,33 +3618,64 @@ class GameDeck(
                 tag = "card_meta"
                 text = context.resolveText(meta)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                setTextColor(0x99FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_MUTED)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
             }
             holder.metaView = metaTv
-            card.addView(metaTv, LinearLayout.LayoutParams(
+            body.addView(metaTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-            holder.root.addView(card, LinearLayout.LayoutParams(
+            ).apply { topMargin = context.dp(2) })
+            cardFrame.addView(
+                body,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            val checkBadge = ImageView(context).apply {
+                setImageResource(R.drawable.ic_check_circle)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setColorFilter(
+                    ThemePack.accentTextColor(settings.accentColor, Color.BLACK),
+                    PorterDuff.Mode.SRC_IN,
+                )
+                setPadding(context.dp(2), context.dp(2), context.dp(2), context.dp(2))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(0xCC000000.toInt())
+                }
+                visibility = View.GONE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            holder.multiBadge = checkBadge
+            cardFrame.addView(
+                checkBadge,
+                FrameLayout.LayoutParams(
+                    context.dp(24),
+                    context.dp(24),
+                    Gravity.TOP or Gravity.END,
+                ).apply {
+                    topMargin = context.dp(8)
+                    marginEnd = context.dp(8)
+                },
+            )
+            holder.cardFrame = cardFrame
+            holder.root.addView(cardFrame, LinearLayout.LayoutParams(
+                cardWidthPx,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
+            applySelectionVisuals(holder, position, animate = false)
             wireCardClicks(holder, entry)
             scheduleNeighborPrefetch(position)
-            // Selection ring for multi-select.
-            if (state.multiSelectEnabled && entry.key in state.multiSelectKeys) {
-                card.alpha = 1f
-                card.foreground = android.graphics.drawable.ColorDrawable(0x4400AAFF)
-            }
         }
 
         private fun rebindCardMeta(holder: CardHolder, entry: CarouselEntry) {
             val metaView = holder.metaView
-                ?: (holder.root.getChildAt(0) as? LinearLayout)
-                    ?.findViewWithTag<TextView>("card_meta")
+                ?: holder.cardFrame?.findViewWithTag<TextView>("card_meta")
                     ?.also { holder.metaView = it }
                 ?: return
             val meta = SessionMath.cardMetaLine(
@@ -3437,6 +3740,9 @@ class GameDeck(
         /** RecyclerView payload: only ring/scale/multi-select chrome. */
         const val PAYLOAD_SELECTION = "selection"
         const val TAG_GAME_WALLPAPER = "game_wallpaper"
+        const val FOCUS_SCALE = 1.1f
+        const val FOCUS_ANIM_MS = 90L
+        val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PREFETCH_DELTAS = intArrayOf(-2, -1, 1, 2)
     }
 
