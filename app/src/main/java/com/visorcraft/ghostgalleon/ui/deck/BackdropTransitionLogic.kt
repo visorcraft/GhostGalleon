@@ -51,13 +51,15 @@ object BackdropTransitionLogic {
 
     /**
      * Crossfade only when transitioning between two distinct backdrops on an
-     * already-attached view (initial paint stays instant).
+     * already-attached view while system animations are enabled (initial paint
+     * and reduced-motion stay instant).
      */
     fun shouldCrossfadeBackdrop(
         previousKey: String?,
         nextKey: String,
         attachedToWindow: Boolean,
-    ): Boolean = attachedToWindow && previousKey != null && previousKey != nextKey
+        animationsEnabled: Boolean = true,
+    ): Boolean = animationsEnabled && attachedToWindow && previousKey != null && previousKey != nextKey
 
     /** Deep OLED-blended opaque vertical lift band derived from [platformAccent]. */
     fun platformLiftBandColor(platformAccent: Int): Int {

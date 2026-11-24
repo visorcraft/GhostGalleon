@@ -50,9 +50,11 @@ object ArtTileMetrics {
     fun revealMode(wasSyncMemoryHit: Boolean, isAttached: Boolean): RevealMode =
         if (!wasSyncMemoryHit && isAttached) RevealMode.FADE else RevealMode.SNAP
 
-    /** Animation duration (ms) corresponding to [mode]. */
-    fun revealDurationMs(mode: RevealMode): Long =
-        if (mode == RevealMode.FADE) ASYNC_FADE_MS else SYNC_SNAP_MS
+    /** Animation duration (ms) corresponding to [mode], honoring system reduced-motion. */
+    fun revealDurationMs(
+        mode: RevealMode,
+        animationsEnabled: Boolean = true,
+    ): Long = if (animationsEnabled && mode == RevealMode.FADE) ASYNC_FADE_MS else SYNC_SNAP_MS
 
     /**
      * Clamp rounded outline radius (px) so small dock/strip tiles never exceed

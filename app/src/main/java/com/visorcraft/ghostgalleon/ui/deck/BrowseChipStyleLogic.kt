@@ -39,12 +39,24 @@ object BrowseChipStyleLogic {
     }
 
     /**
-     * Gamepad/keyboard focus ring color: accent color on idle chips, or high-
-     * contrast on-fill text color on already-accent-filled selected chips so
-     * focus remains unmistakably legible.
+     * Gamepad/keyboard focus ring color: accent color on idle chips, or the
+     * higher-contrast pole (`#FFFFFF` vs `#000000`, mathematically `>= 4.58:1`
+     * against every 24-bit color) on already-accent-filled selected chips so
+     * focus stays unmistakably legible across Ghost, Teal, OLED, Neon, and
+     * custom themes.
      */
-    fun focusStrokeColor(selected: Boolean, accentColor: Int): Int =
-        if (selected) ThemePack.onFillTextColor(accentColor) else accentColor
+    fun focusStrokeColor(selected: Boolean, accentColor: Int): Int {
+        if (!selected) return accentColor
+        val white = 0xFFFFFFFF.toInt()
+        val black = 0xFF000000.toInt()
+        return if (ThemePack.contrastRatio(white, accentColor) >=
+            ThemePack.contrastRatio(black, accentColor)
+        ) {
+            white
+        } else {
+            black
+        }
+    }
 
     /** Secondary tint for numeric count suffixes inside browse chips. */
     fun countSuffixColor(selected: Boolean, accentColor: Int): Int {

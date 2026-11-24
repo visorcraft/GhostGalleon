@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -34,6 +35,12 @@ object DeckWallpaper {
     internal const val FADE_IN_MS: Long = 220L
 
     private val FADE_INTERPOLATOR = DecelerateInterpolator()
+    private val DETACH_ANIM_CANCEL = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = Unit
+        override fun onViewDetachedFromWindow(v: View) {
+            v.animate().cancel()
+        }
+    }
     private val EXECUTOR = Executors.newSingleThreadExecutor()
 
     @Volatile
@@ -83,10 +90,14 @@ object DeckWallpaper {
 
     /**
      * Fade in only for genuine asynchronous decodes landing on an already-
-     * attached view; instant snap on cache hits so deck switches never flicker.
+     * attached view when system animations are enabled; instant snap on cache
+     * hits or reduced-motion so deck switches never flicker.
      */
-    internal fun shouldFadeIn(wasCacheHit: Boolean, isAttached: Boolean): Boolean =
-        !wasCacheHit && isAttached
+    internal fun shouldFadeIn(
+        wasCacheHit: Boolean,
+        isAttached: Boolean,
+        animationsEnabled: Boolean = true,
+    ): Boolean = !wasCacheHit && isAttached && animationsEnabled
 
     /** Clamp requested wallpaper opacity cleanly to `[0f, 1f]`. */
     internal fun clampAlpha(alpha: Float): Float = alpha.coerceIn(0f, 1f)
@@ -126,6 +137,7 @@ object DeckWallpaper {
             scaleType = ImageView.ScaleType.CENTER_CROP
             this.alpha = if (hasWarmHit) safeAlpha else 0f
             setBackgroundColor(Color.BLACK)
+            addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
         }
         val scrimView = View(context).apply {
             background = scrimDrawable()
@@ -182,7 +194,12 @@ object DeckWallpaper {
                 if (target.isAttachedToWindow && current == uriString && isUsable(bitmap)) {
                     target.animate().cancel()
                     target.setImageBitmap(bitmap)
-                    if (shouldFadeIn(wasCacheHit = false, isAttached = target.isAttachedToWindow)) {
+                    if (shouldFadeIn(
+                            wasCacheHit = false,
+                            isAttached = target.isAttachedToWindow,
+                            animationsEnabled = ValueAnimator.areAnimatorsEnabled(),
+                        )
+                    ) {
                         target.alpha = 0f
                         target.animate()
                             .alpha(safeAlpha)

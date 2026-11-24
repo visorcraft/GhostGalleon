@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.art
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Outline
@@ -32,6 +33,12 @@ import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 object ArtTile {
 
     private val FADE_INTERPOLATOR = DecelerateInterpolator()
+    private val DETACH_ANIM_CANCEL = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = Unit
+        override fun onViewDetachedFromWindow(v: View) {
+            v.animate().cancel()
+        }
+    }
 
     /**
      * ROM tile art view: placeholder + overlay. [targetPx] is the decode
@@ -67,6 +74,7 @@ object ArtTile {
             scaleType = ImageView.ScaleType.FIT_CENTER
             clipToOutline = true
             outlineProvider = roundedOutline(radiusPx)
+            addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
         }
         frame.addView(overlay, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -276,7 +284,10 @@ object ArtTile {
             },
         )
         hidePlaceholderWithBacking(overlay, context, radiusPx)
-        val durationMs = ArtTileMetrics.revealDurationMs(revealMode)
+        val durationMs = ArtTileMetrics.revealDurationMs(
+            mode = revealMode,
+            animationsEnabled = ValueAnimator.areAnimatorsEnabled(),
+        )
         if (durationMs > 0L) {
             overlay.alpha = 0f
             overlay.animate()

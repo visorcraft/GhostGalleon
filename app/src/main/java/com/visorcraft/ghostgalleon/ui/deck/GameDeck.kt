@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -664,6 +665,7 @@ class GameDeck(
     }
 
     private fun animateEdgeBump(direction: Int) {
+        if (!ValueAnimator.areAnimatorsEnabled()) return
         val rv = recycler ?: return
         val holder = rv.findViewHolderForAdapterPosition(selectedIndex()) as? CardAdapter.CardHolder
             ?: return
@@ -819,6 +821,7 @@ class GameDeck(
                     previousKey = appliedBackdropKey,
                     nextKey = nextKey,
                     attachedToWindow = root.isAttachedToWindow,
+                    animationsEnabled = ValueAnimator.areAnimatorsEnabled(),
                 )
             ) {
                 val prevClean = (currentBg as? TransitionDrawable)?.getDrawable(1) ?: currentBg
@@ -848,6 +851,7 @@ class GameDeck(
                 val wallpaperView = ImageView(root.context).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     alpha = BackdropTransitionLogic.WALLPAPER_ALPHA
+                    addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
                 }
                 val scrimView = View(root.context).apply {
                     background = DeckWallpaper.scrimDrawable()
@@ -1790,7 +1794,7 @@ class GameDeck(
             cornerRadiusDp = LetterJumpMetrics.CHIP_CORNER_RADIUS_DP,
         )
         tv.animate().cancel()
-        if (selected && animate && tv.isLaidOut) {
+        if (selected && animate && tv.isLaidOut && ValueAnimator.areAnimatorsEnabled()) {
             tv.scaleX = LetterJumpMetrics.ACTIVE_PULSE_SCALE
             tv.scaleY = LetterJumpMetrics.ACTIVE_PULSE_SCALE
             tv.animate()
@@ -4613,7 +4617,7 @@ class GameDeck(
             holder.root.translationZ = context.dpF(depthStyle.translationZDp)
             cardFrame.animate().cancel()
             cardFrame.translationX = 0f
-            if (animate && cardFrame.isLaidOut) {
+            if (animate && cardFrame.isLaidOut && ValueAnimator.areAnimatorsEnabled()) {
                 cardFrame.animate()
                     .scaleX(depthStyle.scale)
                     .scaleY(depthStyle.scale)
@@ -5033,6 +5037,12 @@ class GameDeck(
         const val FOCUS_ANIM_MS = 90L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PREFETCH_DELTAS = intArrayOf(-2, -1, 1, 2)
+        val DETACH_ANIM_CANCEL = object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                v.animate().cancel()
+            }
+        }
     }
 
     private class EntryDiff(
