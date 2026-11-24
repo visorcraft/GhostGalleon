@@ -151,6 +151,8 @@ object CompanionPanel {
     private const val FAVORITE_STAR_COLOR = 0xFFFFD54F.toInt()
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
+    private const val TAG_PERF_BAR_PREFIX = "perf_bar_"
+    private const val TAG_PERF_DOT_PREFIX = "perf_dot_"
     private const val TAG_PLAY_HUD = "play_hud"
     private const val TAG_PLAY_HUD_CLOCK = "play_hud_clock"
     private const val TAG_PLAY_HUD_OWNER = "play_hud_owner"
@@ -2880,24 +2882,59 @@ object CompanionPanel {
             ),
         )
         fun ensureRows() {
-            // Build static 2-column metric cards once; ticks only mutate value TextViews.
+            // Build static 2-column metric cards once; ticks only mutate values & meters in place.
             if (grid.childCount > 0) return
             val readings = SystemInfoCollector.collect(context)
             val rows = SystemInfoFormat.rows(readings)
+            val dotPx = dp(PerfHudMetrics.STATUS_DOT_DP)
+            val meterHeightPx = dp(PerfHudMetrics.METER_HEIGHT_DP)
             rows.forEachIndexed { index, (label, value) ->
                 val card = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     background = TileBackgrounds.card(context)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                 }
-                card.addView(TextView(context).apply {
-                    text = context.resolveText(label)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(UiDimens.ALPHA_MUTED)
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    includeFontPadding = false
-                })
+                val headerRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    isBaselineAligned = false
+                }
+                headerRow.addView(
+                    TextView(context).apply {
+                        text = context.resolveText(label)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                        setTextColor(UiDimens.ALPHA_MUTED)
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        includeFontPadding = false
+                    },
+                    LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f,
+                    ),
+                )
+                headerRow.addView(
+                    View(context).apply {
+                        tag = TAG_PERF_DOT_PREFIX + index
+                        visibility = View.GONE
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(PerfHudMetrics.COLOR_GOOD)
+                        }
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(dotPx, dotPx).apply {
+                        marginStart = dp(6)
+                    },
+                )
+                card.addView(
+                    headerRow,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
                 card.addView(TextView(context).apply {
                     tag = TAG_PERF_VALUE_PREFIX + index
                     text = context.resolveText(value)
@@ -2912,6 +2949,16 @@ object CompanionPanel {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { topMargin = dp(4) })
+                card.addView(
+                    MeterBarView(context).apply {
+                        tag = TAG_PERF_BAR_PREFIX + index
+                        visibility = View.GONE
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        meterHeightPx,
+                    ).apply { topMargin = dp(7) },
+                )
                 val span = CompanionHeroMetrics.perfCardColumnSpan(index, rows.size)
                 grid.addView(
                     card,
@@ -2931,11 +2978,38 @@ object CompanionPanel {
         fun paintValues() {
             ensureRows()
             val readings = SystemInfoCollector.collect(context)
-            SystemInfoFormat.rows(readings).forEachIndexed { index, (_, value) ->
+            val sunkenTrack = TileBackgrounds.surfaceSunken(context)
+            val hairline = TileBackgrounds.hairlineDivider(context)
+            SystemInfoFormat.rows(readings).forEachIndexed { index, (label, value) ->
                 val tv = col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
                     ?: return@forEachIndexed
                 val next = context.resolveText(value)
                 if (tv.text?.toString() != next) tv.text = next
+                val meter = PerfHudMetrics.meterForRow(label, readings)
+                val nextTextColor = PerfHudMetrics.valueTextColor(meter?.severity)
+                if (tv.currentTextColor != nextTextColor) tv.setTextColor(nextTextColor)
+                val bar = col.findViewWithTag<MeterBarView>(TAG_PERF_BAR_PREFIX + index)
+                val dot = col.findViewWithTag<View>(TAG_PERF_DOT_PREFIX + index)
+                if (meter != null) {
+                    val statusColor = PerfHudMetrics.statusColor(meter.severity)
+                    bar?.let {
+                        it.setProgress(
+                            fraction = meter.fraction,
+                            fillColor = statusColor,
+                            trackColor = sunkenTrack,
+                            borderColor = hairline,
+                        )
+                        if (it.visibility != View.VISIBLE) it.visibility = View.VISIBLE
+                    }
+                    dot?.let {
+                        ((it.background as? GradientDrawable)?.mutate() as? GradientDrawable)
+                            ?.setColor(statusColor)
+                        if (it.visibility != View.VISIBLE) it.visibility = View.VISIBLE
+                    }
+                } else {
+                    if (bar != null && bar.visibility != View.GONE) bar.visibility = View.GONE
+                    if (dot != null && dot.visibility != View.GONE) dot.visibility = View.GONE
+                }
             }
         }
         paintValues()
