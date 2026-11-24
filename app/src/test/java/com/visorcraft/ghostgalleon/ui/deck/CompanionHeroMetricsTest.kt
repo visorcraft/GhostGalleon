@@ -186,4 +186,17 @@ class CompanionHeroMetricsTest {
         assertFalse(CompanionPanel.isSelectedPinned("rom:snes:sm", slots))
         assertFalse(CompanionPanel.isSelectedPinned(null, slots))
     }
+
+    @Test
+    fun `pinnedCardMaxWidthDp fills narrow panels and caps wide 16-by-9 panels at 440dp`() {
+        val narrow = CompanionHeroMetrics.pinnedCardMaxWidthDp(360f)
+        assertTrue("Narrow panel card ($narrow dp) should fit inside 360dp", narrow in 240..340)
+
+        val sugar = CompanionHeroMetrics.pinnedCardMaxWidthDp(540f)
+        assertEquals(CompanionHeroMetrics.PINNED_CARD_MAX_WIDTH_DP, sugar)
+
+        val wide = CompanionHeroMetrics.pinnedCardMaxWidthDp(960f)
+        assertEquals(CompanionHeroMetrics.PINNED_CARD_MAX_WIDTH_DP, wide)
+        assertTrue(wide <= 440)
+    }
 }

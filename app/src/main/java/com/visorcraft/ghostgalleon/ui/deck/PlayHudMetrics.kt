@@ -86,6 +86,87 @@ object PlayHudMetrics {
     /** Neutral translucent handle tint when Play HUD controls are collapsed. */
     const val HUD_HANDLE_COLLAPSED_COLOR: Int = 0x55FFFFFF
 
+    /** Warm amber warning tint for the armed RetroArch Save-State mode chip. */
+    const val SAVE_ARMED_AMBER: Int = 0xFFFFB74D.toInt()
+
+    /** Duration (ms) for the expanding click-confirmation pulse ring on the Cockpit trackpad. */
+    const val TRACKPAD_CLICK_PULSE_MS: Long = 140L
+
+    /** Arm length (dp) of the subtle L-shaped corner precision brackets on the Cockpit trackpad. */
+    const val TRACKPAD_BRACKET_LEN_DP: Float = 8f
+
+    /** Minimum readable pill width (dp) preserved when laying out the RAM Tracker GridLayout. */
+    const val TRACKER_MIN_PILL_WIDTH_DP: Float = 48f
+
+    data class SlotModeChipStyle(
+        val fillColor: Int,
+        val strokeColor: Int,
+        val textColor: Int,
+        val strokeDp: Int,
+    )
+
+    /**
+     * Distinct chip styling for RetroArch `Save` (warm amber warning) vs `Load`
+     * (theme accent) while the save-slot strip is open, guaranteeing WCAG AA
+     * text contrast across all built-in and custom themes.
+     */
+    fun slotModeChipStyle(
+        saveMode: Boolean,
+        active: Boolean,
+        accentColor: Int,
+        idleSurface: Int,
+        restingHairline: Int = ThemePack.HAIRLINE_LIGHT,
+    ): SlotModeChipStyle {
+        if (!active) {
+            return SlotModeChipStyle(
+                fillColor = idleSurface,
+                strokeColor = restingHairline,
+                textColor = UiDimens.ALPHA_PRIMARY,
+                strokeDp = 1,
+            )
+        }
+        val tint = if (saveMode) SAVE_ARMED_AMBER else accentColor
+        val fill = CompanionChromeErgonomics.activeChipFill(idleSurface, tint)
+        val text = ThemePack.accentTextColor(tint, fill)
+        val stroke = ThemePack.withAlpha(if (saveMode) SAVE_ARMED_AMBER else text, if (saveMode) 0xAA else 0x99)
+        return SlotModeChipStyle(
+            fillColor = fill,
+            strokeColor = stroke,
+            textColor = text,
+            strokeDp = 2,
+        )
+    }
+
+    /** Concentric trackpad corner radius (dp) derived from [ThemePack.cardRadiusDp] in `10..18dp`. */
+    fun trackpadCornerRadiusDp(cardRadiusDp: Int): Int =
+        ThemePack.nestedRadiusDp(outerRadiusDp = cardRadiusDp, insetDp = 8, minDp = 10)
+            .coerceIn(10, 18)
+
+    /** Clamped expanding click-pulse ring radius fraction (`0.30..1.0`) for normalized progress [t]. */
+    fun clickPulseRadiusFrac(t: Float): Float {
+        val u = t.coerceIn(0f, 1f)
+        return (0.30f + 0.70f * u).coerceIn(0.30f, 1f)
+    }
+
+    /**
+     * Width-responsive RAM tracker column count: `<= 6` on narrow `< 560dp` panels
+     * (e.g. Sugar ~540dp), `<= 8` on wider displays, always preserving at least
+     * [TRACKER_MIN_PILL_WIDTH_DP] per pill.
+     */
+    fun trackerColumns(requestedCols: Int, panelWidthDp: Float): Int {
+        val usableWidthDp = (panelWidthDp - 64f).coerceAtLeast(TRACKER_MIN_PILL_WIDTH_DP)
+        val maxByWidth = (usableWidthDp / (TRACKER_MIN_PILL_WIDTH_DP + 4f)).toInt().coerceAtLeast(1)
+        val tierCap = if (panelWidthDp < 560f) 6 else 8
+        return requestedCols.coerceAtLeast(1).coerceAtMost(minOf(tierCap, maxByWidth))
+    }
+
+    /** Effective equal-weight pill width (dp) for [columns] tracker cells on [panelWidthDp]. */
+    fun trackerPillWidthDp(panelWidthDp: Float, columns: Int): Float {
+        val cols = columns.coerceAtLeast(1)
+        val usableWidthDp = (panelWidthDp - 64f).coerceAtLeast(TRACKER_MIN_PILL_WIDTH_DP)
+        return (usableWidthDp / cols) - 4f
+    }
+
     /**
      * Border color for the Achievement Theater card: luminous gold during an
      * active unlock ticker or 100% mastery, otherwise [restingHairline].

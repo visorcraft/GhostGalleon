@@ -188,6 +188,8 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
     private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
+    private const val TAG_PLAY_HUD_SAVE = "play_hud_save"
+    private const val TAG_PLAY_HUD_LOAD = "play_hud_load"
     private const val TAG_PLAY_HUD_SLOTS = "play_hud_slots"
     private const val TAG_PLAY_HUD_COCKPIT = "play_hud_cockpit"
     private const val TAG_PLAY_HUD_TRACKPAD = "play_hud_trackpad"
@@ -4645,6 +4647,15 @@ object CompanionPanel {
                 sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
+        val dm = activity.resources.displayMetrics
+        val panelWidthDp = dm.widthPixels / dm.density
+        val cardWidthPx = dp(CompanionHeroMetrics.pinnedCardMaxWidthDp(panelWidthDp))
+        fun pinnedCardParams(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
+            cardWidthPx,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
         fun framedCard(): LinearLayout = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -4687,13 +4698,7 @@ object CompanionPanel {
                     showCompanionPinPicker(activity)
                 })
                 col.gravity = Gravity.CENTER
-                col.addView(
-                    card,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
+                col.addView(card, pinnedCardParams())
             }
             CompanionRoleResolve.PinHonesty.MISSING -> {
                 val card = framedCard()
@@ -4719,13 +4724,7 @@ object CompanionPanel {
                     showCompanionPinPicker(activity)
                 })
                 col.gravity = Gravity.CENTER
-                col.addView(
-                    card,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
+                col.addView(card, pinnedCardParams())
             }
             CompanionRoleResolve.PinHonesty.DUAL_CLAIM -> {
                 val card = framedCard()
@@ -4738,13 +4737,7 @@ object CompanionPanel {
                     setPadding(0, dp(8), 0, dp(4))
                 })
                 col.gravity = Gravity.CENTER
-                col.addView(
-                    card,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
+                col.addView(card, pinnedCardParams())
             }
             CompanionRoleResolve.PinHonesty.READY -> {
                 val pkg = pinPkg!!
@@ -4780,6 +4773,7 @@ object CompanionPanel {
                         settings,
                         pkg,
                         miniPx,
+                        cornerRadiusPx = activity.dpF(8),
                     )
                     bar.addView(miniIcon, LinearLayout.LayoutParams(miniPx, miniPx).apply {
                         marginEnd = dp(10)
@@ -4902,13 +4896,7 @@ object CompanionPanel {
                     )
                     card.addView(actionRow)
                     col.gravity = Gravity.CENTER
-                    col.addView(
-                        card,
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ),
-                    )
+                    col.addView(card, pinnedCardParams())
                 }
             }
         }
@@ -5095,6 +5083,51 @@ object CompanionPanel {
         bar.alpha = style.alpha
     }
 
+    private fun styleSlotModeChip(
+        chip: TextView,
+        saveMode: Boolean,
+        active: Boolean,
+        accentColor: Int,
+    ) {
+        val context = chip.context
+        val idleSurface = TileBackgrounds.chipIdleColor(context)
+        val restingHairline = TileBackgrounds.hairlineDivider(context)
+        val style = PlayHudMetrics.slotModeChipStyle(
+            saveMode = saveMode,
+            active = active,
+            accentColor = accentColor,
+            idleSurface = idleSurface,
+            restingHairline = restingHairline,
+        )
+        chip.isSelected = active
+        chip.setTextColor(style.textColor)
+        chip.setTypeface(chip.typeface, if (active) Typeface.BOLD else Typeface.NORMAL)
+        val base = GradientDrawable().apply {
+            setColor(style.fillColor)
+            cornerRadius = context.dpF(18)
+            setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+        }
+        chip.background = buildInteractivePillBackground(
+            context = context,
+            base = base,
+            accent = if (active && saveMode) PlayHudMetrics.SAVE_ARMED_AMBER else accentColor,
+            cornerRadiusDp = 18,
+            filled = false,
+        )
+        val padH = UiDimens.dp(context, 14)
+        val insetV = UiDimens.dp(context, CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        chip.setPadding(padH, insetV, padH, insetV)
+    }
+
+    private fun disarmSlotModeChips(root: View?, accentColor: Int) {
+        root?.findViewWithTag<TextView>(TAG_PLAY_HUD_SAVE)?.let {
+            if (it.isSelected) styleSlotModeChip(it, saveMode = true, active = false, accentColor = accentColor)
+        }
+        root?.findViewWithTag<TextView>(TAG_PLAY_HUD_LOAD)?.let {
+            if (it.isSelected) styleSlotModeChip(it, saveMode = false, active = false, accentColor = accentColor)
+        }
+    }
+
     /**
      * Unified in-place Play HUD expand/collapse path shared by gamepad
      * `TOGGLE_PLAY_HUD` and tapping the centered `28×4dp` pill handle: updates
@@ -5111,6 +5144,7 @@ object CompanionPanel {
         root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.let { slots ->
             if (slots.visibility != View.GONE) slots.visibility = View.GONE
         }
+        disarmSlotModeChips(root, accentColor)
         updatePlayHudHandleVisual(
             handleWrapper = root.findViewWithTag(TAG_PLAY_HUD_HANDLE),
             expanded = expanded,
@@ -5652,13 +5686,19 @@ object CompanionPanel {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = dp(8) },
         )
-        hud.addView(GridLayout(activity).apply {
-            tag = TAG_PLAY_HUD_TRACKER
-            visibility = View.GONE
-            columnCount = 8
-            contentDescription = activity.getString(R.string.play_hud_tracker)
-            setPadding(0, dp(6), 0, 0)
-        })
+        hud.addView(
+            GridLayout(activity).apply {
+                tag = TAG_PLAY_HUD_TRACKER
+                visibility = View.GONE
+                columnCount = 6
+                contentDescription = activity.getString(R.string.play_hud_tracker)
+                setPadding(0, dp(6), 0, 0)
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         hud.addView(
             HorizontalScrollView(activity).apply {
                 tag = TAG_PLAY_HUD_CINEMA
@@ -5837,8 +5877,10 @@ object CompanionPanel {
         ) && InputAssistService.supportsDisplayGesture()
         // Default center of launch display until the pad is touched.
         val padPoint = floatArrayOf(0.5f, 0.5f)
+        var trackpadRef: CockpitTrackpadView? = null
         fun tapLaunchPad() {
             if (!mayPointer) return
+            trackpadRef?.flashClick()
             app.injectLaunchPointer(padPoint[0], padPoint[1], true)
             app.injectLaunchPointer(padPoint[0], padPoint[1], false)
         }
@@ -6048,7 +6090,11 @@ object CompanionPanel {
                     ),
                 )
             }
-            val trackpad = CockpitTrackpadView(activity, settings.accentColor).apply {
+            val trackpad = CockpitTrackpadView(
+                context = activity,
+                accentColor = settings.accentColor,
+                cardRadiusDp = ThemePack.resolve(settings).cardRadiusDp,
+            ).apply {
                 tag = TAG_PLAY_HUD_TRACKPAD
                 setTag(R.id.cockpit_pad_point, padPoint)
                 minimumHeight = dp(if (compact) 96 else 160)
@@ -6076,7 +6122,7 @@ object CompanionPanel {
                     }
                     true
                 }
-            }
+            }.also { trackpadRef = it }
             collapsible.addView(
                 trackpad,
                 LinearLayout.LayoutParams(
@@ -6194,6 +6240,13 @@ object CompanionPanel {
                     }
                 }
                 slotStrip = builtSlots
+                lateinit var saveChip: TextView
+                lateinit var loadChip: TextView
+                fun syncArmedSlotChips(open: Boolean, save: Boolean) {
+                    val liveAccent = app.settings.accentColor
+                    styleSlotModeChip(saveChip, saveMode = true, active = open && save, accentColor = liveAccent)
+                    styleSlotModeChip(loadChip, saveMode = false, active = open && !save, accentColor = liveAccent)
+                }
                 fun showOrRunSlots(save: Boolean) {
                     val client = app.ensureRaCommandClient()
                     if (!client.slotStripAllowed()) {
@@ -6204,10 +6257,12 @@ object CompanionPanel {
                     }
                     if (builtSlots.visibility == View.VISIBLE && slotSaveMode == save) {
                         builtSlots.visibility = View.GONE
+                        syncArmedSlotChips(open = false, save = save)
                         return
                     }
                     slotSaveMode = save
                     builtSlots.visibility = View.VISIBLE
+                    syncArmedSlotChips(open = true, save = save)
                 }
                 addRaChip(
                     actionChip(
@@ -6217,16 +6272,20 @@ object CompanionPanel {
                         runRa { client, port -> client.pauseToggle(port) }
                     },
                 )
-                addRaChip(
-                    actionChip(labelRes = R.string.play_hud_save) {
-                        showOrRunSlots(save = true)
-                    },
-                )
-                addRaChip(
-                    actionChip(labelRes = R.string.play_hud_load) {
-                        showOrRunSlots(save = false)
-                    },
-                )
+                saveChip = actionChip(
+                    labelRes = R.string.play_hud_save,
+                    chipTag = TAG_PLAY_HUD_SAVE,
+                ) {
+                    showOrRunSlots(save = true)
+                }
+                addRaChip(saveChip)
+                loadChip = actionChip(
+                    labelRes = R.string.play_hud_load,
+                    chipTag = TAG_PLAY_HUD_LOAD,
+                ) {
+                    showOrRunSlots(save = false)
+                }
+                addRaChip(loadChip)
                 actions.addView(raChips)
                 hud.post {
                     if (!hud.isAttachedToWindow) return@post
@@ -6831,9 +6890,11 @@ object CompanionPanel {
             if (grid.visibility != View.GONE) grid.visibility = View.GONE
             return
         }
-        val cols = spec.widgets.firstOrNull { it.cols > 0 }?.cols ?: 8
-        if (grid.columnCount != cols) grid.columnCount = cols
         val ctx = grid.context
+        val dm = ctx.resources.displayMetrics
+        val panelWidthDp = dm.widthPixels / dm.density
+        val requestedCols = spec.widgets.firstOrNull { it.cols > 0 }?.cols ?: 8
+        val cols = PlayHudMetrics.trackerColumns(requestedCols, panelWidthDp)
         val app = ctx.applicationContext as? GhostGalleonApp
         val accent = app?.settings?.accentColor ?: ThemePack.GHOST.accentColor
         val idleSurface = TileBackgrounds.chipIdleColor(ctx)
@@ -6841,12 +6902,13 @@ object CompanionPanel {
         val hairline = TileBackgrounds.hairlineDivider(ctx)
         val strokePx = ctx.strokePx(1)
         val radiusPx = ctx.dpF(8)
-        val recreated = grid.childCount != cells.size
+        val recreated = grid.childCount != cells.size || grid.columnCount != cols
+        if (grid.columnCount != cols) grid.columnCount = cols
         if (recreated) {
             grid.removeAllViews()
-            val padH = (6 * ctx.resources.displayMetrics.density).toInt()
-            val padV = (4 * ctx.resources.displayMetrics.density).toInt()
-            val margin = (2 * ctx.resources.displayMetrics.density).toInt()
+            val padH = (6 * dm.density).toInt()
+            val padV = (4 * dm.density).toInt()
+            val margin = (2 * dm.density).toInt()
             for (cell in cells) {
                 val tv = TextView(ctx).apply {
                     text = cellLabel(cell)
@@ -6864,6 +6926,9 @@ object CompanionPanel {
                 grid.addView(
                     tv,
                     GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                         setMargins(margin, margin, margin, margin)
                     },
                 )
@@ -7032,9 +7097,12 @@ object CompanionPanel {
         val group = root.findViewWithTag<View>(TAG_PLAY_HUD_RA) ?: return
         val pause = root.findViewWithTag<TextView>(TAG_PLAY_HUD_PAUSE) ?: return
         val slots = root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)
+        val liveAccent = (root.context.applicationContext as? GhostGalleonApp)?.settings?.accentColor
+            ?: ThemePack.GHOST.accentColor
         if (snap == null || !snap.show) {
             group.visibility = View.GONE
             slots?.visibility = View.GONE
+            disarmSlotModeChips(root, liveAccent)
             return
         }
         pause.setText(
@@ -7042,7 +7110,92 @@ object CompanionPanel {
             else R.string.play_hud_pause,
         )
         group.visibility = View.VISIBLE
-        if (!snap.slotsAllowed) slots?.visibility = View.GONE
+        if (!snap.slotsAllowed) {
+            slots?.visibility = View.GONE
+            disarmSlotModeChips(root, liveAccent)
+        }
+    }
+
+    private class SlotCellViews(
+        val cell: FrameLayout,
+        val thumbView: ImageView,
+        val centerNumber: TextView,
+        val cornerBadge: TextView,
+    )
+
+    /**
+     * Decode save-slot / Cinema PNG thumbnails strictly off the UI thread on
+     * [animDecodeExecutor] with attach + token stale guards, recycling dropped
+     * bitmaps cleanly and replacing any prior attach listener on [row].
+     */
+    private fun bindSlotStripThumbsAsync(
+        row: LinearLayout,
+        statesDir: File?,
+        cellsBySlot: Map<Int, SlotCellViews>,
+        targetPx: Int,
+        isCinema: Boolean,
+    ) {
+        (row.getTag(R.id.hero_bound_id) as? View.OnAttachStateChangeListener)?.let { old ->
+            row.removeOnAttachStateChangeListener(old)
+        }
+        row.setTag(R.id.hero_bound_id, null)
+        row.setTag(R.id.media_bind_uri, null)
+        if (statesDir == null || cellsBySlot.isEmpty()) return
+        var dispatched = false
+        fun kickDecode() {
+            if (dispatched || !row.isAttachedToWindow) return
+            dispatched = true
+            val token = "slots:${animBindSeq.incrementAndGet()}"
+            row.setTag(R.id.media_bind_uri, token)
+            animDecodeExecutor.execute {
+                val pngNames = RaStateSlots.pngNamesIn(statesDir)
+                val thumbsMap = if (isCinema) emptyMap() else RaStateSlots.thumbsBySlot(pngNames)
+                for ((slot, views) in cellsBySlot) {
+                    val file = if (isCinema) {
+                        val suffix = ".state$slot.png"
+                        pngNames.firstOrNull { it.endsWith(suffix, ignoreCase = true) }
+                            ?.let { File(statesDir, it) }
+                    } else {
+                        thumbsMap[slot]?.let { File(statesDir, it) }
+                    } ?: continue
+                    val bmp = decodeSlotThumb(file, targetPx) ?: continue
+                    animMainHandler.post {
+                        if (!shouldApplyDecodedAnim(
+                                isAttached = row.isAttachedToWindow && views.thumbView.isAttachedToWindow,
+                                currentToken = row.getTag(R.id.media_bind_uri),
+                                expectedToken = token,
+                            )
+                        ) {
+                            bmp.recycle()
+                            return@post
+                        }
+                        views.thumbView.setImageBitmap(bmp)
+                        views.thumbView.visibility = View.VISIBLE
+                        views.cornerBadge.visibility = View.VISIBLE
+                        views.centerNumber.visibility = View.GONE
+                    }
+                }
+            }
+        }
+        val listener = object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                kickDecode()
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                dispatched = false
+                row.setTag(R.id.media_bind_uri, null)
+                for (views in cellsBySlot.values) {
+                    views.thumbView.setImageDrawable(null)
+                    views.thumbView.visibility = View.GONE
+                    views.cornerBadge.visibility = View.GONE
+                    views.centerNumber.visibility = View.VISIBLE
+                }
+            }
+        }
+        row.setTag(R.id.hero_bound_id, listener)
+        row.addOnAttachStateChangeListener(listener)
+        if (row.isAttachedToWindow) kickDecode()
     }
 
     private fun buildRaSlotStrip(
@@ -7055,8 +7208,6 @@ object CompanionPanel {
     ): View {
         val cell = dp(PlayHudMetrics.slotCellSizeDp(compact))
         val statesDir = raStatesDir(surface)
-        val pngNames = statesDir?.let { RaStateSlots.pngNamesIn(it) }.orEmpty()
-        val thumbs = RaStateSlots.thumbsBySlot(pngNames)
         val row = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -7064,30 +7215,30 @@ object CompanionPanel {
             clipChildren = false
             clipToPadding = false
         }
-        val labels = RaStateSlots.slotLabels(pngNames)
-        labels.forEachIndexed { idx, slot ->
-            val thumbName = thumbs[slot]
-            val bmp = if (statesDir != null && thumbName != null) {
-                decodeSlotThumb(File(statesDir, thumbName), cell)
-            } else {
-                null
-            }
-            row.addView(
-                framedSlotCell(
-                    context = activity,
-                    settings = settings,
-                    slot = slot,
-                    thumb = bmp,
-                    sizePx = cell,
-                    dp = dp,
-                    first = idx == 0,
-                    isPinned = false,
-                    isLatest = false,
-                    onTap = onPick,
-                    onLongTap = null,
-                ),
+        val cellsBySlot = LinkedHashMap<Int, SlotCellViews>(RaStateSlots.SLOTS.size)
+        RaStateSlots.SLOTS.forEachIndexed { idx, slot ->
+            val cellViews = framedSlotCell(
+                context = activity,
+                settings = settings,
+                slot = slot,
+                sizePx = cell,
+                dp = dp,
+                first = idx == 0,
+                isPinned = false,
+                isLatest = false,
+                onTap = onPick,
+                onLongTap = null,
             )
+            cellsBySlot[slot] = cellViews
+            row.addView(cellViews.cell)
         }
+        bindSlotStripThumbsAsync(
+            row = row,
+            statesDir = statesDir,
+            cellsBySlot = cellsBySlot,
+            targetPx = cell,
+            isCinema = false,
+        )
         return HorizontalScrollView(activity).apply {
             tag = TAG_PLAY_HUD_SLOTS
             visibility = View.GONE
@@ -7112,7 +7263,6 @@ object CompanionPanel {
         context: Context,
         settings: Settings,
         slot: Int,
-        thumb: Bitmap?,
         sizePx: Int,
         dp: (Int) -> Int,
         first: Boolean,
@@ -7120,7 +7270,7 @@ object CompanionPanel {
         isLatest: Boolean,
         onTap: (Int) -> Unit,
         onLongTap: ((Int) -> Unit)?,
-    ): View {
+    ): SlotCellViews {
         val radiusPx = context.dpF(PlayHudMetrics.SLOT_CORNER_RADIUS_DP)
         val border = PlayHudMetrics.slotBorderSpec(
             isPinned = isPinned,
@@ -7155,58 +7305,62 @@ object CompanionPanel {
             }
         }
         attachChipTactileFeedback(cell)
-        if (thumb != null) {
-            cell.addView(ImageView(context).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageBitmap(thumb)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            })
-            cell.addView(TextView(context).apply {
-                text = slot.toString()
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                setTypeface(typeface, Typeface.BOLD)
-                fontFeatureSettings = "tnum"
-                includeFontPadding = false
-                gravity = Gravity.CENTER
-                background = GradientDrawable().apply {
-                    setColor(0xB8000000.toInt())
-                    cornerRadius = context.dpF(6)
-                }
-                setPadding(dp(5), dp(1), dp(5), dp(1))
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, FrameLayout.LayoutParams(
+        val thumbView = ImageView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val centerNumber = TextView(context).apply {
+            text = slot.toString()
+            setTextColor(
+                ThemePack.accentTextColor(
+                    settings.accentColor,
+                    TileBackgrounds.surfaceSunken(context),
+                ),
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            fontFeatureSettings = "tnum"
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val cornerBadge = TextView(context).apply {
+            text = slot.toString()
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTypeface(typeface, Typeface.BOLD)
+            fontFeatureSettings = "tnum"
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                setColor(0xB8000000.toInt())
+                cornerRadius = context.dpF(6)
+            }
+            setPadding(dp(5), dp(1), dp(5), dp(1))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        cell.addView(thumbView)
+        cell.addView(centerNumber)
+        cell.addView(
+            cornerBadge,
+            FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM or Gravity.END,
             ).apply {
                 marginEnd = dp(3)
                 bottomMargin = dp(3)
-            })
-        } else {
-            cell.addView(TextView(context).apply {
-                text = slot.toString()
-                setTextColor(
-                    ThemePack.accentTextColor(
-                        settings.accentColor,
-                        TileBackgrounds.surfaceSunken(context),
-                    ),
-                )
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, Typeface.BOLD)
-                fontFeatureSettings = "tnum"
-                gravity = Gravity.CENTER
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            })
-        }
+            },
+        )
         if (isPinned) {
             cell.addView(TextView(context).apply {
                 setText(R.string.glyph_favorite)
@@ -7228,7 +7382,12 @@ object CompanionPanel {
                 topMargin = dp(3)
             })
         }
-        return cell
+        return SlotCellViews(
+            cell = cell,
+            thumbView = thumbView,
+            centerNumber = centerNumber,
+            cornerBadge = cornerBadge,
+        )
     }
 
     private fun cinemaPlayHostAllowed(
@@ -7274,42 +7433,47 @@ object CompanionPanel {
         val surfaceKey = surface.key
         row.removeAllViews()
         row.tag = key
+        val cellsBySlot = LinkedHashMap<Int, SlotCellViews>(CinemaPolicy.BAND.count())
         for (slot in CinemaPolicy.BAND) {
-            val thumbFile = cinemaThumbFile(statesDir, slot)
-            val bmp = thumbFile?.let { decodeSlotThumb(it, cell) }
-            row.addView(
-                framedSlotCell(
-                    context = activity,
-                    settings = settings,
-                    slot = slot,
-                    thumb = bmp,
-                    sizePx = cell,
-                    dp = dp,
-                    first = slot == CinemaPolicy.BAND.first,
-                    isPinned = app.cinemaPinnedSlot == slot,
-                    isLatest = app.cinemaLastSlot == slot,
-                    onTap = { picked ->
-                        if (CinemaPolicy.inBand(picked)) {
-                            app.enqueueRaUdp(
-                                work = { client -> client.loadStateSlot(port, picked) },
-                                onMain = {
-                                    if (app.sessionSurface?.key != surfaceKey) return@enqueueRaUdp
-                                    if (app.raCommandClient?.slotStripAllowed() == false) {
-                                        hidePlayHudCinema(strip)
-                                    }
-                                },
-                            )
-                        }
-                    },
-                    onLongTap = { pinned ->
-                        if (CinemaPolicy.inBand(pinned)) {
-                            app.cinemaPinnedSlot = pinned
-                            paintPlayHudCinema(strip, app, activity, surface)
-                        }
-                    },
-                ),
+            val cellViews = framedSlotCell(
+                context = activity,
+                settings = settings,
+                slot = slot,
+                sizePx = cell,
+                dp = dp,
+                first = slot == CinemaPolicy.BAND.first,
+                isPinned = app.cinemaPinnedSlot == slot,
+                isLatest = app.cinemaLastSlot == slot,
+                onTap = { picked ->
+                    if (CinemaPolicy.inBand(picked)) {
+                        app.enqueueRaUdp(
+                            work = { client -> client.loadStateSlot(port, picked) },
+                            onMain = {
+                                if (app.sessionSurface?.key != surfaceKey) return@enqueueRaUdp
+                                if (app.raCommandClient?.slotStripAllowed() == false) {
+                                    hidePlayHudCinema(strip)
+                                }
+                            },
+                        )
+                    }
+                },
+                onLongTap = { pinned ->
+                    if (CinemaPolicy.inBand(pinned)) {
+                        app.cinemaPinnedSlot = pinned
+                        paintPlayHudCinema(strip, app, activity, surface)
+                    }
+                },
             )
+            cellsBySlot[slot] = cellViews
+            row.addView(cellViews.cell)
         }
+        bindSlotStripThumbsAsync(
+            row = row,
+            statesDir = statesDir,
+            cellsBySlot = cellsBySlot,
+            targetPx = cell,
+            isCinema = true,
+        )
         if (strip.visibility != View.VISIBLE) strip.visibility = View.VISIBLE
     }
 

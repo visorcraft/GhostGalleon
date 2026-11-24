@@ -390,11 +390,15 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
 
     private fun buildColdStartHoldView(): View {
+        val dm = resources.displayMetrics
+        val panelHeightDp = dm.heightPixels / dm.density
+        val holdMetrics = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+            .coldStartMetrics(panelHeightDp)
         val holdRoot = FrameLayout(this).apply {
             setBackgroundColor(0xFF000000.toInt())
             contentDescription = getString(R.string.app_name)
         }
-        val haloSize = dp(220)
+        val haloSize = dp(holdMetrics.haloSizeDp)
         val halo = View(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
                 gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
@@ -416,7 +420,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 android.view.Gravity.CENTER,
             ),
         )
-        val crestSize = dp(96)
+        val crestSize = dp(holdMetrics.crestSizeDp)
         val animEnabled = android.animation.ValueAnimator.areAnimatorsEnabled()
         val crest = android.widget.ImageView(this).apply {
             setImageResource(R.drawable.ic_brand_ship)
@@ -847,6 +851,30 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 root.setBackgroundColor(0xFF000000.toInt())
             }
             setContentView(root)
+            if (com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                    .shouldFadeFirstLibraryPaint(
+                        reason = reason,
+                        animatorsEnabled = android.animation.ValueAnimator.areAnimatorsEnabled(),
+                    )
+            ) {
+                root.alpha = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                    .FIRST_LIBRARY_PAINT_START_ALPHA
+                root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(v: View) {}
+                    override fun onViewDetachedFromWindow(v: View) {
+                        v.animate().cancel()
+                        v.alpha = 1f
+                    }
+                })
+                root.animate()
+                    .alpha(1f)
+                    .setDuration(
+                        com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                            .FIRST_LIBRARY_PAINT_FADE_MS,
+                    )
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
             CompanionPanel.applyPostureChip(root, app)
             // New view tree: listener + owner hint must be rebound.
             lastFocusLock = null

@@ -179,7 +179,29 @@ object CompanionChromeErgonomics {
     const val COLD_START_SCALE_MAX: Float = 1.02f
     const val COLD_START_BREATHE_MS: Long = 1_100L
 
-    /** Subtle radial halo behind the cold-start ship emblem (~14% alpha theme tint). */
+    /** Seamless first-paint root alpha settle strictly when `"library-ready"` completes. */
+    const val FIRST_LIBRARY_PAINT_FADE_MS: Long = 120L
+    const val FIRST_LIBRARY_PAINT_START_ALPHA: Float = 0.82f
+
+    data class ColdStartMetrics(
+        val crestSizeDp: Int,
+        val haloSizeDp: Int,
+    )
+
+    /** Scale cold-start crest (`76..120dp`) and radial halo (`180..280dp`) with [panelHeightDp]. */
+    fun coldStartMetrics(panelHeightDp: Float): ColdStartMetrics {
+        val h = panelHeightDp.coerceAtLeast(1f)
+        val crest = (h * 0.16f).toInt().coerceIn(76, 120)
+        val halo = (h * 0.38f).toInt().coerceIn(180, 280)
+        return ColdStartMetrics(crestSizeDp = crest, haloSizeDp = halo)
+    }
+
+    /** True strictly for `"library-ready"` first paint when system animators are enabled. */
+    fun shouldFadeFirstLibraryPaint(reason: String, animatorsEnabled: Boolean): Boolean =
+        reason == "library-ready" &&
+            MotionPolicy.effectiveDurationMs(FIRST_LIBRARY_PAINT_FADE_MS, animatorsEnabled) > 0L
+
+    /** Subtle luminance-damped radial halo behind the cold-start ship emblem (~14% alpha theme tint). */
     fun coldStartGlowColor(accentColor: Int): Int =
-        (0x24 shl 24) or (accentColor and 0x00FFFFFF)
+        com.visorcraft.ghostgalleon.settings.ThemePack.accentGlowColor(accentColor, 0x24)
 }

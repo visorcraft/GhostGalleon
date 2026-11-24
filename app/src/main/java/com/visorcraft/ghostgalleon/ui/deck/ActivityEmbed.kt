@@ -4,13 +4,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.UserHandle
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
@@ -48,11 +46,7 @@ object ActivityEmbed {
             cornerRadius = radiusPx
         }
         host.clipToOutline = true
-        host.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-            }
-        }
+        host.outlineProvider = OutlineCache.roundedRect(radiusPx)
         val rim = accentColor?.let { CompanionHeroStyle.artRimColor(it) }
             ?: TileBackgrounds.hairlineDivider(context)
         host.foreground = GradientDrawable().apply {

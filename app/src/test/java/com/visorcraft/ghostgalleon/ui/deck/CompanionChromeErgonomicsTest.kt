@@ -269,4 +269,49 @@ class CompanionChromeErgonomicsTest {
             ),
         )
     }
+
+    @Test
+    fun `coldStartMetrics scales across 420 to 1080dp dampens OLED glow and fades only library-ready`() {
+        val small = CompanionChromeErgonomics.coldStartMetrics(420f)
+        val sugar = CompanionChromeErgonomics.coldStartMetrics(540f)
+        val tall = CompanionChromeErgonomics.coldStartMetrics(1080f)
+        assertTrue(small.crestSizeDp in 76..120)
+        assertTrue(small.haloSizeDp in 180..280)
+        assertTrue(sugar.crestSizeDp in 76..120)
+        assertTrue(sugar.haloSizeDp in 180..280)
+        assertTrue(tall.crestSizeDp in 76..120)
+        assertTrue(tall.haloSizeDp in 180..280)
+        assertTrue(small.crestSizeDp < sugar.crestSizeDp)
+        assertTrue(sugar.crestSizeDp < tall.crestSizeDp)
+        assertTrue(small.haloSizeDp < sugar.haloSizeDp)
+        assertTrue(sugar.haloSizeDp < tall.haloSizeDp)
+
+        val oledGlow = CompanionChromeErgonomics.coldStartGlowColor(
+            com.visorcraft.ghostgalleon.settings.ThemePack.OLED.accentColor,
+        )
+        val ghostGlow = CompanionChromeErgonomics.coldStartGlowColor(
+            com.visorcraft.ghostgalleon.settings.ThemePack.GHOST.accentColor,
+        )
+        assertTrue(
+            "OLED high-luminance cold-start halo must dampen alpha below Ghost",
+            ((oledGlow ushr 24) and 0xFF) < ((ghostGlow ushr 24) and 0xFF),
+        )
+
+        assertEquals(
+            true,
+            CompanionChromeErgonomics.shouldFadeFirstLibraryPaint("library-ready", animatorsEnabled = true),
+        )
+        assertEquals(
+            false,
+            CompanionChromeErgonomics.shouldFadeFirstLibraryPaint("library-ready", animatorsEnabled = false),
+        )
+        assertEquals(
+            false,
+            CompanionChromeErgonomics.shouldFadeFirstLibraryPaint("onCreate d=0", animatorsEnabled = true),
+        )
+        assertEquals(
+            false,
+            CompanionChromeErgonomics.shouldFadeFirstLibraryPaint("resume d=0 epoch=2", animatorsEnabled = true),
+        )
+    }
 }

@@ -218,6 +218,22 @@ object CompanionHeroMetrics {
         else -> 24
     }
 
+    /** Maximum centered width (dp) for non-embedded Pinned-App fallback/empty cards on wide panels. */
+    const val PINNED_CARD_MAX_WIDTH_DP: Int = 440
+
+    /**
+     * Responsive card width cap (dp) for non-embedded `PINNED_APP` status cards:
+     * fills narrow companion panels comfortably while capping wide 16:9 panels at
+     * [PINNED_CARD_MAX_WIDTH_DP] centered.
+     */
+    fun pinnedCardMaxWidthDp(panelWidthDp: Float): Int {
+        if (panelWidthDp <= 0f) return PINNED_CARD_MAX_WIDTH_DP
+        val inner = (panelWidthDp - panelHorizontalPaddingDp(panelWidthDp) * 2 - 8)
+            .toInt()
+            .coerceAtLeast(240)
+        return minOf(inner, PINNED_CARD_MAX_WIDTH_DP)
+    }
+
     /** Column count for PERF_HUD metric cards: 2 normally, gracefully collapsing to 1 under 360dp. */
     fun perfGridColumns(panelWidthDp: Float): Int = if (panelWidthDp < 360f) 1 else 2
 

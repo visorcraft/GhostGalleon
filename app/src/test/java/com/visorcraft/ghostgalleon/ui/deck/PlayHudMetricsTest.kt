@@ -215,4 +215,91 @@ class PlayHudMetricsTest {
         assertEquals(28, PlayHudMetrics.HUD_HANDLE_WIDTH_DP)
         assertEquals(4, PlayHudMetrics.HUD_HANDLE_HEIGHT_DP)
     }
+
+    @Test
+    fun `slotModeChipStyle distinguishes armed Save amber warning from Load accent with WCAG AA contrast`() {
+        for (pack in ThemePack.BUILTINS) {
+            val hairline = ThemePack.hairlineDivider(pack)
+            val idle = PlayHudMetrics.slotModeChipStyle(
+                saveMode = true,
+                active = false,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                restingHairline = hairline,
+            )
+            val armedSave = PlayHudMetrics.slotModeChipStyle(
+                saveMode = true,
+                active = true,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                restingHairline = hairline,
+            )
+            val armedLoad = PlayHudMetrics.slotModeChipStyle(
+                saveMode = false,
+                active = true,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                restingHairline = hairline,
+            )
+            assertEquals(1, idle.strokeDp)
+            assertEquals(2, armedSave.strokeDp)
+            assertEquals(2, armedLoad.strokeDp)
+            assertNotEquals(armedSave.strokeColor, armedLoad.strokeColor)
+            assertNotEquals(armedSave.fillColor, armedLoad.fillColor)
+            assertEquals(
+                PlayHudMetrics.SAVE_ARMED_AMBER and 0x00FFFFFF,
+                armedSave.strokeColor and 0x00FFFFFF,
+            )
+            val saveContrast = ThemePack.contrastRatio(armedSave.textColor, armedSave.fillColor)
+            val loadContrast = ThemePack.contrastRatio(armedLoad.textColor, armedLoad.fillColor)
+            assertTrue(
+                "Armed Save chip text contrast on ${pack.id} must be >= 4.5, was $saveContrast",
+                saveContrast >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Armed Load chip text contrast on ${pack.id} must be >= 4.5, was $loadContrast",
+                loadContrast >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
+
+    @Test
+    fun `trackpadCornerRadiusDp derives concentrically from ThemePack cardRadiusDp and clickPulseRadiusFrac clamps`() {
+        assertEquals(10, PlayHudMetrics.trackpadCornerRadiusDp(ThemePack.OLED.cardRadiusDp))
+        assertEquals(16, PlayHudMetrics.trackpadCornerRadiusDp(ThemePack.GHOST.cardRadiusDp))
+        assertEquals(18, PlayHudMetrics.trackpadCornerRadiusDp(32))
+        assertTrue(PlayHudMetrics.trackpadCornerRadiusDp(4) in 10..18)
+        assertTrue(PlayHudMetrics.trackpadCornerRadiusDp(48) in 10..18)
+
+        val start = PlayHudMetrics.clickPulseRadiusFrac(-0.5f)
+        val mid = PlayHudMetrics.clickPulseRadiusFrac(0.5f)
+        val end = PlayHudMetrics.clickPulseRadiusFrac(2.0f)
+        assertEquals(PlayHudMetrics.clickPulseRadiusFrac(0f), start, 0.001f)
+        assertEquals(1f, end, 0.001f)
+        assertTrue(start in 0f..1f && mid in start..end)
+    }
+
+    @Test
+    fun `trackerColumns clamps narrow Sugar panels to at most 6 and preserves 48dp minimum pill width`() {
+        val sugarCols = PlayHudMetrics.trackerColumns(requestedCols = 8, panelWidthDp = 520f)
+        assertTrue("Sugar 520dp tracker cols ($sugarCols) must be <= 6", sugarCols <= 6)
+        assertTrue(
+            "Sugar 520dp tracker pill width must be >= 48dp",
+            PlayHudMetrics.trackerPillWidthDp(520f, sugarCols) >= PlayHudMetrics.TRACKER_MIN_PILL_WIDTH_DP,
+        )
+
+        val narrowCols = PlayHudMetrics.trackerColumns(requestedCols = 8, panelWidthDp = 360f)
+        assertTrue(narrowCols in 1..6)
+        assertTrue(
+            "Narrow 360dp tracker pill width must be >= 48dp",
+            PlayHudMetrics.trackerPillWidthDp(360f, narrowCols) >= PlayHudMetrics.TRACKER_MIN_PILL_WIDTH_DP,
+        )
+
+        val wideCols = PlayHudMetrics.trackerColumns(requestedCols = 8, panelWidthDp = 760f)
+        assertEquals(8, wideCols)
+        assertTrue(
+            PlayHudMetrics.trackerPillWidthDp(760f, wideCols) >= PlayHudMetrics.TRACKER_MIN_PILL_WIDTH_DP,
+        )
+        assertEquals(4, PlayHudMetrics.trackerColumns(requestedCols = 4, panelWidthDp = 760f))
+    }
 }
