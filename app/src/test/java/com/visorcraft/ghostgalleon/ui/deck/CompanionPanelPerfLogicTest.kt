@@ -74,4 +74,11 @@ class CompanionPanelPerfLogicTest {
         assertTrue(IconDensityMetrics.matchesPackage(IconDensityMetrics.cacheKey("com.example.game", 192), "com.example.game"))
         assertFalse(IconDensityMetrics.matchesPackage(IconDensityMetrics.cacheKey("com.example.game.extra", 192), "com.example.game"))
     }
+
+    @Test
+    fun `shouldApplyPerfReadings requires both window attachment and matching generation`() {
+        assertTrue(CompanionPanel.shouldApplyPerfReadings(isAttached = true, currentGen = 7L, expectedGen = 7L))
+        assertFalse(CompanionPanel.shouldApplyPerfReadings(isAttached = false, currentGen = 7L, expectedGen = 7L))
+        assertFalse(CompanionPanel.shouldApplyPerfReadings(isAttached = true, currentGen = 8L, expectedGen = 7L))
+    }
 }

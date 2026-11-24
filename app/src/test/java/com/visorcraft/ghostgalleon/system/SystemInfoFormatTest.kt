@@ -7,6 +7,7 @@ import com.visorcraft.ghostgalleon.i18n.literalArgs
 import com.visorcraft.ghostgalleon.i18n.resourceIds
 import com.visorcraft.ghostgalleon.i18n.text
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -96,5 +97,84 @@ class SystemInfoFormatTest {
         }
         assertEquals(text(R.string.system_not_present), map[R.string.system_microsd])
         assertEquals(text(R.string.label_unavailable), map[R.string.system_power_draw])
+    }
+
+    @Test
+    fun `storage throttle refreshes every 15-30s and caches intermediate 1_5s PERF_HUD ticks`() {
+        assertTrue(
+            "storage TTL should be in 15..30 s",
+            SystemInfoFormat.STORAGE_STAT_TTL_MS in 15_000L..30_000L,
+        )
+        val ttl = SystemInfoFormat.STORAGE_STAT_TTL_MS
+        assertTrue(SystemInfoFormat.shouldRefreshStorage(Long.MIN_VALUE, 1_000L, ttl))
+        assertFalse(SystemInfoFormat.shouldRefreshStorage(1_000L, 1_000L + ttl - 1L, ttl))
+        assertTrue(SystemInfoFormat.shouldRefreshStorage(1_000L, 1_000L + ttl, ttl))
+        // Backwards clock jump refreshes safely
+        assertTrue(SystemInfoFormat.shouldRefreshStorage(5_000L, 4_000L, ttl))
+
+        val cache = ThrottledStorageCache<Int>(ttlMs = ttl)
+        var statCalls = 0
+        // Simulate 15 PERF_HUD ticks spaced 1,500 ms apart (0 ms .. 21,000 ms) -> only 2 StatFs reads!
+        for (tick in 0 until 15) {
+            val nowMs = tick * 1_500L
+            val value = cache.getOrRefresh(nowMs) { ++statCalls }
+            assertEquals(statCalls, value)
+        }
+        assertEquals("15 ticks across 21s must invoke StatFs only twice", 2, statCalls)
+
+        cache.invalidate()
+        cache.getOrRefresh(21_500L) { ++statCalls }
+        assertEquals(3, statCalls)
+    }
+
+    @Test
+    fun `resolveBatteryPercent derives from sticky intent without HAL fallback and falls back when invalid`() {
+        var fallbackCalls = 0
+        // Valid sticky level/scale skips fallback HAL IPC completely
+        assertEquals(
+            73,
+            SystemInfoFormat.resolveBatteryPercent(73, 100) {
+                fallbackCalls++
+                99
+            },
+        )
+        assertEquals(
+            75,
+            SystemInfoFormat.resolveBatteryPercent(150, 200) {
+                fallbackCalls++
+                99
+            },
+        )
+        assertEquals(0, fallbackCalls)
+
+        // Missing or invalid sticky data falls back cleanly to BatteryManager capacity
+        assertEquals(
+            64,
+            SystemInfoFormat.resolveBatteryPercent(-1, 100) {
+                fallbackCalls++
+                64
+            },
+        )
+        assertEquals(
+            52,
+            SystemInfoFormat.resolveBatteryPercent(50, 0) {
+                fallbackCalls++
+                52
+            },
+        )
+        assertEquals(
+            88,
+            SystemInfoFormat.resolveBatteryPercent(120, 100) {
+                fallbackCalls++
+                88
+            },
+        )
+        assertEquals(3, fallbackCalls)
+
+        // Invalid fallback value yields null
+        assertEquals(
+            null,
+            SystemInfoFormat.resolveBatteryPercent(-1, -1) { -5 },
+        )
     }
 }

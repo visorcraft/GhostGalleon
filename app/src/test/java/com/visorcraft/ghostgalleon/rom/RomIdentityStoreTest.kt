@@ -124,4 +124,16 @@ class RomIdentityStoreTest {
         assertEquals(setOf("new"), loaded.keys)
         assertEquals("ff", loaded["new"]!!.hash)
     }
+
+    @Test
+    fun `sourceUri round-trips when present and defaults null for legacy json`() {
+        val f = tmp.root.resolve("id-uri/rom_identity.json")
+        val store = RomIdentityStore(f)
+        val withUri = identity(romId = "snes:a", ready = false).copy(sourceUri = "content://tree/doc/a")
+        val withoutUri = identity(romId = "snes:b", ready = true)
+        store.save(mapOf(withUri.romId to withUri, withoutUri.romId to withoutUri))
+        val loaded = store.load()
+        assertEquals("content://tree/doc/a", loaded["snes:a"]!!.sourceUri)
+        assertNull(loaded["snes:b"]!!.sourceUri)
+    }
 }

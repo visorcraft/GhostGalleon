@@ -167,4 +167,68 @@ object SystemInfoFormat {
         if (microamps <= 0L) return null
         return microamps * voltageMillivolts / 1000L
     }
+
+    /** Storage `StatFs` refresh interval (20 s) so 1.5 s PERF_HUD ticks skip repeated fs stats. */
+    const val STORAGE_STAT_TTL_MS: Long = 20_000L
+
+    /** Returns `true` when cached storage stats are absent or older than [ttlMs]. */
+    fun shouldRefreshStorage(
+        lastSampleMs: Long,
+        nowMs: Long,
+        ttlMs: Long = STORAGE_STAT_TTL_MS,
+    ): Boolean {
+        if (lastSampleMs == Long.MIN_VALUE) return true
+        val elapsed = nowMs - lastSampleMs
+        return elapsed < 0L || elapsed >= ttlMs.coerceAtLeast(0L)
+    }
+
+    /**
+     * Derives battery percentage (`0..100`) from sticky `ACTION_BATTERY_CHANGED`
+     * `EXTRA_LEVEL` and `EXTRA_SCALE`, avoiding a `BatteryManager` HAL Binder IPC.
+     * Falls back to [fallbackCapacity] ONLY when sticky data is absent or invalid.
+     */
+    fun resolveBatteryPercent(
+        stickyLevel: Int,
+        stickyScale: Int,
+        fallbackCapacity: () -> Int?,
+    ): Int? {
+        if (stickyLevel >= 0 && stickyScale > 0) {
+            val pct = ((stickyLevel * 100L) / stickyScale).toInt()
+            if (pct in 0..100) return pct
+        }
+        return fallbackCapacity()?.takeIf { it in 0..100 }
+    }
+}
+
+/**
+ * Pure, thread-safe storage stat snapshot cache throttled to [ttlMs] (default 20 s).
+ */
+internal class ThrottledStorageCache<T : Any>(
+    private val ttlMs: Long = SystemInfoFormat.STORAGE_STAT_TTL_MS,
+) {
+    private val lock = Any()
+    private var cached: T? = null
+    private var lastSampleMs: Long = Long.MIN_VALUE
+
+    fun getOrRefresh(nowMs: Long, reader: () -> T): T {
+        synchronized(lock) {
+            val cur = cached
+            if (cur != null && !SystemInfoFormat.shouldRefreshStorage(lastSampleMs, nowMs, ttlMs)) {
+                return cur
+            }
+        }
+        val fresh = reader()
+        synchronized(lock) {
+            cached = fresh
+            lastSampleMs = nowMs
+        }
+        return fresh
+    }
+
+    fun invalidate() {
+        synchronized(lock) {
+            cached = null
+            lastSampleMs = Long.MIN_VALUE
+        }
+    }
 }

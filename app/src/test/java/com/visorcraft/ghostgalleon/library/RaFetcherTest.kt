@@ -1,12 +1,24 @@
 package com.visorcraft.ghostgalleon.library
 
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class RaFetcherTest {
+
+    @Before
+    fun setUp() {
+        RaFetcher.clearCache()
+    }
+
+    @After
+    fun tearDown() {
+        RaFetcher.clearCache()
+    }
 
     @Test
     fun `progressUrl encodes credentials and game id`() {
@@ -138,5 +150,92 @@ class RaFetcherTest {
             fetchUrl = { error("should not hit network") },
         )
         assertTrue(p.isEmpty)
+    }
+
+    @Test
+    fun `console game list cache invokes fetchUrl once across 50 ROMs on same console and isolates keys and consoles`() {
+        val catalogJson = buildString {
+            append('[')
+            for (i in 1..50) {
+                if (i > 1) append(',')
+                append("""{"ID":${1000 + i},"Title":"SNES Game $i Deluxe"}""")
+            }
+            append(']')
+        }
+        var gameListFetches = 0
+        var progressFetches = 0
+
+        val fetcher: (String) -> String? = { url ->
+            when {
+                url.contains("API_GetGameList") -> {
+                    gameListFetches++
+                    catalogJson
+                }
+                url.contains("API_GetGameInfoAndUserProgress") -> {
+                    progressFetches++
+                    val gid = url.substringAfter("g=").substringBefore('&').toInt()
+                    """{"ID":$gid,"Title":"Game $gid","NumAwardedToUser":2,"NumAchievements":10}"""
+                }
+                else -> null
+            }
+        }
+
+        // Resolve 50 ROMs on SNES (exact + substring matches) -> console list fetched ONLY 1x!
+        for (i in 1..50) {
+            val hint = if (i % 5 == 0) "SNES Game $i" else "SNES Game $i Deluxe"
+            val progress = RaFetcher.fetchProgress(
+                username = "player",
+                apiKey = "api-key-A",
+                gameId = null,
+                titleHint = hint,
+                platformId = "snes",
+                fetchUrl = fetcher,
+            )
+            assertEquals(1000 + i, progress.gameId)
+            assertEquals(2, progress.numAwarded)
+        }
+        assertEquals("expected exactly 1 game-list fetch across 50 SNES ROMs", 1, gameListFetches)
+        assertEquals(50, progressFetches)
+        assertEquals(1, RaFetcher.cacheSize())
+
+        // Different API key on same console -> isolated cache miss (+1 fetch)
+        RaFetcher.fetchProgress("player", "api-key-B", null, "SNES Game 1 Deluxe", "snes", fetcher)
+        assertEquals(2, gameListFetches)
+        assertEquals(2, RaFetcher.cacheSize())
+
+        // Different console on same API key -> isolated cache miss (+1 fetch)
+        RaFetcher.fetchProgress("player", "api-key-A", null, "SNES Game 1 Deluxe", "gba", fetcher)
+        assertEquals(3, gameListFetches)
+        assertEquals(3, RaFetcher.cacheSize())
+
+        // clearCache resets cache cleanly so next resolve fetches again
+        RaFetcher.clearCache()
+        assertEquals(0, RaFetcher.cacheSize())
+        RaFetcher.fetchProgress("player", "api-key-A", null, "SNES Game 1 Deluxe", "snes", fetcher)
+        assertEquals(4, gameListFetches)
+
+        // Transient null / malformed network failure must NOT poison the cache
+        RaFetcher.clearCache()
+        var transientCalls = 0
+        val flaky = RaFetcher.fetchProgress("player", "api-key-C", null, "SNES Game 1 Deluxe", "snes") { url ->
+            if (url.contains("API_GetGameList")) {
+                transientCalls++
+                if (transientCalls == 1) null else catalogJson
+            } else {
+                """{"ID":1001,"Title":"SNES Game 1 Deluxe","NumAwardedToUser":1,"NumAchievements":5}"""
+            }
+        }
+        assertTrue(flaky.isEmpty)
+        assertEquals(0, RaFetcher.cacheSize())
+        val recovered = RaFetcher.fetchProgress("player", "api-key-C", null, "SNES Game 1 Deluxe", "snes") { url ->
+            if (url.contains("API_GetGameList")) {
+                transientCalls++
+                catalogJson
+            } else {
+                """{"ID":1001,"Title":"SNES Game 1 Deluxe","NumAwardedToUser":1,"NumAchievements":5}"""
+            }
+        }
+        assertEquals(1001, recovered.gameId)
+        assertEquals(2, transientCalls)
     }
 }

@@ -550,6 +550,13 @@ class GhostGalleonApp : Application() {
                 },
                 onMiss = { id, query -> noteSgdbMiss(id, query) },
             )
+        }.also { job ->
+            job.addListener(object : ScrapeJob.Listener {
+                override fun onProgress(done: Int, total: Int) {}
+                override fun onFinished(summary: SgdbScraper.Summary) {
+                    sgdbMissDebouncer.flushAsync()
+                }
+            })
         }
     }
 
@@ -559,13 +566,23 @@ class GhostGalleonApp : Application() {
     private var sgdbMisses: Map<String, com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss> =
         emptyMap()
 
+    private val sgdbMissDebouncer by lazy {
+        com.visorcraft.ghostgalleon.art.SgdbMissCache.Debouncer(
+            debounceMs = com.visorcraft.ghostgalleon.art.SgdbMissCache.PERSIST_DEBOUNCE_MS,
+            scheduleDelayed = { delayMs, runnable -> mainHandler.postDelayed(runnable, delayMs) },
+            cancelDelayed = { runnable -> mainHandler.removeCallbacks(runnable) },
+            dispatchIo = { runnable -> SETTINGS_IO.execute(runnable) },
+            writeAction = { persistSgdbMissesNow() },
+        )
+    }
+
     private fun noteSgdbMiss(romId: String, query: String) {
         synchronized(sgdbMissLock) {
             sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.record(
                 sgdbMisses, romId, query, System.currentTimeMillis(),
             )
         }
-        persistSgdbMisses()
+        sgdbMissDebouncer.markDirty()
     }
 
     private fun loadSgdbMissFile() {
@@ -618,6 +635,19 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    private val arcadeTitlesLock = Any()
+    @Volatile
+    private var bundledArcadeTitlesLoaded: Boolean = false
+
+    private fun ensureBundledArcadeTitlesLoaded() {
+        if (bundledArcadeTitlesLoaded) return
+        synchronized(arcadeTitlesLock) {
+            if (bundledArcadeTitlesLoaded) return
+            loadBundledArcadeTitles()
+            bundledArcadeTitlesLoaded = true
+        }
+    }
+
     private fun loadBundledArcadeTitles() {
         runCatching {
             assets.open("arcade_titles.tsv.gz").use {
@@ -645,6 +675,7 @@ class GhostGalleonApp : Application() {
     }
 
     fun importArcadeDat(xml: String): Int {
+        ensureBundledArcadeTitlesLoaded()
         val parsed = com.visorcraft.ghostgalleon.rom.ArcadeDat.parse(xml)
         com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(parsed)
         runCatching {
@@ -657,6 +688,7 @@ class GhostGalleonApp : Application() {
     }
 
     fun clearArcadeDat() {
+        ensureBundledArcadeTitlesLoaded()
         com.visorcraft.ghostgalleon.rom.ArcadeTitles.installOverlay(emptyMap())
         arcadeDatFile().delete()
         rematchArcadeLibrary(onlyFallbackNames = false)
@@ -711,18 +743,13 @@ class GhostGalleonApp : Application() {
         }
     }
 
-    private fun persistSgdbMisses() {
-        SETTINGS_IO.execute {
-            runCatching {
-                val root = JSONObject()
-                sgdbMisses.forEach { (id, miss) ->
-                    root.put(
-                        id,
-                        JSONObject().put("query", miss.query).put("atMs", miss.atMs),
-                    )
-                }
-                File(filesDir, "sgdb_miss.json").writeText(root.toString())
-            }
+    private fun persistSgdbMissesNow() {
+        val snapshot = synchronized(sgdbMissLock) { sgdbMisses }
+        runCatching {
+            com.visorcraft.ghostgalleon.art.SgdbMissCache.writeAtomic(
+                File(filesDir, "sgdb_miss.json"),
+                snapshot,
+            )
         }
     }
 
@@ -1643,22 +1670,45 @@ class GhostGalleonApp : Application() {
         invalidateSortedPickerRomsCache()
         invalidateBrowseChipCache()
         deckState.notifyChanged()
-        scheduleIdentityRefresh(entries)
+        if (RomIdentities.hasArcadeEntries(entries) && !bundledArcadeTitlesLoaded) {
+            ROM_IO.execute {
+                ensureBundledArcadeTitlesLoaded()
+                loadArcadeDatOverlay()
+                rematchArcadeLibraryOffPaint()
+            }
+        }
+        // Explicit rescan retries previously failed ROM hashes.
+        scheduleIdentityRefresh(entries, retryFailed = true)
     }
+
+    private val identityRefreshGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile
+    private var latestIdentitiesOnWorker: Map<String, RomIdentity> = emptyMap()
 
     /**
-     * Compute missing [RomIdentity] rows on [ROM_IO], persist the sidecar,
-     * then post one identity map + selection refresh on the main thread.
-     * Ready rows are kept; failures stay `ready=false` without crashing.
+     * Compute missing [RomIdentity] rows on dedicated low-priority [IDENT_IO]
+     * (never starving [ROM_IO] for Save Ferry / RAM Lenses / rescans),
+     * checkpointing every ~100 newly hashed ROMs and skipping previously failed
+     * rows on cold boots until a rescan or URI change occurs.
      */
-    private fun scheduleIdentityRefresh(entries: List<RomEntry> = romEntries) {
+    private fun scheduleIdentityRefresh(
+        entries: List<RomEntry> = romEntries,
+        retryFailed: Boolean = false,
+    ) {
         val snapshot = entries
-        ROM_IO.execute { refreshIdentities(snapshot) }
+        val generation = identityRefreshGeneration.incrementAndGet()
+        IDENT_IO.execute { refreshIdentities(snapshot, retryFailed, generation) }
     }
 
-    private fun refreshIdentities(entries: List<RomEntry>) {
-        // Prefer the live map so a quiet rescan does not re-read the sidecar.
-        val prior = romIdentities.ifEmpty {
+    private fun refreshIdentities(
+        entries: List<RomEntry>,
+        retryFailed: Boolean,
+        generation: Long,
+    ) {
+        if (identityRefreshGeneration.get() != generation) return
+        // Prefer the worker's latest map (captures checkpoints immediately even before
+        // mainHandler posts land), then live romIdentities, then disk sidecar.
+        val prior = latestIdentitiesOnWorker.ifEmpty { romIdentities }.ifEmpty {
             try {
                 romIdentityStore.load()
             } catch (_: Exception) {
@@ -1666,15 +1716,30 @@ class GhostGalleonApp : Application() {
             }
         }
         val next = LinkedHashMap<String, RomIdentity>(entries.size.coerceAtLeast(prior.size))
+        val pending = ArrayList<RomEntry>()
         var ready = 0
         var fail = 0
-        var newlyComputed = 0
+        // Pre-populate reusable prior rows first so every checkpoint save preserves the
+        // complete known identity set even if the process dies mid-batch.
         for (entry in entries) {
             val kept = prior[entry.id]
-            if (kept != null && kept.ready) {
+            if (kept != null && RomIdentities.shouldReusePrior(kept, entry.uri, retryFailed)) {
                 next[entry.id] = kept
-                ready++
-                continue
+                if (kept.ready) ready++ else fail++
+            } else {
+                pending.add(entry)
+            }
+        }
+
+        var newlyComputed = 0
+        var sinceLastCheckpoint = 0
+        for (entry in pending) {
+            if (identityRefreshGeneration.get() != generation) {
+                if (sinceLastCheckpoint > 0) {
+                    runCatching { romIdentityStore.save(next) }
+                }
+                latestIdentitiesOnWorker = HashMap(next)
+                return
             }
             newlyComputed++
             val computed = try {
@@ -1684,19 +1749,37 @@ class GhostGalleonApp : Application() {
             }
             next[entry.id] = computed
             if (computed.ready) ready++ else fail++
+            sinceLastCheckpoint++
+            if (RomIdentities.shouldCheckpoint(sinceLastCheckpoint)) {
+                runCatching { romIdentityStore.save(next) }
+                sinceLastCheckpoint = 0
+                val partialSnap = HashMap(next)
+                latestIdentitiesOnWorker = partialSnap
+                mainHandler.post {
+                    if (identityRefreshGeneration.get() == generation) {
+                        romIdentities = partialSnap
+                    }
+                }
+            }
         }
+
         val quiet = RomIdentities.sidecarQuiet(prior.keys, next.keys, newlyComputed)
         if (!quiet) {
-            try {
-                romIdentityStore.save(next)
-            } catch (_: Exception) {
-                // Keep in-memory map even if disk write fails.
+            if (sinceLastCheckpoint > 0 || prior.keys != next.keys) {
+                try {
+                    romIdentityStore.save(next)
+                } catch (_: Exception) {
+                    // Keep in-memory map even if disk write fails.
+                }
             }
             Log.i(IDENT_TAG, "ready=$ready fail=$fail")
         }
+        val finalSnap = next
+        latestIdentitiesOnWorker = finalSnap
         mainHandler.post {
-            val firstPaint = romIdentities.isEmpty() && next.isNotEmpty()
-            romIdentities = next
+            if (identityRefreshGeneration.get() != generation) return@post
+            val firstPaint = romIdentities.isEmpty() && finalSnap.isNotEmpty()
+            romIdentities = finalSnap
             if (!quiet || firstPaint) {
                 deckState.notifySelectionRefresh()
             }
@@ -1712,6 +1795,7 @@ class GhostGalleonApp : Application() {
             groupId = null,
             discIndex = null,
             ready = false,
+            sourceUri = entry.uri,
         )
 
     private fun computeIdentity(entry: RomEntry): RomIdentity {
@@ -1747,6 +1831,7 @@ class GhostGalleonApp : Application() {
                 groupId = id,
                 discIndex = null,
                 ready = true,
+                sourceUri = entry.uri,
             )
         }
         val info = readVitaSfo(entry) ?: return notReady(entry, algo)
@@ -1760,6 +1845,7 @@ class GhostGalleonApp : Application() {
             groupId = titleId,
             discIndex = null,
             ready = true,
+            sourceUri = entry.uri,
         )
     }
 
@@ -1788,6 +1874,7 @@ class GhostGalleonApp : Application() {
     }
 
     private fun computeDatCrc(entry: RomEntry): RomIdentity {
+        ensureBundledArcadeTitlesLoaded()
         val algo = RomIdentities.ALGO_DAT_CRC
         val stem = ArcadeTitles.stemOf(entry).trim().lowercase()
         if (stem.isEmpty()) return notReady(entry, algo)
@@ -1801,16 +1888,17 @@ class GhostGalleonApp : Application() {
             groupId = stem,
             discIndex = null,
             ready = true,
+            sourceUri = entry.uri,
         )
     }
 
     private fun computeSha1Payload(entry: RomEntry): RomIdentity {
         val algo = RomIdentities.ALGO_SHA1_PAYLOAD
-        val bytes = runCatching {
-            openRomStream(entry)?.use { it.readBytes() }
+        // 64 KiB streaming SHA-1 (strips 16-byte iNES header on chunk 0) — 64 KiB peak RAM
+        // instead of allocating up to 64 MiB contiguous ByteArrays.
+        val hash = runCatching {
+            openRomStream(entry)?.use { RomIdentities.sha1Payload(it) }
         }.getOrNull() ?: return notReady(entry, algo)
-        val payload = RomIdentities.stripInes(bytes)
-        val hash = RomIdentities.sha1Hex(payload)
         return RomIdentity(
             romId = entry.id,
             algo = algo,
@@ -1819,6 +1907,7 @@ class GhostGalleonApp : Application() {
             groupId = hash,
             discIndex = null,
             ready = true,
+            sourceUri = entry.uri,
         )
     }
 
@@ -1836,6 +1925,7 @@ class GhostGalleonApp : Application() {
             groupId = hash,
             discIndex = null,
             ready = true,
+            sourceUri = entry.uri,
         )
     }
 
@@ -1896,17 +1986,15 @@ class GhostGalleonApp : Application() {
                 }.getOrNull()
             }
         }
+        val discardBuf = ByteArray(RomIdentities.STREAM_BUFFER_BYTES)
         return runCatching {
             openRomStream(entry)?.use { stream ->
                 val head = stream.readNBytesCompat(headLen)
                 if (head.size < headLen && size > headLen) return@use null
                 val skipMid = midStart - headLen.toLong()
-                if (skipMid > 0) {
-                    var left = skipMid
-                    while (left > 0) {
-                        val n = stream.skip(left)
-                        if (n <= 0) break
-                        left -= n
+                if (skipMid > 0L) {
+                    if (RomIdentities.skipFully(stream, skipMid, discardBuf) < skipMid) {
+                        return@use null
                     }
                 }
                 val mid = if (midLen > 0 && midStart >= headLen) {
@@ -1920,28 +2008,24 @@ class GhostGalleonApp : Application() {
                 val afterMid = midStart + midLen
                 val tailStart = (size - tailLen).coerceAtLeast(0L)
                 val skipTail = tailStart - afterMid
-                if (skipTail > 0) {
-                    var left = skipTail
-                    while (left > 0) {
-                        val n = stream.skip(left)
-                        if (n <= 0) break
-                        left -= n
+                if (skipTail > 0L) {
+                    if (RomIdentities.skipFully(stream, skipTail, discardBuf) < skipTail) {
+                        return@use null
                     }
                 }
                 val tail = stream.readNBytesCompat(tailLen)
                 Triple(head, mid, tail)
             }
         }.getOrNull() ?: runCatching {
-            // SAF streams that cannot skip: buffer whole file only if ≤ SMALL_MAX
-            // is wrong for sample path (file is large). Re-open three times.
+            // Overlapping tiny windows: re-open cleanly using 64 KiB discard skip.
             val head = openRomStream(entry)?.use { it.readNBytesCompat(headLen) }
                 ?: return null
             val mid = openRomStream(entry)?.use { s ->
-                s.skipFully(midStart)
+                RomIdentities.skipFully(s, midStart, discardBuf)
                 s.readNBytesCompat(midLen)
             } ?: return null
             val tail = openRomStream(entry)?.use { s ->
-                s.skipFully((size - tailLen).coerceAtLeast(0L))
+                RomIdentities.skipFully(s, (size - tailLen).coerceAtLeast(0L), discardBuf)
                 s.readNBytesCompat(tailLen)
             } ?: return null
             Triple(head, mid, tail)
@@ -1958,19 +2042,6 @@ class GhostGalleonApp : Application() {
             off += r
         }
         return if (off == n) out else out.copyOf(off)
-    }
-
-    private fun InputStream.skipFully(n: Long) {
-        var left = n
-        while (left > 0) {
-            val skipped = skip(left)
-            if (skipped > 0) {
-                left -= skipped
-                continue
-            }
-            if (read() < 0) break
-            left--
-        }
     }
 
     /**
@@ -2691,14 +2762,18 @@ class GhostGalleonApp : Application() {
         prewarmAppLibrary()
         // Off-UI SFX synthesis/cache check & SoundPool warm-up (never blocks first paint).
         soundEngine.warmUp()
-        // 20k-title TSV + rematch + identity sidecar stay off the first paint.
-        ROM_IO.execute {
-            loadBundledArcadeTitles()
-            loadArcadeDatOverlay()
-            rematchArcadeLibraryOffPaint()
-            // Path index is already live; hashes never gate first paint.
-            refreshIdentities(romEntries)
+        // Lazy 20k-title arcade TSV: decompress ONLY when arcade ROMs actually exist.
+        val bootRoms = romEntries
+        if (RomIdentities.hasArcadeEntries(bootRoms)) {
+            ROM_IO.execute {
+                ensureBundledArcadeTitlesLoaded()
+                loadArcadeDatOverlay()
+                rematchArcadeLibraryOffPaint()
+            }
         }
+        // Path index is already live; hashes run on dedicated low-priority IDENT_IO so
+        // ROM_IO (Save Ferry / RAM Lenses / rescans) is never starved.
+        scheduleIdentityRefresh(bootRoms, retryFailed = false)
         // Bundled + optional SAF lens pack; zero bundled games is fine.
         reloadLenses()
         registerPackageChangeReceiver()
@@ -2834,6 +2909,7 @@ class GhostGalleonApp : Application() {
     /** Finish every other live deck activity; called when one deck exits. */
     fun requestExitAll(except: BaseDeckActivity) {
         flushSettingsBlocking()
+        sgdbMissDebouncer.flushBlocking()
         val engineToRelease = synchronized(ambientEngineLock) {
             val cur = _ambientEngine
             _ambientEngine = null
@@ -3056,6 +3132,8 @@ class GhostGalleonApp : Application() {
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
+                val pkg = intent?.data?.schemeSpecificPart?.takeIf { it.isNotBlank() }
+                com.visorcraft.ghostgalleon.ui.deck.AppIconLoader.invalidateShared(pkg)
                 invalidateAppLibrary()
                 prewarmAppLibrary()
             }
@@ -3075,6 +3153,17 @@ class GhostGalleonApp : Application() {
 
     private companion object {
         val ROM_IO = Executors.newSingleThreadExecutor()
+        val IDENT_IO = Executors.newSingleThreadExecutor { runnable ->
+            Thread(
+                {
+                    android.os.Process.setThreadPriority(
+                        android.os.Process.THREAD_PRIORITY_BACKGROUND,
+                    )
+                    runnable.run()
+                },
+                "GG_IDENT_IO",
+            ).apply { isDaemon = true }
+        }
         val RA_IO = Executors.newSingleThreadExecutor()
         val APP_IO = Executors.newSingleThreadExecutor()
         val SETTINGS_IO = Executors.newSingleThreadExecutor()

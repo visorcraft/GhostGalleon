@@ -8,13 +8,20 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.os.SystemClock
 import java.io.File
 
 /**
- * Android seams → [SystemReadings]. Thin wrapper; formatting stays pure in
- * [SystemInfoFormat].
+ * Android seams → [SystemReadings]. Thread-safe for off-UI `PERF_HUD` and About screen
+ * collection; formatting and throttle/battery logic stay pure in [SystemInfoFormat].
  */
 object SystemInfoCollector {
+
+    private data class StorageSnapshot(
+        val internalTotalBytes: Long,
+        val internalFreeBytes: Long,
+        val secondary: Triple<String, Long, Long>?,
+    )
 
     // Static hardware facts change only across reboots — cache for PERF_HUD ticks.
     @Volatile
@@ -22,28 +29,23 @@ object SystemInfoCollector {
     @Volatile
     private var cpuMaxResolved: Boolean = false
     @Volatile
-    private var cachedSecondary: Triple<String, Long, Long>? = null
-    @Volatile
-    private var secondaryResolved: Boolean = false
-    @Volatile
     private var cachedRamTotal: Long = -1L
-    private val memInfo = ActivityManager.MemoryInfo()
+    private val storageCache = ThrottledStorageCache<StorageSnapshot>(
+        ttlMs = SystemInfoFormat.STORAGE_STAT_TTL_MS,
+    )
     private val volumeUuid = Regex("[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}")
 
     fun collect(context: Context): SystemReadings {
         val am = context.getSystemService(ActivityManager::class.java)
-        val mem = memInfo
+        // Local MemoryInfo per call so off-UI PERF_HUD & About screen are 100% thread-safe.
+        val mem = ActivityManager.MemoryInfo()
         am?.getMemoryInfo(mem)
-        if (cachedRamTotal < 0L) cachedRamTotal = mem.totalMem
-        val data = StatFs(Environment.getDataDirectory().absolutePath)
-        val internalTotal = data.totalBytes
-        val internalFree = data.availableBytes
+        if (cachedRamTotal < 0L && mem.totalMem > 0L) cachedRamTotal = mem.totalMem
 
-        if (!secondaryResolved) {
-            cachedSecondary = findSecondaryVolume()
-            secondaryResolved = true
+        val storage = storageCache.getOrRefresh(SystemClock.elapsedRealtime()) {
+            readStorageSnapshot()
         }
-        val secondary = cachedSecondary
+        val secondary = storage.secondary
         val battery = readBattery(context)
         if (!cpuMaxResolved) {
             cachedCpuMaxMhz = readMaxCpuFreqMhz()
@@ -62,8 +64,8 @@ object SystemInfoCollector {
             cpuMaxMhz = cachedCpuMaxMhz,
             ramTotalBytes = if (cachedRamTotal > 0L) cachedRamTotal else mem.totalMem,
             ramAvailBytes = mem.availMem,
-            internalTotalBytes = internalTotal,
-            internalFreeBytes = internalFree,
+            internalTotalBytes = storage.internalTotalBytes,
+            internalFreeBytes = storage.internalFreeBytes,
             secondaryName = secondary?.first,
             secondaryIsSd = secondary?.first?.matches(volumeUuid) == true,
             secondaryTotalBytes = secondary?.second,
@@ -72,6 +74,15 @@ object SystemInfoCollector {
             charging = battery.charging,
             powerSource = battery.source,
             powerMicroWatts = battery.powerUw,
+        )
+    }
+
+    private fun readStorageSnapshot(): StorageSnapshot {
+        val data = StatFs(Environment.getDataDirectory().absolutePath)
+        return StorageSnapshot(
+            internalTotalBytes = data.totalBytes,
+            internalFreeBytes = data.availableBytes,
+            secondary = findSecondaryVolume(),
         )
     }
 
@@ -84,12 +95,15 @@ object SystemInfoCollector {
 
     private fun readBattery(context: Context): BatterySnap {
         val bm = context.getSystemService(BatteryManager::class.java)
-        val pct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            ?.takeIf { it in 0..100 }
         val intent = context.registerReceiver(
             null,
             IntentFilter(Intent.ACTION_BATTERY_CHANGED),
         )
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val pct = SystemInfoFormat.resolveBatteryPercent(level, scale) {
+            bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        }
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = when (status) {
             BatteryManager.BATTERY_STATUS_CHARGING,

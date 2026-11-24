@@ -59,4 +59,30 @@ class RaTheaterTest {
         assertNull(snap.nextLocked?.badgeName)
         assertEquals("002", snap.lastUnlock?.badgeName)
     }
+
+    @Test
+    fun `single-parse JSONObject overload matches String parse bit-for-bit across flat and nested Game payloads`() {
+        val fromString = RaTheater.parse(fixture)
+        val fromObj = RaTheater.parse(org.json.JSONObject(fixture))
+        assertEquals(fromString, fromObj)
+
+        val nested = """
+          {
+            "Game": {"ID": 77, "Title": "Chrono", "NumAwardedToUser": 4, "NumAchievements": 12, "HardcoreMode": 1},
+            "Achievements": [
+              {"ID": 100, "Title": "Start", "Description": "Go", "Points": 5, "DateEarnedHardcore": "2025-01-01", "BadgeName": "b1"},
+              {"ID": 101, "Title": "Boss", "Description": "Win", "Points": 25, "DateEarned": null, "BadgeName": "b2"}
+            ]
+          }
+        """.trimIndent()
+        val nestedFromString = RaTheater.parse(nested)
+        val nestedFromObj = RaTheater.parse(org.json.JSONObject(nested))
+        assertEquals(nestedFromString, nestedFromObj)
+        assertEquals(77, nestedFromObj.progress.gameId)
+        assertTrue(nestedFromObj.progress.hardcore)
+        assertEquals(4, nestedFromObj.progress.numAwarded)
+        assertEquals(12, nestedFromObj.progress.numPossible)
+        assertEquals(101, nestedFromObj.nextLocked?.id)
+        assertEquals(setOf(100), nestedFromObj.unlockedIds)
+    }
 }

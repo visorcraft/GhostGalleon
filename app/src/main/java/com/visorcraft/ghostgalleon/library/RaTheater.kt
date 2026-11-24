@@ -29,8 +29,20 @@ object RaTheater {
     fun parse(json: String?): RaTheaterSnap {
         if (json.isNullOrBlank()) return emptySnap()
         return try {
-            val progress = RetroAchievements.parseProgress(json)
-            val items = parseAchievements(JSONObject(json))
+            parse(JSONObject(json))
+        } catch (_: Exception) {
+            emptySnap()
+        }
+    }
+
+    /**
+     * Parses an already-parsed RetroAchievements [JSONObject] in a single pass
+     * without constructing a second `JSONObject` DOM for [RetroAchievements.parseProgress].
+     */
+    fun parse(root: JSONObject): RaTheaterSnap {
+        return try {
+            val progress = RetroAchievements.parseProgress(root)
+            val items = parseAchievements(root)
             val unlockedIds = LinkedHashSet<Int>()
             var lastUnlock: RaCheevo? = null
             for (item in items) {

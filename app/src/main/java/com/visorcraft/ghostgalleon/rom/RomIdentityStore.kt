@@ -11,6 +11,8 @@ import java.io.File
  */
 class RomIdentityStore(private val file: File) {
 
+    private val ioLock = Any()
+
     fun load(): Map<String, RomIdentity> {
         if (!file.exists()) return emptyMap()
         return try {
@@ -21,12 +23,14 @@ class RomIdentityStore(private val file: File) {
     }
 
     fun save(identities: Map<String, RomIdentity>) {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(toJson(identities).toString())
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
+        synchronized(ioLock) {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(toJson(identities).toString())
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
         }
     }
 
@@ -34,16 +38,18 @@ class RomIdentityStore(private val file: File) {
         internal fun toJson(identities: Map<String, RomIdentity>): JSONArray {
             val arr = JSONArray()
             identities.values.forEach { id ->
-                arr.put(
-                    JSONObject()
-                        .put("romId", id.romId)
-                        .put("algo", id.algo)
-                        .put("hash", id.hash ?: JSONObject.NULL)
-                        .put("headerTitle", id.headerTitle ?: JSONObject.NULL)
-                        .put("groupId", id.groupId ?: JSONObject.NULL)
-                        .put("discIndex", id.discIndex ?: JSONObject.NULL)
-                        .put("ready", id.ready),
-                )
+                val obj = JSONObject()
+                    .put("romId", id.romId)
+                    .put("algo", id.algo)
+                    .put("hash", id.hash ?: JSONObject.NULL)
+                    .put("headerTitle", id.headerTitle ?: JSONObject.NULL)
+                    .put("groupId", id.groupId ?: JSONObject.NULL)
+                    .put("discIndex", id.discIndex ?: JSONObject.NULL)
+                    .put("ready", id.ready)
+                if (id.sourceUri != null) {
+                    obj.put("sourceUri", id.sourceUri)
+                }
+                arr.put(obj)
             }
             return arr
         }
@@ -66,6 +72,7 @@ class RomIdentityStore(private val file: File) {
                         o.optInt("discIndex")
                     },
                     ready = o.optBoolean("ready", false),
+                    sourceUri = o.optNullableString("sourceUri"),
                 )
                 out[romId] = identity
             }

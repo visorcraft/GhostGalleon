@@ -3,16 +3,57 @@ package com.visorcraft.ghostgalleon.library
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Thin RetroAchievements HTTP fetch. Failures return null / empty (never throw).
  * Host tests use [fetchUrl] seam with canned responses.
  *
  * Title resolve uses the official game list for a console id (`i=`), then
- * client-side title match. (`f=` is "games with achievements only", not a
- * title filter — do not encode titles into `f`.)
+ * client-side title match, caching the parsed per-console game index by
+ * `(apiKeyHash, consoleId)` so browsing multiple ROMs on the same console
+ * downloads & parses the console catalog once instead of per ROM.
+ * (`f=` is "games with achievements only", not a title filter — do not encode titles into `f`.)
  */
 object RaFetcher {
+
+    private const val MAX_CACHED_CONSOLES: Int = 32
+    private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+    private data class ConsoleCacheKey(
+        val apiKeyHash: String,
+        val consoleId: Int,
+    )
+
+    private class ConsoleGameIndex(
+        val exactByLowerTitle: HashMap<String, Int>,
+        val entries: List<Pair<String, Int>>,
+    ) {
+        fun match(titleHint: String): Int? {
+            val needle = titleHint.trim().lowercase(Locale.ROOT)
+            if (needle.isEmpty()) return null
+            exactByLowerTitle[needle]?.let { return it }
+            for (i in entries.indices) {
+                val pair = entries[i]
+                if (pair.first.contains(needle)) return pair.second
+            }
+            return null
+        }
+    }
+
+    private val consoleCacheLock = Any()
+    private val consoleIndexCache = ConcurrentHashMap<ConsoleCacheKey, ConsoleGameIndex>()
+
+    /** Clears all cached RetroAchievements console game-list indexes. */
+    fun clearCache() {
+        synchronized(consoleCacheLock) {
+            consoleIndexCache.clear()
+        }
+    }
+
+    internal fun cacheSize(): Int = consoleIndexCache.size
 
     /**
      * Progress for a known game id.
@@ -170,8 +211,60 @@ object RaFetcher {
         val title = titleHint?.trim().orEmpty()
         if (title.isEmpty()) return null
         val consoleId = consoleIdForPlatform(platformId) ?: return null
+        val key = ConsoleCacheKey(sha256Hex(apiKey.trim()), consoleId)
+        val cached = consoleIndexCache[key]
+        if (cached != null) return cached.match(title)
+
         val body = fetchUrl(gameListUrl(apiKey, consoleId)) ?: return null
-        return parseGameIdMatchingTitle(body, title)
+        val parsed = parseConsoleGameIndex(body) ?: return null
+        synchronized(consoleCacheLock) {
+            if (consoleIndexCache.size >= MAX_CACHED_CONSOLES) {
+                consoleIndexCache.clear()
+            }
+            consoleIndexCache[key] = parsed
+        }
+        return parsed.match(title)
+    }
+
+    private fun parseConsoleGameIndex(json: String?): ConsoleGameIndex? {
+        if (json.isNullOrBlank()) return null
+        val trimmed = json.trim()
+        if (!trimmed.startsWith("[")) return null
+        return try {
+            val arr = org.json.JSONArray(trimmed)
+            val count = arr.length()
+            val exact = HashMap<String, Int>((count * 4) / 3 + 16)
+            val list = ArrayList<Pair<String, Int>>(count)
+            for (i in 0 until count) {
+                val o = arr.optJSONObject(i) ?: continue
+                val title = o.optString("Title", o.optString("title", "")).trim()
+                if (title.isEmpty()) continue
+                val id = when {
+                    o.has("ID") -> o.optInt("ID")
+                    o.has("id") -> o.optInt("id")
+                    else -> 0
+                }.takeIf { it > 0 } ?: continue
+                val lower = title.lowercase(Locale.ROOT)
+                exact.putIfAbsent(lower, id)
+                list.add(lower to id)
+            }
+            ConsoleGameIndex(exactByLowerTitle = exact, entries = list)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun sha256Hex(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+        val out = CharArray(digest.size * 2)
+        var i = 0
+        for (b in digest) {
+            val v = b.toInt() and 0xFF
+            out[i++] = HEX_CHARS[v ushr 4]
+            out[i++] = HEX_CHARS[v and 0x0F]
+        }
+        return String(out)
     }
 
     private fun httpGet(url: String): String? {

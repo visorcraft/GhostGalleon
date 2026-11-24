@@ -1101,6 +1101,13 @@ object CompanionPanel {
         expectedToken: String,
     ): Boolean = isAttached && currentToken == expectedToken
 
+    /** Pure host-tested stale-result guard for off-UI `PERF_HUD` reading posts. */
+    internal fun shouldApplyPerfReadings(
+        isAttached: Boolean,
+        currentGen: Long,
+        expectedGen: Long,
+    ): Boolean = isAttached && currentGen == expectedGen
+
     private class HolderFrameLayout(context: Context) : FrameLayout(context) {
         var surfaceHolder: PanelSurfaceHolder? = null
     }
@@ -1647,6 +1654,16 @@ object CompanionPanel {
             }
         }
     }
+    private val perfHudExecutor by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "gg-perf-hud").apply {
+                isDaemon = true
+                priority = Thread.MIN_PRIORITY + 1
+            }
+        }
+    }
+    @Volatile
+    private var lastPerfReadings: com.visorcraft.ghostgalleon.system.SystemReadings? = null
     private val animMainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val animBindSeq = java.util.concurrent.atomic.AtomicLong(0L)
 
@@ -3913,10 +3930,18 @@ object CompanionPanel {
                 1f,
             ),
         )
-        fun ensureRows() {
-            // Build static 2-column metric cards once; ticks only mutate values & meters in place.
-            if (grid.childCount > 0) return
-            val readings = SystemInfoCollector.collect(context)
+        class PerfRowHolder(
+            val card: View,
+            val valueTv: TextView,
+            val bar: MeterBarView,
+            val dot: View,
+        )
+        val rowHolders = ArrayList<PerfRowHolder>(12)
+
+        fun ensureRows(readings: com.visorcraft.ghostgalleon.system.SystemReadings) {
+            // Build static 2-column metric cards once from the already-collected readings;
+            // ticks only mutate values & meters in place via direct rowHolders references.
+            if (rowHolders.isNotEmpty()) return
             val rows = SystemInfoFormat.rows(readings)
             val dotPx = dp(PerfHudMetrics.STATUS_DOT_DP)
             val meterHeightPx = dp(PerfHudMetrics.METER_HEIGHT_DP)
@@ -3955,16 +3980,17 @@ object CompanionPanel {
                         1f,
                     ),
                 )
+                val dot = View(context).apply {
+                    tag = TAG_PERF_DOT_PREFIX + index
+                    visibility = View.GONE
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(PerfHudMetrics.COLOR_GOOD)
+                    }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
                 headerRow.addView(
-                    View(context).apply {
-                        tag = TAG_PERF_DOT_PREFIX + index
-                        visibility = View.GONE
-                        background = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(PerfHudMetrics.COLOR_GOOD)
-                        }
-                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    },
+                    dot,
                     LinearLayout.LayoutParams(dotPx, dotPx).apply {
                         marginStart = dp(6)
                     },
@@ -3976,7 +4002,7 @@ object CompanionPanel {
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                     ),
                 )
-                card.addView(TextView(context).apply {
+                val valueTv = TextView(context).apply {
                     tag = TAG_PERF_VALUE_PREFIX + index
                     text = resolvedValue
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -3987,15 +4013,20 @@ object CompanionPanel {
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     includeFontPadding = false
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = dp(4) })
+                }
                 card.addView(
-                    MeterBarView(context).apply {
-                        tag = TAG_PERF_BAR_PREFIX + index
-                        visibility = View.GONE
-                    },
+                    valueTv,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = dp(4) },
+                )
+                val bar = MeterBarView(context).apply {
+                    tag = TAG_PERF_BAR_PREFIX + index
+                    visibility = View.GONE
+                }
+                card.addView(
+                    bar,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         meterHeightPx,
@@ -4015,70 +4046,108 @@ object CompanionPanel {
                         setMargins(dp(4), dp(4), dp(4), dp(4))
                     },
                 )
+                rowHolders.add(PerfRowHolder(card = card, valueTv = valueTv, bar = bar, dot = dot))
             }
         }
-        fun paintValues() {
-            ensureRows()
-            val readings = SystemInfoCollector.collect(context)
+        fun applyReadings(readings: com.visorcraft.ghostgalleon.system.SystemReadings) {
+            ensureRows(readings)
             val sunkenTrack = TileBackgrounds.surfaceSunken(context)
             val hairline = TileBackgrounds.hairlineDivider(context)
             SystemInfoFormat.rows(readings).forEachIndexed { index, (label, value) ->
-                val tv = col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
-                    ?: return@forEachIndexed
+                val holder = rowHolders.getOrNull(index) ?: return@forEachIndexed
+                val tv = holder.valueTv
                 val next = context.resolveText(value)
                 if (tv.text?.toString() != next) {
                     tv.text = next
-                    col.findViewWithTag<View>(TAG_PERF_CARD_PREFIX + index)?.contentDescription =
+                    holder.card.contentDescription =
                         CompanionA11y.metricCardDescription(context.resolveText(label), next)
                 }
                 val meter = PerfHudMetrics.meterForRow(label, readings)
                 val nextTextColor = PerfHudMetrics.valueTextColor(meter?.severity)
                 if (tv.currentTextColor != nextTextColor) tv.setTextColor(nextTextColor)
-                val bar = col.findViewWithTag<MeterBarView>(TAG_PERF_BAR_PREFIX + index)
-                val dot = col.findViewWithTag<View>(TAG_PERF_DOT_PREFIX + index)
+                val bar = holder.bar
+                val dot = holder.dot
                 if (meter != null) {
                     val statusColor = PerfHudMetrics.statusColor(meter.severity)
-                    bar?.let {
-                        it.setProgress(
-                            fraction = meter.fraction,
-                            fillColor = statusColor,
-                            trackColor = sunkenTrack,
-                            borderColor = hairline,
-                        )
-                        if (it.visibility != View.VISIBLE) it.visibility = View.VISIBLE
-                    }
-                    dot?.let {
-                        ((it.background as? GradientDrawable)?.mutate() as? GradientDrawable)
-                            ?.setColor(statusColor)
-                        if (it.visibility != View.VISIBLE) it.visibility = View.VISIBLE
-                    }
+                    bar.setProgress(
+                        fraction = meter.fraction,
+                        fillColor = statusColor,
+                        trackColor = sunkenTrack,
+                        borderColor = hairline,
+                    )
+                    if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
+                    ((dot.background as? GradientDrawable)?.mutate() as? GradientDrawable)
+                        ?.setColor(statusColor)
+                    if (dot.visibility != View.VISIBLE) dot.visibility = View.VISIBLE
                 } else {
-                    if (bar != null && bar.visibility != View.GONE) bar.visibility = View.GONE
-                    if (dot != null && dot.visibility != View.GONE) dot.visibility = View.GONE
+                    if (bar.visibility != View.GONE) bar.visibility = View.GONE
+                    if (dot.visibility != View.GONE) dot.visibility = View.GONE
                 }
             }
         }
-        paintValues()
-        // Live refresh without SETTINGS / setContentView thrash.
+
+        // Paint cached readings immediately (0 ms UI cost) when returning to PERF_HUD;
+        // actual SystemInfoCollector.collect() ALWAYS runs off the UI thread on perfHudExecutor.
+        lastPerfReadings?.let { applyReadings(it) }
+
+        val appContext = context.applicationContext ?: context
         val handler = Handler(Looper.getMainLooper())
+        val perfGen = java.util.concurrent.atomic.AtomicLong(0L)
+        val collectInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+        val pendingRefresh = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun requestOffUiCollect() {
+            if (!collectInFlight.compareAndSet(false, true)) {
+                pendingRefresh.set(true)
+                return
+            }
+            val expectedGen = perfGen.get()
+            perfHudExecutor.execute {
+                try {
+                    if (perfGen.get() != expectedGen) return@execute
+                    val readings = runCatching { SystemInfoCollector.collect(appContext) }.getOrNull()
+                        ?: return@execute
+                    lastPerfReadings = readings
+                    handler.post {
+                        if (shouldApplyPerfReadings(col.isAttachedToWindow, perfGen.get(), expectedGen)) {
+                            applyReadings(readings)
+                        }
+                    }
+                } finally {
+                    collectInFlight.set(false)
+                    if (pendingRefresh.getAndSet(false)) {
+                        handler.post {
+                            if (col.isAttachedToWindow) requestOffUiCollect()
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live refresh off-UI without SETTINGS / setContentView thrash.
         val tick = object : Runnable {
             override fun run() {
                 if (!col.isAttachedToWindow) return
-                paintValues()
+                requestOffUiCollect()
                 handler.postDelayed(this, DualPaintPolicy.PERF_HUD_REFRESH_MS)
             }
         }
         col.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
+                perfGen.incrementAndGet()
                 handler.removeCallbacks(tick)
+                requestOffUiCollect()
                 handler.postDelayed(tick, DualPaintPolicy.PERF_HUD_REFRESH_MS)
             }
 
             override fun onViewDetachedFromWindow(v: View) {
+                perfGen.incrementAndGet()
                 handler.removeCallbacks(tick)
             }
         })
         if (col.isAttachedToWindow) {
+            perfGen.incrementAndGet()
+            requestOffUiCollect()
             handler.postDelayed(tick, DualPaintPolicy.PERF_HUD_REFRESH_MS)
         }
         return col
