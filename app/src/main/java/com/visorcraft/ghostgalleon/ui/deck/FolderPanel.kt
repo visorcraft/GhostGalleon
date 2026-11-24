@@ -169,6 +169,7 @@ class FolderPanel(
     private var thumbSizePx: Int = 0
     private var activeColumns: Int = FolderPanelNav.COLUMNS
     private var themeTokens: ThemeTokens = ThemePack.GHOST
+    private var focusedCellTemplate: GradientDrawable? = null
 
     private val hasMirror: Boolean
         get() = onMirrorToCollection != null && memberKeys.isNotEmpty()
@@ -626,18 +627,20 @@ class FolderPanel(
         val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
         val surfaceFill = TileBackgrounds.surfaceColor(context)
         val focusStrokeColor = DeckThemeContrast.accessibleFocusStroke(accentColor, surfaceFill)
+        val cellTemplate = focusedCellTemplate ?: TileBackgrounds.focusStroke(
+            context = context,
+            accent = focusStrokeColor,
+            fill = surfaceFill,
+            cornerRadiusDp = cellRadiusDp,
+            strokeDp = 3,
+        ).also { focusedCellTemplate = it }
         val animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled()
         cells.forEachIndexed { index, cell ->
             val selected = index == activeCell
             cell.isSelected = selected
             cell.background = if (selected) {
-                TileBackgrounds.focusStroke(
-                    context = context,
-                    accent = focusStrokeColor,
-                    fill = surfaceFill,
-                    cornerRadiusDp = cellRadiusDp,
-                    strokeDp = 3,
-                )
+                (cellTemplate.constantState?.newDrawable()?.mutate() as? GradientDrawable)
+                    ?: cellTemplate
             } else {
                 null
             }
@@ -678,10 +681,18 @@ class FolderPanel(
                 hairlineColor = TileBackgrounds.hairlineDivider(context),
             )
             btn.isSelected = focused
-            btn.background = GradientDrawable().apply {
-                setColor(style.fillColor)
-                cornerRadius = context.dpF(mirrorRadius)
-                setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+            val existingBg = btn.background as? GradientDrawable
+            if (existingBg != null) {
+                existingBg.mutate()
+                existingBg.setColor(style.fillColor)
+                existingBg.cornerRadius = context.dpF(mirrorRadius)
+                existingBg.setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+            } else {
+                btn.background = GradientDrawable().apply {
+                    setColor(style.fillColor)
+                    cornerRadius = context.dpF(mirrorRadius)
+                    setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+                }
             }
             btn.setTextColor(style.textColor)
             btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)

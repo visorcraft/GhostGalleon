@@ -76,6 +76,11 @@ class DockBar(
     private var paintedFocus: Int? = null
     private var paintedMoving: Int? = null
     private var focusPainted = false
+    private val themeTokens by lazy { ThemePack.resolve(settings) }
+    private var slotTemplateKey: DeckHotPathCache.TemplateKey? = null
+    private var focusedSlotTemplate: GradientDrawable? = null
+    private var liftedSlotTemplate: GradientDrawable? = null
+    private var dropSlotTemplate: GradientDrawable? = null
 
     // Dock tiles resolve like grid slots: apps through the FULL cache (a
     // hidden app stays docked and launchable), ROMs through the library
@@ -131,7 +136,6 @@ class DockBar(
         val density = metrics.density.coerceAtLeast(0.1f)
         slotSizeDp = (slotSize / density).toInt()
         val iconSizeDp = (spec.iconSizePx() / density).toInt()
-        val themeTokens = ThemePack.resolve(settings)
         slotRadiusDp = DeckCornerMetrics.dockSlotRadiusDp(
             tokens = themeTokens,
             barPadVDp = padVDp,
@@ -328,6 +332,46 @@ class DockBar(
         focusPainted = false
     }
 
+    private fun cloneTemplate(template: GradientDrawable): GradientDrawable =
+        (template.constantState?.newDrawable()?.mutate() as? GradientDrawable) ?: template
+
+    private fun ensureSlotTemplates(ctx: Context, surfaceFill: Int) {
+        val key = DeckHotPathCache.TemplateKey(
+            surfaceFill = surfaceFill,
+            accent = settings.accentColor,
+            radiusDp = slotRadiusDp,
+            density = ctx.resources.displayMetrics.density,
+        )
+        if (DeckHotPathCache.isCacheHit(slotTemplateKey, key)) return
+        val radiusPx = ctx.dpF(slotRadiusDp)
+        focusedSlotTemplate = TileBackgrounds.focusStroke(
+            context = ctx,
+            accent = DeckThemeContrast.accessibleFocusStroke(settings.accentColor, surfaceFill),
+            fill = surfaceFill,
+            cornerRadiusDp = slotRadiusDp,
+            strokeDp = 3,
+        )
+        liftedSlotTemplate = GradientDrawable().apply {
+            setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
+            cornerRadius = radiusPx
+            setStroke(
+                ctx.strokePx(3),
+                MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
+            )
+        }
+        dropSlotTemplate = GradientDrawable().apply {
+            setColor(Color.TRANSPARENT)
+            cornerRadius = radiusPx
+            setStroke(
+                ctx.strokePx(2),
+                MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill),
+                ctx.dpF(5),
+                ctx.dpF(3),
+            )
+        }
+        slotTemplateKey = key
+    }
+
     // Moves the accent ring, subtle scale lift, and elevation to [focused]
     // (null = no dock focus, ring returns to deck content) and applies
     // lifted / drop-target choreography while a dock move is in flight.
@@ -354,34 +398,18 @@ class DockBar(
             updateSlotDescription(frame, index, role == MoveChoreography.SlotRole.LIFTED)
             frame.animate().cancel()
             frame.background = when (role) {
-                MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
-                    setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
-                    cornerRadius = ctx.dpF(slotRadiusDp)
-                    setStroke(
-                        ctx.strokePx(3),
-                        MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
-                    )
+                MoveChoreography.SlotRole.LIFTED -> {
+                    ensureSlotTemplates(ctx, surfaceFill)
+                    cloneTemplate(liftedSlotTemplate!!)
                 }
-                MoveChoreography.SlotRole.DROP_TARGET -> GradientDrawable().apply {
-                    setColor(Color.TRANSPARENT)
-                    cornerRadius = ctx.dpF(slotRadiusDp)
-                    setStroke(
-                        ctx.strokePx(2),
-                        MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill),
-                        ctx.dpF(5),
-                        ctx.dpF(3),
-                    )
+                MoveChoreography.SlotRole.DROP_TARGET -> {
+                    ensureSlotTemplates(ctx, surfaceFill)
+                    cloneTemplate(dropSlotTemplate!!)
                 }
-                MoveChoreography.SlotRole.FOCUSED -> TileBackgrounds.focusStroke(
-                    context = ctx,
-                    accent = DeckThemeContrast.accessibleFocusStroke(
-                        settings.accentColor,
-                        surfaceFill,
-                    ),
-                    fill = surfaceFill,
-                    cornerRadiusDp = slotRadiusDp,
-                    strokeDp = 3,
-                )
+                MoveChoreography.SlotRole.FOCUSED -> {
+                    ensureSlotTemplates(ctx, surfaceFill)
+                    cloneTemplate(focusedSlotTemplate!!)
+                }
                 MoveChoreography.SlotRole.NORMAL -> null
             }
             frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f

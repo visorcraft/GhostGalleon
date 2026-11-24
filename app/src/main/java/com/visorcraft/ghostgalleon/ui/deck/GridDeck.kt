@@ -103,6 +103,51 @@ class GridDeck(
     // long-press).
     private val romByKey by lazy { roms.associateBy { SlotKey.rom(it.id) } }
 
+    // Cached resolved theme tokens for this immutable settings snapshot so hot
+    // selection / scroll paths never re-parse themeCustomJson on every NAV tick.
+    private val themeTokens by lazy { ThemePack.resolve(settings) }
+
+    // Cached move-mode drawable templates cloned via constantState so rapid
+    // move-mode swaps avoid repeated GradientDrawable allocations.
+    private var moveTemplateKey: DeckHotPathCache.TemplateKey? = null
+    private var liftedBgTemplate: GradientDrawable? = null
+    private var dropBlankBgTemplate: GradientDrawable? = null
+    private var dropFilledBgTemplate: GradientDrawable? = null
+
+    private fun cloneTemplate(template: GradientDrawable): GradientDrawable =
+        (template.constantState?.newDrawable()?.mutate() as? GradientDrawable) ?: template
+
+    private fun ensureMoveTemplates(ctx: Context, surfaceFill: Int) {
+        val key = DeckHotPathCache.TemplateKey(
+            surfaceFill = surfaceFill,
+            accent = settings.accentColor,
+            radiusDp = themeTokens.cardRadiusDp,
+            density = ctx.resources.displayMetrics.density,
+        )
+        if (DeckHotPathCache.isCacheHit(moveTemplateKey, key)) return
+        val radiusPx = ctx.dpF(key.radiusDp)
+        val dropStroke = MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill)
+        liftedBgTemplate = GradientDrawable().apply {
+            setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
+            cornerRadius = radiusPx
+            setStroke(
+                ctx.strokePx(4),
+                MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
+            )
+        }
+        dropBlankBgTemplate = GradientDrawable().apply {
+            setColor(TileBackgrounds.surfaceSunken(ctx))
+            cornerRadius = radiusPx
+            setStroke(ctx.strokePx(2), dropStroke, ctx.dpF(6), ctx.dpF(4))
+        }
+        dropFilledBgTemplate = GradientDrawable().apply {
+            setColor(surfaceFill)
+            cornerRadius = radiusPx
+            setStroke(ctx.strokePx(1), dropStroke, ctx.dpF(6), ctx.dpF(4))
+        }
+        moveTemplateKey = key
+    }
+
     // Move mode: a lifted tile swaps contents slot-by-slot until dropped
     // (saved to settings) or cancelled (working copy discarded).
     private var moveIndex: Int? = null
@@ -352,28 +397,16 @@ class GridDeck(
             surfaceFocused = state.dockSlot == null,
         )
         val spec = MoveChoreography.gridVisualSpec(role, isBlank)
-        val tokens = ThemePack.resolve(settings)
-        val radiusPx = ctx.dpF(tokens.cardRadiusDp)
         val surfaceFill = TileBackgrounds.surfaceColor(ctx)
 
         cell.background = when (role) {
-            MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
-                setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
-                cornerRadius = radiusPx
-                setStroke(
-                    ctx.strokePx(4),
-                    MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
-                )
+            MoveChoreography.SlotRole.LIFTED -> {
+                ensureMoveTemplates(ctx, surfaceFill)
+                cloneTemplate(liftedBgTemplate!!)
             }
-            MoveChoreography.SlotRole.DROP_TARGET -> GradientDrawable().apply {
-                setColor(if (isBlank) TileBackgrounds.surfaceSunken(ctx) else surfaceFill)
-                cornerRadius = radiusPx
-                setStroke(
-                    ctx.strokePx(if (isBlank) 2 else 1),
-                    MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill),
-                    ctx.dpF(6),
-                    ctx.dpF(4),
-                )
+            MoveChoreography.SlotRole.DROP_TARGET -> {
+                ensureMoveTemplates(ctx, surfaceFill)
+                cloneTemplate(if (isBlank) dropBlankBgTemplate!! else dropFilledBgTemplate!!)
             }
             MoveChoreography.SlotRole.FOCUSED ->
                 TileBackgrounds.selected(
@@ -906,7 +939,7 @@ class GridDeck(
         val app = activity.application as GhostGalleonApp
         val px = (96 * activity.resources.displayMetrics.density).toInt()
         val thumbRadiusPx = activity.dpF(
-            DeckCornerMetrics.folderThumbRadiusDp(ThemePack.resolve(settings)),
+            DeckCornerMetrics.folderThumbRadiusDp(themeTokens),
         )
         SlotKey.romId(key)?.let { id ->
             val rom = app.romEntry(id) ?: return
@@ -1150,7 +1183,6 @@ class GridDeck(
                     (grid.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
                 val safeDensity = density.coerceAtLeast(0.1f)
-                val tokens = ThemePack.resolve(settings)
                 val labelSpec = GridLabelMetrics.compute(
                     cellWidthDp = (cellWidth / safeDensity).toInt(),
                     cellHeightDp = (cellHeight / safeDensity).toInt(),
@@ -1158,7 +1190,7 @@ class GridDeck(
                     cellPaddingDp = 8,
                     showLabels = settings.showLabels,
                     hasWallpaper = !settings.wallpaperUri.isNullOrBlank(),
-                    fontScale = tokens.fontScale,
+                    fontScale = themeTokens.fontScale,
                 )
                 val resolvedLabelHeight = (labelSpec.reservedHeightDp * safeDensity).toInt()
                 val iconSize = GridIconMetrics.iconSizePx(
@@ -1257,7 +1289,6 @@ class GridDeck(
                     (pager.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
                 val safeDensity = density.coerceAtLeast(0.1f)
-                val tokens = ThemePack.resolve(settings)
                 val labelSpec = GridLabelMetrics.compute(
                     cellWidthDp = (cellWidth / safeDensity).toInt(),
                     cellHeightDp = (cellHeight / safeDensity).toInt(),
@@ -1265,7 +1296,7 @@ class GridDeck(
                     cellPaddingDp = 8,
                     showLabels = settings.showLabels,
                     hasWallpaper = !settings.wallpaperUri.isNullOrBlank(),
-                    fontScale = tokens.fontScale,
+                    fontScale = themeTokens.fontScale,
                 )
                 val resolvedLabelHeight = (labelSpec.reservedHeightDp * safeDensity).toInt()
                 val iconSize = GridIconMetrics.iconSizePx(
@@ -2201,6 +2232,7 @@ class GridDeck(
         private var iconSize = iconSize
         private var cellHeight = cellHeight
         private var labelSpec = labelSpec
+        private var badgeScrimTemplate: GradientDrawable? = null
 
         fun updateMetrics(
             cellWidth: Int,
@@ -2240,7 +2272,16 @@ class GridDeck(
                 populateFrame(frame, absPos)
                 frame.setTag(R.id.grid_cell_key, key)
             }
-            frame.layoutParams = AbsListView.LayoutParams(cellWidth, cellHeight)
+            val existingLp = frame.layoutParams
+            if (!DeckHotPathCache.layoutParamsUnchanged(
+                    existingLp?.width ?: -1,
+                    existingLp?.height ?: -1,
+                    cellWidth,
+                    cellHeight,
+                )
+            ) {
+                frame.layoutParams = AbsListView.LayoutParams(cellWidth, cellHeight)
+            }
             return frame
         }
 
@@ -2296,10 +2337,9 @@ class GridDeck(
                 }
             }
             val filled = key != null && (romEntry != null || appEntry != null || isFolder)
-            val tokens = ThemePack.resolve(settings)
             val badgeSpec = GridBadgeMetrics.compute(
                 cellWidthPx = cellWidth,
-                cardRadiusDp = tokens.cardRadiusDp,
+                cardRadiusDp = themeTokens.cardRadiusDp,
                 density = density,
             )
             val badgePlacement = if (filled && key != null) {
@@ -2366,8 +2406,7 @@ class GridDeck(
         }
 
         private fun buildTileRipple(ctx: Context): RippleDrawable {
-            val tokens = ThemePack.resolve(settings)
-            val radiusPx = ctx.dpF(GridTileFeedbackMetrics.gridTileRippleRadiusDp(tokens))
+            val radiusPx = ctx.dpF(GridTileFeedbackMetrics.gridTileRippleRadiusDp(themeTokens))
             val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
                 surfaceFill = TileBackgrounds.surfaceColor(ctx),
                 accent = settings.accentColor,
@@ -2379,12 +2418,14 @@ class GridDeck(
             return RippleDrawable(ColorStateList.valueOf(rippleColor), null, mask)
         }
 
-        private fun cornerBadgeScrim(ctx: Context): GradientDrawable =
-            GradientDrawable().apply {
+        private fun cornerBadgeScrim(ctx: Context): GradientDrawable {
+            val template = badgeScrimTemplate ?: GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(GridBadgeMetrics.BADGE_SCRIM_FILL)
                 setStroke(ctx.strokePx(1), GridBadgeMetrics.BADGE_SCRIM_STROKE)
-            }
+            }.also { badgeScrimTemplate = it }
+            return cloneTemplate(template)
+        }
 
         private fun buildCellLabel(
             labelText: String,
@@ -2424,7 +2465,7 @@ class GridDeck(
             val padDp = (cellPadding / density).toInt()
             val iconDp = (iconSize / density).toInt()
             return DeckCornerMetrics.gridTileInnerRadiusDp(
-                tokens = ThemePack.resolve(settings),
+                tokens = themeTokens,
                 cellPaddingDp = padDp,
                 iconSizeDp = iconDp,
             )
