@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -434,7 +436,13 @@ object StatusPill {
                 prev.iconTint != nextIconTint ||
                 prev.borderColor != nextBorderColor
             )
-        if (tintsChanged && pill.isAttachedToWindow && ValueAnimator.areAnimatorsEnabled()) {
+        if (tintsChanged &&
+            MotionPolicy.shouldAnimate(
+                requestedMs = TINT_TRANSITION_MS,
+                animatorsEnabled = ValueAnimator.areAnimatorsEnabled(),
+                attached = pill.isAttachedToWindow,
+            )
+        ) {
             animateTintTransition(
                 pill = pill,
                 tv = tv,
@@ -472,7 +480,11 @@ object StatusPill {
     }
 
     private fun cancelTintTransition(pill: View) {
-        activeTintAnimators.remove(pill)?.cancel()
+        activeTintAnimators.remove(pill)?.let { anim ->
+            anim.removeAllUpdateListeners()
+            anim.removeAllListeners()
+            anim.cancel()
+        }
     }
 
     private fun animateTintTransition(
@@ -488,7 +500,10 @@ object StatusPill {
     ) {
         cancelTintTransition(pill)
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = TINT_TRANSITION_MS
+            duration = MotionPolicy.effectiveDurationMs(
+                TINT_TRANSITION_MS,
+                ValueAnimator.areAnimatorsEnabled(),
+            )
             addUpdateListener { anim ->
                 val f = anim.animatedValue as Float
                 tv.setTextColor(colorEvaluator.evaluate(f, fromText, toText) as Int)
@@ -498,6 +513,16 @@ object StatusPill {
                 )
                 applyPillBorder(pill, colorEvaluator.evaluate(f, fromBorder, toBorder) as Int)
             }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (activeTintAnimators[pill] === animation) {
+                        activeTintAnimators.remove(pill)
+                    }
+                    tv.setTextColor(toText)
+                    icon?.setColorFilter(toIcon, PorterDuff.Mode.SRC_IN)
+                    applyPillBorder(pill, toBorder)
+                }
+            })
         }
         activeTintAnimators[pill] = animator
         animator.start()

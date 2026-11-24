@@ -967,15 +967,41 @@ object CompanionPanel {
         )
     }
 
+    private val heroDetachWatched = java.util.WeakHashMap<View, Boolean>()
+
+    private fun ensureHeroDetachReset(view: View) {
+        if (heroDetachWatched.put(view, true) != null) return
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) {
+                v.animate().cancel()
+                v.alpha = 1f
+                v.translationY = 0f
+                v.translationX = 0f
+            }
+        })
+    }
+
     private fun animateHeroTextSettle(view: View, density: Float) {
+        ensureHeroDetachReset(view)
         view.animate().cancel()
-        if (!ValueAnimator.areAnimatorsEnabled()) {
+        val enabled = ValueAnimator.areAnimatorsEnabled()
+        if (!MotionPolicy.shouldAnimate(
+                CompanionHeroStyle.HERO_CROSSFADE_MS,
+                enabled,
+                view.isAttachedToWindow,
+            )
+        ) {
             view.alpha = 1f
             view.translationY = 0f
             return
         }
-        view.alpha = CompanionHeroStyle.HERO_START_ALPHA
-        view.translationY = CompanionHeroStyle.HERO_SETTLE_TRANSLATION_DP * density
+        view.alpha = MotionPolicy.initialSettleAlpha(enabled, CompanionHeroStyle.HERO_START_ALPHA)
+        view.translationY = MotionPolicy.initialSettleTranslationPx(
+            enabled,
+            CompanionHeroStyle.HERO_SETTLE_TRANSLATION_DP,
+            density,
+        )
         view.animate()
             .alpha(1f)
             .translationY(0f)
@@ -985,12 +1011,19 @@ object CompanionPanel {
     }
 
     private fun animateHeroArtSettle(view: View) {
+        ensureHeroDetachReset(view)
         view.animate().cancel()
-        if (!ValueAnimator.areAnimatorsEnabled()) {
+        val enabled = ValueAnimator.areAnimatorsEnabled()
+        if (!MotionPolicy.shouldAnimate(
+                CompanionHeroStyle.HERO_CROSSFADE_MS,
+                enabled,
+                view.isAttachedToWindow,
+            )
+        ) {
             view.alpha = 1f
             return
         }
-        view.alpha = CompanionHeroStyle.ART_START_ALPHA
+        view.alpha = MotionPolicy.initialSettleAlpha(enabled, CompanionHeroStyle.ART_START_ALPHA)
         view.animate()
             .alpha(1f)
             .setDuration(CompanionHeroStyle.HERO_CROSSFADE_MS)
@@ -1343,10 +1376,21 @@ object CompanionPanel {
         var downRawY = 0f
         var tracking = false
         var dismissing = false
+        var dismissCommitted = false
+        fun commitDismissOnce() {
+            if (dismissCommitted) return
+            dismissCommitted = true
+            app.dismissResumeChip()
+        }
         val touchSlopPx = (8 * view.resources.displayMetrics.density).coerceAtLeast(4f)
         fun settleRest(scale: Float) {
             view.animate().cancel()
-            if (!ValueAnimator.areAnimatorsEnabled()) {
+            if (!MotionPolicy.shouldAnimate(
+                    CompanionChromeErgonomics.RESUME_SWIPE_ANIM_MS,
+                    ValueAnimator.areAnimatorsEnabled(),
+                    view.isAttachedToWindow,
+                )
+            ) {
                 view.translationX = 0f
                 view.alpha = 1f
                 view.scaleX = scale
@@ -1366,7 +1410,12 @@ object CompanionPanel {
             if (dismissing || tracking) return@setOnFocusChangeListener
             val scale = CompanionChromeErgonomics.targetScale(pressed = false, focused = hasFocus)
             view.animate().cancel()
-            if (!ValueAnimator.areAnimatorsEnabled()) {
+            if (!MotionPolicy.shouldAnimate(
+                    CompanionChromeErgonomics.SCALE_ANIM_MS,
+                    ValueAnimator.areAnimatorsEnabled(),
+                    view.isAttachedToWindow,
+                )
+            ) {
                 view.scaleX = scale
                 view.scaleY = scale
             } else {
@@ -1382,6 +1431,7 @@ object CompanionPanel {
             override fun onViewAttachedToWindow(v: View) {}
             override fun onViewDetachedFromWindow(v: View) {
                 v.animate().cancel()
+                if (dismissing) commitDismissOnce()
             }
         })
         view.setOnClickListener {
@@ -1440,16 +1490,21 @@ object CompanionPanel {
                     if (event.actionMasked == MotionEvent.ACTION_UP && fb.shouldDismiss) {
                         dismissing = true
                         val exitX = if (dx >= 0f) swipeSlopPx * 2.5f else -swipeSlopPx * 2.5f
-                        if (ValueAnimator.areAnimatorsEnabled()) {
+                        if (MotionPolicy.shouldAnimate(
+                                CompanionChromeErgonomics.RESUME_SWIPE_ANIM_MS,
+                                ValueAnimator.areAnimatorsEnabled(),
+                                view.isAttachedToWindow,
+                            )
+                        ) {
                             view.animate()
                                 .translationX(exitX)
                                 .alpha(0f)
                                 .setDuration(CompanionChromeErgonomics.RESUME_SWIPE_ANIM_MS)
                                 .setInterpolator(heroSettleInterpolator)
-                                .withEndAction { app.dismissResumeChip() }
+                                .withEndAction { commitDismissOnce() }
                                 .start()
                         } else {
-                            app.dismissResumeChip()
+                            commitDismissOnce()
                         }
                         true
                     } else {

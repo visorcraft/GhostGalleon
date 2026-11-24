@@ -62,7 +62,12 @@ internal fun iconButton(
                 focusScale = CompanionChromeErgonomics.ICON_FOCUS_SCALE,
             )
             animate().cancel()
-            if (!ValueAnimator.areAnimatorsEnabled()) {
+            if (!MotionPolicy.shouldAnimate(
+                    CompanionChromeErgonomics.SCALE_ANIM_MS,
+                    ValueAnimator.areAnimatorsEnabled(),
+                    isAttachedToWindow,
+                )
+            ) {
                 scaleX = scale
                 scaleY = scale
                 return

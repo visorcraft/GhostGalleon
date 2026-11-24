@@ -428,10 +428,13 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 android.view.Gravity.CENTER,
             ),
         )
-        if (animEnabled) {
+        val breatheDuration = com.visorcraft.ghostgalleon.ui.deck.MotionPolicy.effectiveDurationMs(
+            com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics.COLD_START_BREATHE_MS,
+            animEnabled,
+        )
+        if (breatheDuration > 0L) {
             val breathe = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
-                    .COLD_START_BREATHE_MS
+                duration = breatheDuration
                 repeatCount = android.animation.ValueAnimator.INFINITE
                 repeatMode = android.animation.ValueAnimator.REVERSE
                 interpolator = android.view.animation.AccelerateDecelerateInterpolator()
@@ -458,6 +461,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 }
 
                 override fun onViewDetachedFromWindow(v: View) {
+                    breathe.removeAllUpdateListeners()
                     breathe.cancel()
                 }
             })
