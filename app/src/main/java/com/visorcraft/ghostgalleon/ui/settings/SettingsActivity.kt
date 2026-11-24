@@ -3370,6 +3370,22 @@ class SettingsActivity : AppCompatActivity() {
                 resetRow,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)),
             )
+            val shown = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors)
+            val seatPreview = SecondSeatPreviewView(
+                context = this,
+                tokens = themeTokens,
+                accent = accent,
+                initialAnchors = shown,
+            )
+            seatLayoutHost.addView(
+                seatPreview,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)).apply {
+                    marginStart = dp(10)
+                    marginEnd = dp(10)
+                    topMargin = dp(6)
+                    bottomMargin = dp(8)
+                },
+            )
             val colHeader = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -3407,7 +3423,6 @@ class SettingsActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
-            val shown = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors)
             for (anchor in shown) {
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -3423,7 +3438,7 @@ class SettingsActivity : AppCompatActivity() {
                     },
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
                 )
-                fun coordField(value: Float, write: (Float) -> Unit): EditText =
+                fun coordField(anchorId: String, value: Float, write: (Float) -> Unit): EditText =
                     EditText(this).apply {
                         isSingleLine = true
                         inputType = InputType.TYPE_CLASS_NUMBER or
@@ -3431,6 +3446,7 @@ class SettingsActivity : AppCompatActivity() {
                         setText(value.toString())
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                         setTextColor(UiDimens.ALPHA_PRIMARY)
+                        useTabularNumerals()
                         gravity = Gravity.CENTER
                         background = TileBackgrounds.focusableRow(
                             context = this@SettingsActivity,
@@ -3444,14 +3460,21 @@ class SettingsActivity : AppCompatActivity() {
                         )
                         setPadding(dp(10), dp(8), dp(10), dp(8))
                         onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
-                            if (hasFocus) return@OnFocusChangeListener
+                            if (hasFocus) {
+                                seatPreview.setHighlightedAnchor(anchorId)
+                                return@OnFocusChangeListener
+                            }
+                            seatPreview.setHighlightedAnchor(null)
                             val parsed = text?.toString()?.toFloatOrNull()?.coerceIn(0f, 1f)
                                 ?: return@OnFocusChangeListener
                             write(parsed)
+                            seatPreview.setAnchors(
+                                SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors),
+                            )
                         }
                     }
                 row.addView(
-                    coordField(anchor.nx) { nx ->
+                    coordField(anchor.id, anchor.nx) { nx ->
                         commitSeatAnchor(anchor.id, nx, null)
                     },
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -3459,7 +3482,7 @@ class SettingsActivity : AppCompatActivity() {
                     },
                 )
                 row.addView(
-                    coordField(anchor.ny) { ny ->
+                    coordField(anchor.id, anchor.ny) { ny ->
                         commitSeatAnchor(anchor.id, null, ny)
                     },
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {

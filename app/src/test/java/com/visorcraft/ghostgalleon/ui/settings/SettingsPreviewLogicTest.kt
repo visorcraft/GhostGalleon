@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.settings
 
+import com.visorcraft.ghostgalleon.input.SeatAnchor
+import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -82,5 +84,39 @@ class SettingsPreviewLogicTest {
         val oledR = SettingsPreviewLogic.scaledCornerRadiusPx(ThemePack.OLED.cardRadiusDp, density = 2f)
         assertTrue("Ghost ($ghostR) should be rounder than OLED ($oledR)", ghostR > oledR)
         assertTrue(oledR >= 4f)
+    }
+
+    @Test
+    fun `SecondSeatPreviewLogic maps default anchors into padded viewport and classifies glyphs`() {
+        val dots = SecondSeatPreviewLogic.layoutDots(
+            anchors = SecondSeatPolicy.DEFAULT_ANCHORS,
+            widthPx = 320f,
+            heightPx = 180f,
+            padPx = 16f,
+        )
+        assertEquals(SecondSeatPolicy.DEFAULT_ANCHORS.size, dots.size)
+        assertEquals(4, dots.count { it.isDpad })
+        assertEquals("\u25B2", SecondSeatPreviewLogic.glyphForAnchor("up"))
+        assertEquals("A", SecondSeatPreviewLogic.glyphForAnchor("a"))
+        assertEquals("ST", SecondSeatPreviewLogic.glyphForAnchor("start"))
+        assertEquals("L1", SecondSeatPreviewLogic.glyphForAnchor("l1"))
+        for (dot in dots) {
+            assertTrue("xPx=${dot.xPx} out of padded bounds", dot.xPx in 16f..304f)
+            assertTrue("yPx=${dot.yPx} out of padded bounds", dot.yPx in 16f..164f)
+        }
+
+        // Clamps out-of-range and NaN coordinates cleanly.
+        val clamped = SecondSeatPreviewLogic.layoutDots(
+            anchors = listOf(SeatAnchor("a", -0.5f, 2f), SeatAnchor("b", Float.NaN, Float.POSITIVE_INFINITY)),
+            widthPx = 200f,
+            heightPx = 100f,
+            padPx = 10f,
+        )
+        assertEquals(10f, clamped[0].xPx, 0.01f)
+        assertEquals(90f, clamped[0].yPx, 0.01f)
+        assertEquals(100f, clamped[1].xPx, 0.01f)
+        assertEquals(50f, clamped[1].yPx, 0.01f)
+
+        assertTrue(SecondSeatPreviewLogic.layoutDots(SecondSeatPolicy.DEFAULT_ANCHORS, 0f, 100f, 10f).isEmpty())
     }
 }

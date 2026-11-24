@@ -6,7 +6,9 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.Typeface
 import android.view.View
+import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -569,5 +571,175 @@ internal class DeterminateProgressBarView(
         val inset = borderPaint.strokeWidth * 0.5f
         rect.set(inset, inset, w - inset, h - inset)
         canvas.drawRoundRect(rect, r, r, borderPaint)
+    }
+}
+
+/** Pure mapped dot coordinates for [SecondSeatPreviewView]. Host-tested. */
+internal data class SeatPreviewDot(
+    val id: String,
+    val xPx: Float,
+    val yPx: Float,
+    val glyph: String,
+    val isDpad: Boolean,
+)
+
+/** Pure host-tested 2D anchor mapping for the Second-Seat touch cluster preview. */
+internal object SecondSeatPreviewLogic {
+
+    fun glyphForAnchor(id: String): String = when (id.trim().lowercase()) {
+        "up" -> "\u25B2"
+        "down" -> "\u25BC"
+        "left" -> "\u25C0"
+        "right" -> "\u25B6"
+        "a" -> "A"
+        "b" -> "B"
+        "x" -> "X"
+        "y" -> "Y"
+        "start" -> "ST"
+        "select" -> "SL"
+        else -> id.trim().take(2).uppercase()
+    }
+
+    fun isDpadAnchor(id: String): Boolean =
+        id.trim().lowercase() in setOf("up", "down", "left", "right")
+
+    fun layoutDots(
+        anchors: List<SeatAnchor>,
+        widthPx: Float,
+        heightPx: Float,
+        padPx: Float,
+    ): List<SeatPreviewDot> {
+        if (widthPx <= 0f || heightPx <= 0f) return emptyList()
+        val safePadX = padPx.coerceIn(0f, widthPx * 0.45f)
+        val safePadY = padPx.coerceIn(0f, heightPx * 0.45f)
+        val spanW = (widthPx - safePadX * 2f).coerceAtLeast(0f)
+        val spanH = (heightPx - safePadY * 2f).coerceAtLeast(0f)
+        return anchors.map { anchor ->
+            val nx = if (anchor.nx.isNaN() || anchor.nx.isInfinite()) 0.5f else anchor.nx.coerceIn(0f, 1f)
+            val ny = if (anchor.ny.isNaN() || anchor.ny.isInfinite()) 0.5f else anchor.ny.coerceIn(0f, 1f)
+            SeatPreviewDot(
+                id = anchor.id,
+                xPx = safePadX + nx * spanW,
+                yPx = safePadY + ny * spanH,
+                glyph = glyphForAnchor(anchor.id),
+                isDpad = isDpadAnchor(anchor.id),
+            )
+        }
+    }
+}
+
+/**
+ * Live 2D miniature companion-panel canvas displaying every Second-Seat touch
+ * anchor at its exact normalized `(nx, ny)` coordinate. Highlights whichever
+ * anchor row currently has focus during coordinate editing.
+ */
+internal class SecondSeatPreviewView(
+    context: Context,
+    tokens: ThemeTokens,
+    private val accent: Int,
+    initialAnchors: List<SeatAnchor>,
+) : View(context) {
+
+    private var anchors: List<SeatAnchor> = initialAnchors
+    private var highlightedId: String? = null
+
+    private val rect = RectF()
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.surfaceSunken(tokens)
+    }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.HAIRLINE_SUBTLE
+        strokeWidth = context.strokePx(1).toFloat()
+    }
+    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.hairlineDivider(tokens)
+        style = Paint.Style.STROKE
+        strokeWidth = context.strokePx(1).toFloat()
+    }
+    private val dpadFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.surfaceElevated(tokens)
+    }
+    private val dpadStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.accentHairline(accent, 0x99)
+        style = Paint.Style.STROKE
+        strokeWidth = context.dpF(1.25f)
+    }
+    private val faceFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.withAlpha(accent, 0xCC)
+    }
+    private val highlightHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = SettingsUiLogic.activePillFocusRing(accent)
+        style = Paint.Style.STROKE
+        strokeWidth = context.dpF(2)
+    }
+    private val dpadTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = SettingsUiLogic.accentOnSurface(accent, tokens)
+        textAlign = Paint.Align.CENTER
+        textSize = context.dpF(9)
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    private val faceTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = SettingsUiLogic.accessibleOnAccent(accent)
+        textAlign = Paint.Align.CENTER
+        textSize = context.dpF(9)
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    init {
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    fun setAnchors(next: List<SeatAnchor>) {
+        if (anchors != next) {
+            anchors = next
+            invalidate()
+        }
+    }
+
+    fun setHighlightedAnchor(id: String?) {
+        if (highlightedId != id) {
+            highlightedId = id
+            invalidate()
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
+        val outerR = dpF(UiDimens.RADIUS_MD)
+        rect.set(0f, 0f, w, h)
+        canvas.drawRoundRect(rect, outerR, outerR, bgPaint)
+
+        // Subtle alignment gridlines (25% / 50% / 75% X and 50% Y).
+        for (frac in floatArrayOf(0.25f, 0.5f, 0.75f)) {
+            canvas.drawLine(w * frac, dpF(6), w * frac, h - dpF(6), gridPaint)
+        }
+        canvas.drawLine(dpF(6), h * 0.5f, w - dpF(6), h * 0.5f, gridPaint)
+
+        val baseRadius = dpF(11)
+        val pad = baseRadius + dpF(5)
+        val dots = SecondSeatPreviewLogic.layoutDots(anchors, w, h, pad)
+        for (dot in dots) {
+            val focused = dot.id == highlightedId
+            val r = if (focused) baseRadius * 1.22f else baseRadius
+            if (dot.isDpad) {
+                canvas.drawCircle(dot.xPx, dot.yPx, r, dpadFillPaint)
+                canvas.drawCircle(dot.xPx, dot.yPx, r, if (focused) highlightHaloPaint else dpadStrokePaint)
+            } else {
+                canvas.drawCircle(dot.xPx, dot.yPx, r, faceFillPaint)
+                if (focused) {
+                    canvas.drawCircle(dot.xPx, dot.yPx, r + dpF(1.5f), highlightHaloPaint)
+                }
+            }
+            val textPaint = if (dot.isDpad) dpadTextPaint else faceTextPaint
+            val textY = dot.yPx - (textPaint.descent() + textPaint.ascent()) * 0.5f
+            canvas.drawText(dot.glyph, dot.xPx, textY, textPaint)
+        }
+
+        val inset = borderPaint.strokeWidth * 0.5f
+        rect.set(inset, inset, w - inset, h - inset)
+        canvas.drawRoundRect(rect, outerR, outerR, borderPaint)
     }
 }
