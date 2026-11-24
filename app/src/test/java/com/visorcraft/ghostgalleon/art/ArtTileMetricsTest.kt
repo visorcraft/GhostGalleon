@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.art
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,5 +64,58 @@ class ArtTileMetricsTest {
         assertEquals(1, ArtTileMetrics.backingStrokePx(1.0f))
         assertEquals(2, ArtTileMetrics.backingStrokePx(2.0f))
         assertEquals(3, ArtTileMetrics.backingStrokePx(3.0f))
+    }
+
+    @Test
+    fun `isNearSquareAspect and framingFor adapt cleanly between square covers, 2-to-3 boxes, and logos`() {
+        assertTrue(ArtTileMetrics.isNearSquareAspect(512, 512))
+        assertTrue(ArtTileMetrics.isNearSquareAspect(600, 500))
+        assertFalse(ArtTileMetrics.isNearSquareAspect(600, 900))
+        assertFalse(ArtTileMetrics.isNearSquareAspect(1920, 620))
+        assertFalse(ArtTileMetrics.isNearSquareAspect(0, 512))
+
+        // Near-square cover uses full-bleed CENTER_CROP with 0 inset padding.
+        val squareCover = ArtTileMetrics.framingFor(
+            kind = ArtTileMetrics.ArtFrameKind.COVER_ART,
+            bitmapWidth = 512,
+            bitmapHeight = 512,
+            targetPx = 400,
+            density = 2f,
+        )
+        assertTrue(squareCover.centerCrop)
+        assertEquals(0, squareCover.insetPaddingPx)
+        assertFalse(squareCover.roundBitmapCorners)
+
+        // Portrait 2:3 cover preserves full artwork via FIT_CENTER + rounded bitmap corners.
+        val portraitCover = ArtTileMetrics.framingFor(
+            kind = ArtTileMetrics.ArtFrameKind.COVER_ART,
+            bitmapWidth = 600,
+            bitmapHeight = 900,
+            targetPx = 400,
+            density = 2f,
+        )
+        assertFalse(portraitCover.centerCrop)
+        assertEquals(0, portraitCover.insetPaddingPx)
+        assertTrue(portraitCover.roundBitmapCorners)
+
+        // Logo fallback uses FIT_CENTER + proportional clamped inset padding without clipping corners.
+        val carouselLogo = ArtTileMetrics.framingFor(
+            kind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
+            bitmapWidth = 600,
+            bitmapHeight = 200,
+            targetPx = 400,
+            density = 2f,
+        )
+        val dockLogo = ArtTileMetrics.framingFor(
+            kind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
+            bitmapWidth = 600,
+            bitmapHeight = 200,
+            targetPx = 96,
+            density = 2f,
+        )
+        assertFalse(carouselLogo.centerCrop)
+        assertFalse(carouselLogo.roundBitmapCorners)
+        assertTrue(carouselLogo.insetPaddingPx > dockLogo.insetPaddingPx)
+        assertTrue(dockLogo.insetPaddingPx >= 8)
     }
 }

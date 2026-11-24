@@ -108,6 +108,8 @@ object ArtTile {
         }
         overlay.animate().cancel()
         overlay.alpha = 1f
+        overlay.scaleType = ImageView.ScaleType.FIT_CENTER
+        overlay.setPadding(0, 0, 0, 0)
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
         showPlaceholder(overlay)
@@ -131,7 +133,15 @@ object ArtTile {
                     wasSyncMemoryHit = syncGrid,
                     isAttached = overlay.isAttachedToWindow,
                 )
-                applyRounded(overlay, context, bitmap, radiusPx, mode)
+                applyRounded(
+                    overlay = overlay,
+                    context = context,
+                    bitmap = bitmap,
+                    radiusPx = radiusPx,
+                    targetPx = targetPx,
+                    frameKind = ArtTileMetrics.ArtFrameKind.COVER_ART,
+                    revealMode = mode,
+                )
                 return@onGrid
             }
             // Logo fallback on the decode thread (no main-thread disk stat).
@@ -149,7 +159,15 @@ object ArtTile {
                         wasSyncMemoryHit = syncLogo,
                         isAttached = overlay.isAttachedToWindow,
                     )
-                    applyRounded(overlay, context, logoBmp, radiusPx, mode)
+                    applyRounded(
+                        overlay = overlay,
+                        context = context,
+                        bitmap = logoBmp,
+                        radiusPx = radiusPx,
+                        targetPx = targetPx,
+                        frameKind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
+                        revealMode = mode,
+                    )
                     return@onLogo
                 }
                 val logo = HeroDetail.logoUri(rom) ?: return@onLogo
@@ -168,7 +186,15 @@ object ArtTile {
                             wasSyncMemoryHit = syncLocal,
                             isAttached = overlay.isAttachedToWindow,
                         )
-                        applyRounded(overlay, context, local, radiusPx, mode)
+                        applyRounded(
+                            overlay = overlay,
+                            context = context,
+                            bitmap = local,
+                            radiusPx = radiusPx,
+                            targetPx = targetPx,
+                            frameKind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
+                            revealMode = mode,
+                        )
                     }
                 }
                 syncLocal = false
@@ -218,14 +244,36 @@ object ArtTile {
         context: Context,
         bitmap: Bitmap,
         radiusPx: Float,
+        targetPx: Int,
+        frameKind: ArtTileMetrics.ArtFrameKind,
         revealMode: ArtTileMetrics.RevealMode,
     ) {
         overlay.animate().cancel()
         releaseDisplayed(overlay)
         ArtCache.acquireDisplay(bitmap)
+        val density = context.resources.displayMetrics.density
+        val framing = ArtTileMetrics.framingFor(
+            kind = frameKind,
+            bitmapWidth = bitmap.width,
+            bitmapHeight = bitmap.height,
+            targetPx = targetPx,
+            density = density,
+        )
+        overlay.scaleType = if (framing.centerCrop) {
+            ImageView.ScaleType.CENTER_CROP
+        } else {
+            ImageView.ScaleType.FIT_CENTER
+        }
+        overlay.setPadding(
+            framing.insetPaddingPx,
+            framing.insetPaddingPx,
+            framing.insetPaddingPx,
+            framing.insetPaddingPx,
+        )
         overlay.setImageDrawable(
-            RoundedBitmapDrawableFactory.create(context.resources, bitmap)
-                .apply { cornerRadius = radiusPx },
+            RoundedBitmapDrawableFactory.create(context.resources, bitmap).apply {
+                cornerRadius = if (framing.roundBitmapCorners) radiusPx else 0f
+            },
         )
         hidePlaceholderWithBacking(overlay, context, radiusPx)
         val durationMs = ArtTileMetrics.revealDurationMs(revealMode)
