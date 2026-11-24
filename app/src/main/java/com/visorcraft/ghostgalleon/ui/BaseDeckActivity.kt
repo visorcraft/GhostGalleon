@@ -24,11 +24,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.LinearLayout
 import com.visorcraft.ghostgalleon.GhostGalleonApp
@@ -974,14 +972,13 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             return
         }
         val labels = offers.map { it.displayName }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.setup_get_emulator_title)
-            .setItems(labels) { _, which ->
-                if (which !in offers.indices) return@setItems
-                openPlayerStore(offers[which].packageName)
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.setup_get_emulator_title,
+            items = labels,
+        ) { which ->
+            if (which in offers.indices) openPlayerStore(offers[which].packageName)
+        }
     }
 
     private fun openPlayerStore(packageName: String) {
@@ -1002,31 +999,19 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     }
 
     private fun showSetupSgdbKeyDialog() {
-        val density = resources.displayMetrics.density
-        fun dp(v: Int) = (v * density).toInt()
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(app.settings.sgdbApiKey ?: "")
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(0x66FFFFFF)
-            setHint(R.string.settings_api_key_hint)
+        DeckDialogs.promptText(
+            context = this,
+            titleRes = R.string.settings_sgdb_api_key,
+            initialText = app.settings.sgdbApiKey ?: "",
+            hintRes = R.string.settings_api_key_hint,
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            positiveRes = R.string.action_save,
+        ) { raw ->
+            val key = raw.trim().ifEmpty { null }
+            // notify=false: avoid full deck rebuild; refresh setup card only.
+            app.updateSettings(app.settings.copy(sgdbApiKey = key), notify = false)
+            refreshSetupOverlay()
         }
-        val container = FrameLayout(this).apply {
-            setPadding(dp(20), dp(12), dp(20), 0)
-            addView(input)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_sgdb_api_key)
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val key = input.text.toString().trim().ifEmpty { null }
-                // notify=false: avoid full deck rebuild; refresh setup card only.
-                app.updateSettings(app.settings.copy(sgdbApiKey = key), notify = false)
-                refreshSetupOverlay()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
     }
 
     private fun dismissSetup() {

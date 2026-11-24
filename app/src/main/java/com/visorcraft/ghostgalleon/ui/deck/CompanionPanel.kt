@@ -36,7 +36,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.children
 import kotlin.math.abs
@@ -96,6 +95,7 @@ import com.visorcraft.ghostgalleon.settings.hint
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.HostSurface
@@ -2305,23 +2305,23 @@ object CompanionPanel {
                             Toast.LENGTH_SHORT,
                         ).show()
                     } else {
-                        AlertDialog.Builder(activity)
-                            .setTitle(R.string.action_open_with)
-                            .setItems(players.map { it.displayName }.toTypedArray()) { _, which ->
-                                val p = players[which]
-                                val live = app.settings
-                                app.updateSettings(
-                                    live.copy(
-                                        defaultPlayers = live.defaultPlayers +
-                                            (rom.platformId to p.id),
-                                    ),
-                                    notify = false,
-                                )
-                                launchSlotKey(
-                                    activity, state, app.romEntries, romKey, playerId = p.id)
-                            }
-                            .setNegativeButton(R.string.action_cancel, null)
-                            .show()
+                        DeckDialogs.chooseItem(
+                            context = activity,
+                            titleRes = R.string.action_open_with,
+                            items = players.map { it.displayName }.toTypedArray(),
+                        ) { which ->
+                            val p = players[which]
+                            val live = app.settings
+                            app.updateSettings(
+                                live.copy(
+                                    defaultPlayers = live.defaultPlayers +
+                                        (rom.platformId to p.id),
+                                ),
+                                notify = false,
+                            )
+                            launchSlotKey(
+                                activity, state, app.romEntries, romKey, playerId = p.id)
+                        }
                     }
                 }
                 val quickScroll = HorizontalScrollView(context).apply {
@@ -2874,17 +2874,18 @@ object CompanionPanel {
             return
         }
         val labels = apps.map { it.label }.toTypedArray()
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.settings_pinned_companion)
-            .setItems(labels) { _, which ->
-                val pkg = apps[which].packageName
-                app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
-            }
-            .setNeutralButton(R.string.action_clear) { _, _ ->
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.settings_pinned_companion,
+            items = labels,
+            neutralRes = R.string.action_clear,
+            onNeutral = {
                 app.updateSettings(app.settings.copy(companionPinnedPackage = null))
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            },
+        ) { which ->
+            val pkg = apps[which].packageName
+            app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
+        }
     }
 
     private fun buildNowPlayingCard(
@@ -3623,7 +3624,7 @@ object CompanionPanel {
     }
 
     private fun confirmPostureYield(activity: AppCompatActivity, app: GhostGalleonApp) {
-        AlertDialog.Builder(activity)
+        val builder = DeckDialogs.builder(activity)
             .setTitle(R.string.settings_stage_plot)
             .setMessage(R.string.confirm_yield_on_keep_player)
             .setPositiveButton(R.string.action_ok) { _, _ ->
@@ -3634,7 +3635,7 @@ object CompanionPanel {
                 app.dismissPostureYieldChip()
             }
             .setOnCancelListener { app.dismissPostureYieldChip() }
-            .show()
+        DeckDialogs.show(builder, activity)
     }
 
     /** Stage-plot / package yield only. Never beginSession or assign policy. */

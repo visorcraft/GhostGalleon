@@ -60,6 +60,7 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
@@ -1796,9 +1797,12 @@ class GameDeck(
         }
         actions += BulkAction.CLEAR_SELECTION to activity.getString(R.string.bulk_clear_selection)
         actions += BulkAction.CANCEL_MODE to activity.getString(R.string.bulk_cancel_mode)
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.bulk_actions)
-            .setItems(actions.map { it.second }.toTypedArray()) { _, which ->
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.bulk_actions,
+            items = actions.map { it.second }.toTypedArray(),
+            negativeRes = R.string.action_close,
+        ) { which ->
                 when (actions[which].first) {
                     BulkAction.SELECT_ALL -> {
                         val all = com.visorcraft.ghostgalleon.library.MultiSelectOps
@@ -2014,9 +2018,7 @@ class GameDeck(
                     BulkAction.CLEAR_SELECTION -> state.setMultiSelectKeys(emptySet())
                     BulkAction.CANCEL_MODE -> state.clearMultiSelect()
                 }
-            }
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        }
     }
 
     /**
@@ -2029,20 +2031,20 @@ class GameDeck(
         val labels = buildList {
             add(activity.getString(R.string.format_open_count, count))
             if (count > 0) add(activity.getString(R.string.deck_clear_all_favorites))
-            add(activity.getString(R.string.action_cancel))
         }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.label_favorites)
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> state.setLibraryBrowse(
-                        LibraryBrowse.BrowseQuery(mode = LibraryBrowse.Mode.FAVORITES),
-                        force = true,
-                    )
-                    1 -> if (count > 0) confirmClearAllFavorites()
-                }
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.label_favorites,
+            items = labels,
+        ) { which ->
+            when (which) {
+                0 -> state.setLibraryBrowse(
+                    LibraryBrowse.BrowseQuery(mode = LibraryBrowse.Mode.FAVORITES),
+                    force = true,
+                )
+                1 -> if (count > 0) confirmClearAllFavorites()
             }
-            .show()
+        }
     }
 
     private fun confirmClearAllFavorites() {
@@ -2052,33 +2054,34 @@ class GameDeck(
             Toast.makeText(activity, R.string.deck_no_favorites, Toast.LENGTH_SHORT).show()
             return
         }
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.deck_clear_all_favorites)
-            .setMessage(activity.resources.getQuantityString(
+        DeckDialogs.confirm(
+            context = activity,
+            titleRes = R.string.deck_clear_all_favorites,
+            message = activity.resources.getQuantityString(
                 R.plurals.deck_clear_all_favorites_confirm,
                 n,
                 n,
-            ))
-            .setPositiveButton(R.string.action_clear) { _, _ ->
-                val (favs, cols) = CollectionsOps.clearAllFavorites(live.collections)
-                app().updateSettings(
-                    live.copy(favorites = favs, collections = cols),
-                )
-                if (state.libraryBrowse.mode == LibraryBrowse.Mode.FAVORITES) {
-                    state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
-                }
-                Toast.makeText(
-                    activity,
-                    activity.resources.getQuantityString(
-                        R.plurals.count_cleared_favorites,
-                        n,
-                        n,
-                    ),
-                    Toast.LENGTH_SHORT,
-                ).show()
+            ),
+            positiveRes = R.string.action_clear,
+            destructive = true,
+        ) {
+            val (favs, cols) = CollectionsOps.clearAllFavorites(live.collections)
+            app().updateSettings(
+                live.copy(favorites = favs, collections = cols),
+            )
+            if (state.libraryBrowse.mode == LibraryBrowse.Mode.FAVORITES) {
+                state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            Toast.makeText(
+                activity,
+                activity.resources.getQuantityString(
+                    R.plurals.count_cleared_favorites,
+                    n,
+                    n,
+                ),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     /**
@@ -2091,91 +2094,79 @@ class GameDeck(
             activity.getString(R.string.action_edit_members),
             activity.getString(R.string.action_rename),
             activity.getString(R.string.deck_delete_collection),
-            activity.getString(R.string.action_cancel),
         )
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(name)
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> state.setLibraryBrowse(
-                        LibraryBrowse.BrowseQuery(
-                            mode = LibraryBrowse.Mode.COLLECTION,
-                            collectionName = name,
-                        ),
-                        force = true,
-                    )
-                    1 -> CollectionDialogs.promptMembers(
-                        activity,
-                        app(),
-                        name,
-                        labelOf = { k ->
-                            entries.firstOrNull { it.key == k }?.label
-                                ?: continueLabel(k, settings)
-                        },
-                        onChanged = {
-                            if (state.libraryBrowse.collectionName == name) {
-                                state.setLibraryBrowse(
-                                    LibraryBrowse.BrowseQuery(
-                                        mode = LibraryBrowse.Mode.COLLECTION,
-                                        collectionName = name,
-                                    ),
-                                    force = true,
-                                )
-                            }
-                        },
-                    )
-                    2 -> promptRenameCollection(name)
-                    3 -> {
-                        val next = CollectionsOps.deleteCollection(settings.collections, name)
-                        app().updateSettings(settings.copy(collections = next))
-                        // Leave collection filter if it pointed at the deleted rail.
+        DeckDialogs.chooseItem(
+            context = activity,
+            title = name,
+            items = labels,
+        ) { which ->
+            when (which) {
+                0 -> state.setLibraryBrowse(
+                    LibraryBrowse.BrowseQuery(
+                        mode = LibraryBrowse.Mode.COLLECTION,
+                        collectionName = name,
+                    ),
+                    force = true,
+                )
+                1 -> CollectionDialogs.promptMembers(
+                    activity,
+                    app(),
+                    name,
+                    labelOf = { k ->
+                        entries.firstOrNull { it.key == k }?.label
+                            ?: continueLabel(k, settings)
+                    },
+                    onChanged = {
                         if (state.libraryBrowse.collectionName == name) {
-                            state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
+                            state.setLibraryBrowse(
+                                LibraryBrowse.BrowseQuery(
+                                    mode = LibraryBrowse.Mode.COLLECTION,
+                                    collectionName = name,
+                                ),
+                                force = true,
+                            )
                         }
-                        Toast.makeText(
-                            activity,
-                            activity.getString(R.string.format_deleted_named, name),
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                    },
+                )
+                2 -> promptRenameCollection(name)
+                3 -> {
+                    val next = CollectionsOps.deleteCollection(settings.collections, name)
+                    app().updateSettings(settings.copy(collections = next))
+                    // Leave collection filter if it pointed at the deleted rail.
+                    if (state.libraryBrowse.collectionName == name) {
+                        state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
                     }
+                    Toast.makeText(
+                        activity,
+                        activity.getString(R.string.format_deleted_named, name),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
             }
-            .show()
+        }
     }
 
     private fun showRenameDialog(entry: CarouselEntry) {
         val rom = entry.rom ?: return
         val current = romLabel(rom)
-        val input = android.widget.EditText(activity).apply {
-            setText(current)
-            setSelectAllOnFocus(true)
-            setTextColor(android.graphics.Color.WHITE)
-            setHintTextColor(0x66FFFFFF)
-            setHint(R.string.deck_display_name_hint)
-            setSingleLine()
-        }
-        val container = FrameLayout(activity).apply {
-            val margin = (20 * activity.resources.displayMetrics.density).toInt()
-            setPadding(margin, (12 * activity.resources.displayMetrics.density).toInt(), margin, 0)
-            addView(input)
-        }
-        androidx.appcompat.app.AlertDialog.Builder(activity)
-            .setTitle(activity.getString(R.string.deck_rename_named, rom.name))
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val name = input.text.toString().trim()
-                app().updateSettings(
-                    settings.copy(
-                        romNames = com.visorcraft.ghostgalleon.settings.RomNames.set(
-                            app().settings.romNames,
-                            rom.id,
-                            name.takeIf { it.isNotEmpty() && it != rom.name },
-                        ),
+        DeckDialogs.promptText(
+            context = activity,
+            title = activity.getString(R.string.deck_rename_named, rom.name),
+            initialText = current,
+            hintRes = R.string.deck_display_name_hint,
+            positiveRes = R.string.action_save,
+        ) { raw ->
+            val name = raw.trim()
+            app().updateSettings(
+                settings.copy(
+                    romNames = com.visorcraft.ghostgalleon.settings.RomNames.set(
+                        app().settings.romNames,
+                        rom.id,
+                        name.takeIf { it.isNotEmpty() && it != rom.name },
                     ),
-                )
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+                ),
+            )
+        }
     }
 
     private fun resetRomName(rom: RomEntry) {
@@ -2190,34 +2181,29 @@ class GameDeck(
     }
 
     private fun promptRenameCollection(from: String) {
-        val input = android.widget.EditText(activity).apply {
-            setText(from)
-            setSelection(from.length)
-            setHint(R.string.settings_collection_name_hint)
-        }
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.deck_rename_collection)
-            .setView(input)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val to = input.text?.toString().orEmpty()
-                val next = CollectionsOps.renameCollection(settings.collections, from, to)
-                app().updateSettings(settings.copy(collections = next))
-                val dest = to.trim()
-                if (dest.isNotEmpty() &&
-                    state.libraryBrowse.collectionName == from
-                ) {
-                    state.setLibraryBrowse(
-                        LibraryBrowse.BrowseQuery(
-                            mode = LibraryBrowse.Mode.COLLECTION,
-                            collectionName = dest,
-                        ),
-                        force = true,
-                    )
-                }
-                Toast.makeText(activity, R.string.deck_renamed, Toast.LENGTH_SHORT).show()
+        DeckDialogs.promptText(
+            context = activity,
+            titleRes = R.string.deck_rename_collection,
+            initialText = from,
+            hintRes = R.string.settings_collection_name_hint,
+            positiveRes = R.string.action_save,
+        ) { to ->
+            val next = CollectionsOps.renameCollection(settings.collections, from, to)
+            app().updateSettings(settings.copy(collections = next))
+            val dest = to.trim()
+            if (dest.isNotEmpty() &&
+                state.libraryBrowse.collectionName == from
+            ) {
+                state.setLibraryBrowse(
+                    LibraryBrowse.BrowseQuery(
+                        mode = LibraryBrowse.Mode.COLLECTION,
+                        collectionName = dest,
+                    ),
+                    force = true,
+                )
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            Toast.makeText(activity, R.string.deck_renamed, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun promptAddToCollection(keys: List<String>, clearMulti: Boolean = false) {
@@ -2237,12 +2223,18 @@ class GameDeck(
     private fun availableContinueKeys(live: Settings): List<String> =
         live.lastLaunchedMs.keys.toList()
 
-    /** Human label for a continue/slot key (ROM name or app label). */
+    /** Human label for a continue/slot key (folder name, ROM display name, or app label). */
     private fun continueLabel(key: String, live: Settings): String {
-        SlotKey.romId(key)?.let { id ->
-            app().romEntry(id)?.name?.let { return it }
+        SlotKey.folderId(key)?.let { fid ->
+            live.folders[fid]?.name?.takeIf { it.isNotBlank() }?.let { return it }
         }
-        library.curated(live).firstOrNull { it.packageName == key }?.label?.let { return it }
+        SlotKey.romId(key)?.let { id ->
+            app().romEntry(id)?.let { rom ->
+                return com.visorcraft.ghostgalleon.settings.RomNames.display(rom, live.romNames)
+            }
+        }
+        live.customNames[key]?.takeIf { it.isNotBlank() }?.let { return it }
+        library.all(live).firstOrNull { it.packageName == key }?.label?.let { return it }
         return key.substringAfterLast(':').ifBlank { key }
     }
 
@@ -2292,19 +2284,19 @@ class GameDeck(
         val lines = keys.map { k ->
             activity.resolveText(lineOf(continueLabel(k, live), live.lastLaunchedMs[k], nowMs))
         }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(titleRes)
-            .setItems(lines) { _, which ->
-                if (which in keys.indices) {
-                    jumpToContinue(
-                        keys[which],
-                        app().settings,
-                        toastPrefixRes = toastPrefixRes,
-                    )
-                }
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = titleRes,
+            items = lines,
+        ) { which ->
+            if (which in keys.indices) {
+                jumpToContinue(
+                    keys[which],
+                    app().settings,
+                    toastPrefixRes = toastPrefixRes,
+                )
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        }
     }
 
     /**
@@ -2392,15 +2384,15 @@ class GameDeck(
     }
 
     private fun openSearchDialog() {
-        val input = android.widget.EditText(activity).apply {
-            setText(state.libraryBrowse.text)
-            setHint(R.string.browse_search_hint)
-            setSingleLine()
-        }
+        val (container, input) = DeckDialogs.createInput(
+            context = activity,
+            initialText = state.libraryBrowse.text,
+            hintRes = R.string.browse_search_hint,
+        )
         val hasHistory = app().settings.searchHistory.isNotEmpty()
-        val builder = android.app.AlertDialog.Builder(activity)
+        val builder = DeckDialogs.builder(activity)
             .setTitle(R.string.browse_search_library)
-            .setView(input)
+            .setView(container)
             .setPositiveButton(R.string.action_search) { _, _ ->
                 applySearch(input.text?.toString().orEmpty())
             }
@@ -2414,7 +2406,7 @@ class GameDeck(
                 applySearch("")
             }
         }
-        builder.show()
+        DeckDialogs.show(builder, activity)
     }
 
     /** Apply a library text filter and remember non-blank queries. */
@@ -2449,23 +2441,22 @@ class GameDeck(
             return
         }
         val items = history.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.browse_recent_searches)
-            .setItems(items) { _, which ->
-                if (which in items.indices) {
-                    applySearch(items[which])
-                }
-            }
-            .setNeutralButton(R.string.browse_clear_history) { _, _ ->
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.browse_recent_searches,
+            items = items,
+            neutralRes = R.string.browse_clear_history,
+            onNeutral = {
                 app().updateSettings(live.copy(searchHistory = SearchHistory.clear()))
                 Toast.makeText(
                     activity,
                     R.string.browse_search_history_cleared,
                     Toast.LENGTH_SHORT,
                 ).show()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            },
+        ) { which ->
+            if (which in items.indices) applySearch(items[which])
+        }
     }
 
     /** Toast when a rail/filter would show zero cards. */
@@ -2789,18 +2780,18 @@ class GameDeck(
                 activity.getString(R.string.browse_sort_last_platform, action.shortName)
         }
         val labels = actions.map(::label).toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(shortName.ifBlank { platformId })
-            .setItems(labels) { _, which ->
-                if (which !in actions.indices) return@setItems
-                val action = actions[which]
-                val next = settings.browseChrome.sanitize(action.query)
-                state.setLibraryBrowse(next, force = true)
-                toastIfEmptyBrowse(next)
-                Toast.makeText(activity, label(action), Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            title = shortName.ifBlank { platformId },
+            items = labels,
+        ) { which ->
+            if (which !in actions.indices) return@chooseItem
+            val action = actions[which]
+            val next = settings.browseChrome.sanitize(action.query)
+            state.setLibraryBrowse(next, force = true)
+            toastIfEmptyBrowse(next)
+            Toast.makeText(activity, label(action), Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
@@ -2821,25 +2812,25 @@ class GameDeck(
             val name = activity.resolveText(LibraryBrowse.sortDisplayName(sort))
             if (sort == current) activity.getString(R.string.format_selected_check, name) else name
         }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.deck_sort_order)
-            .setItems(labels) { _, which ->
-                if (which !in options.indices) return@setItems
-                val picked = options[which]
-                val next = LibraryBrowse.queryWithSort(state.libraryBrowse, picked)
-                state.setLibraryBrowse(next, force = true)
-                val toast = if (picked == LibraryBrowse.Sort.DEFAULT) {
-                    activity.getString(R.string.label_default_order)
-                } else {
-                    activity.getString(
-                        R.string.format_sorted_by,
-                        activity.resolveText(LibraryBrowse.sortDisplayName(picked)),
-                    )
-                }
-                Toast.makeText(activity, toast, Toast.LENGTH_SHORT).show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.deck_sort_order,
+            items = labels,
+        ) { which ->
+            if (which !in options.indices) return@chooseItem
+            val picked = options[which]
+            val next = LibraryBrowse.queryWithSort(state.libraryBrowse, picked)
+            state.setLibraryBrowse(next, force = true)
+            val toast = if (picked == LibraryBrowse.Sort.DEFAULT) {
+                activity.getString(R.string.label_default_order)
+            } else {
+                activity.getString(
+                    R.string.format_sorted_by,
+                    activity.resolveText(LibraryBrowse.sortDisplayName(picked)),
+                )
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            Toast.makeText(activity, toast, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun showDetails(entry: CarouselEntry) {
@@ -2866,7 +2857,7 @@ class GameDeck(
         val body = activity.resolveText(GameDetails.body(input))
         val related = relatedOptionsFor(rom)
         val ferryPeers = if (rom != null) saveFerryPeers(rom) else emptyList()
-        val builder = android.app.AlertDialog.Builder(activity)
+        val builder = DeckDialogs.builder(activity)
             .setTitle(R.string.details_title)
             .setPositiveButton(R.string.action_ok, null)
             .setNeutralButton(R.string.action_copy_title) { _, _ ->
@@ -2875,15 +2866,17 @@ class GameDeck(
         var bodyView: TextView? = null
         if (rom != null) {
             val pad = (20 * activity.resources.displayMetrics.density).toInt()
+            val surface = TileBackgrounds.surfaceColor(activity)
             val message = TextView(activity).apply {
                 text = body
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 setTextIsSelectable(true)
                 setPadding(pad, pad / 2, pad, pad / 2)
             }
             bodyView = message
             val helperValue = TextView(activity).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(settings.accentColor)
+                setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 gravity = Gravity.END
@@ -2892,8 +2885,13 @@ class GameDeck(
             val helperRow = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(pad, 0, pad, pad)
+                setPadding(pad, activity.dp(8), pad, activity.dp(8))
                 isFocusable = true
+                background = TileBackgrounds.focusableRow(
+                    context = activity,
+                    accent = settings.accentColor,
+                    cornerRadiusDp = 10,
+                )
                 setOnClickListener { showRomHelperPicker(rom.id, helperValue) }
                 setOnLongClickListener {
                     clearRomHelper(rom.id, helperValue)
@@ -2904,7 +2902,7 @@ class GameDeck(
                 TextView(activity).apply {
                     setText(R.string.settings_play_host_helper)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    setTextColor(Color.WHITE)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
@@ -2917,7 +2915,12 @@ class GameDeck(
                 addView(message)
                 addView(helperRow)
             }
-            builder.setView(android.widget.ScrollView(activity).apply { addView(content) })
+            builder.setView(
+                OverlayPrimitives.MaxHeightScrollView(
+                    activity,
+                    OverlayPrimitives.maxModalHeight(activity, 0.56f),
+                ).apply { addView(content) },
+            )
         } else {
             builder.setMessage(body)
         }
@@ -2934,9 +2937,9 @@ class GameDeck(
                     showBrowseRelatedDialog(related)
                 }
         }
-        val dialog = builder.show()
+        val dialog = DeckDialogs.show(builder, activity)
         if (rom != null && ferryPeers.isNotEmpty()) {
-            val ferryBtn = dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)
+            val ferryBtn = dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
             ferryBtn.visibility = View.GONE
             app().hasFerryDocs(rom) { readable ->
                 if (dialog.isShowing && readable) ferryBtn.visibility = View.VISIBLE
@@ -2985,19 +2988,18 @@ class GameDeck(
             return
         }
         val labels = apps.map { it.label }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.settings_play_host_helper)
-            .setItems(labels) { _, which ->
-                val pkg = apps[which].packageName
-                val live = app().settings
-                app().updateSettings(live.copy(romHelpers = live.romHelpers + (romId to pkg)))
-                bindRomHelperValue(value, romId)
-            }
-            .setNeutralButton(R.string.action_clear) { _, _ ->
-                clearRomHelper(romId, value)
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.settings_play_host_helper,
+            items = labels,
+            neutralRes = R.string.action_clear,
+            onNeutral = { clearRomHelper(romId, value) },
+        ) { which ->
+            val pkg = apps[which].packageName
+            val live = app().settings
+            app().updateSettings(live.copy(romHelpers = live.romHelpers + (romId to pkg)))
+            bindRomHelperValue(value, romId)
+        }
     }
 
     private fun saveFerryPeers(rom: RomEntry): List<RomEntry> {
@@ -3015,13 +3017,13 @@ class GameDeck(
             return
         }
         val labels = peers.map { romLabel(it) }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.settings_save_ferry)
-            .setItems(labels) { _, which ->
-                if (which in peers.indices) startSaveFerry(from, peers[which])
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.settings_save_ferry,
+            items = labels,
+        ) { which ->
+            if (which in peers.indices) startSaveFerry(from, peers[which])
+        }
     }
 
     private fun startSaveFerry(from: RomEntry, to: RomEntry) {
@@ -3055,35 +3057,34 @@ class GameDeck(
 
     private fun pickSaveFerryOffer(from: RomEntry, to: RomEntry, offers: List<FerryOffer>) {
         val labels = offers.map { ferryKindLabel(it) }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.settings_save_ferry)
-            .setItems(labels) { _, which ->
-                if (which in offers.indices) confirmSaveFerry(from, to, offers[which])
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.settings_save_ferry,
+            items = labels,
+        ) { which ->
+            if (which in offers.indices) confirmSaveFerry(from, to, offers[which])
+        }
     }
 
     private fun confirmSaveFerry(from: RomEntry, to: RomEntry, offer: FerryOffer) {
-        android.app.AlertDialog.Builder(activity)
-            .setMessage(
-                activity.getString(
-                    R.string.confirm_save_ferry,
-                    ferryKindLabel(offer),
-                    romLabel(from),
-                    romLabel(to),
-                ),
-            )
-            .setPositiveButton(R.string.action_ok) { _, _ ->
-                if (app().destIsOpenYield(to.id)) {
-                    Toast.makeText(activity, R.string.settings_stage_yield, Toast.LENGTH_SHORT)
-                        .show()
-                    return@setPositiveButton
-                }
-                app().ferryCopy(offer)
+        DeckDialogs.confirm(
+            context = activity,
+            titleRes = R.string.settings_save_ferry,
+            message = activity.getString(
+                R.string.confirm_save_ferry,
+                ferryKindLabel(offer),
+                romLabel(from),
+                romLabel(to),
+            ),
+            positiveRes = R.string.action_ok,
+        ) {
+            if (app().destIsOpenYield(to.id)) {
+                Toast.makeText(activity, R.string.settings_stage_yield, Toast.LENGTH_SHORT)
+                    .show()
+                return@confirm
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            app().ferryCopy(offer)
+        }
     }
 
     private fun ferryKindLabel(offer: FerryOffer): String = when (offer.kind) {
@@ -3165,13 +3166,13 @@ class GameDeck(
         val labels = options.map {
             activity.resolveText(GameDetails.relatedOptionLabel(it))
         }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.details_browse_related)
-            .setItems(labels) { _, which ->
-                if (which in options.indices) applyRelatedOption(options[which])
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.details_browse_related,
+            items = labels,
+        ) { which ->
+            if (which in options.indices) applyRelatedOption(options[which])
+        }
     }
 
     private fun openAppInfo(packageName: String) {
@@ -3240,7 +3241,12 @@ class GameDeck(
             }
             add(SlotMenu.Choice.CANCEL)
         }
-        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
+        val menu = SlotMenu.fromChoices(
+            activity,
+            settings.accentColor,
+            choices,
+            title = entry.label,
+        ) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.DETAILS -> showDetails(entry)
@@ -3300,7 +3306,13 @@ class GameDeck(
         state.focusDock(index)
         val choices = listOf(
             SlotMenu.Choice.MOVE, SlotMenu.Choice.REMOVE, SlotMenu.Choice.CANCEL)
-        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
+        val dockTitle = dockBar?.keyAt(index)?.let { continueLabel(it, settings) }
+        val menu = SlotMenu.fromChoices(
+            activity,
+            settings.accentColor,
+            choices,
+            title = dockTitle,
+        ) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.MOVE -> startDockMove(index)

@@ -49,6 +49,7 @@ import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
@@ -798,7 +799,13 @@ class GridDeck(
         state.focusDock(index)
         val choices = listOf(
             SlotMenu.Choice.MOVE, SlotMenu.Choice.REMOVE, SlotMenu.Choice.CANCEL)
-        val menu = SlotMenu.fromChoices(activity, settings.accentColor, choices) { choice ->
+        val dockTitle = dockBar?.keyAt(index)?.let(::gridEntryLabel)
+        val menu = SlotMenu.fromChoices(
+            activity,
+            settings.accentColor,
+            choices,
+            title = dockTitle,
+        ) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.MOVE -> startDockMove(index)
@@ -953,31 +960,19 @@ class GridDeck(
 
     private fun renameFolder(folderId: String) {
         val current = settings.folders[folderId]?.name ?: folderId
-        val input = android.widget.EditText(activity).apply {
-            setText(current)
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(0x66FFFFFF)
-            setHint(R.string.deck_folder_name_hint)
-            setSingleLine()
+        DeckDialogs.promptText(
+            context = activity,
+            titleRes = R.string.deck_rename_folder,
+            initialText = current,
+            hintRes = R.string.deck_folder_name_hint,
+            positiveRes = R.string.action_save,
+        ) { raw ->
+            val name = raw.trim()
+            if (name.isEmpty()) return@promptText
+            val app = activity.application as GhostGalleonApp
+            app.updateSettings(app.settings.copy(
+                folders = Folders.rename(app.settings.folders, folderId, name)))
         }
-        val container = FrameLayout(activity).apply {
-            val margin = (20 * resources.displayMetrics.density).toInt()
-            setPadding(margin, (12 * resources.displayMetrics.density).toInt(), margin, 0)
-            addView(input)
-        }
-        androidx.appcompat.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.deck_rename_folder)
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val name = input.text.toString().trim()
-                if (name.isEmpty()) return@setPositiveButton
-                val app = activity.application as GhostGalleonApp
-                app.updateSettings(app.settings.copy(
-                    folders = Folders.rename(app.settings.folders, folderId, name)))
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
     }
 
     private fun addFolderMember(folderId: String) {
@@ -1064,7 +1059,8 @@ class GridDeck(
                 )
             }
         }
-        val menu = SlotMenu(activity, settings.accentColor, rows) { choice ->
+        val menuTitle = key?.let(::gridEntryLabel)
+        val menu = SlotMenu(activity, settings.accentColor, rows, title = menuTitle) { choice ->
             closeSlotMenu()
             when (choice) {
                 SlotMenu.Choice.DETAILS -> key?.let { k -> showGridDetails(k) }
@@ -1215,11 +1211,12 @@ class GridDeck(
     }
 
     private fun gridEntryLabel(key: String): String {
+        SlotKey.folderId(key)?.let { fid ->
+            settings.folders[fid]?.name?.takeIf { it.isNotBlank() }?.let { return it }
+        }
         SlotKey.romId(key)?.let { id ->
             roms.firstOrNull { it.id == id }?.let { rom ->
-                return com.visorcraft.ghostgalleon.settings.RomNames.display(
-                    rom, settings.romNames,
-                )
+                return RomNames.display(rom, settings.romNames)
             }
         }
         return settings.customNames[key]
@@ -1291,13 +1288,13 @@ class GridDeck(
                 com.visorcraft.ghostgalleon.library.GameDetails.relatedOptionLabel(it),
             )
         }.toTypedArray()
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(R.string.details_browse_related)
-            .setItems(labels) { _, which ->
-                if (which in options.indices) applyGridRelated(options[which])
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.details_browse_related,
+            items = labels,
+        ) { which ->
+            if (which in options.indices) applyGridRelated(options[which])
+        }
     }
 
     private fun showGridDetails(key: String) {
@@ -1306,7 +1303,7 @@ class GridDeck(
             (activity.application as GhostGalleonApp).romIdentities[it.id]
         }
         val title = when {
-            rom != null -> rom.name
+            rom != null -> RomNames.display(rom, settings.romNames)
             else -> settings.customNames[key]
                 ?: visibleByPkg[key]?.label
                 ?: key
@@ -1336,7 +1333,7 @@ class GridDeck(
             ),
         )
         val related = if (rom != null) gridRelatedOptions(key) else emptyList()
-        val builder = android.app.AlertDialog.Builder(activity)
+        val builder = DeckDialogs.builder(activity)
             .setTitle(R.string.details_title)
             .setMessage(activity.resolveText(body))
             .setPositiveButton(R.string.action_ok, null)
@@ -1351,7 +1348,7 @@ class GridDeck(
                     showGridBrowseRelated(key)
                 }
         }
-        val dialog = builder.show()
+        val dialog = DeckDialogs.show(builder, activity)
         val fullHash = com.visorcraft.ghostgalleon.library.GameDetails.copyableHash(identity)
         if (fullHash != null) {
             dialog.findViewById<TextView>(android.R.id.message)?.setOnLongClickListener {
@@ -1393,52 +1390,40 @@ class GridDeck(
         val romId = SlotKey.romId(key)
         val rom = romId?.let { id -> roms.firstOrNull { it.id == id } }
         val current = if (rom != null) {
-            com.visorcraft.ghostgalleon.settings.RomNames.display(rom, settings.romNames)
+            RomNames.display(rom, settings.romNames)
         } else {
             settings.customNames[key] ?: visibleByPkg[key]?.label ?: key
         }
         val original = rom?.name ?: visibleByPkg[key]?.label ?: key
-        val input = android.widget.EditText(activity).apply {
-            setText(current)
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(0x66FFFFFF)
-            setHint(R.string.deck_display_name_hint)
-            setSingleLine()
-        }
-        val container = FrameLayout(activity).apply {
-            val margin = (20 * resources.displayMetrics.density).toInt()
-            setPadding(margin, (12 * resources.displayMetrics.density).toInt(), margin, 0)
-            addView(input)
-        }
-        androidx.appcompat.app.AlertDialog.Builder(activity)
-            .setTitle(activity.getString(R.string.deck_rename_named, original))
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val name = input.text.toString().trim()
-                val app = activity.application as GhostGalleonApp
-                if (rom != null) {
-                    app.updateSettings(
-                        app.settings.copy(
-                            romNames = com.visorcraft.ghostgalleon.settings.RomNames.set(
-                                app.settings.romNames,
-                                rom.id,
-                                name.takeIf { it.isNotEmpty() && it != rom.name },
-                            ),
+        DeckDialogs.promptText(
+            context = activity,
+            title = activity.getString(R.string.deck_rename_named, original),
+            initialText = current,
+            hintRes = R.string.deck_display_name_hint,
+            positiveRes = R.string.action_save,
+        ) { raw ->
+            val name = raw.trim()
+            val app = activity.application as GhostGalleonApp
+            if (rom != null) {
+                app.updateSettings(
+                    app.settings.copy(
+                        romNames = RomNames.set(
+                            app.settings.romNames,
+                            rom.id,
+                            name.takeIf { it.isNotEmpty() && it != rom.name },
                         ),
-                    )
-                } else {
-                    val names = app.settings.customNames
-                    app.updateSettings(app.settings.copy(
-                        customNames = if (name.isEmpty() || name == current) {
-                            names - key
-                        } else {
-                            names + (key to name)
-                        }))
-                }
+                    ),
+                )
+            } else {
+                val names = app.settings.customNames
+                app.updateSettings(app.settings.copy(
+                    customNames = if (name.isEmpty() || name == current) {
+                        names - key
+                    } else {
+                        names + (key to name)
+                    }))
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        }
     }
 
     private fun closeSlotMenu() {

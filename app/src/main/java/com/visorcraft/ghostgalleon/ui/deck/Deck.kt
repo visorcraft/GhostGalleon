@@ -19,6 +19,7 @@ import com.visorcraft.ghostgalleon.rom.RomProfiles
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.resolveText
 
 interface Deck {
@@ -235,17 +236,17 @@ private fun pickSgdbMatchThenStart(
                 return@runOnUiThread
             }
             val labels = hits.map { it.name }.toTypedArray()
-            android.app.AlertDialog.Builder(activity)
-                .setTitle(R.string.artwork_pick_match)
-                .setItems(labels) { _, which ->
-                    val hit = hits.getOrNull(which) ?: return@setItems
-                    com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = hit.id
-                    com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[rom.id] = hit.id
-                    app.persistSgdbPicks()
-                    pickSgdbImagesThenStart(activity, app, rom, apiKey, hit.id)
-                }
-                .setNegativeButton(R.string.action_cancel, null)
-                .show()
+            DeckDialogs.chooseItem(
+                context = activity,
+                titleRes = R.string.artwork_pick_match,
+                items = labels,
+            ) { which ->
+                val hit = hits.getOrNull(which) ?: return@chooseItem
+                com.visorcraft.ghostgalleon.art.Sgdb.forcedGameIds[rom.id] = hit.id
+                com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[rom.id] = hit.id
+                app.persistSgdbPicks()
+                pickSgdbImagesThenStart(activity, app, rom, apiKey, hit.id)
+            }
         }
     }
 }
@@ -318,19 +319,28 @@ private fun pickImageKind(
                 orientation = android.widget.LinearLayout.VERTICAL
                 setPadding(dp(12), dp(8), dp(12), dp(8))
             }
-            val builder = android.app.AlertDialog.Builder(activity)
+            val builder = DeckDialogs.builder(activity)
                 .setTitle(titleRes)
                 .setNeutralButton(R.string.artwork_use_first) { _, _ ->
                     onPicked(urls.first())
                 }
                 .setNegativeButton(R.string.action_cancel, null)
             val dialog = builder.create()
+            val accent = (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
+                ?.settings?.accentColor
+                ?: com.visorcraft.ghostgalleon.settings.ThemePack.GHOST.accentColor
             thumbs.forEachIndexed { i, (url, bmp) ->
                 val row = android.widget.LinearLayout(activity).apply {
                     orientation = android.widget.LinearLayout.HORIZONTAL
                     gravity = android.view.Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(6), 0, dp(6))
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
                     isClickable = true
+                    isFocusable = true
+                    background = TileBackgrounds.focusableRow(
+                        context = activity,
+                        accent = accent,
+                        cornerRadiusDp = 10,
+                    )
                     setOnClickListener {
                         dialog.dismiss()
                         onPicked(url)
@@ -339,7 +349,7 @@ private fun pickImageKind(
                 val thumb = android.widget.ImageView(activity).apply {
                     scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                     if (bmp != null) setImageBitmap(bmp)
-                    else setBackgroundColor(0xFF2A2A32.toInt())
+                    else setBackgroundColor(TileBackgrounds.surfaceSunken(activity))
                 }
                 row.addView(thumb, android.widget.LinearLayout.LayoutParams(dp(72), dp(40)))
                 row.addView(
@@ -354,8 +364,15 @@ private fun pickImageKind(
                 )
                 col.addView(row)
             }
-            dialog.setView(android.widget.ScrollView(activity).apply { addView(col) })
+            val scroll = OverlayPrimitives.MaxHeightScrollView(
+                activity,
+                OverlayPrimitives.maxModalHeight(activity, 0.56f),
+            ).apply {
+                addView(col)
+            }
+            dialog.setView(scroll)
             dialog.show()
+            DeckDialogs.style(dialog, activity)
         }
     }
 }
