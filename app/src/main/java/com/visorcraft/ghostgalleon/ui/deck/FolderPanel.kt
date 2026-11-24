@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -28,6 +29,7 @@ import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 /** Focus state for [FolderPanel]: either a member cell or the Mirror footer button. */
 internal data class FolderNavState(
@@ -156,6 +158,8 @@ class FolderPanel(
     private var memberKeys: MutableList<Pair<String, String>> = members.toMutableList()
     private var gridHost: LinearLayout? = null
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
+    private var topScrollCue: View? = null
+    private var bottomScrollCue: View? = null
     private var subtitleView: TextView? = null
     private var mirrorButton: TextView? = null
     private var hintFooterView: TextView? = null
@@ -198,7 +202,10 @@ class FolderPanel(
             title = title,
             subtitle = countSubtitle(memberKeys.size),
         )
-        subtitleView = header.getChildAt(1) as? TextView
+        subtitleView = (header.getChildAt(1) as? TextView)?.apply {
+            fontFeatureSettings = "tnum"
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         card.addView(
             header,
             LinearLayout.LayoutParams(
@@ -220,6 +227,14 @@ class FolderPanel(
             context = context,
             maxHeightPx = layoutSpec.maxScrollHeightPx,
         ).apply {
+            isVerticalFadingEdgeEnabled = true
+            isScrollbarFadingEnabled = true
+            setFadingEdgeLength(
+                context.dp(
+                    GridScrollFeedback.fadingEdgeLengthDp(layoutSpec.maxScrollHeightPx, dm.density),
+                ),
+            )
+            setOnScrollChangeListener { _, _, _, _, _ -> updateScrollCues() }
             addView(
                 grid,
                 FrameLayout.LayoutParams(
@@ -229,8 +244,57 @@ class FolderPanel(
             )
         }
         scrollHost = scroll
+
+        val cardSurface = TileBackgrounds.surfaceColor(context)
+        val cueHeightPx = context.dp(12)
+        val topCue = View(context).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(cardSurface, Color.TRANSPARENT),
+            )
+            visibility = View.GONE
+            isClickable = false
+            isFocusable = false
+        }
+        val bottomCue = View(context).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(cardSurface, Color.TRANSPARENT),
+            )
+            visibility = View.GONE
+            isClickable = false
+            isFocusable = false
+        }
+        topScrollCue = topCue
+        bottomScrollCue = bottomCue
+
+        val scrollContainer = FrameLayout(context).apply {
+            addView(
+                scroll,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                topCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    cueHeightPx,
+                    Gravity.TOP,
+                ),
+            )
+            addView(
+                bottomCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    cueHeightPx,
+                    Gravity.BOTTOM,
+                ),
+            )
+        }
         card.addView(
-            scroll,
+            scrollContainer,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -310,23 +374,14 @@ class FolderPanel(
         if (memberKeys.isEmpty()) {
             nav = FolderNavState(selectedCell = 0, mirrorFocused = false)
             grid.addView(
-                TextView(context).apply {
-                    setText(R.string.deck_empty_folder)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    setTextColor(UiDimens.ALPHA_MUTED)
-                    gravity = Gravity.CENTER
-                    setPadding(
-                        context.dp(UiDimens.SPACE_LG),
-                        context.dp(20),
-                        context.dp(UiDimens.SPACE_LG),
-                        context.dp(20),
-                    )
-                },
+                buildEmptyStateView(),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
+            topScrollCue?.visibility = View.GONE
+            bottomScrollCue?.visibility = View.GONE
             return
         }
 
@@ -455,6 +510,78 @@ class FolderPanel(
             )
         }
         paintSelection()
+        scrollHost?.post { updateScrollCues() }
+    }
+
+    private fun buildEmptyStateView(): View {
+        val sunkenFill = TileBackgrounds.surfaceSunken(context)
+        val medallionSize = context.dp(FolderPanelMetrics.EMPTY_MEDALLION_SIZE_DP)
+        val iconSize = context.dp(FolderPanelMetrics.EMPTY_MEDALLION_ICON_DP)
+        val medallion = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(sunkenFill)
+                setStroke(
+                    context.strokePx(1),
+                    TileBackgrounds.hairlineDivider(context),
+                    context.dpF(4),
+                    context.dpF(3),
+                )
+            }
+            addView(
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_folder)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setColorFilter(
+                        FolderPanelMetrics.emptyMedallionTint(accentColor, sunkenFill),
+                        PorterDuff.Mode.SRC_IN,
+                    )
+                },
+                FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER),
+            )
+        }
+        val message = TextView(context).apply {
+            setText(R.string.deck_empty_folder)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            setLineSpacing(0f, 1.25f)
+            gravity = Gravity.CENTER
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(
+                context.dp(UiDimens.SPACE_LG),
+                context.dp(20),
+                context.dp(UiDimens.SPACE_LG),
+                context.dp(20),
+            )
+            addView(
+                medallion,
+                LinearLayout.LayoutParams(medallionSize, medallionSize).apply {
+                    bottomMargin = context.dp(UiDimens.SPACE_MD)
+                },
+            )
+            addView(
+                message,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+    }
+
+    private fun updateScrollCues() {
+        val scroller = scrollHost ?: return
+        val contentH = gridHost?.height ?: 0
+        val cueState = FolderPanelMetrics.scrollCueState(
+            scrollY = scroller.scrollY,
+            contentHeightPx = contentH,
+            viewportHeightPx = scroller.height,
+        )
+        topScrollCue?.visibility = if (cueState.showTopCue) View.VISIBLE else View.GONE
+        bottomScrollCue?.visibility = if (cueState.showBottomCue) View.VISIBLE else View.GONE
     }
 
     private fun roundedRipple(cornerRadiusDp: Int, rippleColor: Int): RippleDrawable {

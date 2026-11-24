@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import kotlin.math.roundToInt
 
@@ -25,6 +26,8 @@ object FolderPanelMetrics {
     const val CELL_FOCUS_SCALE: Float = 1.045f
     const val CELL_FOCUS_ELEVATION_DP: Float = 6f
     const val FOCUS_ANIM_MS: Long = 100L
+    const val EMPTY_MEDALLION_SIZE_DP: Int = 56
+    const val EMPTY_MEDALLION_ICON_DP: Int = 26
 
     data class LayoutSpec(
         val columns: Int,
@@ -32,6 +35,32 @@ object FolderPanelMetrics {
         val thumbSizePx: Int,
         val maxScrollHeightPx: Int,
     )
+
+    data class ScrollCueState(
+        val showTopCue: Boolean,
+        val showBottomCue: Boolean,
+    )
+
+    /** Determine whether top/bottom scroll-more cues should show for [scrollY]. */
+    fun scrollCueState(
+        scrollY: Int,
+        contentHeightPx: Int,
+        viewportHeightPx: Int,
+        tolerancePx: Int = 2,
+    ): ScrollCueState {
+        if (contentHeightPx <= viewportHeightPx + tolerancePx || viewportHeightPx <= 0) {
+            return ScrollCueState(showTopCue = false, showBottomCue = false)
+        }
+        val clampedY = scrollY.coerceAtLeast(0)
+        return ScrollCueState(
+            showTopCue = clampedY > tolerancePx,
+            showBottomCue = (contentHeightPx - (clampedY + viewportHeightPx)) > tolerancePx,
+        )
+    }
+
+    /** WCAG-AA accent glyph tint inside the sunken empty-folder medallion. */
+    fun emptyMedallionTint(accent: Int, sunkenFill: Int): Int =
+        ThemePack.accentTextColor(accent, sunkenFill)
 
     /**
      * Compute responsive column count, modal card width, thumbnail size, and

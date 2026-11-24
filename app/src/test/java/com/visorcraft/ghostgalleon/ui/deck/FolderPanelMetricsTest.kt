@@ -1,7 +1,9 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,6 +65,39 @@ class FolderPanelMetricsTest {
                 assertTrue(spec.thumbSizePx >= 1)
                 assertTrue(spec.maxScrollHeightPx <= h)
             }
+        }
+    }
+
+    @Test
+    fun `scrollCueState reflects non-scrollable, top, middle, and bottom positions accurately`() {
+        // Short content fits cleanly -> neither cue shows.
+        val fits = FolderPanelMetrics.scrollCueState(scrollY = 0, contentHeightPx = 300, viewportHeightPx = 400)
+        assertFalse(fits.showTopCue)
+        assertFalse(fits.showBottomCue)
+
+        // Tall content at top -> only bottom cue shows.
+        val atTop = FolderPanelMetrics.scrollCueState(scrollY = 0, contentHeightPx = 800, viewportHeightPx = 400)
+        assertFalse(atTop.showTopCue)
+        assertTrue(atTop.showBottomCue)
+
+        // Middle of scroll -> both cues show.
+        val middle = FolderPanelMetrics.scrollCueState(scrollY = 180, contentHeightPx = 800, viewportHeightPx = 400)
+        assertTrue(middle.showTopCue)
+        assertTrue(middle.showBottomCue)
+
+        // Reached bottom -> only top cue shows.
+        val atBottom = FolderPanelMetrics.scrollCueState(scrollY = 400, contentHeightPx = 800, viewportHeightPx = 400)
+        assertTrue(atBottom.showTopCue)
+        assertFalse(atBottom.showBottomCue)
+    }
+
+    @Test
+    fun `emptyMedallionTint meets WCAG AA on every built-in theme sunken surface`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val sunken = ThemePack.surfaceSunken(tokens)
+            val tint = FolderPanelMetrics.emptyMedallionTint(tokens.accentColor, sunken)
+            val ratio = ThemePack.contrastRatio(tint, sunken)
+            assertTrue("theme=${tokens.id} medallion contrast $ratio < 4.5", ratio >= ThemePack.MIN_TEXT_CONTRAST)
         }
     }
 }
