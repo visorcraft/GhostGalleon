@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.drawable.Drawable
@@ -77,4 +78,36 @@ class AppIconLoader(private val pm: PackageManager) {
 
     private fun isolateDrawable(template: Drawable): Drawable =
         template.constantState?.newDrawable()?.mutate() ?: template
+
+    companion object {
+        @Volatile
+        private var sharedInstance: AppIconLoader? = null
+
+        /**
+         * Process-shared icon loader backed by [Context.getApplicationContext]'s
+         * [PackageManager] so no [android.app.Activity] is ever retained across
+         * activities, panels, or modals.
+         */
+        fun shared(context: Context): AppIconLoader {
+            sharedInstance?.let { return it }
+            synchronized(this) {
+                return sharedInstance ?: AppIconLoader(
+                    (context.applicationContext ?: context).packageManager,
+                ).also { sharedInstance = it }
+            }
+        }
+
+        /**
+         * Evict one package (or clear the entire shared icon cache when
+         * [packageName] is null/blank) after package install/remove/change events.
+         */
+        fun invalidateShared(packageName: String? = null) {
+            val instance = sharedInstance ?: return
+            if (packageName.isNullOrBlank()) {
+                instance.clear()
+            } else {
+                instance.evict(packageName)
+            }
+        }
+    }
 }

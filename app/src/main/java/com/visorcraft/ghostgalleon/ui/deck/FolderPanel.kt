@@ -3,7 +3,6 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -13,7 +12,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
 import android.widget.Button
@@ -137,6 +135,49 @@ internal object FolderPanelNav {
             mirrorFocused = false,
         )
     }
+
+    internal data class DirtyUpdate(
+        val cellIndices: List<Int>,
+        val updateMirror: Boolean,
+    )
+
+    /**
+     * Minimal set of member cells (`<= 2`) and Mirror-footer flag to repaint
+     * on transition from [previous] to [next]. Pass `previous = null` on
+     * initial build or after grid rebuild to paint all cells.
+     */
+    fun dirtyUpdate(
+        previous: FolderNavState?,
+        next: FolderNavState,
+        cellCount: Int,
+        hasMirror: Boolean,
+    ): DirtyUpdate {
+        val nextActive = if (next.mirrorFocused || cellCount <= 0) {
+            -1
+        } else {
+            GridWrapNav.clampIndex(next.selectedCell, cellCount)
+        }
+        if (previous == null) {
+            return DirtyUpdate(
+                cellIndices = if (cellCount > 0) (0 until cellCount).toList() else emptyList(),
+                updateMirror = hasMirror,
+            )
+        }
+        val prevActive = if (previous.mirrorFocused || cellCount <= 0) {
+            -1
+        } else {
+            GridWrapNav.clampIndex(previous.selectedCell, cellCount)
+        }
+        val dirtyCells = ArrayList<Int>(2)
+        if (prevActive >= 0 && prevActive != nextActive) dirtyCells.add(prevActive)
+        if (nextActive >= 0 && nextActive != prevActive) dirtyCells.add(nextActive)
+        val prevMirror = previous.mirrorFocused && hasMirror
+        val nextMirror = next.mirrorFocused && hasMirror
+        return DirtyUpdate(
+            cellIndices = dirtyCells,
+            updateMirror = prevMirror != nextMirror,
+        )
+    }
 }
 
 /**
@@ -157,8 +198,14 @@ class FolderPanel(
     /** Bind thumbnail art into the cell [ImageView] for [key]. */
     private val onBindThumb: ((ImageView, String) -> Unit)? = null,
 ) {
+    private data class BoundCell(
+        val container: LinearLayout,
+        val labelView: TextView,
+    )
+
     private var nav = FolderNavState()
-    private val cells = mutableListOf<View>()
+    private var paintedNav: FolderNavState? = null
+    private val cells = mutableListOf<BoundCell>()
     private var memberKeys: MutableList<Pair<String, String>> = members.toMutableList()
     private var gridHost: LinearLayout? = null
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
@@ -386,6 +433,7 @@ class FolderPanel(
         val grid = gridHost ?: return
         grid.removeAllViews()
         cells.clear()
+        paintedNav = null
         subtitleView?.text = countSubtitle(memberKeys.size)
         mirrorButton?.visibility = if (hasMirror) View.VISIBLE else View.GONE
         hintFooterView?.setText(hintResForState())
@@ -459,11 +507,7 @@ class FolderPanel(
                 }
                 val thumbBox = FrameLayout(context).apply {
                     background = TileBackgrounds.sunkenField(context, cornerRadiusDp = thumbRadiusDp)
-                    outlineProvider = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) {
-                            outline.setRoundRect(0, 0, view.width, view.height, thumbRadiusPx)
-                        }
-                    }
+                    outlineProvider = OutlineCache.roundedRect(thumbRadiusPx)
                     clipToOutline = true
                 }
                 if (SlotKey.isRom(key)) {
@@ -491,23 +535,24 @@ class FolderPanel(
                 )
                 cell.addView(thumbBox, LinearLayout.LayoutParams(thumbSize, thumbSize))
                 onBindThumb?.invoke(thumb, key)
+                val labelTv = TextView(context).apply {
+                    text = label
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(GridLabelMetrics.LABEL_UNFOCUSED_COLOR)
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    includeFontPadding = false
+                    setPadding(0, context.dp(UiDimens.SPACE_XS), 0, 0)
+                }
                 cell.addView(
-                    TextView(context).apply {
-                        text = label
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                        setTextColor(GridLabelMetrics.LABEL_UNFOCUSED_COLOR)
-                        gravity = Gravity.CENTER
-                        maxLines = 2
-                        ellipsize = TextUtils.TruncateAt.END
-                        includeFontPadding = false
-                        setPadding(0, context.dp(UiDimens.SPACE_XS), 0, 0)
-                    },
+                    labelTv,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                     ),
                 )
-                cells.add(cell)
+                cells.add(BoundCell(cell, labelTv))
                 row.addView(
                     cell,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -618,7 +663,7 @@ class FolderPanel(
     }
 
     private fun cancelAnimations() {
-        cells.forEach { it.animate().cancel() }
+        cells.forEach { it.container.animate().cancel() }
         mirrorButton?.animate()?.cancel()
         subtitleView?.animate()?.cancel()
         gridHost?.animate()?.cancel()
@@ -630,95 +675,119 @@ class FolderPanel(
         } else {
             GridWrapNav.clampIndex(nav.selectedCell, cells.size)
         }
-        val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
+        val dirty = FolderPanelNav.dirtyUpdate(
+            previous = paintedNav,
+            next = nav,
+            cellCount = cells.size,
+            hasMirror = hasMirror,
+        )
         val surfaceFill = TileBackgrounds.surfaceColor(context)
-        val focusStrokeColor = DeckThemeContrast.accessibleFocusStroke(accentColor, surfaceFill)
-        val cellTemplate = focusedCellTemplate ?: TileBackgrounds.focusStroke(
-            context = context,
-            accent = focusStrokeColor,
-            fill = surfaceFill,
-            cornerRadiusDp = cellRadiusDp,
-            strokeDp = 3,
-        ).also { focusedCellTemplate = it }
         val animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled()
-        cells.forEachIndexed { index, cell ->
-            val selected = index == activeCell
-            cell.isSelected = selected
-            cell.background = if (selected) {
-                (cellTemplate.constantState?.newDrawable()?.mutate() as? GradientDrawable)
-                    ?: cellTemplate
-            } else {
-                null
-            }
-            val labelView = (cell as? LinearLayout)?.let { ll ->
-                if (ll.childCount > 1) ll.getChildAt(ll.childCount - 1) as? TextView else null
-            }
-            if (labelView != null) {
-                val style = GridLabelMetrics.labelStyleForRole(
-                    if (selected) MoveChoreography.SlotRole.FOCUSED else MoveChoreography.SlotRole.NORMAL,
-                )
-                labelView.setTextColor(style.textColor)
-                labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
-            }
-            val scale = if (selected) FolderPanelMetrics.CELL_FOCUS_SCALE else 1f
-            cell.translationZ = if (selected) context.dpF(FolderPanelMetrics.CELL_FOCUS_ELEVATION_DP) else 0f
-            cell.animate().cancel()
-            if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, cell.isLaidOut)) {
-                cell.animate()
-                    .scaleX(scale)
-                    .scaleY(scale)
-                    .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
-                    .setInterpolator(FOCUS_INTERPOLATOR)
-                    .start()
-            } else {
-                cell.scaleX = scale
-                cell.scaleY = scale
-            }
-        }
-
-        mirrorButton?.let { btn ->
-            val focused = nav.mirrorFocused && hasMirror
-            val mirrorRadius = themeTokens.cardRadiusDp.coerceAtMost(16)
-            val style = FolderPanelMetrics.mirrorButtonStyle(
-                focused = focused,
-                accent = accentColor,
-                surfaceFill = surfaceFill,
-                chipIdleFill = TileBackgrounds.chipIdleColor(context),
-                hairlineColor = TileBackgrounds.hairlineDivider(context),
-            )
-            btn.isSelected = focused
-            val existingBg = btn.background as? GradientDrawable
-            if (existingBg != null) {
-                existingBg.mutate()
-                existingBg.setColor(style.fillColor)
-                existingBg.cornerRadius = context.dpF(mirrorRadius)
-                existingBg.setStroke(context.strokePx(style.strokeDp), style.strokeColor)
-            } else {
-                btn.background = GradientDrawable().apply {
-                    setColor(style.fillColor)
-                    cornerRadius = context.dpF(mirrorRadius)
-                    setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+        if (dirty.cellIndices.isNotEmpty()) {
+            val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
+            val focusStrokeColor = DeckThemeContrast.accessibleFocusStroke(accentColor, surfaceFill)
+            val cellTemplate = focusedCellTemplate ?: TileBackgrounds.focusStroke(
+                context = context,
+                accent = focusStrokeColor,
+                fill = surfaceFill,
+                cornerRadiusDp = cellRadiusDp,
+                strokeDp = 3,
+            ).also { focusedCellTemplate = it }
+            // Clear unfocused cells first so the single shared focus drawable never attaches twice.
+            for (index in dirty.cellIndices) {
+                if (index == activeCell) continue
+                val bound = cells[index]
+                val cell = bound.container
+                cell.isSelected = false
+                cell.background = null
+                val style = GridLabelMetrics.labelStyleForRole(MoveChoreography.SlotRole.NORMAL)
+                bound.labelView.setTextColor(style.textColor)
+                bound.labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+                cell.translationZ = 0f
+                cell.animate().cancel()
+                if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, cell.isLaidOut)) {
+                    cell.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
+                        .setInterpolator(FOCUS_INTERPOLATOR)
+                        .start()
+                } else {
+                    cell.scaleX = 1f
+                    cell.scaleY = 1f
                 }
             }
-            btn.setTextColor(style.textColor)
-            btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
-            btn.translationZ = if (style.elevationDp > 0f) context.dpF(style.elevationDp) else 0f
-            btn.animate().cancel()
-            if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, btn.isLaidOut)) {
-                btn.animate()
-                    .scaleX(style.scale)
-                    .scaleY(style.scale)
-                    .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
-                    .setInterpolator(FOCUS_INTERPOLATOR)
-                    .start()
-            } else {
-                btn.scaleX = style.scale
-                btn.scaleY = style.scale
+            if (activeCell >= 0 && activeCell in dirty.cellIndices) {
+                val bound = cells[activeCell]
+                val cell = bound.container
+                cell.isSelected = true
+                cell.background = cellTemplate
+                val style = GridLabelMetrics.labelStyleForRole(MoveChoreography.SlotRole.FOCUSED)
+                bound.labelView.setTextColor(style.textColor)
+                bound.labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+                val scale = FolderPanelMetrics.CELL_FOCUS_SCALE
+                cell.translationZ = context.dpF(FolderPanelMetrics.CELL_FOCUS_ELEVATION_DP)
+                cell.animate().cancel()
+                if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, cell.isLaidOut)) {
+                    cell.animate()
+                        .scaleX(scale)
+                        .scaleY(scale)
+                        .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
+                        .setInterpolator(FOCUS_INTERPOLATOR)
+                        .start()
+                } else {
+                    cell.scaleX = scale
+                    cell.scaleY = scale
+                }
             }
         }
 
+        if (dirty.updateMirror) {
+            mirrorButton?.let { btn ->
+                val focused = nav.mirrorFocused && hasMirror
+                val mirrorRadius = themeTokens.cardRadiusDp.coerceAtMost(16)
+                val style = FolderPanelMetrics.mirrorButtonStyle(
+                    focused = focused,
+                    accent = accentColor,
+                    surfaceFill = surfaceFill,
+                    chipIdleFill = TileBackgrounds.chipIdleColor(context),
+                    hairlineColor = TileBackgrounds.hairlineDivider(context),
+                )
+                btn.isSelected = focused
+                val existingBg = btn.background as? GradientDrawable
+                if (existingBg != null) {
+                    existingBg.mutate()
+                    existingBg.setColor(style.fillColor)
+                    existingBg.cornerRadius = context.dpF(mirrorRadius)
+                    existingBg.setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+                } else {
+                    btn.background = GradientDrawable().apply {
+                        setColor(style.fillColor)
+                        cornerRadius = context.dpF(mirrorRadius)
+                        setStroke(context.strokePx(style.strokeDp), style.strokeColor)
+                    }
+                }
+                btn.setTextColor(style.textColor)
+                btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+                btn.translationZ = if (style.elevationDp > 0f) context.dpF(style.elevationDp) else 0f
+                btn.animate().cancel()
+                if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, btn.isLaidOut)) {
+                    btn.animate()
+                        .scaleX(style.scale)
+                        .scaleY(style.scale)
+                        .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
+                        .setInterpolator(FOCUS_INTERPOLATOR)
+                        .start()
+                } else {
+                    btn.scaleX = style.scale
+                    btn.scaleY = style.scale
+                }
+            }
+        }
+        paintedNav = nav
+
         if (activeCell >= 0) {
-            val focusedRow = cells.getOrNull(activeCell)?.parent as? View ?: return
+            val focusedRow = cells.getOrNull(activeCell)?.container?.parent as? View ?: return
             val scroller = scrollHost ?: return
             scroller.post {
                 val contentH = gridHost?.height ?: 0

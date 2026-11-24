@@ -9,7 +9,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -926,10 +925,9 @@ object CompanionPanel {
     ) {
         val context = target.context
         val radiusPx = context.dpF(cornerRadiusDp)
-        target.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-            }
+        val provider = OutlineCache.roundedRect(radiusPx)
+        if (target.outlineProvider !== provider) {
+            target.outlineProvider = provider
         }
         target.elevation = context.dpF(elevationDp)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -1041,49 +1039,44 @@ object CompanionPanel {
     }
 
     // Cheap Palette stand-in: draw the icon at 16x16 and average the opaque
-    // pixels. Null when the icon cannot be rasterized.
+    // pixels. Null when the icon cannot be rasterized. Always recycles the
+    // temporary 16x16 bitmap so repeated lookups leave zero native leaks.
     private fun dominantColor(drawable: Drawable): Int? = runCatching {
         val bmp = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        drawable.setBounds(0, 0, 16, 16)
-        drawable.draw(canvas)
-        var r = 0L; var g = 0L; var b = 0L; var n = 0L
-        for (y in 0 until 16) {
-            for (x in 0 until 16) {
-                val p = bmp.getPixel(x, y)
-                if (p ushr 24 < 0x40) continue
-                r += (p shr 16) and 0xFF
-                g += (p shr 8) and 0xFF
-                b += p and 0xFF
-                n++
+        try {
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, 16, 16)
+            drawable.draw(canvas)
+            var r = 0L; var g = 0L; var b = 0L; var n = 0L
+            for (y in 0 until 16) {
+                for (x in 0 until 16) {
+                    val p = bmp.getPixel(x, y)
+                    if (p ushr 24 < 0x40) continue
+                    r += (p shr 16) and 0xFF
+                    g += (p shr 8) and 0xFF
+                    b += p and 0xFF
+                    n++
+                }
             }
+            if (n == 0L) return null
+            Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+        } finally {
+            bmp.recycle()
         }
-        if (n == 0L) return null
-        Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
     }.getOrNull()
 
     // Glow tint cache: PM icon + 16×16 average is too heavy for every NAV.
     private val glowColorByPackage = HashMap<String, Int>(32)
 
-    private var cachedIconLoader: AppIconLoader? = null
-    private var cachedIconPm: android.content.pm.PackageManager? = null
-
-    private fun iconLoader(context: Context): AppIconLoader {
-        val pm = context.packageManager
-        val hit = cachedIconLoader
-        if (hit != null && cachedIconPm === pm) return hit
-        return AppIconLoader(pm).also {
-            cachedIconLoader = it
-            cachedIconPm = pm
-        }
-    }
+    private fun iconLoader(context: Context): AppIconLoader = AppIconLoader.shared(context)
 
     // Glow tint: dominant color of the selected app's icon when available,
-    // otherwise the accent color.
+    // otherwise the accent color. Reuses process-shared AppIconLoader so
+    // cached icons avoid redundant PackageManager Binder IPCs.
     private fun glowColor(context: Context, packageName: String?, settings: Settings): Int {
         if (packageName != null) {
             glowColorByPackage[packageName]?.let { return it }
-            runCatching { context.packageManager.getApplicationIcon(packageName) }
+            runCatching { iconLoader(context).load(packageName) }
                 .getOrNull()
                 ?.let { dominantColor(it) }
                 ?.let {
@@ -1092,6 +1085,97 @@ object CompanionPanel {
                 }
         }
         return settings.accentColor
+    }
+
+    /** Pure host-tested gate skipping redundant accent/background repaints on NAV ticks. */
+    internal fun shouldRepaintAccent(
+        hasPaintedAccent: Boolean,
+        previousAccent: Int,
+        nextAccent: Int,
+    ): Boolean = !hasPaintedAccent || previousAccent != nextAccent
+
+    /** Pure host-tested stale-result guard for off-UI animated WebP swaps. */
+    internal fun shouldApplyDecodedAnim(
+        isAttached: Boolean,
+        currentToken: Any?,
+        expectedToken: String,
+    ): Boolean = isAttached && currentToken == expectedToken
+
+    private class HolderFrameLayout(context: Context) : FrameLayout(context) {
+        var surfaceHolder: PanelSurfaceHolder? = null
+    }
+
+    private sealed class PanelSurfaceHolder {
+        object PlayHud : PanelSurfaceHolder()
+        object PerfHud : PanelSurfaceHolder()
+
+        class TopStrip(
+            val stripRoot: FrameLayout,
+            val panelRoot: LinearLayout,
+            val artHost: FrameLayout,
+            val artRomTile: TextView,
+            val artRomImage: ImageView,
+            val artAppImage: ImageView,
+            val favView: TextView,
+            val nameView: TextView,
+            val subView: TextView,
+            val detailView: TextView,
+            val raRow: LinearLayout,
+            val raView: TextView,
+            val raBar: MeterBarView,
+            val dividerView: View,
+            var lastStripAccent: Int,
+            var hasStripAccent: Boolean = true,
+            var lastIsRom: Boolean,
+        ) : PanelSurfaceHolder()
+
+        class Hero(
+            val panelRoot: View,
+            val resumeChip: View?,
+            val isRomHero: Boolean,
+            val isAppHero: Boolean,
+            val romBanner: FrameLayout? = null,
+            val romTileFrame: FrameLayout? = null,
+            val romTile: TextView? = null,
+            val romLogo: ImageView? = null,
+            val romMeta: TextView? = null,
+            val romMetadata: TextView? = null,
+            val romPlayer: TextView? = null,
+            val romRa: TextView? = null,
+            val romRaBar: MeterBarView? = null,
+            val romDesc: TextView? = null,
+            val romShot: ImageView? = null,
+            val romVideoHost: FrameLayout? = null,
+            val romQuickBar: View? = null,
+            val romQuickFav: TextView? = null,
+            val appPedestal: FrameLayout? = null,
+            val appIcon: ImageView? = null,
+            val nameView: TextView? = null,
+            val subView: TextView? = null,
+            var lastPanelAccent: Int = 0,
+            var hasPanelAccent: Boolean = false,
+            var lastArtAccent: Int = 0,
+            var hasArtAccent: Boolean = false,
+        ) : PanelSurfaceHolder()
+    }
+
+    /**
+     * O(1) resolution of the attached [PanelSurfaceHolder] from either the panel
+     * root directly or `android.R.id.content` (dual companion = child 0;
+     * single-display TOP_STRIP = child 0 -> child 0). Avoids 13–20 DFS walks per NAV.
+     */
+    private fun resolveSurfaceHolder(view: View): PanelSurfaceHolder? {
+        if (view is HolderFrameLayout) return view.surfaceHolder
+        val vg = view as? ViewGroup ?: return null
+        if (vg.childCount == 0) return null
+        val first = vg.getChildAt(0)
+        if (first is HolderFrameLayout) return first.surfaceHolder
+        val firstGroup = first as? ViewGroup ?: return null
+        if (firstGroup.childCount > 0) {
+            val nested = firstGroup.getChildAt(0)
+            if (nested is HolderFrameLayout) return nested.surfaceHolder
+        }
+        return null
     }
 
     /**
@@ -1135,39 +1219,71 @@ object CompanionPanel {
         roms: List<RomEntry>,
         settings: Settings,
     ): Boolean {
-        // KEEP play HUD / PERF are the common companion KEEP surfaces —
-        // check them before TOP_STRIP so NAV does not walk the tree twice.
-        if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) {
-            val ctxApp = context.applicationContext as? GhostGalleonApp
-            if (ctxApp != null) {
-                com.visorcraft.ghostgalleon.ui.tickPlayHudClock(view, ctxApp, context)
+        val holder = resolveSurfaceHolder(view)
+        when (holder) {
+            PanelSurfaceHolder.PlayHud -> {
+                val ctxApp = context.applicationContext as? GhostGalleonApp
+                if (ctxApp != null) {
+                    com.visorcraft.ghostgalleon.ui.tickPlayHudClock(view, ctxApp, context)
+                }
+                return true
             }
-            return true
+            PanelSurfaceHolder.PerfHud -> return true
+            is PanelSurfaceHolder.TopStrip ->
+                return updateTopStrip(holder, context, state, library, roms, settings)
+            is PanelSurfaceHolder.Hero ->
+                return updateHeroSelection(holder, context, state, library, roms, settings)
+            null -> {
+                // Fallback when view was built outside HolderFrameLayout (e.g. PINNED_APP / NOW_PLAYING).
+                if (view.findViewWithTag<View>(TAG_PLAY_HUD) != null) {
+                    val ctxApp = context.applicationContext as? GhostGalleonApp
+                    if (ctxApp != null) {
+                        com.visorcraft.ghostgalleon.ui.tickPlayHudClock(view, ctxApp, context)
+                    }
+                    return true
+                }
+                if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
+                val stripRoot = view.findViewWithTag<View>(TAG_TOP_STRIP) as? HolderFrameLayout
+                val stripHolder = stripRoot?.surfaceHolder as? PanelSurfaceHolder.TopStrip
+                if (stripHolder != null) {
+                    return updateTopStrip(stripHolder, context, state, library, roms, settings)
+                }
+                val app = context.applicationContext as? GhostGalleonApp
+                if (selectedRom(state.selectedKey, roms, app) != null) return false
+                val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
+                return entry == null &&
+                    view.findViewWithTag<View>(TAG_HERO_ICON) == null &&
+                    view.findViewWithTag<View>(TAG_HERO_NAME) == null
+            }
         }
-        if (view.findViewWithTag<View>(TAG_PERF_HUD_ROOT) != null) return true
-        // Compact TOP_STRIP path: always selection-context, never full dual roles.
-        if (view.findViewWithTag<View>(TAG_TOP_STRIP) != null) {
-            return updateTopStrip(view, context, state, library, roms, settings)
-        }
+    }
+
+    private fun updateHeroSelection(
+        holder: PanelSurfaceHolder.Hero,
+        context: Context,
+        state: DeckState,
+        library: AppLibrary,
+        roms: List<RomEntry>,
+        settings: Settings,
+    ): Boolean {
         // Resume chip: only touch an existing view (GONE/show). Never require
         // the chip to exist when resumeChip is on — content may omit it.
-        view.findViewWithTag<View>(TAG_RESUME_CHIP)?.let { chip ->
+        holder.resumeChip?.let { chip ->
             val show = settings.browseChrome.resumeChip && !settings.hideResumeChip
-            chip.visibility = if (show) View.VISIBLE else View.GONE
+            val nextVis = if (show) View.VISIBLE else View.GONE
+            if (chip.visibility != nextVis) chip.visibility = nextVis
         }
         val app = context.applicationContext as? GhostGalleonApp
         val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
-            // In-place only when the hero is already in ROM shape (banner
-            // frame + tile TextView + name + platform subtitle).
-            val tile = view.findViewWithTag<View>(TAG_HERO_ICON) as? TextView
-                ?: return false
-            val name = view.findViewWithTag<TextView>(TAG_HERO_NAME) ?: return false
-            val sub = view.findViewWithTag<TextView>(TAG_HERO_SUB) ?: return false
-            val banner = view.findViewWithTag<View>(TAG_HERO_BANNER) as? FrameLayout
-                ?: return false
-            val tileFrame = tile.parent as? FrameLayout ?: return false
-            val cache = (context.applicationContext as GhostGalleonApp).artCache
+            if (!holder.isRomHero) return false
+            val tile = holder.romTile ?: return false
+            val name = holder.nameView ?: return false
+            val sub = holder.subView ?: return false
+            val banner = holder.romBanner ?: return false
+            val tileFrame = holder.romTileFrame ?: return false
+            val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
+            val cache = appCtx.artCache
             val artGen = cache.artGeneration(rom.id)
             val alreadyBound = sameHeroBinding(
                 name.getTag(R.id.hero_bound_id),
@@ -1182,14 +1298,14 @@ object CompanionPanel {
             val previousName = name.text
             if (!alreadyBound) {
                 PlatformTile.restyle(tile, context, rom.platformId)
-            }
-            // Rebind the art chain only when the ROM or cache generation
-            // changed (NAV same-title skip; scrape / SET_ART still refresh).
-            if (!alreadyBound) {
                 val artPx = (heroSpec.artSizeDp * dens).toInt()
-                val artElevation = CompanionHeroStyle.artElevationDp(heroSpec.artSizeDp)
-                applyHeroArtFrame(tileFrame, platformAccent, artElevation)
-                applyHeroArtFrame(banner, platformAccent, artElevation)
+                if (shouldRepaintAccent(holder.hasArtAccent, holder.lastArtAccent, platformAccent)) {
+                    val artElevation = CompanionHeroStyle.artElevationDp(heroSpec.artSizeDp)
+                    applyHeroArtFrame(tileFrame, platformAccent, artElevation)
+                    applyHeroArtFrame(banner, platformAccent, artElevation)
+                    holder.lastArtAccent = platformAccent
+                    holder.hasArtAccent = true
+                }
                 bindRomHeroArt(
                     banner,
                     tileFrame,
@@ -1199,11 +1315,7 @@ object CompanionPanel {
                     artPx,
                 )
                 animateHeroArtSettle(tileFrame)
-                bindHeroLogo(
-                    view.findViewWithTag(TAG_HERO_LOGO),
-                    cache,
-                    rom,
-                )
+                bindHeroLogo(holder.romLogo, cache, rom)
             }
             name.setTag(R.id.hero_bound_id, rom.id)
             name.setTag(R.id.hero_art_gen, artGen)
@@ -1233,69 +1345,59 @@ object CompanionPanel {
                 animateHeroTextSettle(name, dens)
                 animateHeroTextSettle(sub, dens)
             }
-            view.findViewWithTag<TextView>(TAG_HERO_META)?.visibility = View.GONE
-            view.findViewWithTag<TextView>(TAG_HERO_PLAYER)?.visibility = View.GONE
-            bindMetadataLine(view.findViewWithTag(TAG_HERO_METADATA), rom)
-            val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
+            holder.romMeta?.let { if (it.visibility != View.GONE) it.visibility = View.GONE }
+            holder.romPlayer?.let { if (it.visibility != View.GONE) it.visibility = View.GONE }
+            bindMetadataLine(holder.romMetadata, rom)
             val raProgress = appCtx.raProgressFor(rom.id)
             val hasRaCreds = !settings.raApiKey.isNullOrBlank()
             bindRaLine(
-                tv = view.findViewWithTag(TAG_HERO_RA),
-                bar = view.findViewWithTag(TAG_HERO_RA_BAR),
+                tv = holder.romRa,
+                bar = holder.romRaBar,
                 progress = raProgress,
                 hasCreds = hasRaCreds,
                 accentColor = settings.accentColor,
             )
             val desc = HeroDetail.descriptionText(rom.description)
-            view.findViewWithTag<TextView>(TAG_HERO_DESC)?.let { tv ->
+            holder.romDesc?.let { tv ->
                 if (desc != null) {
-                    tv.visibility = View.VISIBLE
+                    if (tv.visibility != View.VISIBLE) tv.visibility = View.VISIBLE
                     tv.text = desc
                 } else {
-                    tv.visibility = View.GONE
-                    tv.text = ""
+                    if (tv.visibility != View.GONE) tv.visibility = View.GONE
+                    if (tv.text.isNotEmpty()) tv.text = ""
                 }
             }
             if (!alreadyBound) {
-                bindScreenshot(
-                    view.findViewWithTag(TAG_HERO_SHOT),
-                    appCtx.artCache,
-                    rom,
-                )
-                bindHeroVideo(view.findViewWithTag(TAG_HERO_VIDEO_HOST), rom)
-            }
-            if (!alreadyBound) {
-                view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
-                    panelBackground(context, platformAccent)
+                bindScreenshot(holder.romShot, cache, rom)
+                bindHeroVideo(holder.romVideoHost, rom)
+                if (shouldRepaintAccent(holder.hasPanelAccent, holder.lastPanelAccent, platformAccent)) {
+                    holder.panelRoot.background = panelBackground(context, platformAccent)
+                    holder.lastPanelAccent = platformAccent
+                    holder.hasPanelAccent = true
+                }
                 appCtx.requestRaProgress(rom.id, rom.name)
             }
             val romKey = SlotKey.rom(rom.id)
-            view.findViewWithTag<TextView>(TAG_HERO_QUICK_FAV)?.let { favChip ->
+            holder.romQuickFav?.let { favChip ->
                 styleFavoriteQuickChip(
                     chip = favChip,
                     isFavorite = isSelectedFavorite(romKey, settings.favorites),
                     accentColor = settings.accentColor,
                 )
             }
-            view.findViewWithTag<View>(TAG_HERO_QUICK_BAR)?.let { bar ->
+            holder.romQuickBar?.let { bar ->
                 if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
             }
             return true
         }
         val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
-        // Find as View first: the ROM hero tags a TextView tile with
-        // TAG_HERO_ICON, and findViewWithTag<ImageView> would throw a
-        // ClassCastException on it instead of returning null.
-        val heroIcon = view.findViewWithTag<View>(TAG_HERO_ICON)
-        val name = view.findViewWithTag<TextView>(TAG_HERO_NAME)
         if (entry == null) {
-            // Only already showing the wordmark counts as up to date.
-            return heroIcon == null && name == null
+            // Already showing the brand hero (neither ROM nor App hero): stay in place.
+            return !holder.isRomHero && !holder.isAppHero
         }
-        // A ROM-shaped hero showing while an app is selected is a structure
-        // mismatch -> full rebuild.
-        val icon = heroIcon as? ImageView ?: return false
-        if (name == null) return false
+        if (!holder.isAppHero) return false
+        val icon = holder.appIcon ?: return false
+        val name = holder.nameView ?: return false
         val dens = context.resources.displayMetrics.density
         val hDp = context.resources.displayMetrics.heightPixels / dens
         val appHeroSpec = CompanionHeroMetrics.forPanel(hDp)
@@ -1308,9 +1410,10 @@ object CompanionPanel {
             CustomIcon.bind(
                 icon, iconLoader(context),
                 appCtx.artCache,
-                settings, entry.packageName, targetPx)
+                settings, entry.packageName, targetPx,
+            )
             animateHeroArtSettle(icon)
-            view.findViewWithTag<FrameLayout>(TAG_HERO_APP_PEDESTAL)?.let { pedestal ->
+            holder.appPedestal?.let { pedestal ->
                 applyAppPedestalFrame(
                     pedestal = pedestal,
                     accentColor = appGlow,
@@ -1321,7 +1424,7 @@ object CompanionPanel {
         }
         name.setTag(R.id.hero_bound_id, entry.packageName)
         name.text = entry.label
-        val appSub = view.findViewWithTag<TextView>(TAG_HERO_SUB)
+        val appSub = holder.subView
         if (appSub != null) {
             appSub.text = context.resolveText(
                 HeroDetail.compactSubline(
@@ -1335,11 +1438,11 @@ object CompanionPanel {
             animateHeroTextSettle(name, dens)
             if (appSub != null) animateHeroTextSettle(appSub, dens)
         }
-        // Cached glow (no PM + 16×16 average every NAV).
-        view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
-            context,
-            appGlow,
-        )
+        if (shouldRepaintAccent(holder.hasPanelAccent, holder.lastPanelAccent, appGlow)) {
+            holder.panelRoot.background = panelBackground(context, appGlow)
+            holder.lastPanelAccent = appGlow
+            holder.hasPanelAccent = true
+        }
         return true
     }
 
@@ -1536,28 +1639,101 @@ object CompanionPanel {
         }
     }
 
-    // Loads res/raw/<name> (animated WebP/GIF) as a started-or-startable
-    // AnimatedImageDrawable; null when the asset is absent, undecodable, or
-    // the platform predates ImageDecoder (API 28). Looked up by name so a
-    // drop-in asset never needs a code change.
-    private fun loadAnimated(context: Context, rawName: String): Drawable? {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return null
-        val id = context.resources.getIdentifier(rawName, "raw", context.packageName)
-        if (id == 0) return null
-        return runCatching {
-            android.graphics.ImageDecoder.decodeDrawable(
-                android.graphics.ImageDecoder.createSource(context.resources, id),
-            )
-        }.getOrNull()?.takeIf {
-            it is android.graphics.drawable.AnimatedImageDrawable
+    private val animDecodeExecutor by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "gg-hero-anim").apply {
+                isDaemon = true
+                priority = Thread.NORM_PRIORITY - 1
+            }
+        }
+    }
+    private val animMainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val animBindSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private fun rawAnimResId(context: Context, rawName: String): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return 0
+        val appContext = context.applicationContext ?: context
+        return appContext.resources.getIdentifier(rawName, "raw", appContext.packageName)
+    }
+
+    private fun stopAnimatedDrawable(image: ImageView) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            (image.drawable as? android.graphics.drawable.AnimatedImageDrawable)?.stop()
         }
     }
 
-    private fun ImageView.showAnimated(drawable: Drawable) {
-        setImageDrawable(drawable)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            (drawable as? android.graphics.drawable.AnimatedImageDrawable)?.start()
+    /**
+     * Decode a heavy animated WebP (`res/raw/<rawName>`) off the UI thread once
+     * [image] attaches, swap it in on the main thread only if still attached and
+     * bound to the same token, and stop + release any active
+     * [android.graphics.drawable.AnimatedImageDrawable] on detach.
+     */
+    private fun bindAnimatedAsync(image: ImageView, rawName: String) {
+        val resId = rawAnimResId(image.context, rawName)
+        if (resId == 0) return
+        val appContext = image.context.applicationContext ?: image.context
+        val token = "anim:$rawName:${animBindSeq.incrementAndGet()}"
+        image.setTag(R.id.media_bind_uri, token)
+        var dispatched = false
+        fun kickDecode() {
+            if (dispatched) return
+            dispatched = true
+            animDecodeExecutor.execute {
+                val decoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    runCatching {
+                        android.graphics.ImageDecoder.decodeDrawable(
+                            android.graphics.ImageDecoder.createSource(appContext.resources, resId),
+                        )
+                    }.getOrNull()?.takeIf {
+                        it is android.graphics.drawable.AnimatedImageDrawable
+                    }
+                } else {
+                    null
+                } ?: return@execute
+                animMainHandler.post {
+                    if (!shouldApplyDecodedAnim(
+                            isAttached = image.isAttachedToWindow,
+                            currentToken = image.getTag(R.id.media_bind_uri),
+                            expectedToken = token,
+                        )
+                    ) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            (decoded as? android.graphics.drawable.AnimatedImageDrawable)?.stop()
+                        }
+                        return@post
+                    }
+                    stopAnimatedDrawable(image)
+                    image.setImageDrawable(decoded)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        (decoded as? android.graphics.drawable.AnimatedImageDrawable)?.start()
+                    }
+                }
+            }
         }
+        image.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                val iv = v as? ImageView ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    (iv.drawable as? android.graphics.drawable.AnimatedImageDrawable)?.let { anim ->
+                        anim.start()
+                        return
+                    }
+                }
+                if (iv.getTag(R.id.media_bind_uri) == token) kickDecode()
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                val iv = v as? ImageView ?: return
+                iv.setTag(R.id.media_bind_uri, null)
+                stopAnimatedDrawable(iv)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                    iv.drawable is android.graphics.drawable.AnimatedImageDrawable
+                ) {
+                    iv.setImageDrawable(null)
+                }
+            }
+        })
+        if (image.isAttachedToWindow) kickDecode()
     }
 
     // Wide banner frame for HERO art: GONE until wide art arrives, ~40% of
@@ -1568,11 +1744,7 @@ object CompanionPanel {
         val image = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-                }
-            }
+            outlineProvider = OutlineCache.roundedRect(radiusPx)
         }
         return FrameLayout(context).apply {
             tag = TAG_HERO_BANNER
@@ -1612,24 +1784,50 @@ object CompanionPanel {
         hasCreds: Boolean,
         accentColor: Int,
     ) {
+        val ctx = tv?.context ?: bar?.context ?: return
+        val line = if (tv != null) RetroAchievements.heroLine(progress, hasCreds) else null
+        val needsBar = bar != null && hasCreds && progress != null &&
+            !progress.isEmpty && progress.numPossible > 0
+        val meter = if (line != null || needsBar) {
+            CompanionHeroStyle.raMeterState(
+                progress = progress,
+                hasCredentials = hasCreds,
+                accentColor = accentColor,
+                surfaceColor = TileBackgrounds.surfaceColor(ctx),
+            )
+        } else {
+            null
+        }
         if (tv != null) {
-            val line = RetroAchievements.heroLine(progress, hasCreds)
-            if (line != null) {
-                tv.visibility = View.VISIBLE
-                tv.text = tv.context.resolveText(line)
-                val meter = CompanionHeroStyle.raMeterState(
-                    progress = progress,
-                    hasCredentials = hasCreds,
-                    accentColor = accentColor,
-                    surfaceColor = TileBackgrounds.surfaceColor(tv.context),
-                )
+            if (line != null && meter != null) {
+                if (tv.visibility != View.VISIBLE) tv.visibility = View.VISIBLE
+                tv.text = ctx.resolveText(line)
                 tv.setTextColor(meter.fillColor)
             } else {
-                tv.visibility = View.GONE
-                tv.text = ""
+                if (tv.visibility != View.GONE) tv.visibility = View.GONE
+                if (tv.text.isNotEmpty()) tv.text = ""
             }
         }
-        bindRaMeter(bar, progress, hasCreds, accentColor)
+        applyRaMeter(bar, meter)
+    }
+
+    private fun applyRaMeter(
+        bar: MeterBarView?,
+        meter: CompanionHeroStyle.RaMeterState?,
+    ) {
+        if (bar == null) return
+        if (meter != null && meter.visible) {
+            val ctx = bar.context
+            bar.setProgress(
+                fraction = meter.fraction,
+                fillColor = meter.fillColor,
+                trackColor = TileBackgrounds.surfaceSunken(ctx),
+                borderColor = TileBackgrounds.hairlineDivider(ctx),
+            )
+            if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
+        } else if (bar.visibility != View.GONE) {
+            bar.visibility = View.GONE
+        }
     }
 
     private fun bindRaMeter(
@@ -1639,24 +1837,13 @@ object CompanionPanel {
         accentColor: Int,
     ) {
         if (bar == null) return
-        val sunken = TileBackgrounds.surfaceSunken(bar.context)
         val meter = CompanionHeroStyle.raMeterState(
             progress = progress,
             hasCredentials = hasCreds,
             accentColor = accentColor,
-            surfaceColor = sunken,
+            surfaceColor = TileBackgrounds.surfaceSunken(bar.context),
         )
-        if (meter.visible) {
-            bar.setProgress(
-                fraction = meter.fraction,
-                fillColor = meter.fillColor,
-                trackColor = sunken,
-                borderColor = TileBackgrounds.hairlineDivider(bar.context),
-            )
-            if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
-        } else if (bar.visibility != View.GONE) {
-            bar.visibility = View.GONE
-        }
+        applyRaMeter(bar, meter)
     }
 
     /** Wordmark / wheel overlay when [RomEntry.logoUri] is set. */
@@ -1785,11 +1972,7 @@ object CompanionPanel {
                 // Never steal audio focus from user music or emulators (API 26+).
                 setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE)
                 clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setRoundRect(0, 0, view.width, view.height, radius)
-                    }
-                }
+                outlineProvider = OutlineCache.roundedRect(radius)
                 // Release video audio claims when the surface tears down on onStop / SCREEN_OFF
                 // (VideoView releases its MediaPlayer without detaching the view).
                 holder.addCallback(object : SurfaceHolder.Callback {
@@ -1998,7 +2181,7 @@ object CompanionPanel {
         val resolvedTitle = context.resolveText(model.title)
         val resolvedSub = context.resolveText(model.subtitle)
 
-        val root = FrameLayout(context).apply {
+        val root = HolderFrameLayout(context).apply {
             tag = TAG_TOP_STRIP
             clipChildren = true
             clipToPadding = true
@@ -2023,13 +2206,31 @@ object CompanionPanel {
             background = panelBackground(context, stripAccent)
         }
 
-        // Art host: square; holds ImageView (app) or platform tile (ROM).
+        // Persistent art children reused in place (zero removeAllViews per selection tick).
         val artSize = dp(stripSpec.artSizeDp)
+        val stripArtCornerDp = TopStripMetrics.ART_CORNER_RADIUS_DP
+        val artRomTile = PlatformTile.view(context, "", cornerRadiusDp = stripArtCornerDp).apply {
+            tag = TAG_HERO_ICON
+            setTag(R.id.platform_tile_id, null)
+            visibility = View.GONE
+        }
+        val artRomImage = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            clipToOutline = true
+            outlineProvider = OutlineCache.roundedRect(context.dpF(stripArtCornerDp))
+        }
+        val artAppImage = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            visibility = View.GONE
+        }
         val artHost = FrameLayout(context).apply {
             tag = TAG_STRIP_ART_HOST
+            addView(artRomTile, FrameLayout.LayoutParams(artSize, artSize))
+            addView(artRomImage, FrameLayout.LayoutParams(artSize, artSize))
+            addView(artAppImage, FrameLayout.LayoutParams(artSize, artSize))
         }
         applyStripArtFrame(artHost, isRom = model.isRom, accentColor = stripAccent, spec = stripSpec)
-        bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
         row.addView(artHost, LinearLayout.LayoutParams(artSize, artSize).apply {
             marginEnd = dp(stripSpec.artGapDp)
         })
@@ -2043,7 +2244,7 @@ object CompanionPanel {
             gravity = Gravity.CENTER_VERTICAL
             isBaselineAligned = false
         }
-        titleRow.addView(TextView(context).apply {
+        val favTv = TextView(context).apply {
             tag = TAG_STRIP_FAV
             setText(R.string.glyph_favorite)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -2055,12 +2256,13 @@ object CompanionPanel {
                 View.GONE
             }
             contentDescription = context.getString(R.string.action_favorite)
-        }, LinearLayout.LayoutParams(
+        }
+        titleRow.addView(favTv, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { marginEnd = dp(6) })
         val stripRom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
-        titleRow.addView(TextView(context).apply {
+        val nameTv = TextView(context).apply {
             tag = TAG_HERO_NAME
             setTag(R.id.hero_bound_id, stripRom?.id ?: state.selectedKey)
             setTag(
@@ -2074,7 +2276,8 @@ object CompanionPanel {
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTypeface(typeface, Typeface.BOLD)
             includeFontPadding = false
-        }, LinearLayout.LayoutParams(
+        }
+        titleRow.addView(nameTv, LinearLayout.LayoutParams(
             0,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             1f,
@@ -2083,7 +2286,7 @@ object CompanionPanel {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        texts.addView(TextView(context).apply {
+        val subTv = TextView(context).apply {
             tag = TAG_HERO_SUB
             text = resolvedSub
             setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.subtitleSp)
@@ -2091,11 +2294,12 @@ object CompanionPanel {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
-        }, LinearLayout.LayoutParams(
+        }
+        texts.addView(subTv, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(2) })
-        texts.addView(TextView(context).apply {
+        val detailTv = TextView(context).apply {
             tag = TAG_STRIP_DETAIL
             text = model.detail?.let(context::resolveText).orEmpty()
             visibility = if (model.detail != null) View.VISIBLE else View.GONE
@@ -2105,7 +2309,8 @@ object CompanionPanel {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
-        }, LinearLayout.LayoutParams(
+        }
+        texts.addView(detailTv, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(2) })
@@ -2178,18 +2383,41 @@ object CompanionPanel {
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
         // Subtle 1dp accent-tinted bottom hairline separating TOP_STRIP from the deck below.
+        val dividerView = View(context).apply {
+            tag = TAG_STRIP_DIVIDER
+            setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
         root.addView(
-            View(context).apply {
-                tag = TAG_STRIP_DIVIDER
-                setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
+            dividerView,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 context.strokePx(1),
                 Gravity.BOTTOM,
             ),
         )
+
+        val holder = PanelSurfaceHolder.TopStrip(
+            stripRoot = root,
+            panelRoot = row,
+            artHost = artHost,
+            artRomTile = artRomTile,
+            artRomImage = artRomImage,
+            artAppImage = artAppImage,
+            favView = favTv,
+            nameView = nameTv,
+            subView = subTv,
+            detailView = detailTv,
+            raRow = raRow,
+            raView = stripRaTv,
+            raBar = stripRaBar,
+            dividerView = dividerView,
+            lastStripAccent = stripAccent,
+            hasStripAccent = true,
+            lastIsRom = model.isRom,
+        )
+        root.surfaceHolder = holder
+        bindStripArt(holder, context, state, library, roms, settings, app, artSize)
 
         // Kick live RA for ROM selection (same as full hero).
         if (stripRom != null) {
@@ -2250,7 +2478,7 @@ object CompanionPanel {
     }
 
     private fun bindStripArt(
-        host: FrameLayout,
+        holder: PanelSurfaceHolder.TopStrip,
         context: Context,
         state: DeckState,
         library: AppLibrary,
@@ -2259,54 +2487,55 @@ object CompanionPanel {
         app: GhostGalleonApp,
         artSize: Int,
     ) {
-        host.removeAllViews()
         val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
-            val cornerDp = TopStripMetrics.ART_CORNER_RADIUS_DP
-            val tile = PlatformTile.view(context, rom.platformId, cornerRadiusDp = cornerDp).apply {
-                tag = TAG_HERO_ICON
-            }
-            host.addView(tile, FrameLayout.LayoutParams(artSize, artSize))
-            // Prefer grid art when available; corner radius matches PlatformTile & rim.
-            val radiusPx = context.dpF(cornerDp)
-            val image = ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                visibility = View.GONE
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-                    }
-                }
-            }
-            host.addView(image, FrameLayout.LayoutParams(artSize, artSize))
+            ArtCache.dropDisplayed(holder.artAppImage)
+            holder.artAppImage.setTag(R.id.custom_icon_key, null)
+            holder.artAppImage.setImageDrawable(null)
+            holder.artAppImage.visibility = View.GONE
+            PlatformTile.restyle(
+                holder.artRomTile,
+                context,
+                rom.platformId,
+                cornerRadiusDp = TopStripMetrics.ART_CORNER_RADIUS_DP,
+            )
+            holder.artRomTile.visibility = View.VISIBLE
+            ArtCache.dropDisplayed(holder.artRomImage)
+            holder.artRomImage.setImageDrawable(null)
+            holder.artRomImage.visibility = View.GONE
             val romId = rom.id
+            holder.artRomImage.tag = romId
+            var syncHit = true
             app.artCache.load(
                 context, rom,
                 maxDimension = artSize,
                 kind = ArtCache.ArtKind.GRID,
                 artOverrides = settings.artOverrides,
-                isStillValid = { image.isAttachedToWindow },
+                isStillValid = { holder.artRomImage.tag == romId },
             ) { bitmap ->
-                if (bitmap != null && image.isAttachedToWindow &&
+                if (bitmap != null &&
+                    holder.artRomImage.tag == romId &&
+                    (syncHit || holder.artRomImage.isAttachedToWindow) &&
                     selectedRom(state.selectedKey, roms, app)?.id == romId
                 ) {
-                    ArtCache.showDisplayed(image, bitmap)
-                    image.visibility = View.VISIBLE
-                    tile.visibility = View.GONE
+                    ArtCache.showDisplayed(holder.artRomImage, bitmap)
+                    holder.artRomImage.visibility = View.VISIBLE
+                    holder.artRomTile.visibility = View.GONE
                 }
             }
+            syncHit = false
             return
         }
+        ArtCache.dropDisplayed(holder.artRomImage)
+        holder.artRomImage.setImageDrawable(null)
+        holder.artRomImage.tag = null
+        holder.artRomImage.visibility = View.GONE
+        holder.artRomTile.visibility = View.GONE
+        holder.artAppImage.visibility = View.VISIBLE
         val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
-        val image = ImageView(context).apply {
-            tag = TAG_HERO_ICON
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-        }
-        host.addView(image, FrameLayout.LayoutParams(artSize, artSize))
         if (entry != null) {
             CustomIcon.bind(
-                image,
+                holder.artAppImage,
                 iconLoader(context),
                 app.artCache,
                 settings,
@@ -2314,23 +2543,25 @@ object CompanionPanel {
                 artSize,
             )
         } else {
-            image.setImageResource(R.drawable.ic_brand_ship)
+            ArtCache.dropDisplayed(holder.artAppImage)
+            holder.artAppImage.setTag(R.id.custom_icon_key, null)
+            holder.artAppImage.setImageResource(R.drawable.ic_brand_ship)
         }
     }
 
     private fun updateTopStrip(
-        view: View,
+        holder: PanelSurfaceHolder.TopStrip,
         context: Context,
         state: DeckState,
         library: AppLibrary,
         roms: List<RomEntry>,
         settings: Settings,
     ): Boolean {
-        val name = view.findViewWithTag<TextView>(TAG_HERO_NAME) ?: return false
-        val sub = view.findViewWithTag<TextView>(TAG_HERO_SUB) ?: return false
-        val detail = view.findViewWithTag<TextView>(TAG_STRIP_DETAIL) ?: return false
-        val ra = view.findViewWithTag<TextView>(TAG_HERO_RA) ?: return false
-        val artHost = view.findViewWithTag<FrameLayout>(TAG_STRIP_ART_HOST) ?: return false
+        val name = holder.nameView
+        val sub = holder.subView
+        val detail = holder.detailView
+        val ra = holder.raView
+        val artHost = holder.artHost
         val app = context.applicationContext as GhostGalleonApp
         val dm = context.resources.displayMetrics
         val density = dm.density
@@ -2359,44 +2590,55 @@ object CompanionPanel {
         name.text = nextTitle
         sub.text = nextSubtitle
         detail.text = model.detail?.let(context::resolveText).orEmpty()
-        detail.visibility = if (model.detail != null) View.VISIBLE else View.GONE
+        val detailVis = if (model.detail != null) View.VISIBLE else View.GONE
+        if (detail.visibility != detailVis) detail.visibility = detailVis
         if (animateSelection) {
             animateHeroTextSettle(name, density)
             animateHeroTextSettle(sub, density)
         }
-        val stripRaBar = view.findViewWithTag<MeterBarView>(TAG_STRIP_RA_BAR)
         bindRaLine(
             tv = ra,
-            bar = stripRaBar,
+            bar = holder.raBar,
             progress = rom?.let { app.raProgressFor(it.id) },
             hasCreds = !settings.raApiKey.isNullOrBlank(),
             accentColor = settings.accentColor,
         )
-        view.findViewWithTag<View>(TAG_STRIP_RA_ROW)?.let { raRow ->
-            if (raRow.visibility != ra.visibility) raRow.visibility = ra.visibility
+        if (holder.raRow.visibility != ra.visibility) holder.raRow.visibility = ra.visibility
+        val nextFavVis = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
+            View.VISIBLE
+        } else {
+            View.GONE
         }
-        view.findViewWithTag<View>(TAG_STRIP_FAV)?.let { fav ->
-            val nextVis = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
-            if (fav.visibility != nextVis) fav.visibility = nextVis
-        }
-        view.findViewWithTag<View>(TAG_TOP_STRIP)?.contentDescription =
+        if (holder.favView.visibility != nextFavVis) holder.favView.visibility = nextFavVis
+        holder.stripRoot.contentDescription =
             CompanionA11y.heroSummary(
                 title = nextTitle,
                 subline = nextSubtitle,
                 raLine = ra.takeIf { it.visibility == View.VISIBLE }?.text?.toString(),
             )
-        view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
-            panelBackground(context, stripAccent)
-        view.findViewWithTag<View>(TAG_STRIP_DIVIDER)
-            ?.setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
+        val accentChanged = shouldRepaintAccent(
+            holder.hasStripAccent,
+            holder.lastStripAccent,
+            stripAccent,
+        )
+        if (accentChanged) {
+            holder.panelRoot.background = panelBackground(context, stripAccent)
+            holder.dividerView.setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
+            holder.lastStripAccent = stripAccent
+            holder.hasStripAccent = true
+        }
         if (!alreadyBound) {
             val artSize = (stripSpec.artSizeDp * density).toInt()
-            applyStripArtFrame(artHost, isRom = model.isRom, accentColor = stripAccent, spec = stripSpec)
-            bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
+            if (accentChanged || holder.lastIsRom != model.isRom) {
+                applyStripArtFrame(
+                    artHost,
+                    isRom = model.isRom,
+                    accentColor = stripAccent,
+                    spec = stripSpec,
+                )
+                holder.lastIsRom = model.isRom
+            }
+            bindStripArt(holder, context, state, library, roms, settings, app, artSize)
             animateHeroArtSettle(artHost)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
@@ -2426,7 +2668,7 @@ object CompanionPanel {
         // FrameLayout root so the fallback brand scene (clouds/sea behind,
         // rain in front) can span the WHOLE panel; all normal content lives
         // in the vertical `content` column, which carries TAG_PANEL_ROOT.
-        val root = FrameLayout(context)
+        val root = HolderFrameLayout(context)
         fun installSwitcherHost(): FrameLayout {
             if (root.findViewWithTag<View>(TAG_SESSION_SWITCHER_HOST) == null) {
                 root.addView(
@@ -2527,6 +2769,7 @@ object CompanionPanel {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ))
+                root.surfaceHolder = PanelSurfaceHolder.PerfHud
                 return installSwitcherHost()
             }
             CompanionRole.PINNED_APP -> {
@@ -2584,6 +2827,7 @@ object CompanionPanel {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ))
             attachCompanionStatusOverlay(root, context, settings)
+            root.surfaceHolder = PanelSurfaceHolder.PlayHud
             return installSwitcherHost()
         }
 
@@ -2623,12 +2867,11 @@ object CompanionPanel {
         } else {
             null
         }
-        content.background = panelBackground(
-            context,
-            selectedRom?.let { PlatformTile.colorFor(it.platformId) }
-                ?: glowColor(context, selectedEntry?.packageName, settings),
-        )
-        var frontRain: Drawable? = null
+        val initialPanelAccent = selectedRom?.let { PlatformTile.colorFor(it.platformId) }
+            ?: glowColor(context, selectedEntry?.packageName, settings)
+        content.background = panelBackground(context, initialPanelAccent)
+        var frontRainRawName: String? = null
+        var resumeChipView: View? = null
         val hero = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             // TOP + horizontal center: when space is tight, prefer keeping the
@@ -2666,7 +2909,7 @@ object CompanionPanel {
                 setBounds(0, 0, iconPx, iconPx)
             }
             // Filled accent pill + WCAG-safe contrast text (legible on OLED #E0E0E0).
-            hero.addView(TextView(context).apply {
+            val resumeChip = TextView(context).apply {
                 tag = TAG_RESUME_CHIP
                 text = context.getString(R.string.format_resume, contName)
                 contentDescription = context.getString(
@@ -2709,7 +2952,9 @@ object CompanionPanel {
                     app = app,
                     swipeSlopPx = dp(40).toFloat(),
                 )
-            }, LinearLayout.LayoutParams(
+            }
+            resumeChipView = resumeChip
+            hero.addView(resumeChip, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
@@ -2745,9 +2990,11 @@ object CompanionPanel {
                 bindNow = false,
             ) as FrameLayout
             applyHeroArtFrame(artFrame, platformAccent, artElevation)
-            // updateSelection finds the placeholder tile by this tag for
-            // in-place restyle; the art overlay sits next to it in the frame.
-            artFrame.children.filterIsInstance<TextView>().first().tag = TAG_HERO_ICON
+            // updateSelection finds the placeholder tile directly on HeroViewHolder
+            // (and keeps TAG_HERO_ICON for compatibility).
+            val romTileView = artFrame.children.filterIsInstance<TextView>().first().apply {
+                tag = TAG_HERO_ICON
+            }
             hero.addView(artFrame, LinearLayout.LayoutParams(artPx, artPx))
             bindRomHeroArt(
                 banner, artFrame, cache, selectedRom, settings.artOverrides, artPx,
@@ -2763,7 +3010,7 @@ object CompanionPanel {
             })
             bindHeroLogo(logo, cache, selectedRom)
             // Title must fit above actions on short secondary panels.
-            hero.addView(TextView(context).apply {
+            val romNameTv = TextView(context).apply {
                 tag = TAG_HERO_NAME
                 setTag(R.id.hero_bound_id, selectedRom.id)
                 setTag(R.id.hero_art_gen, cache.artGeneration(selectedRom.id))
@@ -2781,7 +3028,8 @@ object CompanionPanel {
                     dp(4),
                 )
                 ViewCompat.setAccessibilityHeading(this, true)
-            }, LinearLayout.LayoutParams(
+            }
+            hero.addView(romNameTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
@@ -2799,7 +3047,7 @@ object CompanionPanel {
                 romMetaLine(settings, SlotKey.rom(selectedRom.id)),
                 HeroDetail.playerShortName(platform, preferredPlayer, installed),
             )
-            hero.addView(TextView(context).apply {
+            val romSubTv = TextView(context).apply {
                 tag = TAG_HERO_SUB
                 text = context.resolveText(compact)
                 setTextSize(
@@ -2811,16 +3059,18 @@ object CompanionPanel {
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(heroSpec.nameSidePadDp), dp(4), dp(heroSpec.nameSidePadDp), 0)
-            }, LinearLayout.LayoutParams(
+            }
+            hero.addView(romSubTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-            hero.addView(TextView(context).apply {
+            val romMetaTv = TextView(context).apply {
                 tag = TAG_HERO_META
                 visibility = View.GONE
-            })
+            }
+            hero.addView(romMetaTv)
             val metadataText = HeroDetail.metadataLine(selectedRom)
-            hero.addView(TextView(context).apply {
+            val romMetadataTv = TextView(context).apply {
                 tag = TAG_HERO_METADATA
                 text = metadataText.orEmpty()
                 visibility = if (metadataText != null && heroSpec.showExtraMedia) {
@@ -2834,14 +3084,16 @@ object CompanionPanel {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(heroSpec.nameSidePadDp), dp(2), dp(heroSpec.nameSidePadDp), 0)
-            }, LinearLayout.LayoutParams(
+            }
+            hero.addView(romMetadataTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-            hero.addView(TextView(context).apply {
+            val romPlayerTv = TextView(context).apply {
                 tag = TAG_HERO_PLAYER
                 visibility = View.GONE
-            })
+            }
+            hero.addView(romPlayerTv)
             val raProgress = app.raProgressFor(selectedRom.id)
             val hasRaCreds = !settings.raApiKey.isNullOrBlank()
             val raTv = TextView(context).apply {
@@ -2876,7 +3128,7 @@ object CompanionPanel {
                 accentColor = settings.accentColor,
             )
             val descText = HeroDetail.descriptionText(selectedRom.description)
-            hero.addView(TextView(context).apply {
+            val romDescTv = TextView(context).apply {
                 tag = TAG_HERO_DESC
                 text = descText.orEmpty()
                 visibility = if (descText != null && heroSpec.showExtraMedia) {
@@ -2890,20 +3142,19 @@ object CompanionPanel {
                 maxLines = if (heroSpec.showExtraMedia) 4 else 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(heroSpec.nameSidePadDp), dp(4), dp(heroSpec.nameSidePadDp), 0)
-            })
+            }
+            hero.addView(romDescTv)
+            var romShotView: ImageView? = null
+            var romVideoHostView: FrameLayout? = null
             if (heroSpec.showExtraMedia) {
                 val shot = ImageView(context).apply {
                     tag = TAG_HERO_SHOT
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     visibility = View.GONE
                     clipToOutline = true
-                    outlineProvider = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) {
-                            outline.setRoundRect(
-                                0, 0, view.width, view.height, dp(12).toFloat())
-                        }
-                    }
+                    outlineProvider = OutlineCache.roundedRect(dp(12).toFloat())
                 }
+                romShotView = shot
                 hero.addView(shot, LinearLayout.LayoutParams(dp(280), dp(140)).apply {
                     topMargin = dp(6)
                     gravity = Gravity.CENTER_HORIZONTAL
@@ -2913,6 +3164,7 @@ object CompanionPanel {
                     tag = TAG_HERO_VIDEO_HOST
                     visibility = View.GONE
                 }
+                romVideoHostView = videoHost
                 hero.addView(videoHost, LinearLayout.LayoutParams(dp(280), dp(140)).apply {
                     topMargin = dp(6)
                     gravity = Gravity.CENTER_HORIZONTAL
@@ -2923,6 +3175,8 @@ object CompanionPanel {
             // labels never clip on the ~540dp Sugar panel. Every click resolves
             // live state.selectedKey / app.settings so in-place updateSelection
             // never leaves stale build-time closures behind.
+            var romQuickBarView: View? = null
+            var romQuickFavView: TextView? = null
             if (heroSpec.showQuickChips) {
                 val chipH = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
                 val insetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
@@ -3015,6 +3269,8 @@ object CompanionPanel {
                     isFavorite = isSelectedFavorite(initialKey, settings.favorites),
                     accentColor = settings.accentColor,
                 )
+                romQuickFavView = favChip
+                romQuickBarView = quickScroll
                 addChip(context.getString(R.string.action_pin)) {
                     val rom = liveRom() ?: return@addChip
                     app.playSfx(SoundCue.CONFIRM)
@@ -3090,6 +3346,32 @@ object CompanionPanel {
                     ),
                 )
             }
+            root.surfaceHolder = PanelSurfaceHolder.Hero(
+                panelRoot = content,
+                resumeChip = resumeChipView,
+                isRomHero = true,
+                isAppHero = false,
+                romBanner = banner,
+                romTileFrame = artFrame,
+                romTile = romTileView,
+                romLogo = logo,
+                romMeta = romMetaTv,
+                romMetadata = romMetadataTv,
+                romPlayer = romPlayerTv,
+                romRa = raTv,
+                romRaBar = raBar,
+                romDesc = romDescTv,
+                romShot = romShotView,
+                romVideoHost = romVideoHostView,
+                romQuickBar = romQuickBarView,
+                romQuickFav = romQuickFavView,
+                nameView = romNameTv,
+                subView = romSubTv,
+                lastPanelAccent = initialPanelAccent,
+                hasPanelAccent = true,
+                lastArtAccent = platformAccent,
+                hasArtAccent = true,
+            )
         } else if (selectedEntry != null) {
             val appGlow = glowColor(context, selectedEntry.packageName, settings)
             val pedestalInset = dp(CompanionHeroStyle.appPedestalInsetDp(heroSpec.artSizeDp))
@@ -3119,7 +3401,7 @@ object CompanionPanel {
                 ),
             )
             hero.addView(pedestal, LinearLayout.LayoutParams(artPx, artPx))
-            hero.addView(TextView(context).apply {
+            val appNameTv = TextView(context).apply {
                 tag = TAG_HERO_NAME
                 setTag(R.id.hero_bound_id, selectedEntry.packageName)
                 text = selectedEntry.label
@@ -3136,11 +3418,12 @@ object CompanionPanel {
                     dp(4),
                 )
                 ViewCompat.setAccessibilityHeading(this, true)
-            }, LinearLayout.LayoutParams(
+            }
+            hero.addView(appNameTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-            hero.addView(TextView(context).apply {
+            val appSubTv = TextView(context).apply {
                 tag = TAG_HERO_SUB
                 text = context.resolveText(
                     HeroDetail.compactSubline(
@@ -3158,104 +3441,116 @@ object CompanionPanel {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(heroSpec.nameSidePadDp), dp(2), dp(heroSpec.nameSidePadDp), 0)
-            }, LinearLayout.LayoutParams(
+            }
+            hero.addView(appSubTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
+            root.surfaceHolder = PanelSurfaceHolder.Hero(
+                panelRoot = content,
+                resumeChip = resumeChipView,
+                isRomHero = false,
+                isAppHero = true,
+                appPedestal = pedestal,
+                appIcon = icon,
+                nameView = appNameTv,
+                subView = appSubTv,
+                lastPanelAccent = appGlow,
+                hasPanelAccent = true,
+            )
         } else {
-            // Layered brand fallback, full-panel: clouds + sea behind the
-            // content column (transparent so the scene shows edge to edge).
-            // Ship is a root FrameLayout overlay (not inside the hero column)
-            // so role chips / status pill never pull it off the waterline.
-            // Size scales with panel height; hull sits on the clouds:sea 3:2
-            // horizon (CompanionHeroMetrics.brandShipLayout) — works on any
-            // dual/single panel, not only Sugar. Rain is added LAST so it
-            // falls in front of ship + UI.
-            // Clouds/sea are exact vertical slices of one 1280×720 scene
-            // (432px sky, 288px water), stacked 3:2 so the horizon keeps its
-            // authored 60/40 split (CENTER_CROP trims width overflow). Every
-            // layer is optional: no sky/sea = programmatic dusk-horizon scene,
-            // no ship anim (or pre-API-28) = ic_brand_ship, no rain = none.
+            // Layered brand fallback, full-panel: show static dusk-horizon + ship
+            // immediately (0ms UI-thread decode), then decode optional multi-MB
+            // animated WebPs off the UI thread and swap in cleanly while attached.
             val tokens = com.visorcraft.ghostgalleon.settings.ThemePack.resolve(settings)
-            val clouds = loadAnimated(context, "hero_clouds_anim")
-            val sea = loadAnimated(context, "hero_sea_anim")
-            val ocean = if (clouds == null || sea == null) {
-                loadAnimated(context, "hero_ocean_anim")
-            } else {
-                null
+            val palette = CompanionHeroStyle.brandHorizonPalette(
+                panelLift = tokens.panelLift,
+                accentColor = settings.accentColor,
+            )
+            val horizonColumn = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            if (clouds != null && sea != null) {
+            horizonColumn.addView(
+                View(context).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        intArrayOf(0xFF000000.toInt(), palette.skyMid, palette.skyHorizon),
+                    )
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f),
+            )
+            horizonColumn.addView(
+                View(context).apply {
+                    setBackgroundColor(palette.horizonLine)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.strokePx(1),
+                ),
+            )
+            horizonColumn.addView(
+                View(context).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        intArrayOf(palette.seaTop, 0xFF000000.toInt()),
+                    )
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f),
+            )
+            root.addView(
+                horizonColumn,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            content.background = null
+
+            val hasClouds = rawAnimResId(context, "hero_clouds_anim") != 0
+            val hasSea = rawAnimResId(context, "hero_sea_anim") != 0
+            val hasOcean = (!hasClouds || !hasSea) && rawAnimResId(context, "hero_ocean_anim") != 0
+            if (hasClouds && hasSea) {
                 val bgColumn = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
-                listOf(clouds to 3f, sea to 2f).forEach { (anim, weight) ->
-                    bgColumn.addView(ImageView(context).apply {
+                listOf("hero_clouds_anim" to 3f, "hero_sea_anim" to 2f).forEach { (rawName, weight) ->
+                    val iv = ImageView(context).apply {
                         scaleType = ImageView.ScaleType.CENTER_CROP
-                        showAnimated(anim)
-                    }, LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, 0, weight))
-                }
-                root.addView(bgColumn, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT))
-                content.background = null
-            } else {
-                val singles = listOfNotNull(clouds, sea ?: ocean)
-                if (singles.isNotEmpty()) {
-                    singles.forEach { anim ->
-                        root.addView(ImageView(context).apply {
-                            scaleType = ImageView.ScaleType.CENTER_CROP
-                            showAnimated(anim)
-                        }, FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT))
-                    }
-                    content.background = null
-                } else {
-                    // Programmatic 3:2 dusk-horizon backdrop grounding the galleon waterline.
-                    val palette = CompanionHeroStyle.brandHorizonPalette(
-                        panelLift = tokens.panelLift,
-                        accentColor = settings.accentColor,
-                    )
-                    val horizonColumn = LinearLayout(context).apply {
-                        orientation = LinearLayout.VERTICAL
                         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                     }
-                    horizonColumn.addView(
-                        View(context).apply {
-                            background = GradientDrawable(
-                                GradientDrawable.Orientation.TOP_BOTTOM,
-                                intArrayOf(0xFF000000.toInt(), palette.skyMid, palette.skyHorizon),
-                            )
-                        },
-                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f),
+                    bgColumn.addView(
+                        iv,
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, weight),
                     )
-                    horizonColumn.addView(
-                        View(context).apply {
-                            setBackgroundColor(palette.horizonLine)
-                        },
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            context.strokePx(1),
-                        ),
-                    )
-                    horizonColumn.addView(
-                        View(context).apply {
-                            background = GradientDrawable(
-                                GradientDrawable.Orientation.TOP_BOTTOM,
-                                intArrayOf(palette.seaTop, 0xFF000000.toInt()),
-                            )
-                        },
-                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f),
-                    )
+                    bindAnimatedAsync(iv, rawName)
+                }
+                root.addView(
+                    bgColumn,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            } else {
+                val singleNames = buildList(2) {
+                    if (hasClouds) add("hero_clouds_anim")
+                    if (hasSea) add("hero_sea_anim") else if (hasOcean) add("hero_ocean_anim")
+                }
+                singleNames.forEach { rawName ->
+                    val iv = ImageView(context).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
                     root.addView(
-                        horizonColumn,
+                        iv,
                         FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         ),
                     )
-                    content.background = null
+                    bindAnimatedAsync(iv, rawName)
                 }
             }
             // z-order: bg (already added) → content (later) → ship → rain.
@@ -3265,19 +3560,16 @@ object CompanionPanel {
                 density = density,
             )
             if (shipLayout.sizePx > 0) {
-                root.addView(ImageView(context).apply {
+                val shipView = ImageView(context).apply {
                     tag = TAG_HERO_ICON
                     contentDescription = context.getString(R.string.app_name)
-                    val ship = loadAnimated(context, "hero_ship_anim")
-                    if (ship != null) {
-                        showAnimated(ship)
-                    } else {
-                        setImageResource(R.drawable.ic_brand_ship)
-                    }
-                }, FrameLayout.LayoutParams(shipLayout.sizePx, shipLayout.sizePx).apply {
+                    setImageResource(R.drawable.ic_brand_ship)
+                }
+                root.addView(shipView, FrameLayout.LayoutParams(shipLayout.sizePx, shipLayout.sizePx).apply {
                     gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
                     topMargin = shipLayout.topMarginPx
                 })
+                bindAnimatedAsync(shipView, "hero_ship_anim")
             }
             if (CompanionHeroMetrics.brandCaptionFitsBelowShip(dm.heightPixels, shipLayout, density)) {
                 hero.gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
@@ -3297,9 +3589,16 @@ object CompanionPanel {
                     ),
                 )
             }
-            if (tokens.heroRain) {
-                frontRain = loadAnimated(context, "hero_rain_anim")
+            if (tokens.heroRain && rawAnimResId(context, "hero_rain_anim") != 0) {
+                frontRainRawName = "hero_rain_anim"
             }
+            root.surfaceHolder = PanelSurfaceHolder.Hero(
+                panelRoot = content,
+                resumeChip = resumeChipView,
+                isRomHero = false,
+                isAppHero = false,
+                hasPanelAccent = false,
+            )
         }
         content.addView(hero, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -3311,14 +3610,20 @@ object CompanionPanel {
         root.addView(content, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT))
-        // Rain falls in front of the ship (and everything else).
-        frontRain?.let { rain ->
-            root.addView(ImageView(context).apply {
+        // Rain falls in front of the ship (and everything else), decoded off-UI.
+        frontRainRawName?.let { rawName ->
+            val rainView = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                showAnimated(rain)
-            }, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            root.addView(
+                rainView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            bindAnimatedAsync(rainView, rawName)
         }
         // Dual: only larger panel. Overlay pins Swap/Settings to bottom
         // corners (above rain so they stay tappable).
@@ -4645,11 +4950,7 @@ object CompanionPanel {
                             cornerRadius = badgeRadiusPx
                         }
                         clipToOutline = true
-                        outlineProvider = object : ViewOutlineProvider() {
-                            override fun getOutline(view: View, outline: Outline) {
-                                outline.setRoundRect(0, 0, view.width, view.height, badgeRadiusPx)
-                            }
-                        }
+                        outlineProvider = OutlineCache.roundedRect(badgeRadiusPx)
                         foreground = GradientDrawable().apply {
                             setColor(Color.TRANSPARENT)
                             cornerRadius = badgeRadiusPx
@@ -5998,11 +6299,7 @@ object CompanionPanel {
                 cornerRadius = radiusPx
             }
             clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-                }
-            }
+            outlineProvider = OutlineCache.roundedRect(radiusPx)
             foreground = GradientDrawable().apply {
                 setColor(Color.TRANSPARENT)
                 cornerRadius = radiusPx

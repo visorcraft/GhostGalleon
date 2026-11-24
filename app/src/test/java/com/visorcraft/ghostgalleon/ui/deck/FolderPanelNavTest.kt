@@ -133,4 +133,52 @@ class FolderPanelNavTest {
         assertEquals(FolderNavState(1, false), FolderPanelNav.afterRemoval(FolderNavState(2, false), 2))
         assertEquals(FolderNavState(0, false), FolderPanelNav.afterRemoval(FolderNavState(1, true), 1))
     }
+
+    @Test
+    fun `dirtyUpdate touches at most two cells per NAV tick and updates mirror only on flip`() {
+        val initial = FolderPanelNav.dirtyUpdate(
+            previous = null,
+            next = FolderNavState(0, false),
+            cellCount = 9,
+            hasMirror = true,
+        )
+        assertEquals((0 until 9).toList(), initial.cellIndices)
+        assertTrue(initial.updateMirror)
+
+        val cellMove = FolderPanelNav.dirtyUpdate(
+            previous = FolderNavState(0, false),
+            next = FolderNavState(3, false),
+            cellCount = 9,
+            hasMirror = true,
+        )
+        assertEquals(listOf(0, 3), cellMove.cellIndices)
+        assertFalse(cellMove.updateMirror)
+
+        val toMirror = FolderPanelNav.dirtyUpdate(
+            previous = FolderNavState(6, false),
+            next = FolderNavState(6, true),
+            cellCount = 9,
+            hasMirror = true,
+        )
+        assertEquals(listOf(6), toMirror.cellIndices)
+        assertTrue(toMirror.updateMirror)
+
+        val stayMirror = FolderPanelNav.dirtyUpdate(
+            previous = FolderNavState(6, true),
+            next = FolderNavState(6, true),
+            cellCount = 9,
+            hasMirror = true,
+        )
+        assertEquals(emptyList<Int>(), stayMirror.cellIndices)
+        assertFalse(stayMirror.updateMirror)
+
+        val fromMirror = FolderPanelNav.dirtyUpdate(
+            previous = FolderNavState(6, true),
+            next = FolderNavState(0, false),
+            cellCount = 9,
+            hasMirror = true,
+        )
+        assertEquals(listOf(0), fromMirror.cellIndices)
+        assertTrue(fromMirror.updateMirror)
+    }
 }

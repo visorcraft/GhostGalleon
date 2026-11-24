@@ -3,6 +3,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -88,5 +89,18 @@ class AppPickerHighlightTest {
         assertEquals(listOf(1), AppPickerHighlight.positionsToRefreshAfterFilter(1, 1, newSize = 5))
         assertEquals(listOf(3, 1), AppPickerHighlight.positionsToRefreshAfterFilter(3, 1, newSize = 5))
         assertEquals(listOf(1), AppPickerHighlight.positionsToRefreshAfterFilter(99, 1, newSize = 5))
+    }
+
+    @Test
+    fun `shouldUseDiffUtil caps synchronous Myers DiffUtil on large ROM libraries`() {
+        assertTrue(AppPickerHighlight.shouldUseDiffUtil(0, 0))
+        assertTrue(AppPickerHighlight.shouldUseDiffUtil(256, 256))
+        assertTrue(AppPickerHighlight.shouldUseDiffUtil(512, 0))
+        assertFalse(AppPickerHighlight.shouldUseDiffUtil(256, 257))
+        assertFalse(AppPickerHighlight.shouldUseDiffUtil(513, 0))
+        assertFalse(AppPickerHighlight.shouldUseDiffUtil(6_500, 6_500))
+        assertFalse(AppPickerHighlight.shouldUseDiffUtil(20_000, 10))
+        assertFalse(AppPickerHighlight.shouldUseDiffUtil(Int.MAX_VALUE, Int.MAX_VALUE))
+        assertTrue(AppPickerHighlight.shouldUseDiffUtil(-5, 100))
     }
 }

@@ -123,4 +123,14 @@ class SlotMenuNavTest {
         assertFalse(SlotMenuNav.shouldTriggerTouchHaptic(hapticsEnabled = true, isCancel = true))
         assertFalse(SlotMenuNav.shouldTriggerTouchHaptic(hapticsEnabled = false, isCancel = false))
     }
+
+    @Test
+    fun `dirtyIndices repaints all rows on first paint and at most two rows per NAV tick`() {
+        assertEquals(emptyList<Int>(), SlotMenuNav.dirtyIndices(-1, 0, count = 0))
+        assertEquals(listOf(0, 1, 2, 3, 4), SlotMenuNav.dirtyIndices(-1, 0, count = 5))
+        assertEquals(listOf(0, 1), SlotMenuNav.dirtyIndices(0, 1, count = 15))
+        assertEquals(listOf(14, 0), SlotMenuNav.dirtyIndices(14, 0, count = 15))
+        assertEquals(emptyList<Int>(), SlotMenuNav.dirtyIndices(3, 3, count = 15))
+        assertEquals(emptyList<Int>(), SlotMenuNav.dirtyIndices(0, 99, count = 1))
+    }
 }

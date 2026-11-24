@@ -148,4 +148,13 @@ class SessionSwitcherNavTest {
             }
         }
     }
+
+    @Test
+    fun `dirtyRowIndices repaints all rows initially and at most two rows per NAV tick`() {
+        assertEquals(emptyList<Int>(), SessionSwitcherNav.dirtyRowIndices(-1, 0, count = 0))
+        assertEquals(listOf(0, 1, 2, 3), SessionSwitcherNav.dirtyRowIndices(-1, 1, count = 4))
+        assertEquals(listOf(1, 2), SessionSwitcherNav.dirtyRowIndices(1, 2, count = 8))
+        assertEquals(listOf(7, 0), SessionSwitcherNav.dirtyRowIndices(7, 0, count = 8))
+        assertEquals(emptyList<Int>(), SessionSwitcherNav.dirtyRowIndices(2, 2, count = 8))
+    }
 }

@@ -1185,9 +1185,13 @@ class SettingsActivity : AppCompatActivity() {
             val artDir = File(appContext.filesDir, "art")
             ARCHIVE_IO.execute {
                 val result = runCatching {
-                    appContext.contentResolver.openInputStream(uri)?.use { input ->
-                        ArtArchive.unzip(input, artDir)
-                    } ?: error("could not open $uri")
+                    try {
+                        appContext.contentResolver.openInputStream(uri)?.use { input ->
+                            ArtArchive.unzip(input, artDir)
+                        } ?: error("could not open $uri")
+                    } finally {
+                        app.artCache.invalidateDiskIndex()
+                    }
                 }
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread

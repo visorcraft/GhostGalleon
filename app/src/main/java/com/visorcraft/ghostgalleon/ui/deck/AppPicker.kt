@@ -2,7 +2,10 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
@@ -17,7 +20,6 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -33,6 +35,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.rom.PlatformTile
@@ -43,6 +46,7 @@ import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
 
 /** Result of moving highlight inside [AppPicker] — O(1) changed indices only. */
@@ -58,6 +62,19 @@ internal data class PickerHighlightMove(
  * changed positions (`<= 2`) so 6,384+ ROM lists never trigger O(N) rebinds.
  */
 internal object AppPickerHighlight {
+
+    /**
+     * Max combined old + new picker row count for synchronous Myers DiffUtil
+     * on the UI thread. Above this cap, search/filter dataset replacement swaps
+     * directly (never used on NAV highlight moves, which notify <= 2 rows).
+     */
+    const val MAX_SYNC_DIFF_ITEMS: Int = 512
+
+    fun shouldUseDiffUtil(oldSize: Int, newSize: Int): Boolean {
+        val safeOld = oldSize.coerceAtLeast(0).toLong()
+        val safeNew = newSize.coerceAtLeast(0).toLong()
+        return safeOld + safeNew <= MAX_SYNC_DIFF_ITEMS.toLong()
+    }
 
     fun firstSelectable(items: List<PickerItem>): Int =
         items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
@@ -155,9 +172,16 @@ class AppPicker(
 ) {
     private val app get() = activity.application as GhostGalleonApp
     private val hiddenRomIds get() = app.settings.hiddenRomIds
-    // Sort once for the lifetime of this picker — keystroke filters only.
-    private val sortedRoms: List<RomEntry> =
-        PickerItems.sortedRoms(roms, hiddenRomIds)
+    // Lazy & app-cached so prebuilt drawer opens do zero ROM sorting and
+    // slot/dock pickers reuse GhostGalleonApp.sortedPickerRoms() in O(1).
+    private val sortedRoms: List<RomEntry> by lazy(LazyThreadSafetyMode.NONE) {
+        val liveApp = app
+        if (liveApp.romEntries === roms) {
+            liveApp.sortedPickerRoms(hiddenRomIds)
+        } else {
+            PickerItems.sortedRoms(roms, hiddenRomIds)
+        }
+    }
     private var emptyQueryItems: List<PickerItem> =
         prebuiltItems ?: PickerItems.build(
             allEntries, roms, "",
@@ -217,13 +241,15 @@ class AppPicker(
         val kept = prevKey != null && items.any { PickerItems.rowKey(it) == prevKey }
         highlight = AppPickerHighlight.afterFilter(items, prevKey)
         adapter?.setActiveQuery(nextTrimmed)
-        adapter?.submit(items, queryChanged = queryChanged)
-        AppPickerHighlight.positionsToRefreshAfterFilter(
-            previousHighlight = prevHighlight,
-            nextHighlight = highlight,
-            newSize = items.size,
-        ).forEach { pos ->
-            adapter?.notifyItemChanged(pos, PAYLOAD_HIGHLIGHT)
+        val usedDiff = adapter?.submit(items, queryChanged = queryChanged) == true
+        if (usedDiff) {
+            AppPickerHighlight.positionsToRefreshAfterFilter(
+                previousHighlight = prevHighlight,
+                nextHighlight = highlight,
+                newSize = items.size,
+            ).forEach { pos ->
+                adapter?.notifyItemChanged(pos, PAYLOAD_HIGHLIGHT)
+            }
         }
         refreshEmpty()
         recycler?.scrollToPosition(if (kept) highlight else 0)
@@ -416,6 +442,7 @@ class AppPicker(
             rowPadH = context.dp(UiDimens.SPACE_MD),
             rowPadV = context.dp(10),
             headerColor = ThemePack.accentTextColor(accentColor, surfaceColor),
+            surfaceColor = surfaceColor,
             matchTitleColor = matchTitleColor,
             matchBadgeColor = matchBadgeColor,
             rowCornerRadiusDp = tokens.cardRadiusDp,
@@ -745,11 +772,14 @@ class AppPicker(
         }
     }
 
-    // Row views are recycled (the ROM section can hold thousands of rows):
-    // a shared row layout whose thumb container swaps app icon <-> platform
-    // tile and whose text views are simply re-bound.
+    // Row views are truly recycled (the ROM section can hold 6k–20k rows):
+    // persistent app icon + ROM platform tile children toggle visibility in
+    // place with zero thumb.removeAllViews() and reusable row/ripple drawables.
     private class RowHolder(
         val thumb: FrameLayout,
+        val appIcon: ImageView,
+        val romTile: TextView,
+        val appThumbBg: Drawable,
         val name: TextView,
         val tag: TextView,
     )
@@ -758,8 +788,14 @@ class AppPicker(
 
     private inner class RowVH(
         val row: LinearLayout,
+        val rowBg: GradientDrawable,
         val cells: RowHolder,
-    ) : RecyclerView.ViewHolder(row)
+    ) : RecyclerView.ViewHolder(row) {
+        var boundItem: PickerItem? = null
+        var boundIsApp: Boolean? = null
+        var boundThumbKey: String? = null
+        var paintedHighlighted: Boolean? = null
+    }
 
     private inner class PickerAdapter(
         private val context: Context,
@@ -767,6 +803,7 @@ class AppPicker(
         private val rowPadH: Int,
         private val rowPadV: Int,
         private val headerColor: Int,
+        private val surfaceColor: Int,
         private val matchTitleColor: Int,
         private val matchBadgeColor: Int,
         private val rowCornerRadiusDp: Int,
@@ -775,6 +812,11 @@ class AppPicker(
         private var sectionCounts: PickerSectionCounts = PickerSectionCounts(0, 0)
         private var activeQuery: String = ""
         private val locale = context.resources.configuration.locales[0]
+        private val iconPadPx = context.dp(2)
+        private val innerIconSizePx = (iconSize - iconPadPx * 2).coerceAtLeast(1)
+        private val thumbClipRadiusPx = context.dpF(10)
+        private val rowCornerRadiusPx = context.dpF(rowCornerRadiusDp)
+        private val selectedStrokePx = context.strokePx(4)
 
         init {
             setHasStableIds(true)
@@ -784,18 +826,31 @@ class AppPicker(
             activeQuery = trimmedQuery
         }
 
-        fun submit(next: List<PickerItem>, queryChanged: Boolean = false) {
+        /**
+         * Replace adapter rows. Uses Myers DiffUtil only when `old.size + next.size`
+         * stays within [AppPickerHighlight.MAX_SYNC_DIFF_ITEMS]; larger dataset
+         * filter swaps use `notifyDataSetChanged()` (`itemAnimator == null`).
+         * @return true when DiffUtil dispatched incremental updates.
+         */
+        fun submit(next: List<PickerItem>, queryChanged: Boolean = false): Boolean {
             val old = rows
             val prevCounts = sectionCounts
             val nextCounts = AppPickerMatch.sectionCounts(next)
             val countsChanged = prevCounts != nextCounts
             sectionCounts = nextCounts
-            val diff = DiffUtil.calculateDiff(
-                PickerDiff(old, next, queryChanged || countsChanged),
-                false,
-            )
+            if (AppPickerHighlight.shouldUseDiffUtil(old.size, next.size)) {
+                val diff = DiffUtil.calculateDiff(
+                    PickerDiff(old, next, queryChanged || countsChanged),
+                    false,
+                )
+                rows = next
+                diff.dispatchUpdatesTo(this)
+                return true
+            }
             rows = next
-            diff.dispatchUpdatesTo(this)
+            @Suppress("NotifyDataSetChanged")
+            notifyDataSetChanged()
+            return false
         }
 
         override fun getItemCount(): Int = rows.size
@@ -822,19 +877,46 @@ class AppPicker(
                 }
                 return HeaderVH(header)
             }
+            val rowBg = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = rowCornerRadiusPx
+            }
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                background = OverlayPrimitives.roundedRipple(
+                    context = context,
+                    content = rowBg,
+                    cornerRadiusDp = rowCornerRadiusDp,
+                    rippleColor = ROW_RIPPLE_COLOR,
+                )
                 setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
             }
+            val appThumbBg = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
+            val appIcon = ImageView(context).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                visibility = View.GONE
+            }
+            val romTile = PlatformTile.view(context, "", cornerRadiusDp = 12).apply {
+                setTag(R.id.platform_tile_id, null)
+                visibility = View.GONE
+            }
             val thumb = FrameLayout(context).apply {
-                outlineProvider = ViewOutlineProvider.BACKGROUND
+                outlineProvider = OutlineCache.roundedRect(thumbClipRadiusPx)
                 clipToOutline = true
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                addView(
+                    appIcon,
+                    FrameLayout.LayoutParams(innerIconSizePx, innerIconSizePx, Gravity.CENTER),
+                )
+                addView(
+                    romTile,
+                    FrameLayout.LayoutParams(iconSize, iconSize),
+                )
             }
             row.addView(thumb, LinearLayout.LayoutParams(iconSize, iconSize))
             val name = TextView(context).apply {
@@ -865,7 +947,34 @@ class AppPicker(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
-            return RowVH(row, RowHolder(thumb, name, tag))
+            val holder = RowVH(
+                row = row,
+                rowBg = rowBg,
+                cells = RowHolder(thumb, appIcon, romTile, appThumbBg, name, tag),
+            )
+            row.setOnClickListener {
+                when (val bound = holder.boundItem) {
+                    is PickerItem.App -> {
+                        performPickHaptic(row)
+                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                        cancelPendingSearch()
+                        onPick(bound.entry.packageName)
+                    }
+                    is PickerItem.Rom -> {
+                        performPickHaptic(row)
+                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                        cancelPendingSearch()
+                        onPick(SlotKey.rom(bound.entry.id))
+                    }
+                    else -> Unit
+                }
+            }
+            row.setOnLongClickListener {
+                val bound = holder.boundItem as? PickerItem.App ?: return@setOnLongClickListener false
+                openHideMenu(bound.entry)
+                true
+            }
+            return holder
         }
 
         override fun onBindViewHolder(
@@ -886,7 +995,7 @@ class AppPicker(
                         bindRowText(holder, rows[position])
                     }
                     if (payloads.contains(PAYLOAD_HIGHLIGHT)) {
-                        paintHighlight(holder.row, position)
+                        paintHighlight(holder, position)
                     }
                 }
                 return
@@ -942,88 +1051,67 @@ class AppPicker(
                 return
             }
             if (holder !is RowVH) return
+            holder.boundItem = item
             val row = holder.row
             val cells = holder.cells
             when (item) {
                 is PickerItem.App -> {
+                    if (holder.boundIsApp != true) {
+                        cells.romTile.visibility = View.GONE
+                        cells.appIcon.visibility = View.VISIBLE
+                        cells.thumb.background = cells.appThumbBg
+                        holder.boundIsApp = true
+                    }
                     val bindKey = "a:${item.entry.packageName}"
-                    val existing = cells.thumb.getChildAt(0) as? ImageView
-                    if (existing == null || cells.thumb.tag != bindKey) {
-                        cells.thumb.removeAllViews()
-                        cells.thumb.background = TileBackgrounds.sunkenField(
-                            context = context,
-                            cornerRadiusDp = 10,
-                        )
-                        val iconPad = context.dp(2)
-                        cells.thumb.setPadding(iconPad, iconPad, iconPad, iconPad)
-                        val icon = ImageView(context).apply {
-                            scaleType = ImageView.ScaleType.FIT_CENTER
-                        }
-                        val innerSize = (iconSize - iconPad * 2).coerceAtLeast(1)
-                        cells.thumb.addView(
-                            icon,
-                            FrameLayout.LayoutParams(innerSize, innerSize, Gravity.CENTER),
-                        )
+                    if (holder.boundThumbKey != bindKey) {
                         CustomIcon.bind(
-                            icon, iconLoader, app.artCache, app.settings,
-                            item.entry.packageName, innerSize,
+                            cells.appIcon,
+                            iconLoader,
+                            app.artCache,
+                            app.settings,
+                            item.entry.packageName,
+                            innerIconSizePx,
                         )
-                        cells.thumb.tag = bindKey
+                        holder.boundThumbKey = bindKey
                     }
                     bindRowText(holder, item)
-                    row.setOnClickListener {
-                        performPickHaptic(row)
-                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
-                        cancelPendingSearch()
-                        onPick(item.entry.packageName)
-                    }
-                    row.setOnLongClickListener {
-                        openHideMenu(item.entry)
-                        true
-                    }
                     row.isLongClickable = true
                 }
                 is PickerItem.Rom -> {
+                    if (holder.boundIsApp != false) {
+                        if (holder.boundIsApp == true) {
+                            ArtCache.dropDisplayed(cells.appIcon)
+                            cells.appIcon.setTag(R.id.custom_icon_key, null)
+                            cells.appIcon.setImageDrawable(null)
+                        }
+                        cells.appIcon.visibility = View.GONE
+                        cells.romTile.visibility = View.VISIBLE
+                        cells.thumb.background = null
+                        holder.boundIsApp = false
+                    }
                     val pid = item.entry.platformId
-                    val existing = cells.thumb.getChildAt(0) as? TextView
-                    cells.thumb.background = null
-                    cells.thumb.setPadding(0, 0, 0, 0)
-                    if (existing != null && cells.thumb.childCount == 1) {
-                        PlatformTile.restyle(
-                            existing, context, pid, cornerRadiusDp = 12,
-                        )
-                    } else {
-                        cells.thumb.removeAllViews()
-                        cells.thumb.addView(
-                            PlatformTile.view(context, pid, cornerRadiusDp = 12),
-                            FrameLayout.LayoutParams(iconSize, iconSize),
-                        )
-                    }
-                    cells.thumb.tag = "r:$pid"
+                    PlatformTile.restyle(cells.romTile, context, pid, cornerRadiusDp = 12)
+                    holder.boundThumbKey = "r:$pid"
                     bindRowText(holder, item)
-                    row.setOnClickListener {
-                        performPickHaptic(row)
-                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
-                        cancelPendingSearch()
-                        onPick(SlotKey.rom(item.entry.id))
-                    }
-                    row.setOnLongClickListener(null)
                     row.isLongClickable = false
                 }
                 is PickerItem.Header -> {}
             }
-            paintHighlight(row, position)
+            paintHighlight(holder, position)
         }
 
-        private fun paintHighlight(row: View, position: Int) {
+        private fun paintHighlight(holder: RowVH, position: Int) {
             val isHighlighted = position == highlight
-            row.isSelected = isHighlighted
-            row.background = OverlayPrimitives.roundedRipple(
-                context = context,
-                content = if (isHighlighted) TileBackgrounds.selected(context, accentColor) else null,
-                cornerRadiusDp = rowCornerRadiusDp,
-                rippleColor = ROW_RIPPLE_COLOR,
-            )
+            if (holder.paintedHighlighted == isHighlighted) return
+            holder.paintedHighlighted = isHighlighted
+            holder.row.isSelected = isHighlighted
+            if (isHighlighted) {
+                holder.rowBg.setColor(surfaceColor)
+                holder.rowBg.setStroke(selectedStrokePx, accentColor)
+            } else {
+                holder.rowBg.setColor(Color.TRANSPARENT)
+                holder.rowBg.setStroke(0, Color.TRANSPARENT)
+            }
         }
     }
 

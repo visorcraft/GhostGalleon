@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
@@ -177,6 +178,24 @@ internal object QuickPanelNav {
         else ->
             tokens.chipIdle to UiDimens.ALPHA_PRIMARY
     }
+
+    /**
+     * Tile indices to repaint when moving focus from [previousIndex] to
+     * [nextIndex], or all tiles when [forceAll] is true (initial build or live
+     * theme cycle). Emits at most 2 indices (`<= 2`) on incremental NAV ticks.
+     */
+    fun dirtyTileIndices(
+        previousIndex: Int,
+        nextIndex: Int,
+        count: Int,
+        forceAll: Boolean = false,
+    ): List<Int> {
+        if (count <= 0) return emptyList()
+        val next = GridWrapNav.clampIndex(nextIndex, count)
+        if (forceAll || previousIndex < 0) return (0 until count).toList()
+        val prev = GridWrapNav.clampIndex(previousIndex, count)
+        return if (prev == next) emptyList() else listOf(prev, next)
+    }
 }
 
 /**
@@ -200,14 +219,16 @@ class QuickPanel(
 
     private data class BoundTile(
         val container: LinearLayout,
+        val bgDrawable: GradientDrawable,
         val labelView: TextView,
         val iconView: ImageView?,
-        val swatchView: View?,
+        val swatchDrawable: GradientDrawable?,
         val cell: Cell,
     )
 
     private var columns = QuickPanelNav.DEFAULT_COLUMNS
     private var selection = 0
+    private var paintedSelection = -1
     private val tileViews = mutableListOf<BoundTile>()
     private lateinit var cells: List<Cell>
     private var accent: Int = 0
@@ -430,12 +451,22 @@ class QuickPanel(
             rowCells.forEachIndexed { colIndex, cell ->
                 val index = rowIndex * columns + colIndex
                 var iconView: ImageView? = null
-                var swatchView: View? = null
+                var swatchDrawable: GradientDrawable? = null
+                val tileRadius = themeTokens.cardRadiusDp
+                val tileBg = GradientDrawable().apply {
+                    cornerRadius = context.dpF(tileRadius)
+                }
                 val tile = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
                     contentDescription = cell.label
                     outlineProvider = ViewOutlineProvider.BACKGROUND
+                    background = OverlayPrimitives.roundedRipple(
+                        context = context,
+                        content = tileBg,
+                        cornerRadiusDp = tileRadius,
+                        rippleColor = QuickPanelNav.tileRippleColor(cell.role, accent),
+                    )
                     isClickable = true
                     setPadding(
                         context.dp(UiDimens.SPACE_SM),
@@ -451,10 +482,14 @@ class QuickPanel(
                 }
                 val iconRes = QuickPanelNav.iconResFor(cell.glyph)
                 if (cell.glyph == QuickPanelNav.TileGlyph.ICON_THEME_SWATCH) {
+                    val dotBg = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                    }
                     val dot = View(context).apply {
+                        background = dotBg
                         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                     }
-                    swatchView = dot
+                    swatchDrawable = dotBg
                     tile.addView(
                         dot,
                         LinearLayout.LayoutParams(context.dp(15), context.dp(15)).apply {
@@ -490,7 +525,7 @@ class QuickPanel(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                     ),
                 )
-                tileViews.add(BoundTile(tile, labelTv, iconView, swatchView, cell))
+                tileViews.add(BoundTile(tile, tileBg, labelTv, iconView, swatchDrawable, cell))
                 row.addView(tile, LinearLayout.LayoutParams(0, tileHeightPx, 1f).apply {
                     if (colIndex > 0) marginStart = context.dp(UiDimens.SPACE_SM)
                 })
@@ -567,7 +602,7 @@ class QuickPanel(
             ),
         )
 
-        paint(animateFocus = false, scrollToFocused = false)
+        paint(animateFocus = false, scrollToFocused = false, forceAll = true)
         root.addView(sheet, FrameLayout.LayoutParams(
             cardWidth,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -576,61 +611,105 @@ class QuickPanel(
         return root
     }
 
+    private fun paintTile(
+        bound: BoundTile,
+        selected: Boolean,
+        animateFocus: Boolean,
+        tileRadiusDp: Int,
+        tileRadiusPx: Float,
+        hairlineColor: Int,
+        stroke1Px: Int,
+        stroke4Px: Int,
+        swatchBorder: Int,
+        refreshThemeChrome: Boolean,
+    ) {
+        val role = bound.cell.role
+        val (fillColor, textColor) = QuickPanelNav.tileColors(role, selected, accent, themeTokens)
+        bound.bgDrawable.cornerRadius = tileRadiusPx
+        bound.bgDrawable.setColor(fillColor)
+        when {
+            selected && role == QuickPanelNav.TileRole.PRIMARY ->
+                bound.bgDrawable.setStroke(0, Color.TRANSPARENT)
+            selected ->
+                bound.bgDrawable.setStroke(stroke4Px, accent)
+            else ->
+                bound.bgDrawable.setStroke(stroke1Px, hairlineColor)
+        }
+        if (refreshThemeChrome) {
+            bound.container.background = OverlayPrimitives.roundedRipple(
+                context = activity,
+                content = bound.bgDrawable,
+                cornerRadiusDp = tileRadiusDp,
+                rippleColor = QuickPanelNav.tileRippleColor(role, accent),
+            )
+            bound.swatchDrawable?.apply {
+                setColor(accent)
+                setStroke(stroke1Px, swatchBorder)
+            }
+        }
+        bound.labelView.setTextColor(textColor)
+        bound.labelView.setTypeface(
+            null,
+            if (selected || role == QuickPanelNav.TileRole.PRIMARY) {
+                Typeface.BOLD
+            } else {
+                Typeface.NORMAL
+            },
+        )
+        bound.iconView?.imageTintList = ColorStateList.valueOf(textColor)
+        bound.container.isSelected = selected
+        bound.container.alpha = 1f
+        bound.container.elevation = activity.dpF(QuickPanelNav.focusElevationDp(selected))
+        OverlayPrimitives.applyFocusScale(
+            view = bound.container,
+            selected = selected,
+            focusedScale = QuickPanelNav.FOCUS_SCALE,
+            animate = animateFocus,
+            durationMs = QuickPanelNav.FOCUS_ANIM_MS,
+        )
+    }
+
     private fun paint(
         animateFocus: Boolean = true,
         scrollToFocused: Boolean = true,
+        forceAll: Boolean = false,
+        refreshThemeChrome: Boolean = false,
     ) {
         if (tileViews.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, tileViews.size)
         selection = sel
-        val tileRadius = themeTokens.cardRadiusDp
-        val swatchBorder = QuickPanelNav.swatchBorderColor(accent)
-        tileViews.forEachIndexed { index, bound ->
-            val selected = index == sel
-            val role = bound.cell.role
-            val (_, textColor) = QuickPanelNav.tileColors(role, selected, accent, themeTokens)
-            val baseBg = when {
-                selected && role == QuickPanelNav.TileRole.PRIMARY ->
-                    TileBackgrounds.accentPill(activity, accent, cornerRadiusDp = tileRadius)
-                selected ->
-                    TileBackgrounds.selected(activity, accent)
-                role == QuickPanelNav.TileRole.CLOSE ->
-                    TileBackgrounds.sunkenField(activity, cornerRadiusDp = tileRadius)
-                else ->
-                    TileBackgrounds.chipIdle(activity, cornerRadiusDp = tileRadius)
+        val dirty = QuickPanelNav.dirtyTileIndices(paintedSelection, sel, tileViews.size, forceAll)
+        if (dirty.isNotEmpty()) {
+            val tileRadiusDp = themeTokens.cardRadiusDp
+            val tileRadiusPx = activity.dpF(tileRadiusDp)
+            val hairlineColor = ThemePack.hairlineDivider(themeTokens)
+            val stroke1Px = activity.strokePx(1)
+            val stroke4Px = activity.strokePx(4)
+            val swatchBorder = QuickPanelNav.swatchBorderColor(accent)
+            val updateSwatch = forceAll || refreshThemeChrome
+            for (index in dirty) {
+                val bound = tileViews[index]
+                paintTile(
+                    bound = bound,
+                    selected = index == sel,
+                    animateFocus = animateFocus,
+                    tileRadiusDp = tileRadiusDp,
+                    tileRadiusPx = tileRadiusPx,
+                    hairlineColor = hairlineColor,
+                    stroke1Px = stroke1Px,
+                    stroke4Px = stroke4Px,
+                    swatchBorder = swatchBorder,
+                    refreshThemeChrome = refreshThemeChrome,
+                )
+                if (updateSwatch && !refreshThemeChrome) {
+                    bound.swatchDrawable?.apply {
+                        setColor(accent)
+                        setStroke(stroke1Px, swatchBorder)
+                    }
+                }
             }
-            bound.container.background = OverlayPrimitives.roundedRipple(
-                context = activity,
-                content = baseBg,
-                cornerRadiusDp = tileRadius,
-                rippleColor = QuickPanelNav.tileRippleColor(role, accent),
-            )
-            bound.labelView.setTextColor(textColor)
-            bound.labelView.setTypeface(
-                null,
-                if (selected || role == QuickPanelNav.TileRole.PRIMARY) {
-                    Typeface.BOLD
-                } else {
-                    Typeface.NORMAL
-                },
-            )
-            bound.iconView?.imageTintList = ColorStateList.valueOf(textColor)
-            bound.swatchView?.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(accent)
-                setStroke(activity.strokePx(1), swatchBorder)
-            }
-            bound.container.isSelected = selected
-            bound.container.alpha = 1f
-            bound.container.elevation = activity.dpF(QuickPanelNav.focusElevationDp(selected))
-            OverlayPrimitives.applyFocusScale(
-                view = bound.container,
-                selected = selected,
-                focusedScale = QuickPanelNav.FOCUS_SCALE,
-                animate = animateFocus,
-                durationMs = QuickPanelNav.FOCUS_ANIM_MS,
-            )
         }
+        paintedSelection = sel
         if (!scrollToFocused) return
         val focusedRow = tileViews.getOrNull(sel)?.container?.parent as? View ?: return
         scrollHost?.smoothScrollToCenter(focusedRow)
@@ -732,7 +811,12 @@ class QuickPanel(
         val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
         topScrollCue?.setBackgroundColor(cueColor)
         bottomScrollCue?.setBackgroundColor(cueColor)
-        paint(animateFocus = false, scrollToFocused = false)
+        paint(
+            animateFocus = false,
+            scrollToFocused = false,
+            forceAll = true,
+            refreshThemeChrome = true,
+        )
         activity.toast(label)
     }
 

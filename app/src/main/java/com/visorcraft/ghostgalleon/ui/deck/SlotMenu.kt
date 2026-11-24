@@ -2,8 +2,8 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
@@ -220,6 +220,19 @@ internal object SlotMenuNav {
         hapticsEnabled: Boolean,
         isCancel: Boolean = false,
     ): Boolean = hapticsEnabled && !isCancel
+
+    /**
+     * Row indices to repaint when moving focus from [previousIndex] to
+     * [nextIndex]. Emits at most 2 indices (`<= 2`) on incremental D-pad moves
+     * and all `0 until count` on initial paint ([previousIndex] < 0).
+     */
+    fun dirtyIndices(previousIndex: Int, nextIndex: Int, count: Int): List<Int> {
+        if (count <= 0) return emptyList()
+        val next = GridWrapNav.clampIndex(nextIndex, count)
+        if (previousIndex < 0) return (0 until count).toList()
+        val prev = GridWrapNav.clampIndex(previousIndex, count)
+        return if (prev == next) emptyList() else listOf(prev, next)
+    }
 }
 
 /**
@@ -291,6 +304,7 @@ class SlotMenu(
 
     private data class BoundAction(
         val container: LinearLayout,
+        val bgDrawable: GradientDrawable,
         val labelView: TextView,
         val glyphView: ImageView?,
         val item: Row.Item,
@@ -298,6 +312,7 @@ class SlotMenu(
     )
 
     private var selection = 0
+    private var paintedSelection = -1
     /** Indices into [rows] that are actionable (not headers). */
     private val actionRowIndices: List<Int> = SlotMenuNav.actionRowIndices(rows)
     private val actionRows = mutableListOf<BoundAction>()
@@ -430,11 +445,27 @@ class SlotMenu(
                     val tone = SlotMenuNav.rowTone(row)
                     val actionIdx = actionRows.size
                     val labelText = context.getString(label)
+                    val cornerDp = themeTokens.cardRadiusDp.coerceAtMost(14)
+                    val rowBg = GradientDrawable().apply {
+                        setColor(Color.TRANSPARENT)
+                        cornerRadius = context.dpF(cornerDp)
+                    }
+                    val rippleColor = if (tone == SlotMenuNav.RowTone.DESTRUCTIVE) {
+                        SlotMenuNav.DESTRUCTIVE_RIPPLE
+                    } else {
+                        SlotMenuNav.STANDARD_RIPPLE
+                    }
                     val rowContainer = LinearLayout(context).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
                         minimumHeight = context.dp(44)
                         contentDescription = labelText
+                        background = OverlayPrimitives.roundedRipple(
+                            context = context,
+                            content = rowBg,
+                            cornerRadiusDp = cornerDp,
+                            rippleColor = rippleColor,
+                        )
                         setPadding(
                             context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
@@ -487,7 +518,7 @@ class SlotMenu(
                             )
                         }
                     }
-                    actionRows.add(BoundAction(rowContainer, actionTv, glyphIv, row, tone))
+                    actionRows.add(BoundAction(rowContainer, rowBg, actionTv, glyphIv, row, tone))
                     list.addView(
                         rowContainer,
                         LinearLayout.LayoutParams(
@@ -574,20 +605,32 @@ class SlotMenu(
         overlay
     }
 
-    private fun rowBackground(spec: SlotMenuNav.RowVisualSpec): Drawable {
-        val cornerDp = themeTokens.cardRadiusDp.coerceAtMost(14)
-        val content: Drawable? = if (spec.fillColor != 0 || spec.strokeDp > 0) {
-            GradientDrawable().apply {
-                setColor(spec.fillColor)
-                cornerRadius = context.dpF(cornerDp)
-                if (spec.strokeDp > 0 && spec.strokeColor != 0) {
-                    setStroke(context.strokePx(spec.strokeDp), spec.strokeColor)
-                }
-            }
+    private fun paintRow(bound: BoundAction, selected: Boolean, animateFocus: Boolean) {
+        val spec = SlotMenuNav.rowVisual(
+            tone = bound.tone,
+            selected = selected,
+            accent = accentColor,
+            tokens = themeTokens,
+        )
+        bound.bgDrawable.setColor(spec.fillColor)
+        if (spec.strokeDp > 0 && spec.strokeColor != 0) {
+            bound.bgDrawable.setStroke(context.strokePx(spec.strokeDp), spec.strokeColor)
         } else {
-            null
+            bound.bgDrawable.setStroke(0, Color.TRANSPARENT)
         }
-        return OverlayPrimitives.roundedRipple(context, content, cornerDp, spec.rippleColor)
+        bound.container.isSelected = selected
+        bound.labelView.setTextColor(spec.textColor)
+        bound.labelView.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        bound.glyphView?.imageTintList = ColorStateList.valueOf(
+            SlotMenuNav.trailingGlyphTint(bound.tone, selected),
+        )
+        OverlayPrimitives.applyFocusScale(
+            view = bound.container,
+            selected = selected,
+            focusedScale = SlotMenuNav.FOCUS_SCALE,
+            animate = animateFocus,
+            durationMs = SlotMenuNav.FOCUS_ANIM_MS,
+        )
     }
 
     private fun paintRows(
@@ -597,29 +640,11 @@ class SlotMenu(
         if (actionRows.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, actionRows.size)
         selection = sel
-        actionRows.forEachIndexed { index, bound ->
-            val selected = index == sel
-            val spec = SlotMenuNav.rowVisual(
-                tone = bound.tone,
-                selected = selected,
-                accent = accentColor,
-                tokens = themeTokens,
-            )
-            bound.container.background = rowBackground(spec)
-            bound.container.isSelected = selected
-            bound.labelView.setTextColor(spec.textColor)
-            bound.labelView.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
-            bound.glyphView?.imageTintList = ColorStateList.valueOf(
-                SlotMenuNav.trailingGlyphTint(bound.tone, selected),
-            )
-            OverlayPrimitives.applyFocusScale(
-                view = bound.container,
-                selected = selected,
-                focusedScale = SlotMenuNav.FOCUS_SCALE,
-                animate = animateFocus,
-                durationMs = SlotMenuNav.FOCUS_ANIM_MS,
-            )
+        val dirty = SlotMenuNav.dirtyIndices(paintedSelection, sel, actionRows.size)
+        for (index in dirty) {
+            paintRow(actionRows[index], selected = index == sel, animateFocus = animateFocus)
         }
+        paintedSelection = sel
         if (!scrollToFocused) return
         val focused = actionRows.getOrNull(sel)?.container ?: return
         scrollHost?.smoothScrollToCenter(focused)

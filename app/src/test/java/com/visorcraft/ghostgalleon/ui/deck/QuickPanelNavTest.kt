@@ -139,4 +139,17 @@ class QuickPanelNavTest {
         assertEquals(ThemePack.GHOST, QuickPanelNav.nextBuiltinTheme(ThemePack.NEON.id))
         assertEquals(ThemePack.THREEDS, QuickPanelNav.nextBuiltinTheme("unknown-custom"))
     }
+
+    @Test
+    fun `dirtyTileIndices repaints at most two tiles per NAV move and all tiles on forceAll`() {
+        assertEquals(emptyList<Int>(), QuickPanelNav.dirtyTileIndices(-1, 0, count = 0))
+        assertEquals((0 until 12).toList(), QuickPanelNav.dirtyTileIndices(-1, 0, count = 12))
+        assertEquals(listOf(0, 4), QuickPanelNav.dirtyTileIndices(0, 4, count = 12))
+        assertEquals(listOf(11, 0), QuickPanelNav.dirtyTileIndices(11, 0, count = 12))
+        assertEquals(emptyList<Int>(), QuickPanelNav.dirtyTileIndices(5, 5, count = 12))
+        assertEquals(
+            (0 until 12).toList(),
+            QuickPanelNav.dirtyTileIndices(5, 5, count = 12, forceAll = true),
+        )
+    }
 }

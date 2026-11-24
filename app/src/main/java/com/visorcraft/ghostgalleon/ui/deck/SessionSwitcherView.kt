@@ -2,8 +2,8 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
@@ -168,6 +168,19 @@ internal object SessionSwitcherNav {
         val trimmedRecency = recency?.trim().orEmpty()
         if (trimmedRecency.isNotEmpty()) add(trimmedRecency)
     }
+
+    /**
+     * Row indices to repaint on selection transition from [previousIndex] to
+     * [nextIndex] (`<= 2` indices on incremental D-pad moves; all rows on
+     * initial paint when [previousIndex] < 0).
+     */
+    fun dirtyRowIndices(previousIndex: Int, nextIndex: Int, count: Int): List<Int> {
+        if (count <= 0) return emptyList()
+        val next = GridWrapNav.clampIndex(nextIndex, count)
+        if (previousIndex < 0) return (0 until count).toList()
+        val prev = GridWrapNav.clampIndex(previousIndex, count)
+        return if (prev == next) emptyList() else listOf(prev, next)
+    }
 }
 
 /**
@@ -252,7 +265,9 @@ object SessionSwitcherView {
         initialSelection: Int = 0,
     ) : FrameLayout(context) {
         var selection: Int = GridWrapNav.clampIndex(initialSelection, entries.size)
+        private var paintedSelection: Int = -1
         val rows = mutableListOf<View>()
+        internal val rowBackgrounds = mutableListOf<GradientDrawable>()
         internal val subtitleViews = mutableListOf<TextView?>()
         internal var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
 
@@ -289,43 +304,45 @@ object SessionSwitcherView {
             }
         }
 
-        private fun rowDrawable(visual: SessionSwitcherNav.RowVisual): Drawable {
-            val content = GradientDrawable().apply {
+        private fun paintRow(index: Int, selected: Boolean, animateFocus: Boolean) {
+            val row = rows[index]
+            val entry = entries.getOrNull(index)
+            val isActive = entry != null &&
+                SessionSwitcherNav.isActiveEntry(entry.key, activeKey)
+            val visual = SessionSwitcherNav.rowVisual(
+                isActive = isActive,
+                selected = selected,
+                accent = accent,
+                tokens = themeTokens,
+            )
+            rowBackgrounds.getOrNull(index)?.apply {
                 setColor(visual.fillColor)
-                cornerRadius = context.dpF(rowRadiusDp)
                 if (visual.strokeDp > 0 && visual.strokeColor != 0) {
                     setStroke(context.strokePx(visual.strokeDp), visual.strokeColor)
+                } else {
+                    setStroke(0, Color.TRANSPARENT)
                 }
             }
-            return OverlayPrimitives.roundedRipple(context, content, rowRadiusDp, visual.rippleColor)
+            row.isSelected = selected
+            subtitleViews.getOrNull(index)?.setTextColor(visual.subtitleColor)
+            OverlayPrimitives.applyFocusScale(
+                view = row,
+                selected = selected,
+                focusedScale = SessionSwitcherNav.FOCUS_SCALE,
+                animate = animateFocus,
+                durationMs = SessionSwitcherNav.FOCUS_ANIM_MS,
+            )
         }
 
         fun paint(animateFocus: Boolean = false) {
             if (rows.isEmpty()) return
             val sel = GridWrapNav.clampIndex(selection, rows.size)
             selection = sel
-            rows.forEachIndexed { index, row ->
-                val selected = index == sel
-                val entry = entries.getOrNull(index)
-                val isActive = entry != null &&
-                    SessionSwitcherNav.isActiveEntry(entry.key, activeKey)
-                val visual = SessionSwitcherNav.rowVisual(
-                    isActive = isActive,
-                    selected = selected,
-                    accent = accent,
-                    tokens = themeTokens,
-                )
-                row.background = rowDrawable(visual)
-                row.isSelected = selected
-                subtitleViews.getOrNull(index)?.setTextColor(visual.subtitleColor)
-                OverlayPrimitives.applyFocusScale(
-                    view = row,
-                    selected = selected,
-                    focusedScale = SessionSwitcherNav.FOCUS_SCALE,
-                    animate = animateFocus,
-                    durationMs = SessionSwitcherNav.FOCUS_ANIM_MS,
-                )
+            val dirty = SessionSwitcherNav.dirtyRowIndices(paintedSelection, sel, rows.size)
+            for (index in dirty) {
+                paintRow(index, selected = index == sel, animateFocus = animateFocus)
             }
+            paintedSelection = sel
             val focused = rows.getOrNull(sel) ?: return
             scrollHost?.smoothScrollToCenter(focused)
         }
@@ -444,14 +461,9 @@ object SessionSwitcherView {
             )
         } else {
             val app = context.applicationContext as? GhostGalleonApp
-            val neededRomIds = entries.mapNotNull { SlotKey.romId(it.key) }.toSet()
-            val romsById: Map<String, RomEntry> = if (neededRomIds.isEmpty() || app == null) {
-                emptyMap()
-            } else {
-                app.romEntries.filter { it.id in neededRomIds }.associateBy { it.id }
-            }
+            val romsById: Map<String, RomEntry> = app?.romById ?: emptyMap()
             val iconLoader = if (entries.any { !SlotKey.isRom(it.key) }) {
-                AppIconLoader(context.packageManager)
+                AppIconLoader.shared(context)
             } else {
                 null
             }
@@ -459,6 +471,9 @@ object SessionSwitcherView {
             val yieldHint = context.getString(R.string.settings_player_uses_both_screens)
             entries.forEachIndexed { index, entry ->
                 val isActive = SessionSwitcherNav.isActiveEntry(entry.key, activeKey)
+                val rowBg = GradientDrawable().apply {
+                    cornerRadius = context.dpF(rowRadiusDp)
+                }
                 val (row, subtitleView) = rowView(
                     context = context,
                     app = app,
@@ -470,10 +485,13 @@ object SessionSwitcherView {
                     isActive = isActive,
                     accent = accent,
                     themeTokens = themeTokens,
+                    rowBg = rowBg,
+                    rowRadiusDp = rowRadiusDp,
                     onPick = onPick,
                     onRemove = onRemove,
                 )
                 overlay.rows.add(row)
+                overlay.rowBackgrounds.add(rowBg)
                 overlay.subtitleViews.add(subtitleView)
                 list.addView(
                     row,
@@ -580,12 +598,20 @@ object SessionSwitcherView {
         isActive: Boolean,
         accent: Int,
         themeTokens: ThemeTokens,
+        rowBg: GradientDrawable,
+        rowRadiusDp: Int,
         onPick: (SessionRingEntry) -> Unit,
         onRemove: (String) -> Unit,
     ): Pair<View, TextView?> {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = rowBg,
+                cornerRadiusDp = rowRadiusDp,
+                rippleColor = SessionSwitcherNav.ROW_RIPPLE_COLOR,
+            )
             setPadding(
                 context.dp(UiDimens.SPACE_MD),
                 context.dp(10),

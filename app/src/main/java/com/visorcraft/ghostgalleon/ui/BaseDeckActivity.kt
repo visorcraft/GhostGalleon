@@ -260,6 +260,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         if (allowed) {
             content?.setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                    playHostTouchClaimEnabled &&
                     HostSurfacePolicy.shouldClaimPlayHostTouch(
                         playHostAllowed = true,
                         hostSurface = app.hostSurface,
@@ -533,7 +534,11 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            lastDownIsSeatChrome = CompanionPanel.isNoClaimChromeHit(window?.decorView, ev)
+            lastDownIsSeatChrome = if (playHostTouchClaimEnabled) {
+                CompanionPanel.isNoClaimChromeHit(window?.decorView, ev)
+            } else {
+                false
+            }
         }
         val handled = super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -735,7 +740,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     protected val appLibrary: AppLibrary by lazy { app.appLibrary() }
 
-    protected val appIconLoader: AppIconLoader by lazy { AppIconLoader(packageManager) }
+    protected val appIconLoader: AppIconLoader by lazy { AppIconLoader.shared(this) }
 
     private lateinit var currentDeck: Deck
 
