@@ -4,11 +4,13 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -120,6 +122,11 @@ class GridDeck(
     private var pagerScroll: HorizontalScrollView? = null
     private var pageGrids: List<GridView> = emptyList()
     private var pageDotsView: LinearLayout? = null
+    private var pagePillViews: List<View> = emptyList()
+    private var pagePrevButton: ImageView? = null
+    private var pageNextButton: ImageView? = null
+    private val pageDotAnimators = mutableListOf<ValueAnimator>()
+    private var lastPaintedPage: Int = -1
     private var pageGeometry: PageGeometry? = null
     private var dockBar: DockBar? = null
     private var hintView: TextView? = null
@@ -196,8 +203,16 @@ class GridDeck(
         pulseAnimator = null
     }
 
+    private fun cancelPageDotAnimators() {
+        pageDotAnimators.forEach { it.cancel() }
+        pageDotAnimators.clear()
+    }
+
     private fun cancelAllAnimations() {
         cancelPulseAnimator()
+        cancelPageDotAnimators()
+        pagePrevButton?.animate()?.cancel()
+        pageNextButton?.animate()?.cancel()
         forEachAttachedCell { frame, _, _ ->
             frame.animate().cancel()
             frame.translationY = 0f
@@ -397,73 +412,270 @@ class GridDeck(
         if (delta != 0) grid.scrollListBy(delta)
     }
 
-    // Repaints the existing indicator views in place: expanded accent pill for
-    // the current page, compact dim dot for inactive pages.
-    private fun updatePageDots() {
+    // Repaints the interactive page indicator strip in place: smooth cancelable
+    // pill width/color morph for the active page + edge-chevron boundary dimming.
+    private fun updatePageDots(animate: Boolean = pageDotsView?.isLaidOut == true) {
         val dots = pageDotsView ?: return
         val geometry = pageGeometry ?: return
-        val density = dots.resources.displayMetrics.density
-        val activeW = (18 * density).toInt()
-        val inactiveW = (6 * density).toInt()
-        val pillH = (6 * density).toInt()
-        val radius = 3 * density
-        val currentPage = (selectedIndex() / geometry.cellsPerPage) + 1
-        for (i in 0 until dots.childCount) {
-            val page = i + 1
-            val isCurrent = page == currentPage
-            val color = if (isCurrent) settings.accentColor else 0x4DFFFFFF
-            val dot = dots.getChildAt(i)
-            val existing = dot.background as? GradientDrawable
-            if (existing != null) {
-                existing.mutate()
-                existing.cornerRadius = radius
-                existing.setColor(color)
+        if (pagePillViews.isEmpty()) return
+        val stripState = GridPageIndicatorMetrics.stripState(
+            selectedSlot = selectedIndex(),
+            slotCount = slotCount,
+            cellsPerPage = geometry.cellsPerPage,
+        )
+        val prevAlpha = if (stripState.canPagePrev) {
+            GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
+        } else {
+            GridPageIndicatorMetrics.CHEVRON_DISABLED_ALPHA
+        }
+        val nextAlpha = if (stripState.canPageNext) {
+            GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
+        } else {
+            GridPageIndicatorMetrics.CHEVRON_DISABLED_ALPHA
+        }
+        pagePrevButton?.let { btn ->
+            btn.isEnabled = stripState.canPagePrev
+            btn.isClickable = stripState.canPagePrev
+            btn.animate().cancel()
+            if (animate) {
+                btn.animate().alpha(prevAlpha).setDuration(GridPageIndicatorMetrics.PILL_ANIM_MS).start()
             } else {
-                dot.background = GradientDrawable().apply {
-                    cornerRadius = radius
-                    setColor(color)
-                }
+                btn.alpha = prevAlpha
             }
-            val wantW = if (isCurrent) activeW else inactiveW
-            val lp = dot.layoutParams as? LinearLayout.LayoutParams
-            if (lp != null && (lp.width != wantW || lp.height != pillH)) {
-                lp.width = wantW
-                lp.height = pillH
-                dot.layoutParams = lp
+        }
+        pageNextButton?.let { btn ->
+            btn.isEnabled = stripState.canPageNext
+            btn.isClickable = stripState.canPageNext
+            btn.animate().cancel()
+            if (animate) {
+                btn.animate().alpha(nextAlpha).setDuration(GridPageIndicatorMetrics.PILL_ANIM_MS).start()
+            } else {
+                btn.alpha = nextAlpha
+            }
+        }
+
+        if (stripState.currentPage == lastPaintedPage) return
+        val prevPage = lastPaintedPage
+        lastPaintedPage = stripState.currentPage
+
+        val density = dots.resources.displayMetrics.density
+        val activeW = (GridPageIndicatorMetrics.ACTIVE_PILL_WIDTH_DP * density).toInt()
+        val inactiveW = (GridPageIndicatorMetrics.INACTIVE_DOT_WIDTH_DP * density).toInt()
+        val pillH = (GridPageIndicatorMetrics.PILL_HEIGHT_DP * density).toInt()
+        val radius = GridPageIndicatorMetrics.PILL_CORNER_RADIUS_DP * density
+        val activeColor = GridPageIndicatorMetrics.activePillColor(settings.accentColor)
+        val inactiveColor = GridPageIndicatorMetrics.INACTIVE_DOT_COLOR
+
+        cancelPageDotAnimators()
+        pagePillViews.forEachIndexed { pageIndex, pill ->
+            val isCurrent = pageIndex == stripState.currentPage
+            val targetW = if (isCurrent) activeW else inactiveW
+            val targetColor = if (isCurrent) activeColor else inactiveColor
+            (pill.parent as? View)?.isSelected = isCurrent
+
+            val bg = (pill.background as? GradientDrawable)?.also {
+                it.mutate()
+                it.cornerRadius = radius
+            } ?: GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(targetColor)
+                pill.background = this
+            }
+
+            val lp = pill.layoutParams as? FrameLayout.LayoutParams ?: return@forEachIndexed
+            val startW = lp.width.takeIf { it > 0 } ?: if (pageIndex == prevPage) activeW else inactiveW
+            val startColor = if (pageIndex == prevPage) activeColor else inactiveColor
+            val changed = startW != targetW || startColor != targetColor
+
+            if (animate && changed && prevPage >= 0) {
+                val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = GridPageIndicatorMetrics.PILL_ANIM_MS
+                    interpolator = FOCUS_INTERPOLATOR
+                    addUpdateListener { va ->
+                        val frac = va.animatedValue as Float
+                        lp.width = GridPageIndicatorMetrics.interpolateWidthPx(startW, targetW, frac)
+                        lp.height = pillH
+                        pill.layoutParams = lp
+                        bg.setColor(GridPageIndicatorMetrics.interpolateArgb(startColor, targetColor, frac))
+                    }
+                    start()
+                }
+                pageDotAnimators.add(anim)
+            } else {
+                bg.setColor(targetColor)
+                if (lp.width != targetW || lp.height != pillH) {
+                    lp.width = targetW
+                    lp.height = pillH
+                    pill.layoutParams = lp
+                }
             }
         }
     }
 
-    // Centered page indicator strip: expanded 18×6dp accent pill for the
-    // current page, 6dp dim dots for the rest. Hidden on a single-page grid.
+    // Centered interactive page indicator strip: prev chevron cue, tappable
+    // page pills (expanded 20×6dp luminous accent pill for current page, 6dp
+    // dots for others), and next chevron cue. Hidden on a single-page grid.
     private fun buildPageDots(context: Context, dots: LinearLayout, totalPages: Int) {
+        cancelPageDotAnimators()
+        lastPaintedPage = -1
+        dots.removeAllViews()
+        if (totalPages <= 1) {
+            pagePillViews = emptyList()
+            pagePrevButton = null
+            pageNextButton = null
+            dots.visibility = View.GONE
+            return
+        }
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
         val cellsPerPage = pageGeometry?.cellsPerPage ?: 1
-        val currentPage = (selectedIndex() / cellsPerPage) + 1
-        val radius = 3 * density
-        dots.removeAllViews()
-        if (totalPages > 1) {
-            dots.visibility = View.VISIBLE
-            for (page in 1..totalPages) {
-                val isCurrent = page == currentPage
-                val dot = View(context).apply {
-                    background = GradientDrawable().apply {
-                        cornerRadius = radius
-                        setColor(if (isCurrent) settings.accentColor else 0x4DFFFFFF)
-                    }
-                }
-                dots.addView(dot, LinearLayout.LayoutParams(
-                    dp(if (isCurrent) 18 else 6),
-                    dp(6),
-                ).apply {
-                    marginStart = dp(3)
-                    marginEnd = dp(3)
-                })
+        val stripState = GridPageIndicatorMetrics.stripState(
+            selectedSlot = selectedIndex(),
+            slotCount = slotCount,
+            cellsPerPage = cellsPerPage,
+        )
+        val activeColor = GridPageIndicatorMetrics.activePillColor(settings.accentColor)
+        val radius = GridPageIndicatorMetrics.PILL_CORNER_RADIUS_DP * density
+        val touchH = dp(24)
+
+        dots.visibility = View.VISIBLE
+
+        val prevBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_back)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setColorFilter(UiDimens.ALPHA_PRIMARY, PorterDuff.Mode.SRC_IN)
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            background = pageStripRipple(context, cornerRadiusDp = 12)
+            contentDescription = context.getString(R.string.action_page_left)
+            alpha = if (stripState.canPagePrev) {
+                GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
+            } else {
+                GridPageIndicatorMetrics.CHEVRON_DISABLED_ALPHA
             }
-        } else {
-            dots.visibility = View.GONE
+            isEnabled = stripState.canPagePrev
+            isClickable = stripState.canPagePrev
+            setOnClickListener { jumpToPageDelta(-1) }
         }
+        pagePrevButton = prevBtn
+        dots.addView(prevBtn, LinearLayout.LayoutParams(dp(28), touchH).apply {
+            marginEnd = dp(4)
+        })
+
+        val pills = mutableListOf<View>()
+        for (pageIndex in 0 until totalPages) {
+            val isCurrent = pageIndex == stripState.currentPage
+            val pill = View(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = radius
+                    setColor(if (isCurrent) activeColor else GridPageIndicatorMetrics.INACTIVE_DOT_COLOR)
+                }
+            }
+            val hitTarget = FrameLayout(context).apply {
+                setPadding(dp(4), 0, dp(4), 0)
+                background = pageStripRipple(context, cornerRadiusDp = 12)
+                isClickable = true
+                isSelected = isCurrent
+                contentDescription = context.getString(
+                    R.string.format_progress,
+                    pageIndex + 1,
+                    totalPages,
+                )
+                setOnClickListener { jumpToPage(pageIndex) }
+                addView(
+                    pill,
+                    FrameLayout.LayoutParams(
+                        dp(
+                            if (isCurrent) {
+                                GridPageIndicatorMetrics.ACTIVE_PILL_WIDTH_DP
+                            } else {
+                                GridPageIndicatorMetrics.INACTIVE_DOT_WIDTH_DP
+                            },
+                        ),
+                        dp(GridPageIndicatorMetrics.PILL_HEIGHT_DP),
+                        Gravity.CENTER,
+                    ),
+                )
+            }
+            pills.add(pill)
+            dots.addView(
+                hitTarget,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, touchH),
+            )
+        }
+        pagePillViews = pills
+
+        val nextBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_chevron_right)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setColorFilter(UiDimens.ALPHA_PRIMARY, PorterDuff.Mode.SRC_IN)
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            background = pageStripRipple(context, cornerRadiusDp = 12)
+            contentDescription = context.getString(R.string.action_page_right)
+            alpha = if (stripState.canPageNext) {
+                GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
+            } else {
+                GridPageIndicatorMetrics.CHEVRON_DISABLED_ALPHA
+            }
+            isEnabled = stripState.canPageNext
+            isClickable = stripState.canPageNext
+            setOnClickListener { jumpToPageDelta(+1) }
+        }
+        pageNextButton = nextBtn
+        dots.addView(nextBtn, LinearLayout.LayoutParams(dp(28), touchH).apply {
+            marginStart = dp(4)
+        })
+        lastPaintedPage = stripState.currentPage
+    }
+
+    private fun pageStripRipple(context: Context, cornerRadiusDp: Int): RippleDrawable {
+        val mask = GradientDrawable().apply {
+            cornerRadius = context.dpF(cornerRadiusDp)
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(PAGE_STRIP_RIPPLE_COLOR), null, mask)
+    }
+
+    private fun jumpToPage(targetPage: Int) {
+        val geometry = pageGeometry ?: return
+        val current = selectedIndex()
+        val target = GridPageIndicatorMetrics.targetSlotForPage(
+            targetPage = targetPage,
+            currentSlot = current,
+            slotCount = slotCount,
+            cellsPerPage = geometry.cellsPerPage,
+        )
+        applyPageJumpSlot(current, target)
+    }
+
+    private fun jumpToPageDelta(deltaPages: Int) {
+        val geometry = pageGeometry ?: return
+        val current = selectedIndex()
+        val target = GridPageIndicatorMetrics.stepPageSlot(
+            deltaPages = deltaPages,
+            currentSlot = current,
+            slotCount = slotCount,
+            cellsPerPage = geometry.cellsPerPage,
+        )
+        applyPageJumpSlot(current, target)
+    }
+
+    private fun applyPageJumpSlot(from: Int, target: Int) {
+        if (target == from) return
+        val moving = moveIndex
+        if (moving != null) {
+            val working = moveWorking ?: return
+            if (target in working.indices) {
+                val tmp = working[moving]
+                working[moving] = working[target]
+                working[target] = tmp
+                moveIndex = target
+                ensureSelectionVisible()
+                rebindVisibleCells()
+                updatePageDots()
+            }
+            return
+        }
+        state.selectSlot(target, settings.gridSlots.getOrNull(target))
     }
 
     // Tap-to-focus: first tap on an unfocused slot only moves the
@@ -609,13 +821,11 @@ class GridDeck(
             clipChildren = false
             clipToPadding = false
         }
-        // Slim centered page indicator strip above the dock (hidden when 1 page),
-        // keeping the dock itself identically centered across Grid & Game modes.
-        val dotPadV = (4 * context.resources.displayMetrics.density).toInt()
+        // Slim centered interactive page indicator strip above the dock
+        // (hidden when 1 page), keeping the dock centered across Grid & Game.
         val pageDots = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dotPadV, 0, dotPadV)
             visibility = View.GONE
         }
         // The frame clips the grid's partial over-drawn bottom row while
@@ -2207,5 +2417,6 @@ class GridDeck(
         const val BADGE_SCRIM_STROKE = 0x26FFFFFF
         const val FOLDER_GHOST_WELL_FILL = 0x12FFFFFF
         const val FOLDER_GHOST_WELL_STROKE = 0x10FFFFFF
+        const val PAGE_STRIP_RIPPLE_COLOR = 0x33FFFFFF
     }
 }
