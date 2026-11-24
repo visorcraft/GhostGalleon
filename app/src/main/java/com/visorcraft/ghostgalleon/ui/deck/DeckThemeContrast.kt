@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 
 /**
@@ -18,6 +19,17 @@ object DeckThemeContrast {
     /** Small safety margin so 8-bit integer rounding never dips under 3.0:1. */
     private const val TARGET_NON_TEXT_CONTRAST: Double = 3.15
 
+    /** Upper bound on memoized default-ratio `(accent, surface) -> stroke` entries. */
+    internal const val FOCUS_STROKE_CACHE_MAX_SIZE: Int = 256
+
+    private val focusStrokeCache = ConcurrentHashMap<Long, Int>()
+
+    internal fun focusStrokeCacheSize(): Int = focusStrokeCache.size
+
+    internal fun clearCacheForTest() {
+        focusStrokeCache.clear()
+    }
+
     /**
      * Return opaque [accent] unchanged when it already meets [minRatio] over
      * [surfaceFill]; otherwise lift along exact RGB brightness (then gently
@@ -30,6 +42,31 @@ object DeckThemeContrast {
     ): Int {
         val opaque = (0xFF shl 24) or (accent and 0x00FFFFFF)
         val bg = (0xFF shl 24) or (surfaceFill and 0x00FFFFFF)
+        val useCache = minRatio == MIN_NON_TEXT_CONTRAST
+        val cacheKey = if (useCache) {
+            (opaque.toLong() shl 32) or (bg.toLong() and 0xFFFFFFFFL)
+        } else {
+            0L
+        }
+        if (useCache) {
+            focusStrokeCache[cacheKey]?.let { return it }
+        }
+
+        val computed = computeAccessibleFocusStroke(opaque, bg, minRatio)
+        if (useCache) {
+            if (focusStrokeCache.size >= FOCUS_STROKE_CACHE_MAX_SIZE) {
+                focusStrokeCache.clear()
+            }
+            focusStrokeCache[cacheKey] = computed
+        }
+        return computed
+    }
+
+    private fun computeAccessibleFocusStroke(
+        opaque: Int,
+        bg: Int,
+        minRatio: Double,
+    ): Int {
         if (ThemePack.contrastRatio(opaque, bg) >= minRatio) return opaque
 
         val target = maxOf(minRatio, TARGET_NON_TEXT_CONTRAST)

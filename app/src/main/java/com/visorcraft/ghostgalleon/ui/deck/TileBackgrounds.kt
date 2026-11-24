@@ -10,6 +10,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.View
+import com.visorcraft.ghostgalleon.art.ArtTileMetrics
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -21,6 +22,60 @@ object TileBackgrounds {
     private const val CHROME_RIPPLE_COLOR = 0x44FFFFFF
     private const val STATUS_PILL_ALPHA = 0xD9
     private const val STATUS_PILL_STROKE = 0x28FFFFFF
+
+    internal const val CARD_CACHE_MAX_ENTRIES: Int = 12
+    internal const val SELECTED_CACHE_MAX_ENTRIES: Int = 16
+    internal const val BLANK_SLOT_CACHE_MAX_ENTRIES: Int = 12
+    internal const val CHIP_IDLE_CACHE_MAX_ENTRIES: Int = 12
+    internal const val SUNKEN_FIELD_CACHE_MAX_ENTRIES: Int = 12
+    internal const val STATUS_PILL_CACHE_MAX_ENTRIES: Int = 8
+    internal const val ART_BACKING_CACHE_MAX_ENTRIES: Int = 16
+
+    /**
+     * Pure, thread-safe, host-tested bounded LRU cache for immutable templates.
+     * Stores only value keys and template instances — never any [Context] or [View].
+     */
+    internal class BoundedTemplateCache<K : Any, V : Any>(
+        val maxEntries: Int,
+    ) {
+        init {
+            require(maxEntries > 0) { "maxEntries must be > 0, got $maxEntries" }
+        }
+
+        private val lock = Any()
+        private val map = object : LinkedHashMap<K, V>(maxEntries + 1, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean =
+                size > maxEntries
+        }
+        private var hits = 0L
+        private var misses = 0L
+
+        fun getOrPut(key: K, create: () -> V): V = synchronized(lock) {
+            val existing = map[key]
+            if (existing != null) {
+                hits++
+                return existing
+            }
+            misses++
+            val created = create()
+            map[key] = created
+            created
+        }
+
+        fun size(): Int = synchronized(lock) { map.size }
+
+        fun hitCount(): Long = synchronized(lock) { hits }
+
+        fun missCount(): Long = synchronized(lock) { misses }
+
+        fun containsKey(key: K): Boolean = synchronized(lock) { map.containsKey(key) }
+
+        fun clear() = synchronized(lock) {
+            map.clear()
+            hits = 0L
+            misses = 0L
+        }
+    }
 
     /**
      * Pure cache key for the hot-path [card] drawable template (accent-free so
@@ -44,6 +99,24 @@ object TileBackgrounds {
         val accent: Int,
     )
 
+    /**
+     * Pure cache key for stroked rounded-rect templates ([blankSlot], [chipIdle],
+     * [sunkenField], [statusPill], [artBacking]). Holds only primitive visual
+     * tokens — zero [Context] references. Host-tested.
+     */
+    internal data class RoundedRectTemplateKey(
+        val fill: Int,
+        val strokeColor: Int,
+        val strokeWidthPx: Int,
+        val radiusPx: Float,
+    )
+
+    private fun normalizeRadiusPx(radiusPx: Float): Float =
+        if (radiusPx.isNaN() || radiusPx <= 0f) 0f else radiusPx
+
+    private fun strokePxForDensity(density: Float, dpValue: Int): Int =
+        (dpValue * density).toInt().coerceAtLeast(1)
+
     internal fun cardSurfaceKey(
         tokens: ThemeTokens,
         density: Float,
@@ -51,7 +124,7 @@ object TileBackgrounds {
         themeId = tokens.id,
         fill = ThemePack.cardFill(tokens),
         hairline = ThemePack.hairlineDivider(tokens),
-        radiusPx = tokens.cardRadiusDp * density,
+        radiusPx = normalizeRadiusPx(tokens.cardRadiusDp * density),
         density = density,
     )
 
@@ -64,17 +137,101 @@ object TileBackgrounds {
         accent = accent,
     )
 
+    internal fun blankSlotKey(
+        tokens: ThemeTokens,
+        density: Float,
+        cornerRadiusDp: Int? = null,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = ThemePack.surfaceSunken(tokens),
+        strokeColor = ThemePack.HAIRLINE_SUBTLE,
+        strokeWidthPx = strokePxForDensity(density, 1),
+        radiusPx = normalizeRadiusPx((cornerRadiusDp ?: tokens.cardRadiusDp) * density),
+    )
+
+    internal fun chipIdleKey(
+        tokens: ThemeTokens,
+        density: Float,
+        cornerRadiusDp: Int = 12,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = tokens.chipIdle,
+        strokeColor = ThemePack.hairlineDivider(tokens),
+        strokeWidthPx = strokePxForDensity(density, 1),
+        radiusPx = normalizeRadiusPx(cornerRadiusDp * density),
+    )
+
+    internal fun sunkenFieldKey(
+        tokens: ThemeTokens,
+        density: Float,
+        cornerRadiusDp: Int = 12,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = ThemePack.surfaceSunken(tokens),
+        strokeColor = ThemePack.hairlineDivider(tokens),
+        strokeWidthPx = strokePxForDensity(density, 1),
+        radiusPx = normalizeRadiusPx(cornerRadiusDp * density),
+    )
+
+    internal fun statusPillKey(
+        tokens: ThemeTokens,
+        density: Float,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = statusPillFill(ThemePack.cardFill(tokens)),
+        strokeColor = STATUS_PILL_STROKE,
+        strokeWidthPx = strokePxForDensity(density, 1),
+        radiusPx = normalizeRadiusPx(24 * density),
+    )
+
+    internal fun artBackingKey(
+        tokens: ThemeTokens,
+        density: Float,
+        cornerRadiusDp: Int = 24,
+    ): RoundedRectTemplateKey = artBackingPxKey(
+        tokens = tokens,
+        density = density,
+        cornerRadiusPx = cornerRadiusDp * density,
+    )
+
+    internal fun artBackingPxKey(
+        tokens: ThemeTokens,
+        density: Float,
+        cornerRadiusPx: Float,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = ThemePack.surfaceSunken(tokens),
+        strokeColor = ThemePack.hairlineDivider(tokens),
+        strokeWidthPx = ArtTileMetrics.backingStrokePx(density),
+        radiusPx = normalizeRadiusPx(cornerRadiusPx),
+    )
+
     /** Pure translucent status-pill fill derived from the active card fill. */
     internal fun statusPillFill(surfaceColor: Int): Int =
         (STATUS_PILL_ALPHA shl 24) or (surfaceColor and 0x00FFFFFF)
 
-    // Selection is the hottest path (every NAV tick). Cache card and selected
-    // templates independently per theme surface / accent / density; return
-    // constantState copies so views never share mutable bounds/alpha.
-    private var cachedCardKey: CardSurfaceKey? = null
-    private var cachedCard: GradientDrawable? = null
-    private var cachedSelectedKey: SelectedSurfaceKey? = null
-    private var cachedSelected: GradientDrawable? = null
+    // Multi-slot bounded LRU template caches (zero Context refs stored):
+    // eliminates 1-slot thrashing across dual displays with differing densities,
+    // radii, or contrast-adjusted accents while keeping memory strictly bounded.
+    private val cardTemplateCache =
+        BoundedTemplateCache<CardSurfaceKey, GradientDrawable>(CARD_CACHE_MAX_ENTRIES)
+    private val selectedTemplateCache =
+        BoundedTemplateCache<SelectedSurfaceKey, GradientDrawable>(SELECTED_CACHE_MAX_ENTRIES)
+    private val blankSlotTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(BLANK_SLOT_CACHE_MAX_ENTRIES)
+    private val chipIdleTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(CHIP_IDLE_CACHE_MAX_ENTRIES)
+    private val sunkenFieldTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(SUNKEN_FIELD_CACHE_MAX_ENTRIES)
+    private val statusPillTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(STATUS_PILL_CACHE_MAX_ENTRIES)
+    private val artBackingTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(ART_BACKING_CACHE_MAX_ENTRIES)
+
+    private fun cloneTemplate(template: GradientDrawable): GradientDrawable =
+        template.constantState?.newDrawable()?.mutate() as? GradientDrawable ?: template
+
+    private fun buildRoundedRectTemplate(key: RoundedRectTemplateKey): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(key.fill)
+            cornerRadius = key.radiusPx
+            setStroke(key.strokeWidthPx, key.strokeColor)
+        }
 
     private fun tokens(context: Context): ThemeTokens {
         val app = context.applicationContext
@@ -88,35 +245,25 @@ object TileBackgrounds {
     private fun ensureCardTemplate(context: Context): GradientDrawable {
         val t = tokens(context)
         val key = cardSurfaceKey(t, context.resources.displayMetrics.density)
-        val existing = cachedCard
-        if (cachedCardKey == key && existing != null) {
-            return existing
+        return cardTemplateCache.getOrPut(key) {
+            GradientDrawable().apply {
+                setColor(key.fill)
+                cornerRadius = key.radiusPx
+                setStroke(strokePxForDensity(key.density, 1), key.hairline)
+            }
         }
-        val built = GradientDrawable().apply {
-            setColor(key.fill)
-            cornerRadius = key.radiusPx
-            setStroke(UiDimens.strokePx(context, 1), key.hairline)
-        }
-        cachedCardKey = key
-        cachedCard = built
-        return built
     }
 
     private fun ensureSelectedTemplate(context: Context, accent: Int): GradientDrawable {
         val t = tokens(context)
         val key = selectedSurfaceKey(t, accent, context.resources.displayMetrics.density)
-        val existing = cachedSelected
-        if (cachedSelectedKey == key && existing != null) {
-            return existing
+        return selectedTemplateCache.getOrPut(key) {
+            GradientDrawable().apply {
+                setColor(key.surface.fill)
+                cornerRadius = key.surface.radiusPx
+                setStroke(strokePxForDensity(key.surface.density, 4), key.accent)
+            }
         }
-        val built = GradientDrawable().apply {
-            setColor(key.surface.fill)
-            cornerRadius = key.surface.radiusPx
-            setStroke(UiDimens.strokePx(context, 4), accent)
-        }
-        cachedSelectedKey = key
-        cachedSelected = built
-        return built
     }
 
     /** Primary card surface fill color for the active theme pack. */
@@ -141,10 +288,10 @@ object TileBackgrounds {
     ): Int = ThemePack.accentTextColor(accent, surface)
 
     fun card(context: Context): GradientDrawable =
-        ensureCardTemplate(context).constantState!!.newDrawable().mutate() as GradientDrawable
+        cloneTemplate(ensureCardTemplate(context))
 
     fun selected(context: Context, accent: Int): GradientDrawable =
-        ensureSelectedTemplate(context, accent).constantState!!.newDrawable().mutate() as GradientDrawable
+        cloneTemplate(ensureSelectedTemplate(context, accent))
 
     /** Idle chip fill from the active theme pack. */
     fun chipIdleColor(context: Context): Int = tokens(context).chipIdle
@@ -159,12 +306,12 @@ object TileBackgrounds {
         cornerRadiusDp: Int = 10,
     ): GradientDrawable {
         val t = tokens(context)
+        if (fill == t.chipIdle) {
+            return chipIdle(context, cornerRadiusDp)
+        }
         return GradientDrawable().apply {
             setColor(fill)
             cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
-            if (fill == t.chipIdle) {
-                setStroke(UiDimens.strokePx(context, 1), ThemePack.hairlineDivider(t))
-            }
         }
     }
 
@@ -173,12 +320,8 @@ object TileBackgrounds {
         context: Context,
         cornerRadiusDp: Int = 12,
     ): GradientDrawable {
-        val t = tokens(context)
-        return GradientDrawable().apply {
-            setColor(t.chipIdle)
-            cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
-            setStroke(UiDimens.strokePx(context, 1), ThemePack.hairlineDivider(t))
-        }
+        val key = chipIdleKey(tokens(context), context.resources.displayMetrics.density, cornerRadiusDp)
+        return cloneTemplate(chipIdleTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
     }
 
     /** Rounded active/selected pill/chip filled with [accent]. */
@@ -246,12 +389,8 @@ object TileBackgrounds {
 
     /** Translucent floating pill for clock/battery status overlays. */
     fun statusPill(context: Context): GradientDrawable {
-        val t = tokens(context)
-        return GradientDrawable().apply {
-            setColor(statusPillFill(ThemePack.cardFill(t)))
-            cornerRadius = UiDimens.dpF(context, 24)
-            setStroke(UiDimens.strokePx(context, 1), STATUS_PILL_STROKE)
-        }
+        val key = statusPillKey(tokens(context), context.resources.displayMetrics.density)
+        return cloneTemplate(statusPillTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
     }
 
     /**
@@ -262,13 +401,8 @@ object TileBackgrounds {
         context: Context,
         cornerRadiusDp: Int? = null,
     ): GradientDrawable {
-        val t = tokens(context)
-        val radius = cornerRadiusDp ?: t.cardRadiusDp
-        return GradientDrawable().apply {
-            setColor(ThemePack.surfaceSunken(t))
-            cornerRadius = UiDimens.dpF(context, radius)
-            setStroke(UiDimens.strokePx(context, 1), ThemePack.HAIRLINE_SUBTLE)
-        }
+        val key = blankSlotKey(tokens(context), context.resources.displayMetrics.density, cornerRadiusDp)
+        return cloneTemplate(blankSlotTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
     }
 
     /**
@@ -279,12 +413,34 @@ object TileBackgrounds {
         context: Context,
         cornerRadiusDp: Int = 12,
     ): GradientDrawable {
-        val t = tokens(context)
-        return GradientDrawable().apply {
-            setColor(ThemePack.surfaceSunken(t))
-            cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
-            setStroke(UiDimens.strokePx(context, 1), ThemePack.hairlineDivider(t))
-        }
+        val key = sunkenFieldKey(tokens(context), context.resources.displayMetrics.density, cornerRadiusDp)
+        return cloneTemplate(sunkenFieldTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
+    }
+
+    /**
+     * Cached dark sunken hairline-framed backing behind loaded cover artwork
+     * ([com.visorcraft.ghostgalleon.art.ArtTile]), keyed by theme tokens,
+     * density, and corner radius.
+     */
+    fun artBacking(
+        context: Context,
+        cornerRadiusDp: Int = 24,
+    ): GradientDrawable = artBackingPx(context, UiDimens.dpF(context, cornerRadiusDp))
+
+    /**
+     * Pixel-radius overload of [artBacking] for tiles whose corner radius was
+     * pre-clamped by [ArtTileMetrics.clampedCornerRadiusPx].
+     */
+    fun artBackingPx(
+        context: Context,
+        cornerRadiusPx: Float,
+    ): GradientDrawable {
+        val key = artBackingPxKey(
+            tokens = tokens(context),
+            density = context.resources.displayMetrics.density,
+            cornerRadiusPx = cornerRadiusPx,
+        )
+        return cloneTemplate(artBackingTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
     }
 
     /**

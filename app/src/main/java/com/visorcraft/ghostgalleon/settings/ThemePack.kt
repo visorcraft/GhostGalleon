@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.settings
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * Visual theme tokens applied across decks/settings. Pure; host-tested.
  * Built-in packs cover Ghost (current), Teal, OLED pure black, Neon.
@@ -70,6 +72,34 @@ object ThemePack {
     /** Relative luminance cutoff above which accent glows/tints dampen alpha (e.g. OLED `#E0E0E0`). */
     const val HIGH_LUMINANCE_THRESHOLD: Double = 0.55
 
+    /** Upper bound on memoized `(accent, surface) -> color` entries in [accentTextColor]. */
+    internal const val ACCENT_TEXT_CACHE_MAX_SIZE: Int = 256
+
+    // Precomputed sRGB channel linearization table (bit-exact with WCAG 2.1 formula;
+    // eliminates runtime Math.pow calls across all contrast & luminance helpers).
+    private val SRGB_LUMINANCE_LUT: DoubleArray = DoubleArray(256) { c ->
+        val s = c / 255.0
+        if (s <= 0.04045) s / 12.92 else Math.pow((s + 0.055) / 1.055, 2.4)
+    }
+
+    private class ResolvedCacheEntry(
+        val themePackId: String,
+        val themeCustomJson: String?,
+        val tokens: ThemeTokens,
+    )
+
+    @Volatile
+    private var lastResolved: ResolvedCacheEntry? = null
+
+    private val accentTextCache = ConcurrentHashMap<Long, Int>()
+
+    internal fun accentTextCacheSize(): Int = accentTextCache.size
+
+    internal fun clearCachesForTest() {
+        lastResolved = null
+        accentTextCache.clear()
+    }
+
     fun byId(id: String?): ThemeTokens =
         BUILTINS.firstOrNull { it.id.equals(id?.trim(), ignoreCase = true) } ?: GHOST
 
@@ -87,13 +117,9 @@ object ThemePack {
 
     /** WCAG 2.1 relative luminance in `[0.0, 1.0]` for the opaque RGB channels. */
     fun relativeLuminance(color: Int): Double {
-        fun channel(c: Int): Double {
-            val s = c / 255.0
-            return if (s <= 0.04045) s / 12.92 else Math.pow((s + 0.055) / 1.055, 2.4)
-        }
-        val r = channel((color shr 16) and 0xFF)
-        val g = channel((color shr 8) and 0xFF)
-        val b = channel(color and 0xFF)
+        val r = SRGB_LUMINANCE_LUT[(color shr 16) and 0xFF]
+        val g = SRGB_LUMINANCE_LUT[(color shr 8) and 0xFF]
+        val b = SRGB_LUMINANCE_LUT[color and 0xFF]
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
 
@@ -118,7 +144,27 @@ object ThemePack {
     fun accentTextColor(accent: Int, surface: Int = DEFAULT_DARK_SURFACE): Int {
         val opaque = (0xFF shl 24) or (accent and 0x00FFFFFF)
         val bg = (0xFF shl 24) or (surface and 0x00FFFFFF)
-        if (contrastRatio(opaque, bg) >= MIN_TEXT_CONTRAST) return opaque
+        val cacheKey = (opaque.toLong() shl 32) or (bg.toLong() and 0xFFFFFFFFL)
+        accentTextCache[cacheKey]?.let { return it }
+
+        val computed = computeAccentTextColor(opaque, bg)
+        if (accentTextCache.size >= ACCENT_TEXT_CACHE_MAX_SIZE) {
+            accentTextCache.clear()
+        }
+        accentTextCache[cacheKey] = computed
+        return computed
+    }
+
+    private fun computeAccentTextColor(opaque: Int, bg: Int): Int {
+        val bgLum = relativeLuminance(bg)
+        fun ratioWithBg(fg: Int): Double {
+            val l1 = relativeLuminance(fg)
+            val hi = maxOf(l1, bgLum)
+            val lo = minOf(l1, bgLum)
+            return (hi + 0.05) / (lo + 0.05)
+        }
+
+        if (ratioWithBg(opaque) >= MIN_TEXT_CONTRAST) return opaque
 
         val r0 = (opaque shr 16) and 0xFF
         val g0 = (opaque shr 8) and 0xFF
@@ -139,7 +185,7 @@ object ThemePack {
                 kotlin.math.ceil(g0 * maxScale).toInt(),
                 kotlin.math.ceil(b0 * maxScale).toInt(),
             )
-            if (contrastRatio(brightest, bg) >= MIN_TEXT_CONTRAST) {
+            if (ratioWithBg(brightest) >= MIN_TEXT_CONTRAST) {
                 var lo = 1.0
                 var hi = maxScale
                 var best = brightest
@@ -150,14 +196,14 @@ object ThemePack {
                         kotlin.math.ceil(g0 * mid).toInt(),
                         kotlin.math.ceil(b0 * mid).toInt(),
                     )
-                    if (contrastRatio(cand, bg) >= target) {
+                    if (ratioWithBg(cand) >= target) {
                         best = cand
                         hi = mid
                     } else {
                         lo = mid
                     }
                 }
-                return if (contrastRatio(best, bg) >= MIN_TEXT_CONTRAST) best else brightest
+                return if (ratioWithBg(best) >= MIN_TEXT_CONTRAST) best else brightest
             }
             brightest
         } else {
@@ -178,14 +224,14 @@ object ThemePack {
                 kotlin.math.ceil(bgCh + (255 - bgCh) * mid).toInt(),
                 kotlin.math.ceil(bb + (255 - bb) * mid).toInt(),
             )
-            if (contrastRatio(cand, bg) >= target) {
+            if (ratioWithBg(cand) >= target) {
                 best = cand
                 hi = mid
             } else {
                 lo = mid
             }
         }
-        return if (contrastRatio(best, bg) >= MIN_TEXT_CONTRAST) best else 0xFFFFFFFF.toInt()
+        return if (ratioWithBg(best) >= MIN_TEXT_CONTRAST) best else 0xFFFFFFFF.toInt()
     }
 
     /** Primary card fill for [tokens] (preserves Ghost's `#1C1C22` card fill). */
@@ -335,13 +381,26 @@ object ThemePack {
             themeCustomJson = rawJson,
         )
 
-    /** Resolve tokens for current settings (custom JSON wins when valid). */
-    fun resolve(settings: Settings): ThemeTokens {
-        settings.themeCustomJson?.let { raw ->
-            parseJson(raw)?.let { return it }
+    /**
+     * Resolve tokens for ([themePackId], [themeCustomJson]) with a thread-safe
+     * 1-entry volatile cache so repeated hot-path calls never re-parse custom JSON.
+     */
+    fun resolve(themePackId: String, themeCustomJson: String?): ThemeTokens {
+        val cached = lastResolved
+        if (cached != null &&
+            cached.themePackId == themePackId &&
+            cached.themeCustomJson == themeCustomJson
+        ) {
+            return cached.tokens
         }
-        return byId(settings.themePackId)
+        val resolved = themeCustomJson?.let { parseJson(it) } ?: byId(themePackId)
+        lastResolved = ResolvedCacheEntry(themePackId, themeCustomJson, resolved)
+        return resolved
     }
+
+    /** Resolve tokens for current settings (custom JSON wins when valid). */
+    fun resolve(settings: Settings): ThemeTokens =
+        resolve(settings.themePackId, settings.themeCustomJson)
 
     private fun parseColor(o: org.json.JSONObject, key: String): Int? {
         if (!o.has(key) || o.isNull(key)) return null
