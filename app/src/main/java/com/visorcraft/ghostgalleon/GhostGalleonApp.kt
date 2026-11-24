@@ -709,35 +709,48 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    private class BrowseChipCacheEntry(
+        val romsRef: List<RomEntry>,
+        val key: com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipCacheKey,
+        val snapshot: com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipSnapshot,
+    )
+
     @Volatile
-    private var browseChipCacheKey: Int = 0
-    @Volatile
-    private var browseChipCache: com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipSnapshot? =
-        null
+    private var browseChipCache: BrowseChipCacheEntry? = null
 
     fun browseChipSnapshot(
         roms: List<RomEntry>,
         settings: Settings,
         nowMs: Long,
     ): com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipSnapshot {
-        val key = contentEpoch xor
-            roms.size xor
-            settings.lastLaunchedMs.size xor
-            settings.playtimeMs.size xor
-            settings.favorites.size xor
-            settings.hiddenRomIds.size xor
-            (nowMs / 60_000L).toInt()
-        browseChipCache?.let { if (browseChipCacheKey == key) return it }
+        val launchableOnly = settings.browseChrome.launchableOnly
+        val launchableIds = launchablePlatformIds(launchableOnly)
+        val key = com.visorcraft.ghostgalleon.library.LibraryBrowse.BrowseChipCacheKey(
+            contentEpoch = contentEpoch,
+            romCount = roms.size,
+            launchableOnly = launchableOnly,
+            launchablePlatformIds = launchableIds,
+            lastLaunchedMs = settings.lastLaunchedMs,
+            playtimeMs = settings.playtimeMs,
+            hiddenRomIds = settings.hiddenRomIds,
+            favorites = settings.favorites,
+            collections = settings.collections,
+            romNames = settings.romNames,
+            customNames = settings.customNames,
+            nowMinuteBucket = nowMs / 60_000L,
+        )
+        browseChipCache?.let { cached ->
+            if (cached.romsRef === roms && cached.key == key) return cached.snapshot
+        }
         val snap = com.visorcraft.ghostgalleon.library.LibraryBrowse.browseChipSnapshot(
             roms = roms,
             lastLaunchedMs = settings.lastLaunchedMs,
             playtimeMs = settings.playtimeMs,
             hiddenRomIds = settings.hiddenRomIds,
             nowMs = nowMs,
-            launchablePlatformIds = launchablePlatformIds(settings.browseChrome.launchableOnly),
+            launchablePlatformIds = launchableIds,
         )
-        browseChipCacheKey = key
-        browseChipCache = snap
+        browseChipCache = BrowseChipCacheEntry(roms, key, snap)
         return snap
     }
 
@@ -1471,6 +1484,8 @@ class GhostGalleonApp : Application() {
                 if (prev.size != loaded.size || prev != loaded) {
                     contentEpoch++
                     invalidateDrawerListCache()
+                    invalidateSortedPickerRomsCache()
+                    invalidateBrowseChipCache()
                     deckState.notifyChanged()
                 }
             }
@@ -1505,6 +1520,18 @@ class GhostGalleonApp : Application() {
     private var drawerListKey: DrawerListKey? = null
     @Volatile
     private var drawerListItems: List<PickerItem>? = null
+    private val sortedPickerRomsCache = PickerItems.SortedRomsCache()
+
+    /**
+     * Epoch-keyed cached [PickerItems.sortedRoms] for current [romEntries].
+     * Re-sorts only when [contentEpoch], [romEntries], or [hiddenRomIds] changes.
+     */
+    fun sortedPickerRoms(hiddenRomIds: Set<String> = settings.hiddenRomIds): List<RomEntry> =
+        sortedPickerRomsCache.get(contentEpoch, romEntries, hiddenRomIds)
+
+    fun invalidateSortedPickerRomsCache() {
+        sortedPickerRomsCache.invalidate()
+    }
 
     /**
      * Cached empty-query drawer rows for [apps] + current [romEntries].
@@ -1526,6 +1553,7 @@ class GhostGalleonApp : Application() {
         val built = PickerItems.build(
             apps, romEntries, "",
             hiddenRomIds = settings.hiddenRomIds,
+            preSortedRoms = sortedPickerRoms(settings.hiddenRomIds),
         )
         drawerListKey = current
         drawerListItems = built
@@ -1544,6 +1572,8 @@ class GhostGalleonApp : Application() {
         romById = entries.associateBy { it.id }
         contentEpoch++
         invalidateDrawerListCache()
+        invalidateSortedPickerRomsCache()
+        invalidateBrowseChipCache()
         deckState.notifyChanged()
         scheduleIdentityRefresh(entries)
     }
@@ -2842,6 +2872,7 @@ class GhostGalleonApp : Application() {
         com.visorcraft.ghostgalleon.rom.clearInstalledPackageCache()
         launchablePlatformIdsCache = null
         invalidateDrawerListCache()
+        invalidateBrowseChipCache()
     }
 
     /**

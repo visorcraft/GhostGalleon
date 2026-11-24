@@ -4,6 +4,8 @@ import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -190,5 +192,54 @@ class PickerItemsTest {
         )
         val items = PickerItems.build(apps, withHidden, "hades")
         assertTrue(items.filterIsInstance<PickerItem.Rom>().isEmpty())
+    }
+
+    @Test
+    fun `SortedRomsCache hits on unchanged epoch and invalidates on epoch list or hiddenRomIds change`() {
+        val cache = PickerItems.SortedRomsCache()
+        val hiddenA = setOf("snes:roms/snes/zelda.smc")
+        val hiddenB = setOf("gb:roms/gb/tetris.gb")
+
+        val first = cache.get(contentEpoch = 1, roms = roms, hiddenRomIds = hiddenA)
+        val second = cache.get(contentEpoch = 1, roms = roms, hiddenRomIds = hiddenA)
+        assertSame(first, second)
+        assertEquals(listOf("Tetris", "Mario 3D Land", "Super Mario World"), first.map { it.name })
+
+        // Same-size different hiddenRomIds set must invalidate immediately.
+        val afterHiddenSwap = cache.get(contentEpoch = 1, roms = roms, hiddenRomIds = hiddenB)
+        assertNotSame(first, afterHiddenSwap)
+        assertEquals(listOf("Mario 3D Land", "Super Mario World", "Zelda"), afterHiddenSwap.map { it.name })
+
+        // Epoch bump invalidates even for identical list and hidden set.
+        val afterEpochBump = cache.get(contentEpoch = 2, roms = roms, hiddenRomIds = hiddenB)
+        assertNotSame(afterHiddenSwap, afterEpochBump)
+        assertEquals(afterHiddenSwap, afterEpochBump)
+
+        // Fresh ROM list reference invalidates.
+        val copiedRoms = roms.toList()
+        val afterListSwap = cache.get(contentEpoch = 2, roms = copiedRoms, hiddenRomIds = hiddenB)
+        assertNotSame(afterEpochBump, afterListSwap)
+
+        // Explicit invalidate clears cached list.
+        cache.invalidate()
+        val afterExplicit = cache.get(contentEpoch = 2, roms = copiedRoms, hiddenRomIds = hiddenB)
+        assertNotSame(afterListSwap, afterExplicit)
+        assertEquals(afterListSwap, afterExplicit)
+    }
+
+    @Test
+    fun `narrowing query reuses previous items without rescanning or re-sorting roms`() {
+        val first = PickerItems.build(apps, roms, "super")
+        val narrowed = PickerItems.build(
+            apps = apps,
+            roms = emptyList(), // proves narrowing uses previousItems without needing full roms
+            query = "super m",
+            previousQuery = "super",
+            previousItems = first,
+        )
+        assertEquals(
+            listOf("Super Mario World"),
+            narrowed.filterIsInstance<PickerItem.Rom>().map { it.entry.name },
+        )
     }
 }

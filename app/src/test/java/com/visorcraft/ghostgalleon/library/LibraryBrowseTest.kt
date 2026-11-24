@@ -1107,4 +1107,145 @@ class LibraryBrowseTest {
         )
         assertEquals(0, LibraryBrowse.unplayedRomCount(emptyList(), last))
     }
+
+    @Test
+    fun `parseYear zero-alloc scanner matches 4-digit regex semantics on edge cases`() {
+        val regex = Regex("""(\d{4})""")
+        val samples = listOf(
+            null,
+            "",
+            "   ",
+            "1991",
+            "1991-03-15",
+            "19940319T000000",
+            "© 2017 Nintendo",
+            "12345",
+            "1234 1995",
+            "ab99cd2001",
+            "1969",
+            "1970",
+            "2099",
+            "2100",
+            "999",
+            "year: 2024!",
+        )
+        for (raw in samples) {
+            val expected = if (raw.isNullOrBlank()) {
+                null
+            } else {
+                regex.find(raw.trim())?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1970..2099 }
+            }
+            assertEquals("mismatch for raw=$raw", expected, LibraryBrowse.parseYear(raw))
+        }
+    }
+
+    @Test
+    fun `fastLowercase matches String lowercase exactly and avoids copy on lowercase ASCII`() {
+        val alreadyLower = "super_mario_world_1990"
+        assertTrue(LibraryBrowse.fastLowercase(alreadyLower) === alreadyLower)
+        val samples = listOf(
+            "",
+            "abc123",
+            "Super Mario World",
+            "Z_A[\\]^_`a",
+            "Pokémon Emerald",
+            "Ōkami HD",
+            "ΣΕΛΗΝΗ",
+            "İstanbul",
+        )
+        for (s in samples) {
+            assertEquals(s.lowercase(), LibraryBrowse.fastLowercase(s))
+        }
+    }
+
+    @Test
+    fun `BrowseChipCacheKey invalidates on launchableOnly and same-size map or set mutations`() {
+        val base = LibraryBrowse.BrowseChipCacheKey(
+            contentEpoch = 1,
+            romCount = 100,
+            launchableOnly = false,
+            launchablePlatformIds = null,
+            lastLaunchedMs = mapOf("rom:snes:a" to 1000L),
+            playtimeMs = mapOf("rom:snes:a" to 500L),
+            hiddenRomIds = setOf("snes:h1"),
+            favorites = setOf("rom:snes:f1"),
+            collections = mapOf("RPG" to listOf("rom:snes:a")),
+            romNames = mapOf("snes:a" to "Alpha"),
+            customNames = mapOf("com.app" to "App"),
+            nowMinuteBucket = 42L,
+        )
+        assertEquals(base, base.copy())
+        // Launchable-only toggle must invalidate (was missing from old XOR key).
+        assertNotEquals(base, base.copy(launchableOnly = true))
+        assertNotEquals(base, base.copy(launchablePlatformIds = setOf("snes")))
+        // Same-size timestamp/value changes must invalidate (old XOR only hashed .size).
+        assertNotEquals(base, base.copy(lastLaunchedMs = mapOf("rom:snes:a" to 2000L)))
+        assertNotEquals(base, base.copy(playtimeMs = mapOf("rom:snes:a" to 999L)))
+        assertNotEquals(base, base.copy(hiddenRomIds = setOf("snes:h2")))
+        assertNotEquals(base, base.copy(favorites = setOf("rom:snes:f2")))
+        assertNotEquals(base, base.copy(collections = mapOf("RPG" to listOf("rom:snes:b"))))
+        assertNotEquals(base, base.copy(romNames = mapOf("snes:a" to "Beta")))
+        assertNotEquals(base, base.copy(customNames = mapOf("com.app" to "Renamed")))
+        assertNotEquals(base, base.copy(contentEpoch = 2))
+        assertNotEquals(base, base.copy(nowMinuteBucket = 43L))
+    }
+
+    @Test
+    fun `browseRoms with romById matches scan path across all modes sorts and filters`() {
+        val now = 2_000_000_000_000L
+        val last = mapOf(
+            SlotKey.rom("switch:BotW.rom") to now - 1_000L,
+            SlotKey.rom("snes:Zelda.rom") to now - LibraryBrowse.WEEK_WINDOW_MS - 5_000L,
+            SlotKey.rom("snes:Mario.rom") to now - 60_000L,
+            SlotKey.rom("nds:Hidden.rom") to now - 500L, // invisible must stay excluded
+            "com.example.app" to now - 200L, // app key ignored
+        )
+        val play = mapOf(
+            SlotKey.rom("snes:Mario.rom") to 900L,
+            SlotKey.rom("snes:Zelda.rom") to 100L,
+            SlotKey.rom("switch:BotW.rom") to 0L,
+            SlotKey.rom("3ds:Pokemon.rom") to 400L,
+            SlotKey.rom("nds:Hidden.rom") to 9999L,
+        )
+        val favs = setOf(SlotKey.rom("3ds:Pokemon.rom"), SlotKey.rom("snes:Zelda.rom"), "com.example.app")
+        val cols = mapOf(
+            "Favs" to listOf(
+                SlotKey.rom("switch:BotW.rom"),
+                "com.example.app",
+                SlotKey.rom("snes:Zelda.rom"),
+                SlotKey.rom("nds:Hidden.rom"),
+            ),
+        )
+        val byId = library.associateBy { it.id }
+
+        for (mode in LibraryBrowse.Mode.entries) {
+            for (sort in LibraryBrowse.Sort.entries) {
+                val q = LibraryBrowse.BrowseQuery(
+                    mode = mode,
+                    collectionName = if (mode == LibraryBrowse.Mode.COLLECTION) "Favs" else null,
+                    sort = sort,
+                )
+                val withoutIndex = LibraryBrowse.browseRoms(
+                    roms = library,
+                    query = q,
+                    lastLaunchedMs = last,
+                    favorites = favs,
+                    collections = cols,
+                    playtimeMs = play,
+                    nowMs = now,
+                )
+                val withIndex = LibraryBrowse.browseRoms(
+                    roms = library,
+                    query = q,
+                    lastLaunchedMs = last,
+                    favorites = favs,
+                    collections = cols,
+                    playtimeMs = play,
+                    nowMs = now,
+                    romById = byId,
+                )
+                assertEquals("parity mismatch mode=$mode sort=$sort", withoutIndex, withIndex)
+            }
+        }
+    }
 }

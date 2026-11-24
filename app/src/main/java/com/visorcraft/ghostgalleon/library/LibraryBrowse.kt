@@ -6,6 +6,7 @@ import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import java.util.Arrays
 
 /**
  * Pure library browse ops for Game Mode / pickers: platform filter, text
@@ -52,7 +53,125 @@ object LibraryBrowse {
         romCount, appCount, nowBucket,
     ).joinToString("\u001f")
 
-    private val YEAR_TOKEN = Regex("""(\d{4})""")
+    private class StrKeyed<T>(val key: String, val item: T)
+    private class LongKeyed<T>(val key: Long, val item: T)
+    private class PairKeyed<T>(val k1: String, val k2: String, val item: T)
+    private class CountBucket(val key: String, val display: String, var count: Int = 0)
+
+    private val EMPTY_BUCKET = CountBucket("", "")
+
+    private val DECADE_LABELS: Array<String> = Array(13) { i -> "${1970 + i * 10}s" }
+
+    /**
+     * Locale.ROOT-equivalent ASCII fast-path lowercase. Returns [s] unchanged
+     * (zero allocations) when already lowercase ASCII, and falls back to
+     * [String.lowercase] for non-ASCII strings so Unicode parity is exact.
+     */
+    internal fun fastLowercase(s: String): String {
+        val len = s.length
+        var i = 0
+        while (i < len) {
+            val c = s[i]
+            if (c >= '\u0080') return s.lowercase()
+            if (c in 'A'..'Z') {
+                val chars = s.toCharArray()
+                chars[i] = (c.code + 32).toChar()
+                var j = i + 1
+                while (j < len) {
+                    val cj = chars[j]
+                    if (cj >= '\u0080') return s.lowercase()
+                    if (cj in 'A'..'Z') chars[j] = (cj.code + 32).toChar()
+                    j++
+                }
+                return String(chars)
+            }
+            i++
+        }
+        return s
+    }
+
+    private fun isGenreDelimiter(c: Char): Boolean =
+        c == ',' || c == '/' || c == '|' || c == ';'
+
+    private inline fun forEachGenreRange(raw: String?, onToken: (start: Int, end: Int) -> Unit) {
+        if (raw.isNullOrEmpty()) return
+        val len = raw.length
+        var i = 0
+        while (i < len) {
+            var segStart = i
+            while (i < len && !isGenreDelimiter(raw[i])) i++
+            var segEnd = i
+            while (segStart < segEnd && raw[segStart].isWhitespace()) segStart++
+            while (segEnd > segStart && raw[segEnd - 1].isWhitespace()) segEnd--
+            if (segStart < segEnd) {
+                onToken(segStart, segEnd)
+            }
+            i++
+        }
+    }
+
+    private fun matchesGenreTrimmed(raw: String?, needle: String): Boolean {
+        if (raw.isNullOrEmpty()) return false
+        val needleLen = needle.length
+        forEachGenreRange(raw) { start, end ->
+            if (end - start == needleLen &&
+                raw.regionMatches(start, needle, 0, needleLen, ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Extract the decade start year (e.g. `"1990s"` -> `1990`) or -1 if non-standard. */
+    private fun parseDecadeStart(decade: String): Int {
+        if (decade.length != 5) return -1
+        val last = decade[4]
+        if (last != 's' && last != 'S') return -1
+        var y = 0
+        for (i in 0..3) {
+            val c = decade[i]
+            if (c !in '0'..'9') return -1
+            y = y * 10 + (c.code - '0'.code)
+        }
+        return if (y in 1970..2090 && y % 10 == 0) y else -1
+    }
+
+    private fun extractPositiveRomIds(stamps: Map<String, Long>): Set<String> {
+        if (stamps.isEmpty()) return emptySet()
+        var set: HashSet<String>? = null
+        for ((k, v) in stamps) {
+            if (v > 0L) {
+                val id = SlotKey.romId(k) ?: continue
+                if (set == null) set = HashSet()
+                set.add(id)
+            }
+        }
+        return set ?: emptySet()
+    }
+
+    private fun extractRomStampsById(stamps: Map<String, Long>): Map<String, Long> {
+        if (stamps.isEmpty()) return emptyMap()
+        val map = HashMap<String, Long>(stamps.size)
+        for ((k, v) in stamps) {
+            val id = SlotKey.romId(k) ?: continue
+            map[id] = v
+        }
+        return map
+    }
+
+    private fun <T> sortLongDesc(items: List<T>, scoreOf: (T) -> Long): List<T> {
+        val n = items.size
+        if (n <= 1) return items
+        val arr = Array(n) { i ->
+            val item = items[i]
+            LongKeyed(scoreOf(item), item)
+        }
+        Arrays.sort(arr) { a, b -> b.key.compareTo(a.key) }
+        val out = ArrayList<T>(n)
+        for (entry in arr) out.add(entry.item)
+        return out
+    }
 
     enum class Mode {
         ALL,
@@ -273,27 +392,39 @@ object LibraryBrowse {
         lastLaunchedMs: Map<String, Long> = emptyMap(),
         playtimeMs: Map<String, Long> = emptyMap(),
     ): List<T> {
-        if (sort == Sort.DEFAULT || items.size <= 1) return items
+        val n = items.size
+        if (sort == Sort.DEFAULT || n <= 1) return items
         return when (sort) {
             Sort.DEFAULT -> items
             Sort.NAME -> orderByName(items, labelOf)
-            Sort.LAST_PLAYED -> items.withIndex().sortedWith(
-                compareByDescending<IndexedValue<T>> {
-                    lastLaunchedMs[keyOf(it.value)] ?: Long.MIN_VALUE
-                }.thenBy { it.index },
-            ).map { it.value }
-            Sort.MOST_PLAYED -> items.withIndex().sortedWith(
-                compareByDescending<IndexedValue<T>> {
-                    playtimeMs[keyOf(it.value)] ?: Long.MIN_VALUE
-                }.thenBy { it.index },
-            ).map { it.value }
-            Sort.PLATFORM -> items.withIndex().sortedWith(
-                compareBy<IndexedValue<T>> {
-                    platformOf(it.value)?.trim()?.lowercase().orEmpty()
-                }.thenBy {
-                    labelOf(it.value).lowercase()
-                }.thenBy { it.index },
-            ).map { it.value }
+            Sort.LAST_PLAYED -> {
+                if (lastLaunchedMs.isEmpty()) return items
+                sortLongDesc(items) { lastLaunchedMs[keyOf(it)] ?: Long.MIN_VALUE }
+            }
+            Sort.MOST_PLAYED -> {
+                if (playtimeMs.isEmpty()) return items
+                sortLongDesc(items) { playtimeMs[keyOf(it)] ?: Long.MIN_VALUE }
+            }
+            Sort.PLATFORM -> {
+                val platformCache = HashMap<String, String>(32)
+                val arr = Array(n) { i ->
+                    val item = items[i]
+                    val rawPlat = platformOf(item)
+                    val platKey = if (rawPlat.isNullOrEmpty()) {
+                        ""
+                    } else {
+                        platformCache.getOrPut(rawPlat) { fastLowercase(rawPlat.trim()) }
+                    }
+                    PairKeyed(platKey, fastLowercase(labelOf(item)), item)
+                }
+                Arrays.sort(arr) { a, b ->
+                    val cmp = a.k1.compareTo(b.k1)
+                    if (cmp != 0) cmp else a.k2.compareTo(b.k2)
+                }
+                val out = ArrayList<T>(n)
+                for (entry in arr) out.add(entry.item)
+                out
+            }
         }
     }
 
@@ -405,21 +536,25 @@ object LibraryBrowse {
      */
     fun genreTokens(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.split(',', '/', '|', ';')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+        var out: ArrayList<String>? = null
+        forEachGenreRange(raw) { start, end ->
+            if (out == null) out = ArrayList(4)
+            out!!.add(if (start == 0 && end == raw.length) raw else raw.substring(start, end))
+        }
+        return out ?: emptyList()
     }
 
     /** True when [rom] matches optional [genre] token (any segment). */
     fun matchesGenre(rom: RomEntry, genre: String?): Boolean {
         val needle = genre?.trim().orEmpty()
         if (needle.isEmpty()) return true
-        return genreTokens(rom.genre).any { it.equals(needle, ignoreCase = true) }
+        return matchesGenreTrimmed(rom.genre, needle)
     }
 
     fun filterByGenre(roms: List<RomEntry>, genre: String?): List<RomEntry> {
-        if (genre.isNullOrBlank()) return roms
-        return roms.filter { matchesGenre(it, genre) }
+        val needle = genre?.trim().orEmpty()
+        if (needle.isEmpty()) return roms
+        return roms.filter { matchesGenreTrimmed(it.genre, needle) }
     }
 
     /** True when [rom] matches optional [developer] (case-insensitive exact). */
@@ -431,8 +566,12 @@ object LibraryBrowse {
     }
 
     fun filterByDeveloper(roms: List<RomEntry>, developer: String?): List<RomEntry> {
-        if (developer.isNullOrBlank()) return roms
-        return roms.filter { matchesDeveloper(it, developer) }
+        val needle = developer?.trim().orEmpty()
+        if (needle.isEmpty()) return roms
+        return roms.filter { rom ->
+            val raw = rom.developer?.trim()
+            !raw.isNullOrEmpty() && raw.equals(needle, ignoreCase = true)
+        }
     }
 
     /**
@@ -440,14 +579,30 @@ object LibraryBrowse {
      * (`"1991"`, `"1991-03"`, `"© 2017"`). Out-of-range → null.
      */
     fun parseYear(raw: String?): Int? {
-        if (raw.isNullOrBlank()) return null
-        val m = YEAR_TOKEN.find(raw.trim()) ?: return null
-        val y = m.groupValues[1].toIntOrNull() ?: return null
-        return if (y in 1970..2099) y else null
+        if (raw.isNullOrEmpty()) return null
+        val len = raw.length
+        var run = 0
+        var value = 0
+        for (i in 0 until len) {
+            val c = raw[i]
+            if (c in '0'..'9') {
+                value = value * 10 + (c.code - '0'.code)
+                run++
+                if (run == 4) {
+                    return if (value in 1970..2099) value else null
+                }
+            } else {
+                run = 0
+                value = 0
+            }
+        }
+        return null
     }
 
     /** Decade label for a calendar year: `1991` → `"1990s"`. */
     fun yearDecadeLabel(year: Int): String {
+        val idx = (year - 1970) / 10
+        if (year in 1970..2099 && idx in DECADE_LABELS.indices) return DECADE_LABELS[idx]
         val start = (year / 10) * 10
         return "${start}s"
     }
@@ -470,12 +625,25 @@ object LibraryBrowse {
     fun matchesYearDecade(rom: RomEntry, decade: String?): Boolean {
         val d = decade?.trim().orEmpty()
         if (d.isEmpty()) return true
+        val targetStart = parseDecadeStart(d)
+        if (targetStart >= 0) {
+            val y = parseYear(rom.year) ?: return false
+            return (y / 10) * 10 == targetStart
+        }
         return yearDecadeOf(rom.year)?.equals(d, ignoreCase = true) == true
     }
 
     fun filterByYearDecade(roms: List<RomEntry>, decade: String?): List<RomEntry> {
-        if (decade.isNullOrBlank()) return roms
-        return roms.filter { matchesYearDecade(it, decade) }
+        val d = decade?.trim().orEmpty()
+        if (d.isEmpty()) return roms
+        val targetStart = parseDecadeStart(d)
+        if (targetStart >= 0) {
+            return roms.filter { rom ->
+                val y = parseYear(rom.year)
+                y != null && (y / 10) * 10 == targetStart
+            }
+        }
+        return roms.filter { yearDecadeOf(it.year)?.equals(d, ignoreCase = true) == true }
     }
 
     /**
@@ -517,15 +685,23 @@ object LibraryBrowse {
         hiddenRomIds: Set<String> = emptySet(),
         limit: Int = 8,
     ): List<Pair<String, Int>> {
-        val counts = linkedMapOf<String, Int>()
-        HiddenRoms.listed(roms, hiddenRomIds).forEach { rom ->
-            val d = yearDecadeOf(rom.year) ?: return@forEach
-            counts[d] = (counts[d] ?: 0) + 1
+        val cap = limit.coerceAtLeast(0)
+        if (cap == 0 || roms.isEmpty()) return emptyList()
+        val decadeCounts = IntArray(DECADE_LABELS.size)
+        for (rom in roms) {
+            if (!HiddenRoms.isListed(rom, hiddenRomIds)) continue
+            val y = parseYear(rom.year) ?: continue
+            decadeCounts[(y - 1970) / 10]++
         }
-        return counts.entries
-            .sortedBy { it.key }
-            .take(limit.coerceAtLeast(0))
-            .map { it.key to it.value }
+        val out = ArrayList<Pair<String, Int>>(minOf(cap, DECADE_LABELS.size))
+        for (i in decadeCounts.indices) {
+            val n = decadeCounts[i]
+            if (n > 0) {
+                out.add(DECADE_LABELS[i] to n)
+                if (out.size >= cap) break
+            }
+        }
+        return out
     }
 
     /**
@@ -538,22 +714,28 @@ object LibraryBrowse {
         hiddenRomIds: Set<String> = emptySet(),
         limit: Int = 10,
     ): List<Pair<String, Int>> {
-        val counts = linkedMapOf<String, Int>()
-        val display = linkedMapOf<String, String>()
-        HiddenRoms.listed(roms, hiddenRomIds).forEach { rom ->
-            val raw = rom.developer?.trim().orEmpty()
-            if (raw.isEmpty()) return@forEach
-            val key = raw.lowercase()
-            if (key !in display) display[key] = raw
-            counts[key] = (counts[key] ?: 0) + 1
+        val cap = limit.coerceAtLeast(0)
+        if (cap == 0 || roms.isEmpty()) return emptyList()
+        val buckets = HashMap<String, CountBucket>()
+        val rawCache = HashMap<String, CountBucket>()
+        for (rom in roms) {
+            if (!HiddenRoms.isListed(rom, hiddenRomIds)) continue
+            val raw = rom.developer ?: continue
+            val bucket = rawCache.getOrPut(raw) {
+                val trimmed = raw.trim()
+                if (trimmed.isEmpty()) {
+                    EMPTY_BUCKET
+                } else {
+                    val key = fastLowercase(trimmed)
+                    buckets.getOrPut(key) { CountBucket(key, trimmed) }
+                }
+            }
+            if (bucket !== EMPTY_BUCKET) bucket.count++
         }
-        return counts.entries
-            .sortedWith(
-                compareByDescending<Map.Entry<String, Int>> { it.value }
-                    .thenBy { it.key },
-            )
-            .take(limit.coerceAtLeast(0))
-            .map { (key, n) -> (display[key] ?: key) to n }
+        return buckets.values
+            .sortedWith(compareByDescending<CountBucket> { it.count }.thenBy { it.key })
+            .take(cap)
+            .map { it.display to it.count }
     }
 
     /**
@@ -566,23 +748,31 @@ object LibraryBrowse {
         hiddenRomIds: Set<String> = emptySet(),
         limit: Int = 12,
     ): List<Pair<String, Int>> {
-        val counts = linkedMapOf<String, Int>()
-        // canonical display form: first-seen casing per lowercase key
-        val display = linkedMapOf<String, String>()
-        HiddenRoms.listed(roms, hiddenRomIds).forEach { rom ->
-            genreTokens(rom.genre).forEach { token ->
-                val key = token.lowercase()
-                if (key !in display) display[key] = token
-                counts[key] = (counts[key] ?: 0) + 1
+        val cap = limit.coerceAtLeast(0)
+        if (cap == 0 || roms.isEmpty()) return emptyList()
+        val buckets = HashMap<String, CountBucket>()
+        val rawCache = HashMap<String, Array<CountBucket>>()
+        val emptyBuckets = emptyArray<CountBucket>()
+        for (rom in roms) {
+            if (!HiddenRoms.isListed(rom, hiddenRomIds)) continue
+            val raw = rom.genre ?: continue
+            val resolved = rawCache.getOrPut(raw) {
+                var list: ArrayList<CountBucket>? = null
+                forEachGenreRange(raw) { start, end ->
+                    val token = if (start == 0 && end == raw.length) raw else raw.substring(start, end)
+                    val key = fastLowercase(token)
+                    val b = buckets.getOrPut(key) { CountBucket(key, token) }
+                    if (list == null) list = ArrayList(3)
+                    list!!.add(b)
+                }
+                list?.toTypedArray() ?: emptyBuckets
             }
+            for (b in resolved) b.count++
         }
-        return counts.entries
-            .sortedWith(
-                compareByDescending<Map.Entry<String, Int>> { it.value }
-                    .thenBy { it.key },
-            )
-            .take(limit.coerceAtLeast(0))
-            .map { (key, n) -> (display[key] ?: key) to n }
+        return buckets.values
+            .sortedWith(compareByDescending<CountBucket> { it.count }.thenBy { it.key })
+            .take(cap)
+            .map { it.display to it.count }
     }
 
     /**
@@ -633,10 +823,8 @@ object LibraryBrowse {
      * to the end, preserving relative input order among unknowns.
      */
     fun orderByRecent(keys: List<String>, lastLaunchedMs: Map<String, Long>): List<String> {
-        return keys.withIndex().sortedWith(
-            compareByDescending<IndexedValue<String>> { lastLaunchedMs[it.value] ?: Long.MIN_VALUE }
-                .thenBy { it.index },
-        ).map { it.value }
+        if (keys.size <= 1 || lastLaunchedMs.isEmpty()) return keys
+        return sortLongDesc(keys) { lastLaunchedMs[it] ?: Long.MIN_VALUE }
     }
 
     /**
@@ -644,10 +832,8 @@ object LibraryBrowse {
      * playtime fall to the end, preserving relative input order among ties.
      */
     fun orderByPlaytime(keys: List<String>, playtimeMs: Map<String, Long>): List<String> {
-        return keys.withIndex().sortedWith(
-            compareByDescending<IndexedValue<String>> { playtimeMs[it.value] ?: Long.MIN_VALUE }
-                .thenBy { it.index },
-        ).map { it.value }
+        if (keys.size <= 1 || playtimeMs.isEmpty()) return keys
+        return sortLongDesc(keys) { playtimeMs[it] ?: Long.MIN_VALUE }
     }
 
     /**
@@ -655,21 +841,26 @@ object LibraryBrowse {
      * or non-positive stamps fall to the end, stable on input order.
      */
     fun orderByInstallTime(keys: List<String>, firstInstallMs: Map<String, Long>): List<String> {
-        return keys.withIndex().sortedWith(
-            compareByDescending<IndexedValue<String>> {
-                firstInstallMs[it.value] ?: Long.MIN_VALUE
-            }.thenBy { it.index },
-        ).map { it.value }
+        if (keys.size <= 1 || firstInstallMs.isEmpty()) return keys
+        return sortLongDesc(keys) { firstInstallMs[it] ?: Long.MIN_VALUE }
     }
 
     /**
      * Case-insensitive A–Z by [labelOf], stable on input order for ties.
+     * Precomputes lowercase sort keys once (Schwartzian transform) and relies
+     * on JVM TimSort stability to avoid O(N log N) string allocations.
      */
     fun <T> orderByName(items: List<T>, labelOf: (T) -> String): List<T> {
-        return items.withIndex().sortedWith(
-            compareBy<IndexedValue<T>> { labelOf(it.value).lowercase() }
-                .thenBy { it.index },
-        ).map { it.value }
+        val n = items.size
+        if (n <= 1) return items
+        val arr = Array(n) { i ->
+            val item = items[i]
+            StrKeyed(fastLowercase(labelOf(item)), item)
+        }
+        Arrays.sort(arr) { a, b -> a.key.compareTo(b.key) }
+        val out = ArrayList<T>(n)
+        for (entry in arr) out.add(entry.item)
+        return out
     }
 
     /** True when [key] has never been launched (missing or non-positive stamp). */
@@ -731,6 +922,10 @@ object LibraryBrowse {
      *
      * [nowMs] is used by [Mode.PLAYED_TODAY], [Mode.PLAYED_THIS_WEEK], and
      * [Mode.PLAYED_THIS_MONTH] (default 0 → empty window).
+     *
+     * [romById] is an optional O(1) index matching [roms] by [RomEntry.id]
+     * (e.g. `GhostGalleonApp.romById`) so RECENT / window / MOST_PLAYED /
+     * COLLECTION resolve in O(K) without scanning or copying the full library.
      */
     fun browseRoms(
         roms: List<RomEntry>,
@@ -746,105 +941,307 @@ object LibraryBrowse {
          * filter). Null → no launchability gate.
          */
         launchablePlatformIds: Set<String>? = null,
+        romById: Map<String, RomEntry>? = null,
     ): List<RomEntry> {
-        val listed = HiddenRoms.listed(roms, hiddenRomIds)
-        val base = when (query.mode) {
-            Mode.ALL -> listed
-            Mode.ALPHA -> orderByName(listed) { it.name }
-            Mode.UNPLAYED -> {
-                val unplayed = listed.filter {
-                    isUnplayed(SlotKey.rom(it.id), lastLaunchedMs)
+        if (roms.isEmpty() || query.mode == Mode.RECENTLY_INSTALLED) return emptyList()
+        if (launchablePlatformIds != null && launchablePlatformIds.isEmpty()) return emptyList()
+
+        val platFilter = query.platformId
+        val genreNeedle = query.genre?.trim().orEmpty()
+        val devNeedle = query.developer?.trim().orEmpty()
+        val decadeNeedle = query.yearDecade?.trim().orEmpty()
+        val decadeStart = if (decadeNeedle.isNotEmpty()) parseDecadeStart(decadeNeedle) else -1
+        val searchNeedle = fastLowercase(query.text.trim())
+
+        fun matchesFilters(rom: RomEntry): Boolean {
+            if (platFilter != null && rom.platformId != platFilter) return false
+            if (launchablePlatformIds != null && rom.platformId !in launchablePlatformIds) return false
+            if (genreNeedle.isNotEmpty() && !matchesGenreTrimmed(rom.genre, genreNeedle)) return false
+            if (devNeedle.isNotEmpty()) {
+                val rawDev = rom.developer?.trim()
+                if (rawDev.isNullOrEmpty() || !rawDev.equals(devNeedle, ignoreCase = true)) return false
+            }
+            if (decadeNeedle.isNotEmpty()) {
+                if (decadeStart >= 0) {
+                    val y = parseYear(rom.year)
+                    if (y == null || (y / 10) * 10 != decadeStart) return false
+                } else if (yearDecadeOf(rom.year)?.equals(decadeNeedle, ignoreCase = true) != true) {
+                    return false
                 }
-                orderByName(unplayed) { it.name }
+            }
+            if (searchNeedle.isNotEmpty() && !romMatchesSearch(rom, searchNeedle)) return false
+            return true
+        }
+
+        fun resolveWindow(windowMs: Long): List<RomEntry> {
+            if (nowMs <= 0L || lastLaunchedMs.isEmpty()) return emptyList()
+            val since = windowStartMs(nowMs, windowMs)
+            if (romById != null) {
+                val hits = ArrayList<LongKeyed<RomEntry>>()
+                for ((k, ts) in lastLaunchedMs) {
+                    if (ts <= 0L || ts < since) continue
+                    val id = SlotKey.romId(k) ?: continue
+                    val rom = romById[id] ?: continue
+                    if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                        hits.add(LongKeyed(ts, rom))
+                    }
+                }
+                if (hits.size <= 1) return hits.map { it.item }
+                val arr = hits.toTypedArray()
+                Arrays.sort(arr) { a, b -> b.key.compareTo(a.key) }
+                val out = ArrayList<RomEntry>(arr.size)
+                for (e in arr) out.add(e.item)
+                return out
+            }
+            val needed = HashMap<String, Long>()
+            for ((k, ts) in lastLaunchedMs) {
+                if (ts <= 0L || ts < since) continue
+                val id = SlotKey.romId(k) ?: continue
+                needed[id] = ts
+            }
+            if (needed.isEmpty()) return emptyList()
+            val hits = ArrayList<LongKeyed<RomEntry>>(needed.size)
+            for (rom in roms) {
+                val ts = needed[rom.id] ?: continue
+                if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                    hits.add(LongKeyed(ts, rom))
+                }
+            }
+            if (hits.size <= 1) return hits.map { it.item }
+            val arr = hits.toTypedArray()
+            Arrays.sort(arr) { a, b -> b.key.compareTo(a.key) }
+            val out = ArrayList<RomEntry>(arr.size)
+            for (e in arr) out.add(e.item)
+            return out
+        }
+
+        val hasMetaFilters = platFilter != null ||
+            launchablePlatformIds != null ||
+            genreNeedle.isNotEmpty() ||
+            devNeedle.isNotEmpty() ||
+            decadeNeedle.isNotEmpty() ||
+            searchNeedle.isNotEmpty()
+        val bulkInitCap = if (hasMetaFilters) minOf(roms.size, 64) else roms.size
+
+        val filtered: List<RomEntry> = when (query.mode) {
+            Mode.ALL, Mode.GAMES -> {
+                val out = ArrayList<RomEntry>(bulkInitCap)
+                for (rom in roms) {
+                    if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                        out.add(rom)
+                    }
+                }
+                out
+            }
+            Mode.ALPHA -> {
+                val out = ArrayList<RomEntry>(bulkInitCap)
+                for (rom in roms) {
+                    if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                        out.add(rom)
+                    }
+                }
+                val sorted = orderByName(out) { it.name }
+                if (query.sort == Sort.NAME || query.sort == Sort.DEFAULT) return sorted
+                sorted
+            }
+            Mode.UNPLAYED -> {
+                val playedRomIds = extractPositiveRomIds(lastLaunchedMs)
+                val out = ArrayList<RomEntry>(bulkInitCap)
+                for (rom in roms) {
+                    if (HiddenRoms.isListed(rom, hiddenRomIds) &&
+                        (playedRomIds.isEmpty() || rom.id !in playedRomIds) &&
+                        matchesFilters(rom)
+                    ) {
+                        out.add(rom)
+                    }
+                }
+                val sorted = orderByName(out) { it.name }
+                if (query.sort == Sort.NAME || query.sort == Sort.DEFAULT) return sorted
+                sorted
             }
             Mode.RECENT -> {
-                val byKey = listed.associateBy { SlotKey.rom(it.id) }
-                val recentKeys = lastLaunchedMs.keys.filter { it in byKey }
-                orderByRecent(recentKeys, lastLaunchedMs).mapNotNull { byKey[it] }
+                if (lastLaunchedMs.isEmpty()) return emptyList()
+                val hits: ArrayList<LongKeyed<RomEntry>>
+                if (romById != null) {
+                    hits = ArrayList(lastLaunchedMs.size)
+                    for ((k, ts) in lastLaunchedMs) {
+                        val id = SlotKey.romId(k) ?: continue
+                        val rom = romById[id] ?: continue
+                        if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                            hits.add(LongKeyed(ts, rom))
+                        }
+                    }
+                } else {
+                    val neededIds = HashSet<String>(lastLaunchedMs.size)
+                    for (k in lastLaunchedMs.keys) {
+                        SlotKey.romId(k)?.let { neededIds.add(it) }
+                    }
+                    if (neededIds.isEmpty()) return emptyList()
+                    val found = HashMap<String, RomEntry>(neededIds.size)
+                    for (rom in roms) {
+                        if (rom.id in neededIds &&
+                            HiddenRoms.isListed(rom, hiddenRomIds) &&
+                            matchesFilters(rom)
+                        ) {
+                            found[rom.id] = rom
+                        }
+                    }
+                    if (found.isEmpty()) return emptyList()
+                    hits = ArrayList(found.size)
+                    for ((k, ts) in lastLaunchedMs) {
+                        val id = SlotKey.romId(k) ?: continue
+                        val rom = found[id] ?: continue
+                        hits.add(LongKeyed(ts, rom))
+                    }
+                }
+                if (hits.size <= 1) return hits.map { it.item }
+                val arr = hits.toTypedArray()
+                Arrays.sort(arr) { a, b -> b.key.compareTo(a.key) }
+                val out = ArrayList<RomEntry>(arr.size)
+                for (e in arr) out.add(e.item)
+                return out
             }
-            Mode.PLAYED_TODAY -> {
-                val byKey = listed.associateBy { SlotKey.rom(it.id) }
-                val dayKeys = filterPlayedInWindow(
-                    byKey.keys.toList(),
-                    lastLaunchedMs,
-                    nowMs = nowMs,
-                    windowMs = DAY_WINDOW_MS,
-                )
-                dayKeys.mapNotNull { byKey[it] }
-            }
-            Mode.PLAYED_THIS_WEEK -> {
-                val byKey = listed.associateBy { SlotKey.rom(it.id) }
-                val weekKeys = filterPlayedInWindow(
-                    byKey.keys.toList(),
-                    lastLaunchedMs,
-                    nowMs = nowMs,
-                    windowMs = WEEK_WINDOW_MS,
-                )
-                weekKeys.mapNotNull { byKey[it] }
-            }
-            Mode.PLAYED_THIS_MONTH -> {
-                val byKey = listed.associateBy { SlotKey.rom(it.id) }
-                val monthKeys = filterPlayedInWindow(
-                    byKey.keys.toList(),
-                    lastLaunchedMs,
-                    nowMs = nowMs,
-                    windowMs = MONTH_WINDOW_MS,
-                )
-                monthKeys.mapNotNull { byKey[it] }
-            }
+            Mode.PLAYED_TODAY -> return resolveWindow(DAY_WINDOW_MS)
+            Mode.PLAYED_THIS_WEEK -> return resolveWindow(WEEK_WINDOW_MS)
+            Mode.PLAYED_THIS_MONTH -> return resolveWindow(MONTH_WINDOW_MS)
             Mode.MOST_PLAYED -> {
-                val byKey = listed.associateBy { SlotKey.rom(it.id) }
-                // Only keys with positive playtime — empty Top rail when none.
-                val topKeys = playtimeMs
-                    .filter { (k, v) -> v > 0L && k in byKey }
-                    .keys
-                    .toList()
-                orderByPlaytime(topKeys, playtimeMs).mapNotNull { byKey[it] }
+                if (playtimeMs.isEmpty()) return emptyList()
+                val hits: ArrayList<LongKeyed<RomEntry>>
+                if (romById != null) {
+                    hits = ArrayList(playtimeMs.size)
+                    for ((k, v) in playtimeMs) {
+                        if (v <= 0L) continue
+                        val id = SlotKey.romId(k) ?: continue
+                        val rom = romById[id] ?: continue
+                        if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                            hits.add(LongKeyed(v, rom))
+                        }
+                    }
+                } else {
+                    val neededIds = HashSet<String>(playtimeMs.size)
+                    for ((k, v) in playtimeMs) {
+                        if (v > 0L) SlotKey.romId(k)?.let { neededIds.add(it) }
+                    }
+                    if (neededIds.isEmpty()) return emptyList()
+                    val found = HashMap<String, RomEntry>(neededIds.size)
+                    for (rom in roms) {
+                        if (rom.id in neededIds &&
+                            HiddenRoms.isListed(rom, hiddenRomIds) &&
+                            matchesFilters(rom)
+                        ) {
+                            found[rom.id] = rom
+                        }
+                    }
+                    if (found.isEmpty()) return emptyList()
+                    hits = ArrayList(found.size)
+                    for ((k, v) in playtimeMs) {
+                        if (v <= 0L) continue
+                        val id = SlotKey.romId(k) ?: continue
+                        val rom = found[id] ?: continue
+                        hits.add(LongKeyed(v, rom))
+                    }
+                }
+                if (hits.size <= 1) return hits.map { it.item }
+                val arr = hits.toTypedArray()
+                Arrays.sort(arr) { a, b -> b.key.compareTo(a.key) }
+                val out = ArrayList<RomEntry>(arr.size)
+                for (e in arr) out.add(e.item)
+                return out
             }
-            // Install-time rail is app-only (PackageManager firstInstallTime).
-            Mode.RECENTLY_INSTALLED -> emptyList()
-            // Games rail includes every listed ROM (emulated titles are games).
-            Mode.GAMES -> listed
+            Mode.RECENTLY_INSTALLED -> return emptyList()
             Mode.FAVORITES -> {
-                val favIds = favorites.mapNotNull { key ->
-                    if (SlotKey.isRom(key)) SlotKey.romId(key) else null
-                }.toSet()
-                listed.filter { it.id in favIds }
+                if (favorites.isEmpty()) return emptyList()
+                val favIds = HashSet<String>(favorites.size)
+                for (key in favorites) {
+                    SlotKey.romId(key)?.let { favIds.add(it) }
+                }
+                if (favIds.isEmpty()) return emptyList()
+                val out = ArrayList<RomEntry>(minOf(favIds.size, roms.size))
+                for (rom in roms) {
+                    if (rom.id in favIds &&
+                        HiddenRoms.isListed(rom, hiddenRomIds) &&
+                        matchesFilters(rom)
+                    ) {
+                        out.add(rom)
+                    }
+                }
+                out
             }
             Mode.COLLECTION -> {
-                // Preserve user member order (apps skipped here; GameDeck merges).
                 val name = query.collectionName?.trim().orEmpty()
-                val byId = listed.associateBy { it.id }
-                collections[name].orEmpty().mapNotNull { key ->
-                    SlotKey.romId(key)?.let { byId[it] }
+                val members = collections[name]
+                if (members.isNullOrEmpty()) return emptyList()
+                if (romById != null) {
+                    val out = ArrayList<RomEntry>(members.size)
+                    for (key in members) {
+                        val id = SlotKey.romId(key) ?: continue
+                        val rom = romById[id] ?: continue
+                        if (HiddenRoms.isListed(rom, hiddenRomIds) && matchesFilters(rom)) {
+                            out.add(rom)
+                        }
+                    }
+                    return out
                 }
+                val neededIds = HashSet<String>(members.size)
+                for (key in members) {
+                    SlotKey.romId(key)?.let { neededIds.add(it) }
+                }
+                if (neededIds.isEmpty()) return emptyList()
+                val found = HashMap<String, RomEntry>(neededIds.size)
+                for (rom in roms) {
+                    if (rom.id in neededIds &&
+                        HiddenRoms.isListed(rom, hiddenRomIds) &&
+                        matchesFilters(rom)
+                    ) {
+                        found[rom.id] = rom
+                    }
+                }
+                if (found.isEmpty()) return emptyList()
+                val out = ArrayList<RomEntry>(members.size)
+                for (key in members) {
+                    val id = SlotKey.romId(key) ?: continue
+                    found[id]?.let { out.add(it) }
+                }
+                return out
             }
         }
-        // base already listed; pass empty hidden set so platform/search do not
-        // re-filter away members that were intentionally kept (none).
-        val platformed = filterByPlatform(base, query.platformId, emptySet())
-        val genred = filterByGenre(platformed, query.genre)
-        val developed = filterByDeveloper(genred, query.developer)
-        val yeared = filterByYearDecade(developed, query.yearDecade)
-        val launchable = filterByLaunchablePlatforms(yeared, launchablePlatformIds)
-        val searched = searchRoms(launchable, query.text, emptySet())
-        return applyQuerySort(
-            searched,
-            query,
-            keyOf = { SlotKey.rom(it.id) },
-            labelOf = { it.name },
-            platformOf = { it.platformId },
-            lastLaunchedMs = lastLaunchedMs,
-            playtimeMs = playtimeMs,
-        )
+
+        if (!allowsCustomSort(query.mode) || query.sort == Sort.DEFAULT || filtered.size <= 1) {
+            return filtered
+        }
+        return when (query.sort) {
+            Sort.LAST_PLAYED -> {
+                val romLast = extractRomStampsById(lastLaunchedMs)
+                if (romLast.isEmpty()) filtered else sortLongDesc(filtered) { romLast[it.id] ?: Long.MIN_VALUE }
+            }
+            Sort.MOST_PLAYED -> {
+                val romPlay = extractRomStampsById(playtimeMs)
+                if (romPlay.isEmpty()) filtered else sortLongDesc(filtered) { romPlay[it.id] ?: Long.MIN_VALUE }
+            }
+            else -> applySort(
+                filtered,
+                query.sort,
+                keyOf = { it.id },
+                labelOf = { it.name },
+                platformOf = { it.platformId },
+                lastLaunchedMs = lastLaunchedMs,
+                playtimeMs = playtimeMs,
+            )
+        }
     }
 
     /** Distinct platform ids present in the listed library, sorted. */
     fun presentPlatforms(
         roms: List<RomEntry>,
         hiddenRomIds: Set<String> = emptySet(),
-    ): List<String> =
-        HiddenRoms.listed(roms, hiddenRomIds).map { it.platformId }.distinct().sorted()
+    ): List<String> {
+        if (roms.isEmpty()) return emptyList()
+        val seen = HashSet<String>()
+        for (rom in roms) {
+            if (HiddenRoms.isListed(rom, hiddenRomIds)) seen.add(rom.platformId)
+        }
+        return seen.sorted()
+    }
 
     /**
      * Platforms with listed ROM counts (sorted by platform id). Empty library
@@ -854,13 +1251,17 @@ object LibraryBrowse {
         roms: List<RomEntry>,
         hiddenRomIds: Set<String> = emptySet(),
     ): List<Pair<String, Int>> {
-        val counts = linkedMapOf<String, Int>()
-        HiddenRoms.listed(roms, hiddenRomIds).forEach { rom ->
-            counts[rom.platformId] = (counts[rom.platformId] ?: 0) + 1
+        if (roms.isEmpty()) return emptyList()
+        val counts = HashMap<String, CountBucket>()
+        for (rom in roms) {
+            if (!HiddenRoms.isListed(rom, hiddenRomIds)) continue
+            val pid = rom.platformId
+            val b = counts.getOrPut(pid) { CountBucket(pid, pid) }
+            b.count++
         }
-        return counts.entries
+        return counts.values
             .sortedBy { it.key }
-            .map { it.key to it.value }
+            .map { it.key to it.count }
     }
 
     /**
@@ -874,8 +1275,11 @@ object LibraryBrowse {
     }
 
     /** Keys with a positive last-launch stamp (Recent rail size proxy). */
-    fun recentCount(lastLaunchedMs: Map<String, Long>): Int =
-        lastLaunchedMs.count { it.value > 0L }
+    fun recentCount(lastLaunchedMs: Map<String, Long>): Int {
+        var n = 0
+        for (v in lastLaunchedMs.values) if (v > 0L) n++
+        return n
+    }
 
     /**
      * Keys launched inside a rolling window ending at [nowMs]
@@ -887,17 +1291,20 @@ object LibraryBrowse {
         windowMs: Long = WEEK_WINDOW_MS,
     ): Int {
         if (nowMs <= 0L || lastLaunchedMs.isEmpty()) return 0
-        return filterPlayedInWindow(
-            lastLaunchedMs.keys.toList(),
-            lastLaunchedMs,
-            nowMs = nowMs,
-            windowMs = windowMs,
-        ).size
+        val since = windowStartMs(nowMs, windowMs)
+        var count = 0
+        for (t in lastLaunchedMs.values) {
+            if (t > 0L && t >= since) count++
+        }
+        return count
     }
 
     /** Keys with positive playtime (Top rail size proxy). */
-    fun topPlayedCount(playtimeMs: Map<String, Long>): Int =
-        playtimeMs.count { it.value > 0L }
+    fun topPlayedCount(playtimeMs: Map<String, Long>): Int {
+        var n = 0
+        for (v in playtimeMs.values) if (v > 0L) n++
+        return n
+    }
 
     /**
      * Listed ROMs with no positive last-launch stamp (New rail size proxy).
@@ -907,16 +1314,52 @@ object LibraryBrowse {
         roms: List<RomEntry>,
         lastLaunchedMs: Map<String, Long>,
         hiddenRomIds: Set<String> = emptySet(),
-    ): Int =
-        HiddenRoms.listed(roms, hiddenRomIds).count {
-            isUnplayed(SlotKey.rom(it.id), lastLaunchedMs)
+    ): Int {
+        if (roms.isEmpty()) return 0
+        val playedRomIds = extractPositiveRomIds(lastLaunchedMs)
+        var count = 0
+        for (rom in roms) {
+            if (HiddenRoms.isListed(rom, hiddenRomIds) &&
+                (playedRomIds.isEmpty() || rom.id !in playedRomIds)
+            ) {
+                count++
+            }
         }
+        return count
+    }
 
     /** Listed (non-hidden) ROM count — A–Z / Games catalog size proxy half. */
     fun listedRomCount(
         roms: List<RomEntry>,
         hiddenRomIds: Set<String> = emptySet(),
-    ): Int = HiddenRoms.listed(roms, hiddenRomIds).size
+    ): Int {
+        var count = 0
+        for (rom in roms) {
+            if (HiddenRoms.isListed(rom, hiddenRomIds)) count++
+        }
+        return count
+    }
+
+    /**
+     * Collision-free value key for host caching of [BrowseChipSnapshot].
+     * Includes `contentEpoch`, `launchableOnly`, `launchablePlatformIds`, and
+     * exact settings stamps so hits are O(1) via reference fast-path and
+     * invalidation is airtight on any toggle or mutation. Pure; host-tested.
+     */
+    data class BrowseChipCacheKey(
+        val contentEpoch: Int,
+        val romCount: Int,
+        val launchableOnly: Boolean,
+        val launchablePlatformIds: Set<String>?,
+        val lastLaunchedMs: Map<String, Long>,
+        val playtimeMs: Map<String, Long>,
+        val hiddenRomIds: Set<String>,
+        val favorites: Set<String>,
+        val collections: Map<String, List<String>>,
+        val romNames: Map<String, String>,
+        val customNames: Map<String, String>,
+        val nowMinuteBucket: Long,
+    )
 
     /** One-pass chip counts so browse chrome rebuilds do not rewalk the library. */
     data class BrowseChipSnapshot(
@@ -944,60 +1387,126 @@ object LibraryBrowse {
         developerLimit: Int = 10,
         yearLimit: Int = 8,
     ): BrowseChipSnapshot {
-        val listed = HiddenRoms.listed(roms, hiddenRomIds)
-        val launchable = filterByLaunchablePlatforms(listed, launchablePlatformIds)
-        val platformCounts = linkedMapOf<String, Int>()
-        val genreCounts = linkedMapOf<String, Int>()
-        val genreDisplay = linkedMapOf<String, String>()
-        val devCounts = linkedMapOf<String, Int>()
-        val devDisplay = linkedMapOf<String, String>()
-        val yearCounts = linkedMapOf<String, Int>()
+        val playedRomIds = extractPositiveRomIds(lastLaunchedMs)
+        val platformCounts = HashMap<String, CountBucket>(32)
+        val genreBuckets = HashMap<String, CountBucket>(32)
+        val rawGenreCache = HashMap<String, Array<CountBucket>>(64)
+        val emptyGenreBuckets = emptyArray<CountBucket>()
+        val devBuckets = HashMap<String, CountBucket>(64)
+        val rawDevCache = HashMap<String, CountBucket>(64)
+        val decadeCounts = IntArray(DECADE_LABELS.size)
+        var listedCount = 0
         var unplayed = 0
-        // One walk of listed ROMs (was 4× HiddenRoms.listed via present*).
-        for (rom in listed) {
-            if (isUnplayed(SlotKey.rom(rom.id), lastLaunchedMs)) unplayed++
-            genreTokens(rom.genre).forEach { token ->
-                val key = token.lowercase()
-                if (key !in genreDisplay) genreDisplay[key] = token
-                genreCounts[key] = (genreCounts[key] ?: 0) + 1
+
+        // Single zero-copy pass over all ROMs (no HiddenRoms.listed / launchable list copies,
+        // no per-ROM SlotKey.rom allocations, no Regex, and cached raw genre/developer parsing).
+        for (rom in roms) {
+            if (!HiddenRoms.isListed(rom, hiddenRomIds)) continue
+            listedCount++
+            if (playedRomIds.isEmpty() || rom.id !in playedRomIds) unplayed++
+
+            val pid = rom.platformId
+            if (launchablePlatformIds == null || pid in launchablePlatformIds) {
+                val pb = platformCounts.getOrPut(pid) { CountBucket(pid, pid) }
+                pb.count++
             }
-            rom.developer?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
-                val key = raw.lowercase()
-                if (key !in devDisplay) devDisplay[key] = raw
-                devCounts[key] = (devCounts[key] ?: 0) + 1
+
+            val rawGenre = rom.genre
+            if (!rawGenre.isNullOrEmpty()) {
+                val resolved = rawGenreCache.getOrPut(rawGenre) {
+                    var list: ArrayList<CountBucket>? = null
+                    forEachGenreRange(rawGenre) { start, end ->
+                        val token = if (start == 0 && end == rawGenre.length) {
+                            rawGenre
+                        } else {
+                            rawGenre.substring(start, end)
+                        }
+                        val key = fastLowercase(token)
+                        val b = genreBuckets.getOrPut(key) { CountBucket(key, token) }
+                        if (list == null) list = ArrayList(3)
+                        list!!.add(b)
+                    }
+                    list?.toTypedArray() ?: emptyGenreBuckets
+                }
+                for (b in resolved) b.count++
             }
-            yearDecadeOf(rom.year)?.let { d ->
-                yearCounts[d] = (yearCounts[d] ?: 0) + 1
+
+            val rawDev = rom.developer
+            if (!rawDev.isNullOrEmpty()) {
+                val bucket = rawDevCache.getOrPut(rawDev) {
+                    val trimmed = rawDev.trim()
+                    if (trimmed.isEmpty()) {
+                        EMPTY_BUCKET
+                    } else {
+                        val key = fastLowercase(trimmed)
+                        devBuckets.getOrPut(key) { CountBucket(key, trimmed) }
+                    }
+                }
+                if (bucket !== EMPTY_BUCKET) bucket.count++
+            }
+
+            val y = parseYear(rom.year)
+            if (y != null) {
+                decadeCounts[(y - 1970) / 10]++
             }
         }
-        val platformSrc = if (launchablePlatformIds == null) listed else launchable
-        for (rom in platformSrc) {
-            platformCounts[rom.platformId] = (platformCounts[rom.platformId] ?: 0) + 1
+
+        // Single pass over lastLaunchedMs for recent / today / week / month counts (zero sort).
+        var recent = 0
+        var today = 0
+        var week = 0
+        var month = 0
+        if (lastLaunchedMs.isNotEmpty()) {
+            val validNow = nowMs > 0L
+            val daySince = if (validNow) windowStartMs(nowMs, DAY_WINDOW_MS) else Long.MAX_VALUE
+            val weekSince = if (validNow) windowStartMs(nowMs, WEEK_WINDOW_MS) else Long.MAX_VALUE
+            val monthSince = if (validNow) windowStartMs(nowMs, MONTH_WINDOW_MS) else Long.MAX_VALUE
+            for (t in lastLaunchedMs.values) {
+                if (t > 0L) {
+                    recent++
+                    if (validNow) {
+                        if (t >= monthSince) {
+                            month++
+                            if (t >= weekSince) {
+                                week++
+                                if (t >= daySince) today++
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        val yCap = yearLimit.coerceAtLeast(0)
+        val years = ArrayList<Pair<String, Int>>(minOf(yCap, DECADE_LABELS.size))
+        if (yCap > 0) {
+            for (i in decadeCounts.indices) {
+                val n = decadeCounts[i]
+                if (n > 0) {
+                    years.add(DECADE_LABELS[i] to n)
+                    if (years.size >= yCap) break
+                }
+            }
+        }
+
         return BrowseChipSnapshot(
-            recent = recentCount(lastLaunchedMs),
-            today = playedInWindowCount(lastLaunchedMs, nowMs, DAY_WINDOW_MS),
-            week = playedInWindowCount(lastLaunchedMs, nowMs, WEEK_WINDOW_MS),
-            month = playedInWindowCount(lastLaunchedMs, nowMs, MONTH_WINDOW_MS),
+            recent = recent,
+            today = today,
+            week = week,
+            month = month,
             top = topPlayedCount(playtimeMs),
-            listedRoms = listed.size,
+            listedRoms = listedCount,
             unplayed = unplayed,
-            platforms = platformCounts.entries.sortedBy { it.key }.map { it.key to it.value },
-            genres = genreCounts.entries
-                .sortedWith(
-                    compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
-                )
+            platforms = platformCounts.values.sortedBy { it.key }.map { it.key to it.count },
+            genres = genreBuckets.values
+                .sortedWith(compareByDescending<CountBucket> { it.count }.thenBy { it.key })
                 .take(genreLimit.coerceAtLeast(0))
-                .map { (k, n) -> (genreDisplay[k] ?: k) to n },
-            developers = devCounts.entries
-                .sortedWith(
-                    compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
-                )
+                .map { it.display to it.count },
+            developers = devBuckets.values
+                .sortedWith(compareByDescending<CountBucket> { it.count }.thenBy { it.key })
                 .take(developerLimit.coerceAtLeast(0))
-                .map { (k, n) -> (devDisplay[k] ?: k) to n },
-            years = yearCounts.entries.sortedBy { it.key }
-                .take(yearLimit.coerceAtLeast(0))
-                .map { it.key to it.value },
+                .map { it.display to it.count },
+            years = years,
         )
     }
 
@@ -1204,7 +1713,11 @@ object LibraryBrowse {
      * Used by the Game Mode letter jump strip under A–Z / New rails.
      */
     fun letterBucket(label: String): Char {
-        val c = label.trim().firstOrNull()?.uppercaseChar() ?: return '#'
+        val len = label.length
+        var i = 0
+        while (i < len && label[i].isWhitespace()) i++
+        if (i >= len) return '#'
+        val c = label[i].uppercaseChar()
         return if (c in 'A'..'Z') c else '#'
     }
 
@@ -1214,15 +1727,18 @@ object LibraryBrowse {
      */
     fun presentLetterCounts(labels: List<String>): List<Pair<Char, Int>> {
         if (labels.isEmpty()) return emptyList()
-        val counts = linkedMapOf<Char, Int>()
-        labels.forEach { label ->
+        val counts = IntArray(27)
+        for (label in labels) {
             val b = letterBucket(label)
-            counts[b] = (counts[b] ?: 0) + 1
+            if (b == '#') counts[26]++ else counts[b - 'A']++
         }
-        val letters = ('A'..'Z').mapNotNull { c ->
-            counts[c]?.let { n -> c to n }
+        val out = ArrayList<Pair<Char, Int>>(27)
+        for (i in 0 until 26) {
+            val n = counts[i]
+            if (n > 0) out.add(('A' + i) to n)
         }
-        return if ('#' in counts) letters + ('#' to counts.getValue('#')) else letters
+        if (counts[26] > 0) out.add('#' to counts[26])
+        return out
     }
 
     /**
