@@ -2342,7 +2342,7 @@ class GameDeck(
                     chip(
                         counted(short, count),
                         { state.libraryBrowse.platformId == pid },
-                        onLongClick = { showPlatformChipMenu(pid, short) },
+                        onLongClick = { showPlatformChipMenu(pid, short, count) },
                     ) {
                         setBrowse(
                             q.copy(
@@ -2782,7 +2782,9 @@ class GameDeck(
         }.toTypedArray()
         DeckDialogs.chooseItem(
             context = activity,
-            titleRes = R.string.label_favorites,
+            title = activity.resolveText(
+                BrowseMenuFormatter.countedMenuTitle(text(R.string.label_favorites), count),
+            ),
             items = labels,
         ) { which ->
             when (which) {
@@ -2845,7 +2847,9 @@ class GameDeck(
         )
         DeckDialogs.chooseItem(
             context = activity,
-            title = name,
+            title = activity.resolveText(
+                BrowseMenuFormatter.countedMenuTitle(dynamicText(name), count),
+            ),
             items = labels,
         ) { which ->
             when (which) {
@@ -3250,11 +3254,19 @@ class GameDeck(
             Toast.makeText(activity, R.string.browse_no_search_history, Toast.LENGTH_SHORT).show()
             return
         }
-        val items = history.toTypedArray()
+        val activeSearch = state.libraryBrowse.text
+        val displayItems = history.map { query ->
+            activity.resolveText(
+                BrowseMenuFormatter.withActiveCheck(
+                    label = query,
+                    active = BrowseMenuFormatter.isSearchHistoryEntryActive(query, activeSearch),
+                ),
+            )
+        }.toTypedArray()
         DeckDialogs.chooseItem(
             context = activity,
             titleRes = R.string.browse_recent_searches,
-            items = items,
+            items = displayItems,
             neutralRes = R.string.browse_clear_history,
             onNeutral = {
                 app().updateSettings(live.copy(searchHistory = SearchHistory.clear()))
@@ -3265,7 +3277,7 @@ class GameDeck(
                 ).show()
             },
         ) { which ->
-            if (which in items.indices) applySearch(items[which])
+            if (which in history.indices) applySearch(history[which])
         }
     }
 
@@ -3572,14 +3584,15 @@ class GameDeck(
      * Long-press platform chip: filter / clear / sort on that platform.
      * No always-on chrome — depth of core platform chips.
      */
-    private fun showPlatformChipMenu(platformId: String, shortName: String) {
+    private fun showPlatformChipMenu(platformId: String, shortName: String, romCount: Int = 0) {
+        val currentQuery = state.libraryBrowse
         val actions = LibraryBrowse.platformChipActions(
-            state.libraryBrowse,
+            currentQuery,
             platformId,
             shortName,
         )
         if (actions.isEmpty()) return
-        fun label(action: LibraryBrowse.PlatformChipAction): String = when (action.kind) {
+        fun baseLabel(action: LibraryBrowse.PlatformChipAction): String = when (action.kind) {
             LibraryBrowse.PlatformChipActionKind.FILTER ->
                 activity.getString(R.string.browse_filter_platform, action.shortName)
             LibraryBrowse.PlatformChipActionKind.CLEAR ->
@@ -3589,10 +3602,16 @@ class GameDeck(
             LibraryBrowse.PlatformChipActionKind.SORT_LAST_PLAYED ->
                 activity.getString(R.string.browse_sort_last_platform, action.shortName)
         }
-        val labels = actions.map(::label).toTypedArray()
+        val labels = actions.map { action ->
+            val raw = baseLabel(action)
+            val active = BrowseMenuFormatter.isPlatformActionActive(currentQuery, action)
+            activity.resolveText(BrowseMenuFormatter.withActiveCheck(raw, active))
+        }.toTypedArray()
         DeckDialogs.chooseItem(
             context = activity,
-            title = shortName.ifBlank { platformId },
+            title = activity.resolveText(
+                BrowseMenuFormatter.platformMenuTitle(shortName, platformId, romCount),
+            ),
             items = labels,
         ) { which ->
             if (which !in actions.indices) return@chooseItem
@@ -3600,7 +3619,7 @@ class GameDeck(
             val next = settings.browseChrome.sanitize(action.query)
             state.setLibraryBrowse(next, force = true)
             toastIfEmptyBrowse(next)
-            Toast.makeText(activity, label(action), Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, baseLabel(action), Toast.LENGTH_SHORT).show()
         }
     }
 
