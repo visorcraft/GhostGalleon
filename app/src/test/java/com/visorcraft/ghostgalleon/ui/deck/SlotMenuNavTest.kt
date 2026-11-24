@@ -133,4 +133,72 @@ class SlotMenuNavTest {
         assertEquals(emptyList<Int>(), SlotMenuNav.dirtyIndices(3, 3, count = 15))
         assertEquals(emptyList<Int>(), SlotMenuNav.dirtyIndices(0, 99, count = 1))
     }
+
+    @Test
+    fun `standard focused row uses 8 percent accent wash and headerIndexForAction reveals preceding headers`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val stdSelected = SlotMenuNav.rowVisual(
+                tone = SlotMenuNav.RowTone.STANDARD,
+                selected = true,
+                accent = tokens.accentColor,
+                tokens = tokens,
+            )
+            assertNotEquals(0, stdSelected.fillColor)
+            val ratio = ThemePack.contrastRatio(stdSelected.textColor, stdSelected.effectiveSurface)
+            assertTrue(
+                "Standard wash contrast too low ($ratio) on ${tokens.id}",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Standard wash focus stroke contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(stdSelected.strokeColor, stdSelected.effectiveSurface) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+        }
+
+        val rows = listOf(
+            SlotMenu.Row.Header(R.string.menu_section_arrange), // 0
+            SlotMenu.Row.Item(SlotMenu.Choice.MOVE), // action 0 -> row 1 (follows header 0)
+            SlotMenu.Row.Item(SlotMenu.Choice.REMOVE_FROM_GRID, destructive = true), // action 1 -> row 2
+            SlotMenu.Row.Header(R.string.menu_section_dock), // 3
+            SlotMenu.Row.Item(SlotMenu.Choice.PIN_TO_DOCK), // action 2 -> row 4 (follows header 3)
+        )
+        assertEquals(0, SlotMenuNav.headerIndexForAction(rows, actionIdx = 0))
+        assertEquals(-1, SlotMenuNav.headerIndexForAction(rows, actionIdx = 1))
+        assertEquals(3, SlotMenuNav.headerIndexForAction(rows, actionIdx = 2))
+        assertEquals(-1, SlotMenuNav.headerIndexForAction(rows, actionIdx = 9))
+    }
+
+    @Test
+    fun `leadingGlyphRes covers every Choice and rowTopMarginDp adds 6dp buffer above destructive rows`() {
+        for (choice in SlotMenu.Choice.entries) {
+            val res = SlotMenuNav.leadingGlyphRes(choice)
+            assertTrue("Missing leading glyph for $choice", res != 0)
+        }
+        assertEquals(R.drawable.ic_swap, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.MOVE))
+        assertEquals(R.drawable.ic_nav_art, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.SET_ART))
+        assertEquals(R.drawable.ic_folder, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.ADD_TO_COLLECTION))
+        assertEquals(R.drawable.ic_search, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.SEARCH_LIBRARY))
+        assertEquals(R.drawable.ic_settings, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.RENAME))
+        assertEquals(R.drawable.ic_nav_display, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.SCREENS))
+        assertEquals(R.drawable.ic_nav_about, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.DETAILS))
+        assertEquals(R.drawable.ic_close, SlotMenuNav.leadingGlyphRes(SlotMenu.Choice.REMOVE_FROM_GRID))
+
+        assertEquals(
+            6,
+            SlotMenuNav.rowTopMarginDp(SlotMenuNav.RowTone.DESTRUCTIVE, prevIsHeader = false),
+        )
+        assertEquals(
+            2,
+            SlotMenuNav.rowTopMarginDp(SlotMenuNav.RowTone.DESTRUCTIVE, prevIsHeader = true),
+        )
+        assertEquals(
+            2,
+            SlotMenuNav.rowTopMarginDp(SlotMenuNav.RowTone.STANDARD, prevIsHeader = false),
+        )
+        assertEquals(
+            2,
+            SlotMenuNav.rowTopMarginDp(SlotMenuNav.RowTone.CANCEL, prevIsHeader = false),
+        )
+    }
 }

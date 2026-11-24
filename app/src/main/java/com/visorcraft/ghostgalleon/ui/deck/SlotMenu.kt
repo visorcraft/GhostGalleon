@@ -26,6 +26,7 @@ import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 
 /**
  * Pure, host-tested navigation, destructive-row styling, and scroll-cue helpers
@@ -49,7 +50,10 @@ internal object SlotMenuNav {
     const val PAGE_STEP = 5
     const val FOCUS_SCALE = 1.015f
     const val FOCUS_ANIM_MS = 90L
+    const val DEFAULT_ROW_TOP_MARGIN_DP: Int = 2
+    const val DESTRUCTIVE_BUFFER_TOP_MARGIN_DP: Int = 6
 
+    internal const val STANDARD_WASH_SELECTED: Int = 0x14
     internal const val DESTRUCTIVE_WASH_IDLE: Int = 0x14FF5252
     internal const val DESTRUCTIVE_WASH_SELECTED: Int = 0x2EFF5252
     internal const val DESTRUCTIVE_TEXT_SELECTED: Int = 0xFFFFB4AB.toInt()
@@ -59,6 +63,30 @@ internal object SlotMenuNav {
     /** Indices into [rows] that are actionable (never section headers). */
     fun actionRowIndices(rows: List<SlotMenu.Row>): List<Int> =
         rows.mapIndexedNotNull { index, row -> if (row is SlotMenu.Row.Item) index else null }
+
+    /**
+     * When the [actionIdx]-th actionable item in [rows] immediately follows a
+     * [SlotMenu.Row.Header], returns that header's index in [rows]; otherwise `-1`.
+     * Used to bias scroll targets slightly upward so section headers stay revealed
+     * above the focused first item of a section. Host-tested.
+     */
+    fun headerIndexForAction(rows: List<SlotMenu.Row>, actionIdx: Int): Int {
+        val rowIdx = actionRowIndices(rows).getOrNull(actionIdx) ?: return -1
+        val prevIdx = rowIdx - 1
+        return if (prevIdx >= 0 && rows[prevIdx] is SlotMenu.Row.Header) prevIdx else -1
+    }
+
+    /**
+     * Top margin in dp for an action row: inserts a `6dp` touch-separation buffer
+     * above destructive rows (when not already preceded by a section header) to
+     * isolate destructive taps from safe primary actions. Host-tested.
+     */
+    fun rowTopMarginDp(tone: RowTone, prevIsHeader: Boolean): Int =
+        if (tone == RowTone.DESTRUCTIVE && !prevIsHeader) {
+            DESTRUCTIVE_BUFFER_TOP_MARGIN_DP
+        } else {
+            DEFAULT_ROW_TOP_MARGIN_DP
+        }
 
     /** Move selection within `0 until actionCount`, supporting wrap & L1/R1 page jumps. */
     fun move(selection: Int, actionCount: Int, action: Action): Int =
@@ -154,10 +182,15 @@ internal object SlotMenuNav {
                 )
             }
             RowTone.STANDARD -> if (selected) {
+                val fill = blendOverOpaque(
+                    (STANDARD_WASH_SELECTED shl 24) or (accent and 0x00FFFFFF),
+                    surface,
+                )
+                val selectedStroke = OverlayPrimitives.accessibleFocusStroke(accent, fill)
                 RowVisualSpec(
-                    fillColor = surface,
-                    effectiveSurface = surface,
-                    strokeColor = focusStroke,
+                    fillColor = fill,
+                    effectiveSurface = fill,
+                    strokeColor = selectedStroke,
                     strokeDp = 3,
                     textColor = UiDimens.ALPHA_PRIMARY,
                     rippleColor = STANDARD_RIPPLE,
@@ -178,6 +211,83 @@ internal object SlotMenuNav {
     /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling scrollable overflow. */
     fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
         OverlayPrimitives.scrollCueAlphas(canScrollUp, canScrollDown)
+
+    /** Leading semantic 18dp icon rail drawable for every [SlotMenu.Choice]. Host-tested. */
+    @DrawableRes
+    fun leadingGlyphRes(choice: SlotMenu.Choice): Int = when (choice) {
+        SlotMenu.Choice.MOVE,
+        SlotMenu.Choice.MOVE_TO_TOP,
+        SlotMenu.Choice.MOVE_UP,
+        SlotMenu.Choice.MOVE_DOWN,
+        SlotMenu.Choice.MOVE_TO_END,
+        SlotMenu.Choice.PIN_TO_DOCK,
+        SlotMenu.Choice.UNPIN_FROM_DOCK,
+        -> R.drawable.ic_swap
+
+        SlotMenu.Choice.SET_ART,
+        SlotMenu.Choice.DOWNLOAD_ART,
+        SlotMenu.Choice.CUSTOM_ICON,
+        SlotMenu.Choice.RESET_ICON,
+        -> R.drawable.ic_nav_art
+
+        SlotMenu.Choice.ADD_TO_COLLECTION,
+        SlotMenu.Choice.NEW_FOLDER,
+        SlotMenu.Choice.ADD_MEMBER,
+        SlotMenu.Choice.MIRROR_TO_COLLECTION,
+        SlotMenu.Choice.ADD_TO_GRID,
+        -> R.drawable.ic_folder
+
+        SlotMenu.Choice.SEARCH_LIBRARY,
+        SlotMenu.Choice.BROWSE_RELATED,
+        -> R.drawable.ic_search
+
+        SlotMenu.Choice.RENAME,
+        SlotMenu.Choice.RESET_NAME,
+        SlotMenu.Choice.PLAYER,
+        SlotMenu.Choice.OPEN_WITH,
+        SlotMenu.Choice.APP_INFO,
+        -> R.drawable.ic_settings
+
+        SlotMenu.Choice.SCREENS,
+        SlotMenu.Choice.OPEN_IN_GAME_MODE,
+        -> R.drawable.ic_nav_display
+
+        SlotMenu.Choice.FAVORITE,
+        SlotMenu.Choice.UNFAVORITE,
+        SlotMenu.Choice.MARK_PLAYED,
+        -> R.drawable.ic_check_circle
+
+        SlotMenu.Choice.DETAILS,
+        SlotMenu.Choice.COPY_TITLE,
+        -> R.drawable.ic_nav_about
+
+        SlotMenu.Choice.REMOVE,
+        SlotMenu.Choice.REMOVE_FROM_GRID,
+        SlotMenu.Choice.REMOVE_FROM_COLLECTION,
+        SlotMenu.Choice.HIDE,
+        SlotMenu.Choice.CLEAR_PLAY_STATS,
+        SlotMenu.Choice.CANCEL,
+        -> R.drawable.ic_close
+    }
+
+    /** Tint color for a row's leading 18dp semantic icon rail. */
+    fun leadingGlyphTint(
+        tone: RowTone,
+        selected: Boolean,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): Int = when (tone) {
+        RowTone.DESTRUCTIVE ->
+            if (selected) DESTRUCTIVE_TEXT_SELECTED else UiDimens.COLOR_DESTRUCTIVE
+        RowTone.CANCEL ->
+            if (selected) UiDimens.ALPHA_PRIMARY else UiDimens.ALPHA_MUTED
+        RowTone.STANDARD -> if (selected) {
+            val spec = rowVisual(tone, selected = true, accent = accent, tokens = tokens)
+            ThemePack.accentTextColor(accent, spec.effectiveSurface)
+        } else {
+            UiDimens.ALPHA_SECONDARY
+        }
+    }
 
     /** Trailing cue icon for drill-down/sub-modal actions and destructive rows. */
     @DrawableRes
@@ -305,6 +415,9 @@ class SlotMenu(
     private data class BoundAction(
         val container: LinearLayout,
         val bgDrawable: GradientDrawable,
+        val accentBar: View,
+        val accentBarBg: GradientDrawable,
+        val leadingGlyphView: ImageView,
         val labelView: TextView,
         val glyphView: ImageView?,
         val item: Row.Item,
@@ -316,6 +429,8 @@ class SlotMenu(
     /** Indices into [rows] that are actionable (not headers). */
     private val actionRowIndices: List<Int> = SlotMenuNav.actionRowIndices(rows)
     private val actionRows = mutableListOf<BoundAction>()
+    private val headerViewsByRowIndex = mutableMapOf<Int, View>()
+    private var positionBadge: TextView? = null
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
     private var themeTokens: ThemeTokens = ThemePack.GHOST
 
@@ -366,28 +481,113 @@ class SlotMenu(
             padVerticalDp = 12,
         )
 
+        val surfaceColor = TileBackgrounds.surfaceColor(context)
+        val sunkenColor = TileBackgrounds.surfaceSunken(context)
+        val headerColor = ThemePack.accentTextColor(accentColor, surfaceColor)
+        val badgeTextColor = ThemePack.accentTextColor(accentColor, sunkenColor)
+        val dividerColor = TileBackgrounds.hairlineDivider(context)
+        val scrollCueColor = OverlayPrimitives.scrollCueTint(accentColor, surfaceColor)
+        val locale = context.resources.configuration.locales[0]
+
+        val showPosBadge = actionRowIndices.size > 1
         if (headerTitle != null) {
-            card.addView(
-                OverlayPrimitives.modalHeader(
-                    context = context,
-                    title = headerTitle,
-                    gravity = Gravity.START,
-                    showDivider = true,
-                ).apply {
-                    setPadding(context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_XS), context.dp(6))
+            val headerWrap = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_XS), context.dp(6))
+            }
+            val titleRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            titleRow.addView(
+                TextView(context).apply {
+                    text = headerTitle
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    setTypeface(typeface, Typeface.BOLD)
+                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    OverlayPrimitives.markHeading(this)
                 },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            if (showPosBadge) {
+                val badge = TextView(context).apply {
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextColor(badgeTextColor)
+                    setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
+                    maxLines = 1
+                    background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 8)
+                    setPadding(context.dp(8), context.dp(2), context.dp(8), context.dp(2))
+                    OverlayPrimitives.markPoliteLiveRegion(this)
+                }
+                positionBadge = badge
+                titleRow.addView(
+                    badge,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
+                )
+            }
+            headerWrap.addView(
+                titleRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            headerWrap.addView(
+                View(context).apply {
+                    setBackgroundColor(dividerColor)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.strokePx(1),
+                ).apply { topMargin = context.dp(10) },
+            )
+            card.addView(
+                headerWrap,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        } else if (actionRowIndices.size > 5) {
+            val badgeRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                setPadding(context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_XS), context.dp(4))
+            }
+            val badge = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                setTextColor(badgeTextColor)
+                setTypeface(typeface, Typeface.BOLD)
+                useTabularNumerals()
+                maxLines = 1
+                background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 8)
+                setPadding(context.dp(8), context.dp(2), context.dp(8), context.dp(2))
+                OverlayPrimitives.markPoliteLiveRegion(this)
+            }
+            positionBadge = badge
+            badgeRow.addView(
+                badge,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            card.addView(
+                badgeRow,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
         }
-
-        val surfaceColor = TileBackgrounds.surfaceColor(context)
-        val headerColor = ThemePack.accentTextColor(accentColor, surfaceColor)
-        val dividerColor = TileBackgrounds.hairlineDivider(context)
-        val scrollCueColor = OverlayPrimitives.scrollCueTint(accentColor, surfaceColor)
-        val locale = context.resources.configuration.locales[0]
 
         val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -396,6 +596,11 @@ class SlotMenu(
             val hInset = context.dp(UiDimens.SPACE_XS)
             setPadding(hInset, context.dp(2), hInset, context.dp(2))
         }
+        val barWidthPx = context.dp(3)
+        val barHeightPx = context.dp(20)
+        val barGapPx = context.dp(8)
+        val leadingIconPx = context.dp(18)
+        val leadingIconGapPx = context.dp(10)
         rows.forEachIndexed { index, row ->
             when (row) {
                 is Row.Header -> {
@@ -432,6 +637,7 @@ class SlotMenu(
                         isFocusable = false
                         OverlayPrimitives.markHeading(this)
                     }
+                    headerViewsByRowIndex[index] = header
                     list.addView(
                         header,
                         LinearLayout.LayoutParams(
@@ -443,6 +649,7 @@ class SlotMenu(
                 is Row.Item -> {
                     val label = row.labelRes ?: row.choice.labelRes
                     val tone = SlotMenuNav.rowTone(row)
+                    val prevIsHeader = index > 0 && rows[index - 1] is Row.Header
                     val actionIdx = actionRows.size
                     val labelText = context.getString(label)
                     val cornerDp = themeTokens.cardRadiusDp.coerceAtMost(14)
@@ -466,8 +673,8 @@ class SlotMenu(
                             cornerRadiusDp = cornerDp,
                             rippleColor = rippleColor,
                         )
-                        setPadding(
-                            context.dp(UiDimens.SPACE_MD),
+                        setPaddingRelative(
+                            context.dp(UiDimens.SPACE_SM),
                             context.dp(10),
                             context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
@@ -487,6 +694,33 @@ class SlotMenu(
                             onChoice(row.choice)
                         }
                     }
+                    val accentBarBg = TileBackgrounds.activeAccentBar(
+                        context = context,
+                        accent = accentColor,
+                        cornerRadiusDp = 2,
+                    )
+                    val accentBar = View(context).apply {
+                        background = accentBarBg
+                        visibility = View.INVISIBLE
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    rowContainer.addView(
+                        accentBar,
+                        LinearLayout.LayoutParams(barWidthPx, barHeightPx).apply {
+                            marginEnd = barGapPx
+                        },
+                    )
+                    val leadingIv = ImageView(context).apply {
+                        setImageResource(SlotMenuNav.leadingGlyphRes(row.choice))
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    rowContainer.addView(
+                        leadingIv,
+                        LinearLayout.LayoutParams(leadingIconPx, leadingIconPx).apply {
+                            marginEnd = leadingIconGapPx
+                        },
+                    )
                     val actionTv = TextView(context).apply {
                         text = labelText
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -518,14 +752,26 @@ class SlotMenu(
                             )
                         }
                     }
-                    actionRows.add(BoundAction(rowContainer, rowBg, actionTv, glyphIv, row, tone))
+                    actionRows.add(
+                        BoundAction(
+                            container = rowContainer,
+                            bgDrawable = rowBg,
+                            accentBar = accentBar,
+                            accentBarBg = accentBarBg,
+                            leadingGlyphView = leadingIv,
+                            labelView = actionTv,
+                            glyphView = glyphIv,
+                            item = row,
+                            tone = tone,
+                        ),
+                    )
                     list.addView(
                         rowContainer,
                         LinearLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.WRAP_CONTENT,
                         ).apply {
-                            topMargin = context.dp(2)
+                            topMargin = context.dp(SlotMenuNav.rowTopMarginDp(tone, prevIsHeader))
                             bottomMargin = context.dp(2)
                         },
                     )
@@ -633,6 +879,13 @@ class SlotMenu(
             bound.bgDrawable.setStroke(0, Color.TRANSPARENT)
         }
         bound.container.isSelected = selected
+        bound.accentBar.visibility = if (selected) View.VISIBLE else View.INVISIBLE
+        if (selected && spec.strokeColor != 0) {
+            bound.accentBarBg.setColor(spec.strokeColor)
+        }
+        bound.leadingGlyphView.imageTintList = ColorStateList.valueOf(
+            SlotMenuNav.leadingGlyphTint(bound.tone, selected, accentColor, themeTokens),
+        )
         bound.labelView.setTextColor(spec.textColor)
         bound.labelView.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
         bound.glyphView?.imageTintList = ColorStateList.valueOf(
@@ -659,9 +912,28 @@ class SlotMenu(
             paintRow(actionRows[index], selected = index == sel, animateFocus = animateFocus)
         }
         paintedSelection = sel
+        positionBadge?.text = context.getString(R.string.format_progress, sel + 1, actionRows.size)
         if (!scrollToFocused) return
         val focused = actionRows.getOrNull(sel)?.container ?: return
-        scrollHost?.smoothScrollToCenter(focused)
+        val scroller = scrollHost ?: return
+        val hdrIdx = SlotMenuNav.headerIndexForAction(rows, sel)
+        val headerView = if (hdrIdx >= 0) headerViewsByRowIndex[hdrIdx] else null
+        if (headerView != null) {
+            scroller.post {
+                val content = scroller.getChildAt(0) ?: return@post
+                val top = headerView.top
+                val spanHeight = (focused.bottom - top).coerceAtLeast(focused.height)
+                val targetY = OverlayPrimitives.scrollCenterTargetY(
+                    itemTop = top,
+                    itemHeight = spanHeight,
+                    viewportHeight = scroller.height,
+                    contentHeight = content.height,
+                )
+                scroller.smoothScrollTo(0, targetY)
+            }
+        } else {
+            scroller.smoothScrollToCenter(focused)
+        }
     }
 
     fun handleAction(action: Action): Boolean {

@@ -4,6 +4,8 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -104,15 +106,33 @@ class QuickPanelNavTest {
     }
 
     @Test
-    fun `iconResFor maps semantic glyphs and swatchBorderColor stays legible across themes`() {
+    fun `iconResFor and programmaticGlyphKind give every QuickPanel cell a distinct non-NONE glyph`() {
         assertEquals(R.drawable.ic_settings, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_SETTINGS))
-        assertEquals(R.drawable.ic_swap, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_DISPLAY))
+        assertEquals(R.drawable.ic_nav_display, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_DISPLAY))
         assertEquals(R.drawable.ic_chevron_right, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CONTINUE))
-        assertEquals(R.drawable.ic_nav_audio, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_AUDIO))
         assertEquals(R.drawable.ic_close, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CLOSE))
         assertNotNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_RAIL))
         assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_THEME_SWATCH))
         assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.NONE))
+
+        // Programmatic vector glyphs for Wi-Fi, Bluetooth, Random, Controller, Audio (zero Display/Random collision).
+        assertEquals(QuickGlyphDrawable.Kind.WIFI, QuickPanelNav.programmaticGlyphKind(QuickPanelNav.TileGlyph.ICON_WIFI))
+        assertEquals(QuickGlyphDrawable.Kind.BLUETOOTH, QuickPanelNav.programmaticGlyphKind(QuickPanelNav.TileGlyph.ICON_BLUETOOTH))
+        assertEquals(QuickGlyphDrawable.Kind.RANDOM, QuickPanelNav.programmaticGlyphKind(QuickPanelNav.TileGlyph.ICON_RANDOM))
+        assertEquals(QuickGlyphDrawable.Kind.CONTROLLER, QuickPanelNav.programmaticGlyphKind(QuickPanelNav.TileGlyph.ICON_CONTROLLER))
+        assertEquals(QuickGlyphDrawable.Kind.AUDIO, QuickPanelNav.programmaticGlyphKind(QuickPanelNav.TileGlyph.ICON_AUDIO))
+        assertNotEquals(
+            QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_DISPLAY),
+            QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_RANDOM),
+        )
+
+        val coreGlyphs = QuickPanelNav.coreCellGlyphs(includeBrowse = true)
+        assertFalse(coreGlyphs.contains(QuickPanelNav.TileGlyph.NONE))
+        assertEquals(coreGlyphs.size, coreGlyphs.distinct().size)
+        for (glyph in coreGlyphs) {
+            assertTrue("Cell glyph $glyph must have a visual icon", QuickPanelNav.hasVisualGlyph(glyph))
+        }
+
         assertEquals(R.string.quick_audio_on, QuickPanelNav.audioToggleLabelRes(soundEnabled = true))
         assertEquals(R.string.quick_audio_off, QuickPanelNav.audioToggleLabelRes(soundEnabled = false))
 
@@ -151,5 +171,87 @@ class QuickPanelNavTest {
             (0 until 12).toList(),
             QuickPanelNav.dirtyTileIndices(5, 5, count = 12, forceAll = true),
         )
+    }
+
+    @Test
+    fun `focusStrokeColor meets WCAG 1-4-11, audioTileMuted and continueAvailability resolve cleanly`() {
+        val customAccents = listOf(
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+            0xFFFFEE00.toInt(),
+            0xFF101840.toInt(),
+            0xFF00FF88.toInt(),
+        )
+        for (tokens in ThemePack.BUILTINS) {
+            val cardSurface = ThemePack.cardFill(tokens)
+            for (accent in listOf(tokens.accentColor) + customAccents) {
+                for (role in QuickPanelNav.TileRole.entries) {
+                    val stroke = QuickPanelNav.focusStrokeColor(role, accent, tokens)
+                    assertTrue(
+                        "QuickPanel focus stroke < 3.0 on ${tokens.id} role=$role accent=${Integer.toHexString(accent)}",
+                        ThemePack.contrastRatio(stroke, cardSurface) >=
+                            OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                    )
+                }
+            }
+        }
+        assertFalse(QuickPanelNav.audioTileMuted(soundEnabled = true))
+        assertTrue(QuickPanelNav.audioTileMuted(soundEnabled = false))
+        assertEquals(QuickPanelNav.MUTED_AUDIO_IDLE_ALPHA, QuickPanelNav.tileAlpha(selected = false, mutedAudio = true), 0.001f)
+        assertEquals(1f, QuickPanelNav.tileAlpha(selected = true, mutedAudio = true), 0.001f)
+
+        val empty = QuickPanelNav.continueAvailability(null)
+        assertFalse(empty.available)
+        assertEquals(0.55f, empty.idleAlpha, 0.001f)
+        val blank = QuickPanelNav.continueAvailability("   ")
+        assertFalse(blank.available)
+        val ready = QuickPanelNav.continueAvailability("rom:snes:ct")
+        assertTrue(ready.available)
+        assertEquals(1f, ready.idleAlpha, 0.001f)
+    }
+
+    @Test
+    fun `sectionGrouping and moveInSections keep full 2D D-pad reachability across 3-col and 4-col grids`() {
+        // Compact (no browse rails): single flat section, no library header.
+        val compact = QuickPanelNav.sectionGrouping(quickActionCount = 8, browseRailCount = 0)
+        assertEquals(0..8, compact.quickActionRange)
+        assertNull(compact.libraryRange)
+        assertEquals(8, compact.closeIndex)
+
+        // Expanded with 5 browse rails: Quick Actions 0..7, Library + Close 8..13.
+        val expanded = QuickPanelNav.sectionGrouping(quickActionCount = 8, browseRailCount = 5)
+        assertEquals(0..7, expanded.quickActionRange)
+        assertEquals(8..13, expanded.libraryRange)
+        assertEquals(8, expanded.libraryStartIndex)
+        assertEquals(13, expanded.closeIndex)
+
+        val total = 14
+        for (cols in listOf(QuickPanelNav.NARROW_COLUMNS, QuickPanelNav.DEFAULT_COLUMNS)) {
+            val rows = QuickPanelNav.visualRows(total, cols, expanded.libraryStartIndex)
+            // First section ends cleanly before libraryStartIndex = 8; Library section starts at col 0.
+            assertEquals(total, rows.sumOf { it.size })
+            assertTrue(rows.any { it.first() == 8 })
+
+            // Verify every single tile is reachable from index 0 via NAV_RIGHT, NAV_LEFT, and 2D NAV_DOWN/NAV_RIGHT.
+            val visitedRight = mutableSetOf<Int>()
+            var cur = 0
+            repeat(total) {
+                visitedRight.add(cur)
+                cur = QuickPanelNav.moveInSections(cur, total, cols, Action.NAV_RIGHT, expanded.libraryStartIndex)
+            }
+            assertEquals((0 until total).toSet(), visitedRight)
+            assertEquals(0, cur)
+
+            // Vertical traversal across section break stays in bounds and wraps cleanly.
+            val visitedDown = mutableSetOf<Int>()
+            var vCur = 0
+            repeat(rows.size) {
+                visitedDown.add(vCur)
+                vCur = QuickPanelNav.moveInSections(vCur, total, cols, Action.NAV_DOWN, expanded.libraryStartIndex)
+            }
+            assertEquals(rows.size, visitedDown.size)
+            assertEquals(0, vCur)
+            assertTrue("Down traversal from col 0 must cross into Library section", visitedDown.contains(8))
+        }
     }
 }

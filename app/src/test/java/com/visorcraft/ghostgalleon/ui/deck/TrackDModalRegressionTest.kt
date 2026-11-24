@@ -95,7 +95,7 @@ class TrackDModalRegressionTest {
                 }
             }
 
-            // QuickPanel tile text >= 4.5:1.
+            // QuickPanel tile text >= 4.5:1 & focus stroke >= 3.0:1.
             for (role in QuickPanelNav.TileRole.entries) {
                 for (selected in listOf(false, true)) {
                     val (bg, fgRaw) = QuickPanelNav.tileColors(role, selected, accent, tokens)
@@ -105,6 +105,12 @@ class TrackDModalRegressionTest {
                         ThemePack.contrastRatio(fg, bg) >= ThemePack.MIN_TEXT_CONTRAST,
                     )
                 }
+                val qpStroke = QuickPanelNav.focusStrokeColor(role, accent, tokens)
+                assertTrue(
+                    "Low QuickPanel focus stroke contrast on $tag role=$role",
+                    ThemePack.contrastRatio(qpStroke, surface) >=
+                        OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                )
             }
 
             // SessionSwitcherView active & background row text >= 4.5:1, focus border >= 3.0:1.

@@ -88,6 +88,13 @@ object OverlayAudioLogic {
         glyph == QuickPanelNav.TileGlyph.ICON_CONTINUE -> null
         glyph == QuickPanelNav.TileGlyph.ICON_RANDOM -> null
         glyph == QuickPanelNav.TileGlyph.ICON_AUDIO -> null
+        glyph == QuickPanelNav.TileGlyph.ICON_WIFI ||
+            glyph == QuickPanelNav.TileGlyph.ICON_BLUETOOTH ||
+            glyph == QuickPanelNav.TileGlyph.ICON_DISPLAY ||
+            glyph == QuickPanelNav.TileGlyph.ICON_SETTINGS ||
+            glyph == QuickPanelNav.TileGlyph.ICON_CONTROLLER ||
+            glyph == QuickPanelNav.TileGlyph.ICON_RAIL
+        -> SoundCue.CONFIRM
         else -> SoundCue.CONFIRM
     }
 

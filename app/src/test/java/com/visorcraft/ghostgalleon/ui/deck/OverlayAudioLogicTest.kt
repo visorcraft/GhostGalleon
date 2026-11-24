@@ -106,6 +106,20 @@ class OverlayAudioLogicTest {
                 QuickPanelNav.TileGlyph.ICON_SETTINGS,
             ),
         )
+        assertEquals(
+            SoundCue.CONFIRM,
+            OverlayAudioLogic.quickPanelActionCue(
+                QuickPanelNav.TileRole.STANDARD,
+                QuickPanelNav.TileGlyph.ICON_WIFI,
+            ),
+        )
+        assertEquals(
+            SoundCue.CONFIRM,
+            OverlayAudioLogic.quickPanelActionCue(
+                QuickPanelNav.TileRole.STANDARD,
+                QuickPanelNav.TileGlyph.ICON_BLUETOOTH,
+            ),
+        )
         assertNull(
             OverlayAudioLogic.quickPanelActionCue(
                 QuickPanelNav.TileRole.CLOSE,
