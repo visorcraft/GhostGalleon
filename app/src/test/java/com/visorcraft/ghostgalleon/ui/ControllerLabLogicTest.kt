@@ -3,9 +3,12 @@ package com.visorcraft.ghostgalleon.ui
 import android.view.KeyEvent
 import com.visorcraft.ghostgalleon.settings.Action
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.EnumSet
+import java.util.Locale
 
 class ControllerLabLogicTest {
 
@@ -110,7 +113,52 @@ class ControllerLabLogicTest {
     @Test
     fun `compact height detection tightens log box height on 540dp panels`() {
         assertTrue(ControllerLabLogic.isCompactHeight(540))
-        org.junit.Assert.assertFalse(ControllerLabLogic.isCompactHeight(720))
+        assertFalse(ControllerLabLogic.isCompactHeight(720))
         assertTrue(ControllerLabLogic.logBoxHeightDp(540) < ControllerLabLogic.logBoxHeightDp(720))
+    }
+
+    @Test
+    fun `quantized axis deduplication ignores sub-hundredth noise and formats identically to printf`() {
+        // Sub-0.005 jitter around zero collapses to canonical 0 ("+0.00") without triggering updates.
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(0f))
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(-0f))
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(0.004f))
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(-0.004f))
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(Float.NaN))
+        assertEquals(0, ControllerLabLogic.quantizeAxisHundredths(Float.POSITIVE_INFINITY))
+        assertFalse(ControllerLabLogic.axisReadoutChanged(0, 0.004f))
+        assertFalse(ControllerLabLogic.axisReadoutChanged(0, -0.004f))
+
+        // Real 0.01+ steps are detected and clamped cleanly.
+        assertTrue(ControllerLabLogic.axisReadoutChanged(0, 0.01f))
+        assertEquals(1, ControllerLabLogic.quantizeAxisHundredths(0.01f))
+        assertEquals(-1, ControllerLabLogic.quantizeAxisHundredths(-0.01f))
+        assertEquals(50, ControllerLabLogic.quantizeAxisHundredths(0.504f))
+        assertFalse(ControllerLabLogic.axisReadoutChanged(50, 0.503f))
+        assertTrue(ControllerLabLogic.axisReadoutChanged(50, 0.506f))
+        assertEquals(100, ControllerLabLogic.quantizeAxisHundredths(1.8f))
+        assertEquals(-100, ControllerLabLogic.quantizeAxisHundredths(-2.5f))
+
+        // Every quantized value in -100..100 matches String.format(Locale.US, "%+.2f", v).
+        for (q in -100..100) {
+            val expected = String.format(Locale.US, "%+.2f", q * 0.01f)
+            assertEquals("Mismatch at q=$q", expected, ControllerLabLogic.formatQuantizedAxis(q))
+        }
+    }
+
+    @Test
+    fun `fillPadIndicatorsForHat reuses caller buffer cleanly across HAT transitions`() {
+        val buf = EnumSet.noneOf(PadIndicator::class.java)
+        ControllerLabLogic.fillPadIndicatorsForHat(-1f, -1f, buf)
+        assertEquals(setOf(PadIndicator.DPAD_LEFT, PadIndicator.DPAD_UP), buf)
+
+        ControllerLabLogic.fillPadIndicatorsForHat(0.9f, 0f, buf)
+        assertEquals(setOf(PadIndicator.DPAD_RIGHT), buf)
+
+        ControllerLabLogic.fillPadIndicatorsForHat(0f, 0.75f, buf)
+        assertEquals(setOf(PadIndicator.DPAD_DOWN), buf)
+
+        ControllerLabLogic.fillPadIndicatorsForHat(0f, 0f, buf)
+        assertTrue(buf.isEmpty())
     }
 }

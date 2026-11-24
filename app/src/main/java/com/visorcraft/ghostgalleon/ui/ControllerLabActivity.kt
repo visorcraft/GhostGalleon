@@ -34,8 +34,9 @@ import com.visorcraft.ghostgalleon.settings.label
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.settings.SettingsUiLogic
 import java.text.NumberFormat
-import java.util.Locale
+import java.util.EnumSet
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Pure bipolar center-zero bar geometry (`[0..1]` fractions of track width). */
 internal data class AxisBarSpan(
@@ -122,14 +123,59 @@ internal object ControllerLabLogic {
         hatY: Float,
         threshold: Float = 0.5f,
     ): Set<PadIndicator> {
+        val out = EnumSet.noneOf(PadIndicator::class.java)
+        fillPadIndicatorsForHat(hatX, hatY, out, threshold)
+        return out
+    }
+
+    /**
+     * Populate [out] in place with active HAT directions so 120–250 Hz motion
+     * packets allocate zero temporary [Set]s. Pure; host-tested.
+     */
+    fun fillPadIndicatorsForHat(
+        hatX: Float,
+        hatY: Float,
+        out: MutableSet<PadIndicator>,
+        threshold: Float = 0.5f,
+    ) {
+        out.clear()
         val x = clampAxis(hatX)
         val y = clampAxis(hatY)
-        val out = mutableSetOf<PadIndicator>()
         if (x <= -threshold) out.add(PadIndicator.DPAD_LEFT)
         if (x >= threshold) out.add(PadIndicator.DPAD_RIGHT)
         if (y <= -threshold) out.add(PadIndicator.DPAD_UP)
         if (y >= threshold) out.add(PadIndicator.DPAD_DOWN)
-        return out
+    }
+
+    /**
+     * Quantize a clamped `[-1f..1f]` axis reading to integer hundredths
+     * (`-100..100`), matching the `0.01` readout precision so unchanged ticks
+     * skip string formatting and `TextView.setText` relayouts. Pure; host-tested.
+     */
+    fun quantizeAxisHundredths(raw: Float): Int {
+        val clamped = clampAxis(raw)
+        val rounded = (clamped * 100f).roundToInt()
+        return if (rounded == 0) 0 else rounded.coerceIn(-100, 100)
+    }
+
+    /** True when the quantized `0.01` axis readout differs from [previousHundredths]. */
+    fun axisReadoutChanged(previousHundredths: Int, raw: Float): Boolean =
+        previousHundredths != quantizeAxisHundredths(raw)
+
+    /** Format a quantized hundredths reading (`-100..100`) as `"+0.00"` / `"-0.75"`. */
+    fun formatQuantizedAxis(hundredths: Int): String {
+        val clamped = hundredths.coerceIn(-100, 100)
+        val sign = if (clamped < 0) '-' else '+'
+        val mag = abs(clamped)
+        val whole = mag / 100
+        val frac = mag % 100
+        return buildString(5) {
+            append(sign)
+            append(whole)
+            append('.')
+            append(frac / 10)
+            append(frac % 10)
+        }
     }
 
     fun mappedAction(keyCode: Int, keyMap: Map<Int, Action>): Action? = keyMap[keyCode]
@@ -177,9 +223,17 @@ class ControllerLabActivity : AppCompatActivity() {
     private var stickReleaseThreshold: Float = 0.5f
     private var motionEnabled: Boolean = true
     private val padViews = mutableMapOf<PadIndicator, TextView>()
-    private val pressedButtons = mutableSetOf<PadIndicator>()
-    private val pressedHatDirs = mutableSetOf<PadIndicator>()
-    private val seenIndicators = mutableSetOf<PadIndicator>()
+    private val pressedButtons: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val pressedHatDirs: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val seenIndicators: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val scratchNextHat: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val scratchChangedHat: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private var lastAxisLineXQ: Int = Int.MIN_VALUE
+    private var lastAxisLineYQ: Int = Int.MIN_VALUE
+    private var lastAxisLineHatXQ: Int = Int.MIN_VALUE
+    private var lastAxisLineHatYQ: Int = Int.MIN_VALUE
+    private val lastAxisQuantized = IntArray(4)
+    private val lastAxisHighlighted = BooleanArray(4)
 
     private val integerFormat by lazy(LazyThreadSafetyMode.NONE) {
         NumberFormat.getIntegerInstance(resources.configuration.locales[0])
@@ -484,7 +538,7 @@ class ControllerLabActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
             val valTv = TextView(this).apply {
-                text = formatAxisValue(0f)
+                text = ControllerLabLogic.formatQuantizedAxis(0)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
                 typeface = Typeface.MONOSPACE
@@ -701,20 +755,52 @@ class ControllerLabActivity : AppCompatActivity() {
             val y = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_Y))
             val hx = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_X))
             val hy = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_Y))
-            axisLine.text = getString(R.string.controller_axes_values, x, y, hx, hy)
-            updateAxisReadout(stickXBar, stickXVal, x, stickReleaseThreshold)
-            updateAxisReadout(stickYBar, stickYVal, y, stickReleaseThreshold)
-            updateAxisReadout(hatXBar, hatXVal, hx, 0.5f)
-            updateAxisReadout(hatYBar, hatYVal, hy, 0.5f)
-            val nextHat = ControllerLabLogic.padIndicatorsForHat(hx, hy)
-            if (nextHat != pressedHatDirs) {
-                val newlyPressed = nextHat - pressedHatDirs
-                val changed = (pressedHatDirs union nextHat)
+            val qx = ControllerLabLogic.quantizeAxisHundredths(x)
+            val qy = ControllerLabLogic.quantizeAxisHundredths(y)
+            val qhx = ControllerLabLogic.quantizeAxisHundredths(hx)
+            val qhy = ControllerLabLogic.quantizeAxisHundredths(hy)
+            if (qx != lastAxisLineXQ || qy != lastAxisLineYQ ||
+                qhx != lastAxisLineHatXQ || qhy != lastAxisLineHatYQ
+            ) {
+                lastAxisLineXQ = qx
+                lastAxisLineYQ = qy
+                lastAxisLineHatXQ = qhx
+                lastAxisLineHatYQ = qhy
+                axisLine.text = getString(
+                    R.string.controller_axes_values,
+                    qx * 0.01f,
+                    qy * 0.01f,
+                    qhx * 0.01f,
+                    qhy * 0.01f,
+                )
+            }
+            updateAxisReadout(0, stickXBar, stickXVal, x, qx, stickReleaseThreshold)
+            updateAxisReadout(1, stickYBar, stickYVal, y, qy, stickReleaseThreshold)
+            updateAxisReadout(2, hatXBar, hatXVal, hx, qhx, 0.5f)
+            updateAxisReadout(3, hatYBar, hatYVal, hy, qhy, 0.5f)
+            ControllerLabLogic.fillPadIndicatorsForHat(hx, hy, scratchNextHat)
+            if (scratchNextHat != pressedHatDirs) {
+                var firstNew: PadIndicator? = null
+                scratchChangedHat.clear()
+                val all = PadIndicator.entries
+                for (i in 0 until all.size) {
+                    val ind = all[i]
+                    val wasPressed = ind in pressedHatDirs
+                    val isPressed = ind in scratchNextHat
+                    if (wasPressed != isPressed) {
+                        scratchChangedHat.add(ind)
+                        if (isPressed && firstNew == null) {
+                            firstNew = ind
+                        }
+                    }
+                }
                 pressedHatDirs.clear()
-                pressedHatDirs.addAll(nextHat)
-                seenIndicators.addAll(nextHat)
-                changed.forEach(::stylePadIndicator)
-                val firstNew = newlyPressed.firstOrNull()
+                pressedHatDirs.addAll(scratchNextHat)
+                seenIndicators.addAll(scratchNextHat)
+                for (i in 0 until all.size) {
+                    val ind = all[i]
+                    if (ind in scratchChangedHat) stylePadIndicator(ind)
+                }
                 if (firstNew != null && AudioHapticCohesion.shouldEmitGamepadAudio(
                         soundEnabled = app.settings.soundEnabled,
                         actionHandled = true,
@@ -734,16 +820,25 @@ class ControllerLabActivity : AppCompatActivity() {
     }
 
     private fun updateAxisReadout(
+        slot: Int,
         bar: AxisBarView,
         label: TextView,
         value: Float,
+        quantized: Int,
         highlightThreshold: Float,
     ) {
         bar.setAxisValue(value)
-        label.text = formatAxisValue(value)
-        label.setTextColor(
-            if (abs(value) >= highlightThreshold) accentOnCard else UiDimens.ALPHA_SECONDARY,
-        )
+        if (lastAxisQuantized[slot] != quantized) {
+            lastAxisQuantized[slot] = quantized
+            label.text = ControllerLabLogic.formatQuantizedAxis(quantized)
+        }
+        val highlighted = abs(value) >= highlightThreshold
+        if (lastAxisHighlighted[slot] != highlighted) {
+            lastAxisHighlighted[slot] = highlighted
+            label.setTextColor(
+                if (highlighted) accentOnCard else UiDimens.ALPHA_SECONDARY,
+            )
+        }
     }
 
     private fun clearLabState() {
@@ -901,12 +996,10 @@ class ControllerLabActivity : AppCompatActivity() {
         log.text = recent.joinToString("\n")
     }
 
-    private fun formatAxisValue(value: Float): String =
-        String.format(Locale.US, "%+.2f", value)
-
     /**
      * Lightweight center-zero bipolar gauge driven by [ControllerLabLogic.axisBarSpan],
      * with symmetric stick deadzone release/engage markers and live peak-deflection ticks.
+     * Tracks primitive floats so 120–250 Hz updates allocate zero objects.
      */
     private class AxisBarView(
         context: Context,
@@ -916,8 +1009,11 @@ class ControllerLabActivity : AppCompatActivity() {
         private val deadzoneMarkers: DeadzoneMarkers?,
         engageTickColor: Int,
     ) : View(context) {
-        private var span = ControllerLabLogic.axisBarSpan(0f)
-        private var peaks = AxisPeakState()
+        private var clampedValue: Float = 0f
+        private var startFrac: Float = 0.5f
+        private var widthFrac: Float = 0f
+        private var minNeg: Float = 0f
+        private var maxPos: Float = 0f
         private val radius = context.dpF(7)
         private val rect = RectF()
         private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = trackColor }
@@ -946,18 +1042,28 @@ class ControllerLabActivity : AppCompatActivity() {
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fillColor }
 
         fun setAxisValue(raw: Float) {
-            val next = ControllerLabLogic.axisBarSpan(raw)
-            val nextPeaks = ControllerLabLogic.updatePeaks(peaks, raw)
-            if (next != span || nextPeaks != peaks) {
-                span = next
-                peaks = nextPeaks
+            val v = ControllerLabLogic.clampAxis(raw)
+            val nextMin = minOf(minNeg, v)
+            val nextMax = maxOf(maxPos, v)
+            if (v != clampedValue || nextMin != minNeg || nextMax != maxPos) {
+                clampedValue = v
+                if (v >= 0f) {
+                    startFrac = 0.5f
+                    widthFrac = v * 0.5f
+                } else {
+                    startFrac = 0.5f + v * 0.5f
+                    widthFrac = -v * 0.5f
+                }
+                minNeg = nextMin
+                maxPos = nextMax
                 invalidate()
             }
         }
 
         fun resetPeaks() {
-            if (peaks != AxisPeakState()) {
-                peaks = AxisPeakState()
+            if (minNeg != 0f || maxPos != 0f) {
+                minNeg = 0f
+                maxPos = 0f
                 invalidate()
             }
         }
@@ -968,9 +1074,9 @@ class ControllerLabActivity : AppCompatActivity() {
             if (w <= 0f || h <= 0f) return
             rect.set(0f, 0f, w, h)
             canvas.drawRoundRect(rect, radius, radius, trackPaint)
-            if (span.widthFrac > 0.005f) {
-                val left = w * span.startFrac
-                val right = w * (span.startFrac + span.widthFrac)
+            if (widthFrac > 0.005f) {
+                val left = w * startFrac
+                val right = w * (startFrac + widthFrac)
                 rect.set(left, 0f, right, h)
                 canvas.drawRoundRect(rect, radius, radius, fillPaint)
             }
@@ -985,12 +1091,12 @@ class ControllerLabActivity : AppCompatActivity() {
             val midX = w * 0.5f
             canvas.drawLine(midX, 0f, midX, h, centerPaint)
             val peakPad = h * 0.16f
-            if (peaks.minNeg < -0.02f) {
-                val px = w * ControllerLabLogic.valueToBarFrac(peaks.minNeg)
+            if (minNeg < -0.02f) {
+                val px = w * ControllerLabLogic.valueToBarFrac(minNeg)
                 canvas.drawLine(px, peakPad, px, h - peakPad, peakTickPaint)
             }
-            if (peaks.maxPos > 0.02f) {
-                val px = w * ControllerLabLogic.valueToBarFrac(peaks.maxPos)
+            if (maxPos > 0.02f) {
+                val px = w * ControllerLabLogic.valueToBarFrac(maxPos)
                 canvas.drawLine(px, peakPad, px, h - peakPad, peakTickPaint)
             }
             val inset = borderPaint.strokeWidth * 0.5f

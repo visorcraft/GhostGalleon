@@ -46,6 +46,8 @@ import com.visorcraft.ghostgalleon.ui.deck.OverlayAudioLogic
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import com.visorcraft.ghostgalleon.library.RetroAchievements
+import com.visorcraft.ghostgalleon.rom.ArcadeDat
+import com.visorcraft.ghostgalleon.rom.ArcadeTitles
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlayerTemplate
 import com.visorcraft.ghostgalleon.rom.RaCfg
@@ -72,6 +74,7 @@ import com.visorcraft.ghostgalleon.ui.deck.DeckWallpaper
 import com.visorcraft.ghostgalleon.state.UIMode
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
+import com.visorcraft.ghostgalleon.system.SystemReadings
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
@@ -87,6 +90,7 @@ import com.visorcraft.ghostgalleon.ui.themeName
 import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 import java.io.File
 import java.text.NumberFormat
+import java.util.concurrent.Executors
 
 /**
  * Pure, host-tested layout and contrast decisions shared by Settings, About,
@@ -343,6 +347,71 @@ internal object SettingsUiLogic {
         soundPack: String,
         ambientVolume: Int,
     ): Boolean = soundEnabled && ambientEnabled && SoundPackId.fromId(soundPack).isPlayable && ambientVolume > 0
+
+    /**
+     * Snapshot every WCAG-checked theme/accent color once per Settings build
+     * pass so rows, dividers, switches, and nav tabs read precomputed ints
+     * instead of re-running [ThemePack.resolve] + contrast searches per view.
+     * Pure; host-tested.
+     */
+    fun resolvePalette(tokens: ThemeTokens, accent: Int): SettingsPalette {
+        val navActiveBg = navActiveSurface(tokens, accent)
+        return SettingsPalette(
+            accent = accent,
+            tokens = tokens,
+            accentOnCard = accentOnSurface(accent, tokens),
+            accentOnSunken = accentOnSunken(accent, tokens),
+            accentOnBlack = accentOnBlack(accent),
+            onAccentFill = accessibleOnAccent(accent),
+            activeFocusRing = activePillFocusRing(accent),
+            navActiveBg = navActiveBg,
+            navActiveIconTint = ThemePack.accentTextColor(accent, navActiveBg),
+            navActiveBorder = ThemePack.accentHairline(accent),
+            hairline = ThemePack.hairlineDivider(tokens),
+        )
+    }
+}
+
+/** Precomputed immutable theme/contrast snapshot for one Settings build pass. */
+internal data class SettingsPalette(
+    val accent: Int,
+    val tokens: ThemeTokens,
+    val accentOnCard: Int,
+    val accentOnSunken: Int,
+    val accentOnBlack: Int,
+    val onAccentFill: Int,
+    val activeFocusRing: Int,
+    val navActiveBg: Int,
+    val navActiveIconTint: Int,
+    val navActiveBorder: Int,
+    val hairline: Int,
+)
+
+/**
+ * Lazy per-page cache for [SettingsActivity]. Inflates each page at most once
+ * until [invalidate] (called on [SettingsActivity.refreshSettingsUi]) clears
+ * cached bodies and increments [generation] so stale async probes are ignored.
+ * Pure; host-tested.
+ */
+internal class SettingsPageCache<K, V> {
+    private val built = mutableMapOf<K, V>()
+
+    var generation: Int = 0
+        private set
+
+    fun getOrBuild(key: K, builder: (K) -> V): V =
+        built.getOrPut(key) { builder(key) }
+
+    fun peek(key: K): V? = built[key]
+
+    fun isBuilt(key: K): Boolean = key in built
+
+    val builtCount: Int get() = built.size
+
+    fun invalidate(): Int {
+        built.clear()
+        return ++generation
+    }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -370,9 +439,10 @@ class SettingsActivity : AppCompatActivity() {
     )
 
     private var currentPage: SettingsPage = SettingsPage.DISPLAY_GRID
+    private var isWideLayout: Boolean = false
     private var pageHost: LinearLayout? = null
     private var contentScroll: ScrollView? = null
-    private val pageBodies = mutableMapOf<SettingsPage, LinearLayout>()
+    private val pageCache = SettingsPageCache<SettingsPage, LinearLayout>()
     private val navItems = mutableMapOf<SettingsPage, NavRowViews>()
     private var pageDropdownRow: View? = null
     private var pageDropdownIcon: ImageView? = null
@@ -380,6 +450,9 @@ class SettingsActivity : AppCompatActivity() {
     private var headerBackBtn: View? = null
     private var headerSearchBtn: View? = null
     private var headerBreadcrumbLabel: TextView? = null
+    private var wallpaperNameGen: Int = 0
+    private var systemInfoGen: Int = 0
+    private var bundledPacksValue: TextView? = null
 
     private val remappable = listOf(
         Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
@@ -416,7 +489,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun dockEntryLabel(key: String): String {
         val romId = SlotKey.romId(key)
         return if (romId != null) {
-            app.romEntries.firstOrNull { it.id == romId }?.name ?: key
+            app.romById[romId]?.name ?: key
         } else {
             appLabel(key)
         }
@@ -507,133 +580,167 @@ class SettingsActivity : AppCompatActivity() {
         )
     }
 
-    /** Bundled pack asset basenames under assets/platform_packs/. */
-    private fun listBundledPackAssets(): List<String> =
-        runCatching {
-            assets.list("platform_packs")
-                ?.filter { it.endsWith(".json", ignoreCase = true) }
-                ?.sorted()
-                .orEmpty()
-        }.getOrDefault(emptyList())
-
-    private fun loadBundledPackAsset(assetName: String) {
-        val text = runCatching {
-            assets.open("platform_packs/$assetName").bufferedReader().use { it.readText() }
-        }.getOrNull()
-        if (text == null) {
-            Toast.makeText(
-                this,
-                getString(R.string.settings_pack_missing, assetName),
-                Toast.LENGTH_SHORT,
-            ).show()
+    /**
+     * Load bundled pack asset basenames under `assets/platform_packs/` off-UI
+     * once per process (APK assets are immutable) and deliver on the main thread.
+     */
+    private fun loadBundledPackAssetsAsync(onReady: (List<String>) -> Unit) {
+        cachedBundledPackAssets?.let { cached ->
+            onReady(cached)
             return
         }
-        val parsed = app.platformPackStore.importJson(text)
-        if (parsed == null) {
-            Toast.makeText(
-                this,
-                getString(R.string.settings_pack_invalid, assetName),
-                Toast.LENGTH_LONG,
-            ).show()
-        } else {
-            Toast.makeText(
-                this,
-                getString(
-                    R.string.settings_pack_loaded,
-                    assetName,
-                    parsed.platforms.joinToString { it.id },
-                ),
-                Toast.LENGTH_LONG,
-            ).show()
-            refreshSettingsUi()
+        val appContext = applicationContext
+        PROBE_IO.execute {
+            val listed = cachedBundledPackAssets ?: runCatching {
+                appContext.assets.list("platform_packs")
+                    ?.filter { it.endsWith(".json", ignoreCase = true) }
+                    ?.sorted()
+                    .orEmpty()
+            }.getOrDefault(emptyList()).also {
+                cachedBundledPackAssets = it
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                onReady(listed)
+            }
+        }
+    }
+
+    private fun loadBundledPackAsset(assetName: String) {
+        val appContext = applicationContext
+        ARCHIVE_IO.execute {
+            val text = runCatching {
+                appContext.assets.open("platform_packs/$assetName").bufferedReader().use { it.readText() }
+            }.getOrNull()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (text == null) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.settings_pack_missing, assetName),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return@runOnUiThread
+                }
+                val parsed = app.platformPackStore.importJson(text)
+                if (parsed == null) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.settings_pack_invalid, assetName),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(
+                            R.string.settings_pack_loaded,
+                            assetName,
+                            parsed.platforms.joinToString { it.id },
+                        ),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    refreshSettingsUi()
+                }
+            }
         }
     }
 
     /** Merge all bundled packs into one overlay (later packs win on id clash). */
     private fun loadAllBundledPacks() {
-        val names = listBundledPackAssets()
-        if (names.isEmpty()) {
-            Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
-            return
-        }
-        var merged = emptyList<com.visorcraft.ghostgalleon.rom.Platform>()
-        var loaded = 0
-        for (name in names) {
-            val text = runCatching {
-                assets.open("platform_packs/$name").bufferedReader().use { it.readText() }
-            }.getOrNull() ?: continue
-            val parsed = com.visorcraft.ghostgalleon.rom.PlatformPack.parse(text) ?: continue
-            merged = com.visorcraft.ghostgalleon.rom.PlatformPack.merge(merged, parsed.platforms)
-            loaded++
-        }
-        if (merged.isEmpty()) {
-            Toast.makeText(this, R.string.settings_no_valid_packs, Toast.LENGTH_LONG).show()
-            return
-        }
-        val root = org.json.JSONObject()
-            .put("schemaVersion", 1)
-            .put("platforms", org.json.JSONArray().apply {
-                merged.forEach { p ->
-                    put(org.json.JSONObject()
-                        .put("id", p.id)
-                        .put("displayName", p.displayName)
-                        .put("shortName", p.shortName)
-                        .put("folderNames", org.json.JSONArray(p.folderNames))
-                        .put("extensions", org.json.JSONArray(p.extensions))
-                        .put("players", org.json.JSONArray().apply {
-                            p.players.forEach { pl ->
+        loadBundledPackAssetsAsync { names ->
+            if (names.isEmpty()) {
+                Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
+                return@loadBundledPackAssetsAsync
+            }
+            val appContext = applicationContext
+            ARCHIVE_IO.execute {
+                var merged = emptyList<com.visorcraft.ghostgalleon.rom.Platform>()
+                var loaded = 0
+                for (name in names) {
+                    val text = runCatching {
+                        appContext.assets.open("platform_packs/$name").bufferedReader().use { it.readText() }
+                    }.getOrNull() ?: continue
+                    val parsed = com.visorcraft.ghostgalleon.rom.PlatformPack.parse(text) ?: continue
+                    merged = com.visorcraft.ghostgalleon.rom.PlatformPack.merge(merged, parsed.platforms)
+                    loaded++
+                }
+                val mergedJson = if (merged.isEmpty()) null else {
+                    org.json.JSONObject()
+                        .put("schemaVersion", 1)
+                        .put("platforms", org.json.JSONArray().apply {
+                            merged.forEach { p ->
                                 put(org.json.JSONObject()
-                                    .put("id", pl.id)
-                                    .put("displayName", pl.displayName)
-                                    .put("component", pl.component)
-                                    .put("action", pl.action ?: "")
-                                    .put("uriStyle", pl.uriStyle.name)
-                                    .put("grantRead", pl.grantRead)
-                                    .put("flags", pl.flags)
-                                    .put("extras", org.json.JSONObject().apply {
-                                        pl.extras.forEach { (k, v) -> put(k, v) }
+                                    .put("id", p.id)
+                                    .put("displayName", p.displayName)
+                                    .put("shortName", p.shortName)
+                                    .put("folderNames", org.json.JSONArray(p.folderNames))
+                                    .put("extensions", org.json.JSONArray(p.extensions))
+                                    .put("players", org.json.JSONArray().apply {
+                                        p.players.forEach { pl ->
+                                            put(org.json.JSONObject()
+                                                .put("id", pl.id)
+                                                .put("displayName", pl.displayName)
+                                                .put("component", pl.component)
+                                                .put("action", pl.action ?: "")
+                                                .put("uriStyle", pl.uriStyle.name)
+                                                .put("grantRead", pl.grantRead)
+                                                .put("flags", pl.flags)
+                                                .put("extras", org.json.JSONObject().apply {
+                                                    pl.extras.forEach { (k, v) -> put(k, v) }
+                                                }))
+                                        }
                                     }))
                             }
-                        }))
+                        }).toString()
                 }
-            })
-        val result = app.platformPackStore.importJson(root.toString())
-        if (result == null) {
-            Toast.makeText(this, R.string.settings_pack_merge_failed, Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(
-                this,
-                getString(
-                    R.string.settings_loaded_summary,
-                    resources.getQuantityString(R.plurals.count_packs, loaded, loaded),
-                    resources.getQuantityString(
-                        R.plurals.count_platforms,
-                        result.platforms.size,
-                        result.platforms.size,
-                    ),
-                ),
-                Toast.LENGTH_LONG,
-            ).show()
-            refreshSettingsUi()
+                val loadedCount = loaded
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (mergedJson == null) {
+                        Toast.makeText(this, R.string.settings_no_valid_packs, Toast.LENGTH_LONG).show()
+                        return@runOnUiThread
+                    }
+                    val result = app.platformPackStore.importJson(mergedJson)
+                    if (result == null) {
+                        Toast.makeText(this, R.string.settings_pack_merge_failed, Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(
+                            this,
+                            getString(
+                                R.string.settings_loaded_summary,
+                                resources.getQuantityString(R.plurals.count_packs, loadedCount, loadedCount),
+                                resources.getQuantityString(
+                                    R.plurals.count_platforms,
+                                    result.platforms.size,
+                                    result.platforms.size,
+                                ),
+                            ),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        refreshSettingsUi()
+                    }
+                }
+            }
         }
     }
 
     private fun showBundledPackCatalog() {
-        val names = listBundledPackAssets()
-        if (names.isEmpty()) {
-            Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
-            return
-        }
-        val labels = names.map { it.removeSuffix(".json") }.toTypedArray()
-        DeckDialogs.chooseItem(
-            context = this,
-            titleRes = R.string.settings_bundled_packs,
-            items = labels,
-            neutralRes = R.string.action_load_all,
-            onNeutral = { loadAllBundledPacks() },
-            negativeRes = R.string.action_cancel,
-        ) { which ->
-            loadBundledPackAsset(names[which])
+        loadBundledPackAssetsAsync { names ->
+            if (names.isEmpty()) {
+                Toast.makeText(this, R.string.settings_no_bundled_packs, Toast.LENGTH_SHORT).show()
+                return@loadBundledPackAssetsAsync
+            }
+            val labels = names.map { it.removeSuffix(".json") }.toTypedArray()
+            DeckDialogs.chooseItem(
+                context = this,
+                titleRes = R.string.settings_bundled_packs,
+                items = labels,
+                neutralRes = R.string.action_load_all,
+                onNeutral = { loadAllBundledPacks() },
+                negativeRes = R.string.action_cancel,
+            ) { which ->
+                loadBundledPackAsset(names[which])
+            }
         }
     }
 
@@ -778,7 +885,7 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(pad, dp(8), pad, dp(8))
         }
         fun romLabel(id: String): String {
-            val rom = app.romEntries.firstOrNull { it.id == id }
+            val rom = app.romById[id]
             return rom?.name ?: id.substringAfterLast(':').ifBlank { id }
         }
         fun rebuild() {
@@ -971,27 +1078,33 @@ class SettingsActivity : AppCompatActivity() {
     private val platformPackLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            val text = runCatching {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()
-            if (text == null) {
-                Toast.makeText(this, R.string.settings_pack_read_failed, Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-            val parsed = app.platformPackStore.importJson(text)
-            if (parsed == null) {
-                Toast.makeText(this, R.string.settings_platform_pack_invalid, Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(
-                    this,
-                    resources.getQuantityString(
-                        R.plurals.count_platforms_imported,
-                        parsed.platforms.size,
-                        parsed.platforms.size,
-                    ),
-                    Toast.LENGTH_LONG,
-                ).show()
-                refreshSettingsUi()
+            val appContext = applicationContext
+            ARCHIVE_IO.execute {
+                val text = runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (text == null) {
+                        Toast.makeText(this, R.string.settings_pack_read_failed, Toast.LENGTH_SHORT).show()
+                        return@runOnUiThread
+                    }
+                    val parsed = app.platformPackStore.importJson(text)
+                    if (parsed == null) {
+                        Toast.makeText(this, R.string.settings_platform_pack_invalid, Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(
+                            this,
+                            resources.getQuantityString(
+                                R.plurals.count_platforms_imported,
+                                parsed.platforms.size,
+                                parsed.platforms.size,
+                            ),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        refreshSettingsUi()
+                    }
+                }
             }
         }
 
@@ -1014,18 +1127,27 @@ class SettingsActivity : AppCompatActivity() {
             ActivityResultContracts.CreateDocument("application/json")
         ) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            runCatching {
-                val text = SettingsBundle.pack(
-                    SettingsStore.toJson(app.settings),
-                    RomLibrary.entriesToJson(app.romLibrary.load()),
-                )
-                contentResolver.openOutputStream(uri)?.use {
-                    it.write(text.toByteArray(Charsets.UTF_8))
-                } ?: error("could not open $uri")
-            }.onSuccess {
-                Toast.makeText(this, R.string.settings_exported, Toast.LENGTH_SHORT).show()
-            }.onFailure {
-                Toast.makeText(this, R.string.settings_export_failed, Toast.LENGTH_SHORT).show()
+            val settingsSnapshot = app.settings
+            val appContext = applicationContext
+            val romLibrary = app.romLibrary
+            ARCHIVE_IO.execute {
+                val result = runCatching {
+                    val text = SettingsBundle.pack(
+                        SettingsStore.toJson(settingsSnapshot),
+                        RomLibrary.entriesToJson(romLibrary.load()),
+                    )
+                    appContext.contentResolver.openOutputStream(uri)?.use {
+                        it.write(text.toByteArray(Charsets.UTF_8))
+                    } ?: error("could not open $uri")
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    Toast.makeText(
+                        this,
+                        if (result.isSuccess) R.string.settings_exported else R.string.settings_export_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
         }
 
@@ -1034,79 +1156,134 @@ class SettingsActivity : AppCompatActivity() {
             ActivityResultContracts.CreateDocument("application/zip")
         ) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            runCatching {
-                val n = contentResolver.openOutputStream(uri)?.use { out ->
-                    ArtArchive.zip(File(filesDir, "art"), out)
-                } ?: error("could not open $uri")
-                n
-            }.onSuccess { n ->
-                Toast.makeText(
-                    this,
-                    getString(R.string.settings_art_exported, n),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }.onFailure {
-                Toast.makeText(this, R.string.settings_art_export_failed, Toast.LENGTH_SHORT).show()
+            val appContext = applicationContext
+            val artDir = File(appContext.filesDir, "art")
+            ARCHIVE_IO.execute {
+                val result = runCatching {
+                    appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                        ArtArchive.zip(artDir, out)
+                    } ?: error("could not open $uri")
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    result.onSuccess { n ->
+                        Toast.makeText(
+                            this,
+                            getString(R.string.settings_art_exported, n),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }.onFailure {
+                        Toast.makeText(this, R.string.settings_art_export_failed, Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
 
     private val importArtLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    ArtArchive.unzip(input, File(filesDir, "art"))
-                } ?: error("could not open $uri")
-            }.onSuccess { n ->
-                Toast.makeText(
-                    this,
-                    getString(R.string.settings_art_imported, n),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }.onFailure {
-                Toast.makeText(this, R.string.settings_art_import_failed, Toast.LENGTH_SHORT).show()
+            val appContext = applicationContext
+            val artDir = File(appContext.filesDir, "art")
+            ARCHIVE_IO.execute {
+                val result = runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        ArtArchive.unzip(input, artDir)
+                    } ?: error("could not open $uri")
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    result.onSuccess { n ->
+                        Toast.makeText(
+                            this,
+                            getString(R.string.settings_art_imported, n),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }.onFailure {
+                        Toast.makeText(this, R.string.settings_art_import_failed, Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
 
     private val importLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            runCatching {
-                val text = contentResolver.openInputStream(uri)?.use {
-                    it.readBytes().toString(Charsets.UTF_8)
-                } ?: error("could not open $uri")
-                val (settingsJson, romJson) = SettingsBundle.unpack(text)
-                val newSettings = SettingsStore.parse(settingsJson)
-                val entries = RomLibrary.parseEntries(romJson)
-                app.romLibrary.save(entries)
-                app.publishRomEntries(app.romLibrary.load())
-                app.updateSettings(newSettings)
-            }.onSuccess {
-                Toast.makeText(this, R.string.settings_imported, Toast.LENGTH_SHORT).show()
-                refreshSettingsUi()
-            }.onFailure {
-                Toast.makeText(this, R.string.settings_invalid_file, Toast.LENGTH_SHORT).show()
+            val appContext = applicationContext
+            val romLibrary = app.romLibrary
+            ARCHIVE_IO.execute {
+                val result = runCatching {
+                    val text = appContext.contentResolver.openInputStream(uri)?.use {
+                        it.readBytes().toString(Charsets.UTF_8)
+                    } ?: error("could not open $uri")
+                    val (settingsJson, romJson) = SettingsBundle.unpack(text)
+                    val newSettings = SettingsStore.parse(settingsJson)
+                    val entries = RomLibrary.parseEntries(romJson)
+                    romLibrary.save(entries)
+                    val reloaded = romLibrary.load()
+                    newSettings to reloaded
+                }
+                runOnUiThread {
+                    result.onSuccess { (newSettings, reloaded) ->
+                        app.publishRomEntries(reloaded)
+                        app.updateSettings(newSettings)
+                        if (!isFinishing && !isDestroyed) {
+                            Toast.makeText(this, R.string.settings_imported, Toast.LENGTH_SHORT).show()
+                            refreshSettingsUi()
+                        }
+                    }.onFailure {
+                        if (!isFinishing && !isDestroyed) {
+                            Toast.makeText(this, R.string.settings_invalid_file, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             }
         }
 
     private val arcadeDatPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            val text = runCatching {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()
-            if (text.isNullOrBlank()) {
-                Toast.makeText(this, R.string.settings_arcade_dat_failed, Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
+            val appContext = applicationContext
+            val romLibrary = app.romLibrary
+            val initialEntries = app.romEntries
+            ARCHIVE_IO.execute {
+                val text = runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+                if (text.isNullOrBlank()) {
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        Toast.makeText(this, R.string.settings_arcade_dat_failed, Toast.LENGTH_SHORT).show()
+                    }
+                    return@execute
+                }
+                val parsed = ArcadeDat.parse(text)
+                ArcadeTitles.installOverlay(parsed)
+                runCatching {
+                    val root = org.json.JSONObject()
+                    parsed.forEach { (k, v) -> root.put(k, v) }
+                    File(appContext.filesDir, "arcade_dat.json").writeText(root.toString())
+                }
+                val current = if (initialEntries.isEmpty()) romLibrary.load() else initialEntries
+                val relabeled = ArcadeTitles.relabel(current, onlyFallbackNames = false)
+                val changed = relabeled !== current
+                if (changed) {
+                    romLibrary.save(relabeled)
+                }
+                val importedCount = parsed.size
+                runOnUiThread {
+                    if (changed && (app.romEntries === initialEntries || app.romEntries.isEmpty())) {
+                        app.publishRomEntries(relabeled)
+                    }
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    Toast.makeText(
+                        this,
+                        if (importedCount > 0) getString(R.string.settings_arcade_dat_imported, importedCount)
+                        else getString(R.string.settings_arcade_dat_empty),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    refreshSettingsUi()
+                }
             }
-            val n = app.importArcadeDat(text)
-            Toast.makeText(
-                this,
-                if (n > 0) getString(R.string.settings_arcade_dat_imported, n)
-                else getString(R.string.settings_arcade_dat_empty),
-                Toast.LENGTH_LONG,
-            ).show()
-            refreshSettingsUi()
         }
 
     private val wallpaperPicker =
@@ -1125,23 +1302,29 @@ class SettingsActivity : AppCompatActivity() {
     private val themeJsonPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
-            val text = runCatching {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()
-            if (text == null) {
-                Toast.makeText(this, R.string.settings_theme_read_failed, Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-            val tokens = ThemePack.parseJson(text)
-            if (tokens == null) {
-                Toast.makeText(this, R.string.settings_theme_invalid, Toast.LENGTH_LONG).show()
-            } else {
-                applyThemeAndRefresh(ThemePack.applyCustom(app.settings, tokens, text))
-                Toast.makeText(
-                    this,
-                    getString(R.string.format_theme, tokens.displayName),
-                    Toast.LENGTH_SHORT,
-                ).show()
+            val appContext = applicationContext
+            ARCHIVE_IO.execute {
+                val text = runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+                val tokens = text?.let { ThemePack.parseJson(it) }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (text == null) {
+                        Toast.makeText(this, R.string.settings_theme_read_failed, Toast.LENGTH_SHORT).show()
+                        return@runOnUiThread
+                    }
+                    if (tokens == null) {
+                        Toast.makeText(this, R.string.settings_theme_invalid, Toast.LENGTH_LONG).show()
+                    } else {
+                        applyThemeAndRefresh(ThemePack.applyCustom(app.settings, tokens, text))
+                        Toast.makeText(
+                            this,
+                            getString(R.string.format_theme, tokens.displayName),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
         }
 
@@ -1304,7 +1487,7 @@ class SettingsActivity : AppCompatActivity() {
                                 labelOf = { k ->
                                     com.visorcraft.ghostgalleon.settings.SlotKey.romId(k)
                                         ?.let { id ->
-                                            app.romEntries.firstOrNull { it.id == id }?.name
+                                            app.romById[id]?.name
                                         } ?: k
                                 },
                             )
@@ -1770,22 +1953,33 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun wallpaperDisplayName(uriString: String): String = runCatching {
-        val uri = Uri.parse(uriString)
-        contentResolver.query(uri, null, null, null, null)?.use { c ->
-            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (i >= 0 && c.moveToFirst()) c.getString(i) else null
-        } ?: uri.lastPathSegment ?: getString(R.string.label_set)
-    }.getOrDefault(getString(R.string.label_set))
-
     private fun refreshWallpaperRow() {
         val uri = app.settings.wallpaperUri
-        wallpaperValue?.text = if (uri != null) {
-            wallpaperDisplayName(uri)
-        } else {
-            getString(R.string.action_none)
-        }
         wallpaperClear?.visibility = if (uri != null) View.VISIBLE else View.GONE
+        val gen = ++wallpaperNameGen
+        if (uri == null) {
+            wallpaperValue?.setText(R.string.action_none)
+            return
+        }
+        val cached = cachedWallpaperLabel?.takeIf { it.first == uri }?.second
+        if (cached != null) {
+            wallpaperValue?.text = cached
+            return
+        }
+        wallpaperValue?.setText(R.string.glyph_ellipsis)
+        val appContext = applicationContext
+        val fallback = getString(R.string.label_set)
+        val expectedBuildGen = pageCache.generation
+        PROBE_IO.execute {
+            val resolved = resolveWallpaperDisplayName(appContext, uri, fallback)
+            cachedWallpaperLabel = uri to resolved
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (gen != wallpaperNameGen || expectedBuildGen != pageCache.generation) return@runOnUiThread
+                if (app.settings.wallpaperUri != uri) return@runOnUiThread
+                wallpaperValue?.text = resolved
+            }
+        }
     }
 
     private fun refreshRaRows() {
@@ -1842,12 +2036,22 @@ class SettingsActivity : AppCompatActivity() {
         styleStatusBadge(this, active)
     }
 
-    private val accent get() = app.settings.accentColor
-    private val themeTokens get() = ThemePack.resolve(app.settings)
-    private val accentOnCard get() = SettingsUiLogic.accentOnSurface(accent, themeTokens)
-    private val accentOnSunken get() = SettingsUiLogic.accentOnSunken(accent, themeTokens)
-    private val onAccentFill get() = SettingsUiLogic.accessibleOnAccent(accent)
-    private val activeFocusRing get() = SettingsUiLogic.activePillFocusRing(accent)
+    private var palette: SettingsPalette = SettingsUiLogic.resolvePalette(
+        ThemePack.GHOST,
+        ThemePack.GHOST.accentColor,
+    )
+
+    private val accent get() = palette.accent
+    private val themeTokens get() = palette.tokens
+    private val accentOnCard get() = palette.accentOnCard
+    private val accentOnSunken get() = palette.accentOnSunken
+    private val onAccentFill get() = palette.onAccentFill
+    private val activeFocusRing get() = palette.activeFocusRing
+
+    private fun refreshPaletteSnapshot() {
+        val s = app.settings
+        palette = SettingsUiLogic.resolvePalette(ThemePack.resolve(s), s.accentColor)
+    }
 
     /** Rebuild the settings tree without an activity recreate. */
     private fun refreshSettingsUi() {
@@ -1932,7 +2136,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun addDivider(card: LinearLayout) {
         card.addView(
-            View(this).apply { setBackgroundColor(TileBackgrounds.hairlineDivider(this@SettingsActivity)) },
+            View(this).apply { setBackgroundColor(palette.hairline) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, strokePx(1)).apply {
                 marginStart = dp(10)
                 marginEnd = dp(10)
@@ -2335,6 +2539,9 @@ class SettingsActivity : AppCompatActivity() {
         explicitDirection: Int? = null,
     ) {
         val prevPage = currentPage
+        if (prevPage != page) {
+            cancelKeyCapture()
+        }
         currentPage = page
         if (userInitiated) {
             val pages = SettingsPage.entries
@@ -2348,7 +2555,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         val host = pageHost ?: return
         host.removeAllViews()
-        val body = pageBodies[page] ?: return
+        val body = pageCache.getOrBuild(page, ::buildPageBody)
         (body.parent as? ViewGroup)?.removeView(body)
         host.addView(body, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2363,9 +2570,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun paintNav() {
-        val activeBgColor = SettingsUiLogic.navActiveSurface(themeTokens, accent)
-        val activeIconTint = ThemePack.accentTextColor(accent, activeBgColor)
-        val activeBorder = ThemePack.accentHairline(accent)
+        val activeBgColor = palette.navActiveBg
+        val activeIconTint = palette.navActiveIconTint
+        val activeBorder = palette.navActiveBorder
         navItems.forEach { (page, row) ->
             val selected = page == currentPage
             row.container.isSelected = selected
@@ -2591,10 +2798,169 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun addSection(
+        root: LinearLayout,
+        title: String,
+        card: LinearLayout,
+        badgeText: String? = null,
+        badgeActive: Boolean = false,
+        onBadgeView: ((TextView) -> Unit)? = null,
+    ) {
+        if (badgeText != null) {
+            val headerRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    sectionHeader(title),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginEnd = dp(8)
+                    },
+                )
+                val badge = statusPill(badgeText, badgeActive)
+                onBadgeView?.invoke(badge)
+                addView(badge)
+            }
+            root.addView(
+                headerRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    topMargin = dp(24)
+                    bottomMargin = dp(10)
+                },
+            )
+        } else {
+            root.addView(sectionHeader(title), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(24)
+                bottomMargin = dp(10)
+            })
+        }
+        root.addView(card, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+    }
+
+    private fun toggle(card: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+        addDividerIfNeeded(card)
+        val sw = accentSwitch(checked, onChange)
+        card.addView(
+            switchRow(label, sw),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
+        )
+    }
+
+    private fun addActionRow(
+        card: LinearLayout,
+        row: LinearLayout,
+        heightDp: Int = 60,
+        showChevron: Boolean = false,
+    ) {
+        addDividerIfNeeded(card)
+        if (showChevron) {
+            row.addView(
+                drillChevron(),
+                LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginStart = dp(6) },
+            )
+        }
+        styleFocusableRow(row)
+        card.addView(
+            row,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(heightDp)),
+        )
+    }
+
+    private fun seek(
+        card: LinearLayout,
+        label: String,
+        value: Int,
+        min: Int,
+        max: Int,
+        format: (Int) -> String = { formatNumber(it) },
+        onLiveChange: ((Int) -> Unit)? = null,
+        onChange: (Int) -> Unit,
+    ) {
+        addDividerIfNeeded(card)
+        val labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(2))
+        }
+        labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) })
+        val valueView = TextView(this).apply {
+            text = format(value)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(accentOnSunken)
+            setTypeface(typeface, Typeface.BOLD)
+            useTabularNumerals()
+            gravity = Gravity.CENTER
+            minWidth = dp(44)
+            background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+        labelRow.addView(valueView)
+        card.addView(labelRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(SeekBar(this).apply {
+            progressDrawable = ContextCompat.getDrawable(
+                this@SettingsActivity,
+                R.drawable.bg_seekbar_progress,
+            )?.mutate()
+            thumb = ContextCompat.getDrawable(
+                this@SettingsActivity,
+                R.drawable.bg_seekbar_thumb,
+            )?.mutate()
+            splitTrack = false
+            progressTintList = ColorStateList.valueOf(accent)
+            thumbTintList = ColorStateList.valueOf(accent)
+            progressBackgroundTintList = ColorStateList.valueOf(offTint)
+            background = TileBackgrounds.focusableRow(
+                context = this@SettingsActivity,
+                accent = accent,
+                cornerRadiusDp = 12,
+            )
+            minimumHeight = dp(42)
+            setPadding(dp(14), dp(8), dp(14), dp(10))
+            this.max = max - min
+            progress = value - min
+            var trackingTouch = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        val current = p + min
+                        valueView.text = format(current)
+                        onLiveChange?.invoke(current)
+                        // Gamepad D-pad left/right adjusts SeekBar without touch events.
+                        if (!trackingTouch) onChange(current)
+                    }
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {
+                    trackingTouch = true
+                }
+                override fun onStopTrackingTouch(sb: SeekBar) {
+                    trackingTouch = false
+                    val committed = sb.progress + min
+                    onLiveChange?.invoke(committed)
+                    onChange(committed)
+                }
+            })
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+    }
+
     private fun buildContent(): View {
-        val s = app.settings
+        refreshPaletteSnapshot()
         val wide = isWideSettings()
+        isWideLayout = wide
         cancelKeyCapture()
+        pageCache.invalidate()
         navItems.clear()
         keyChipsByAction.clear()
         pageDropdownRow = null
@@ -2603,62 +2969,29 @@ class SettingsActivity : AppCompatActivity() {
         headerBackBtn = null
         headerSearchBtn = null
         headerBreadcrumbLabel = null
+        hiddenValue = null
+        hiddenRomsValue = null
+        dockValue = null
+        packageYieldValue = null
+        playHostHelperValue = null
         artHeaderStatusPill = null
-
-        SettingsPage.entries.forEach { page ->
-            pageBodies[page] = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, 0, 0, dp(32))
-            }
-        }
-
-        fun addSection(
-            page: SettingsPage,
-            title: String,
-            card: LinearLayout,
-            badgeText: String? = null,
-            badgeActive: Boolean = false,
-            onBadgeView: ((TextView) -> Unit)? = null,
-        ) {
-            val root = pageBodies.getValue(page)
-            if (badgeText != null) {
-                val headerRow = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(
-                        sectionHeader(title),
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            marginEnd = dp(8)
-                        },
-                    )
-                    val badge = statusPill(badgeText, badgeActive)
-                    onBadgeView?.invoke(badge)
-                    addView(badge)
-                }
-                root.addView(
-                    headerRow,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ).apply {
-                        topMargin = dp(24)
-                        bottomMargin = dp(10)
-                    },
-                )
-            } else {
-                root.addView(sectionHeader(title), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply {
-                    topMargin = dp(24)
-                    bottomMargin = dp(10)
-                })
-            }
-            root.addView(card, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
+        wallpaperValue = null
+        wallpaperClear = null
+        customSoundPackBadge = null
+        customSoundPackStatus = null
+        customSoundPackClear = null
+        customPackScanGen++
+        wallpaperNameGen++
+        systemInfoGen++
+        raUserValue = null
+        raKeyValue = null
+        sgdbKeyValue = null
+        scrapeLabel = null
+        scrapeValue = null
+        scrapeRow = null
+        scrapeProgressBar = null
+        folderRows = null
+        bundledPacksValue = null
 
         val dm = resources.displayMetrics
         val screenWidthDp = (dm.widthPixels / dm.density).toInt()
@@ -2714,7 +3047,7 @@ class SettingsActivity : AppCompatActivity() {
             val breadcrumb = TextView(this@SettingsActivity).apply {
                 setText(currentPage.titleRes)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                setTextColor(SettingsUiLogic.accentOnBlack(accent))
+                setTextColor(palette.accentOnBlack)
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
@@ -2782,7 +3115,7 @@ class SettingsActivity : AppCompatActivity() {
         val headerRule = FrameLayout(this).apply {
             addView(
                 View(this@SettingsActivity).apply {
-                    setBackgroundColor(TileBackgrounds.hairlineDivider(this@SettingsActivity))
+                    setBackgroundColor(palette.hairline)
                 },
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2818,116 +3151,63 @@ class SettingsActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(8) })
         }
 
-        fun toggle(card: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-            addDividerIfNeeded(card)
-            val sw = accentSwitch(checked, onChange)
-            card.addView(
-                switchRow(label, sw),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
-            )
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
         }
-
-        fun addActionRow(
-            card: LinearLayout,
-            row: LinearLayout,
-            heightDp: Int = 60,
-            showChevron: Boolean = false,
-        ) {
-            addDividerIfNeeded(card)
-            if (showChevron) {
-                row.addView(
-                    drillChevron(),
-                    LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginStart = dp(6) },
-                )
-            }
-            styleFocusableRow(row)
-            card.addView(
-                row,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(heightDp)),
-            )
+        if (wide) {
+            body.addView(buildNavBlade(), LinearLayout.LayoutParams(
+                dp(SettingsUiLogic.navBladeWidthDp(screenWidthDp)),
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ).apply { marginEnd = dp(18) })
         }
-
-        fun seek(
-            card: LinearLayout,
-            label: String,
-            value: Int,
-            min: Int,
-            max: Int,
-            format: (Int) -> String = { formatNumber(it) },
-            onLiveChange: ((Int) -> Unit)? = null,
-            onChange: (Int) -> Unit,
-        ) {
-            addDividerIfNeeded(card)
-            val labelRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(8), dp(10), dp(2))
-            }
-            labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) })
-            val valueView = TextView(this).apply {
-                text = format(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                setTextColor(accentOnSunken)
-                setTypeface(typeface, Typeface.BOLD)
-                useTabularNumerals()
-                gravity = Gravity.CENTER
-                minWidth = dp(44)
-                background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-            }
-            labelRow.addView(valueView)
-            card.addView(labelRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            card.addView(SeekBar(this).apply {
-                progressDrawable = ContextCompat.getDrawable(
-                    this@SettingsActivity,
-                    R.drawable.bg_seekbar_progress,
-                )?.mutate()
-                thumb = ContextCompat.getDrawable(
-                    this@SettingsActivity,
-                    R.drawable.bg_seekbar_thumb,
-                )?.mutate()
-                splitTrack = false
-                progressTintList = ColorStateList.valueOf(accent)
-                thumbTintList = ColorStateList.valueOf(accent)
-                progressBackgroundTintList = ColorStateList.valueOf(offTint)
-                background = TileBackgrounds.focusableRow(
-                    context = this@SettingsActivity,
-                    accent = accent,
-                    cornerRadiusDp = 12,
-                )
-                minimumHeight = dp(42)
-                setPadding(dp(14), dp(8), dp(14), dp(10))
-                this.max = max - min
-                progress = value - min
-                var trackingTouch = false
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
-                        if (fromUser) {
-                            val current = p + min
-                            valueView.text = format(current)
-                            onLiveChange?.invoke(current)
-                            // Gamepad D-pad left/right adjusts SeekBar without touch events.
-                            if (!trackingTouch) onChange(current)
-                        }
-                    }
-                    override fun onStartTrackingTouch(sb: SeekBar) {
-                        trackingTouch = true
-                    }
-                    override fun onStopTrackingTouch(sb: SeekBar) {
-                        trackingTouch = false
-                        val committed = sb.progress + min
-                        onLiveChange?.invoke(committed)
-                        onChange(committed)
-                    }
-                })
-            }, LinearLayout.LayoutParams(
+        val host = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        pageHost = host
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(18))
+            clipToPadding = false
+            setPadding(0, 0, 0, dp(12))
+            addView(host, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
         }
+        contentScroll = scroll
+        body.addView(scroll, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f,
+        ))
+        shell.addView(body, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        // Build ONLY the active page immediately; other pages inflate lazily on first selectPage().
+        selectPage(currentPage)
+        return shell
+    }
 
+    private fun buildPageBody(page: SettingsPage): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(32))
+        }
+        when (page) {
+            SettingsPage.DISPLAY_GRID -> buildDisplayGridPage(root)
+            SettingsPage.APPS -> buildAppsPage(root)
+            SettingsPage.CONTROLS -> buildControlsPage(root)
+            SettingsPage.AUDIO -> buildAudioPage(root)
+            SettingsPage.LIBRARY -> buildLibraryPage(root)
+            SettingsPage.ART_DATA -> buildArtDataPage(root)
+            SettingsPage.STATS -> buildStatsPage(root)
+            SettingsPage.SYSTEM -> buildSystemPage(root)
+            SettingsPage.ABOUT -> buildAboutPage(root)
+        }
+        return root
+    }
+
+    private fun buildDisplayGridPage(root: LinearLayout) {
+        val s = app.settings
         val displayCard = sectionCard()
         toggle(displayCard, getString(R.string.settings_show_hints), s.showHints) {
             app.updateSettings(app.settings.copy(showHints = it))
@@ -2946,7 +3226,7 @@ class SettingsActivity : AppCompatActivity() {
             it.id to themeName(it.id).uppercase(resources.configuration.locales[0])
         }
         val themeSwatches = ThemePack.BUILTINS.associate { it.id to it.accentColor }
-        val themeCurrent = ThemePack.resolve(s).id.let { id ->
+        val themeCurrent = themeTokens.id.let { id ->
             if (ThemePack.BUILTINS.any { it.id == id }) id else ThemePack.GHOST.id
         }
         segmentedRow(
@@ -3088,7 +3368,7 @@ class SettingsActivity : AppCompatActivity() {
             deviceProfileName(s.deviceProfileId),
         )
         addSection(
-            page = SettingsPage.DISPLAY_GRID,
+            root = root,
             title = getString(R.string.settings_section_display),
             card = displayCard,
             badgeText = displayModeBadge,
@@ -3108,9 +3388,9 @@ class SettingsActivity : AppCompatActivity() {
                 app.updateSettings(app.settings.copy(postureSuggestYield = on))
             }
             addSection(
-                SettingsPage.DISPLAY_GRID,
-                getString(R.string.settings_posture),
-                postureCard,
+                root = root,
+                title = getString(R.string.settings_posture),
+                card = postureCard,
             )
         }
 
@@ -3371,9 +3651,9 @@ class SettingsActivity : AppCompatActivity() {
         chromeCard.addView(powerHost, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addSection(
-            SettingsPage.DISPLAY_GRID,
-            getString(R.string.settings_chrome_section),
-            chromeCard,
+            root = root,
+            title = getString(R.string.settings_chrome_section),
+            card = chromeCard,
         )
 
         val companionCard = sectionCard()
@@ -3422,7 +3702,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(UiDimens.ALPHA_SUBTLE)
             setPadding(dp(10), 0, dp(10), dp(6))
         })
-        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_companion_section), companionCard)
+        addSection(root, getString(R.string.settings_companion_section), companionCard)
 
         val gridCard = sectionCard()
         var liveGridCols = s.gridColumns
@@ -3559,8 +3839,11 @@ class SettingsActivity : AppCompatActivity() {
         wallpaperRow.addView(clearView)
         refreshWallpaperRow()
         addActionRow(gridCard, wallpaperRow, showChevron = true)
-        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_grid_section), gridCard)
+        addSection(root, getString(R.string.settings_grid_section), gridCard)
+    }
 
+    private fun buildAppsPage(root: LinearLayout) {
+        val s = app.settings
         val appsCard = sectionCard()
         val hiddenRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -3641,13 +3924,16 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.label_empty)
         }
         addSection(
-            page = SettingsPage.APPS,
+            root = root,
             title = getString(R.string.settings_page_apps),
             card = appsCard,
             badgeText = appsBadge,
             badgeActive = dockFilled > 0,
         )
+    }
 
+    private fun buildControlsPage(root: LinearLayout) {
+        val s = app.settings
         val controlsCard = sectionCard()
         toggle(controlsCard, getString(R.string.settings_haptics), s.haptics) {
             app.updateSettings(app.settings.copy(haptics = it))
@@ -3897,14 +4183,18 @@ class SettingsActivity : AppCompatActivity() {
             addActionRow(controlsCard, row)
         }
         addSection(
-            page = SettingsPage.CONTROLS,
+            root = root,
             title = getString(R.string.settings_page_controls),
             card = controlsCard,
             badgeText = getString(R.string.format_percent, s.stickDeadzone),
             badgeActive = SettingsUiLogic.isCustomDeadzone(s.stickDeadzone),
             onBadgeView = { controlsDeadzoneBadge = it },
         )
+    }
 
+    private fun buildAudioPage(root: LinearLayout) {
+        val s = app.settings
+        val wide = isWideLayout
         // --- Audio page (all updates use notify = false to avoid dual-paint rebuilds) ---
         var audioSfxBadge: TextView? = null
         var audioAmbientBadge: TextView? = null
@@ -3997,7 +4287,7 @@ class SettingsActivity : AppCompatActivity() {
             liveSoundEnabled, liveSoundPack, liveSfxVolume,
         )
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_sfx),
             card = audioSfxCard,
             badgeText = if (initialSfxActive) {
@@ -4087,7 +4377,7 @@ class SettingsActivity : AppCompatActivity() {
             )
         }
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_test_pad),
             card = audioTestPadCard,
         )
@@ -4200,7 +4490,7 @@ class SettingsActivity : AppCompatActivity() {
         )
         val hasCustomPack = s.customSoundPackUri.isNotBlank()
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_custom_pack),
             card = audioCustomPackCard,
             badgeText = getString(
@@ -4245,7 +4535,7 @@ class SettingsActivity : AppCompatActivity() {
             liveSoundEnabled, liveAmbientEnabled, liveSoundPack, liveAmbientVolume,
         )
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_ambient),
             card = audioAmbientCard,
             badgeText = if (initialAmbientActive) {
@@ -4268,7 +4558,7 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(videoPreviewAudio = on), notify = false)
         }
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_events),
             card = audioEventsCard,
         )
@@ -4281,13 +4571,15 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(audioRespectRinger = on), notify = false)
         }
         addSection(
-            page = SettingsPage.AUDIO,
+            root = root,
             title = getString(R.string.settings_audio_section_etiquette),
             card = audioEtiquetteCard,
         )
+    }
 
+    private fun buildLibraryPage(root: LinearLayout) {
+        val s = app.settings
         val libraryCard = sectionCard()
-        val artCard = sectionCard()
         val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         folderRows = rows
         libraryCard.addView(rows, LinearLayout.LayoutParams(
@@ -4559,6 +4851,52 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(accentOnCard)
         })
         addActionRow(libraryCard, lensPackRow, showChevron = true)
+        val setupRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(
+                    setupDismissed = false,
+                    chromeDiscoverDismissed = false,
+                ))
+                Toast.makeText(this@SettingsActivity,
+                    R.string.settings_setup_reset_done, Toast.LENGTH_SHORT).show()
+            }
+        }
+        setupRow.addView(rowLabel(getString(R.string.settings_reset_setup)), LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addActionRow(libraryCard, setupRow)
+        val chromeDiscoverRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                app.updateSettings(app.settings.copy(chromeDiscoverDismissed = false))
+                Toast.makeText(
+                    this@SettingsActivity,
+                    R.string.settings_reset_chrome_discover,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        chromeDiscoverRow.addView(
+            rowLabel(getString(R.string.settings_reset_chrome_discover)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        addActionRow(libraryCard, chromeDiscoverRow)
+        val visibleRoms = app.romEntries.count { it.visibleInUi }
+        val romsBadge = resources.getQuantityString(R.plurals.count_roms_found, visibleRoms, visibleRoms)
+        addSection(
+            root = root,
+            title = getString(R.string.settings_page_library),
+            card = libraryCard,
+            badgeText = romsBadge,
+            badgeActive = visibleRoms > 0,
+        )
+    }
+
+    private fun buildArtDataPage(root: LinearLayout) {
+        val s = app.settings
+        val artCard = sectionCard()
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -4799,7 +5137,6 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(accentOnCard)
         })
         addActionRow(artCard, packRow, showChevron = true)
-        val bundledCount = listBundledPackAssets().size
         val examplePackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -4807,71 +5144,49 @@ class SettingsActivity : AppCompatActivity() {
         }
         examplePackRow.addView(rowLabel(getString(R.string.settings_bundled_packs)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        examplePackRow.addView(TextView(this).apply {
-            text = if (bundledCount > 0) {
-                resources.getQuantityString(R.plurals.count_packs, bundledCount, bundledCount)
+        val bundledValueView = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(accentOnCard)
+        }
+        bundledPacksValue = bundledValueView
+        fun bindBundledCount(count: Int) {
+            bundledValueView.text = if (count > 0) {
+                resources.getQuantityString(R.plurals.count_packs, count, count)
             } else {
                 getString(R.string.action_none)
             }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(accentOnCard)
-        })
+        }
+        val cachedPacks = cachedBundledPackAssets
+        if (cachedPacks != null) {
+            bindBundledCount(cachedPacks.size)
+        } else {
+            bundledValueView.setText(R.string.glyph_ellipsis)
+            val expectedBuildGen = pageCache.generation
+            loadBundledPackAssetsAsync { names ->
+                if (expectedBuildGen != pageCache.generation) return@loadBundledPackAssetsAsync
+                if (bundledPacksValue === bundledValueView) {
+                    bindBundledCount(names.size)
+                }
+            }
+        }
+        examplePackRow.addView(bundledValueView)
         addActionRow(artCard, examplePackRow, showChevron = true)
-        val setupRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setOnClickListener {
-                app.updateSettings(app.settings.copy(
-                    setupDismissed = false,
-                    chromeDiscoverDismissed = false,
-                ))
-                Toast.makeText(this@SettingsActivity,
-                    R.string.settings_setup_reset_done, Toast.LENGTH_SHORT).show()
-            }
-        }
-        setupRow.addView(rowLabel(getString(R.string.settings_reset_setup)), LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addActionRow(libraryCard, setupRow)
-        val chromeDiscoverRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setOnClickListener {
-                app.updateSettings(app.settings.copy(chromeDiscoverDismissed = false))
-                Toast.makeText(
-                    this@SettingsActivity,
-                    R.string.settings_reset_chrome_discover,
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-        }
-        chromeDiscoverRow.addView(
-            rowLabel(getString(R.string.settings_reset_chrome_discover)),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        addActionRow(libraryCard, chromeDiscoverRow)
-        val visibleRoms = app.romEntries.count { it.visibleInUi }
-        val romsBadge = resources.getQuantityString(R.plurals.count_roms_found, visibleRoms, visibleRoms)
-        addSection(
-            page = SettingsPage.LIBRARY,
-            title = getString(R.string.settings_page_library),
-            card = libraryCard,
-            badgeText = romsBadge,
-            badgeActive = visibleRoms > 0,
-        )
         val artCredsReady = SettingsUiLogic.hasAnyArtCredentials(
             sgdbKey = s.sgdbApiKey,
             raUsername = s.raUsername,
             raApiKey = s.raApiKey,
         )
         addSection(
-            page = SettingsPage.ART_DATA,
+            root = root,
             title = getString(R.string.settings_page_art),
             card = artCard,
             badgeText = getString(if (artCredsReady) R.string.label_set else R.string.label_not_set),
             badgeActive = artCredsReady,
             onBadgeView = { artHeaderStatusPill = it },
         )
+    }
 
+    private fun buildStatsPage(root: LinearLayout) {
         val statsCard = sectionCard()
         val most = com.visorcraft.ghostgalleon.library.LibraryStats.mostPlayed(
             app.settings.playtimeMs, limit = 12,
@@ -4972,12 +5287,16 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         addSection(
-            page = SettingsPage.STATS,
+            root = root,
             title = getString(R.string.settings_page_stats),
             card = statsCard,
             badgeText = statsBadge,
             badgeActive = totalPlaytime > 0L,
         )
+    }
+
+    private fun buildSystemPage(root: LinearLayout) {
+        val s = app.settings
         val systemCard = sectionCard()
         val topo = app.refreshDisplayConfig()
         val systemCardExtra = systemCard
@@ -5013,195 +5332,30 @@ class SettingsActivity : AppCompatActivity() {
                     ?: getString(R.string.glyph_dash),
             ),
         ))
-        val readings = SystemInfoCollector.collect(this)
 
-        fun meterTile(
-            title: String,
-            valueText: String,
-            fraction: Float,
-            hasReading: Boolean,
-            lowIsWarn: Boolean = false,
-        ): LinearLayout {
-            val barColor = if (hasReading) {
-                SettingsUiLogic.meterToneColor(fraction, accent, lowIsWarn)
-            } else {
-                UiDimens.ALPHA_SUBTLE
-            }
-            val valueColor = if (!hasReading) {
-                UiDimens.ALPHA_MUTED
-            } else if (barColor == accent) {
-                accentOnSunken
-            } else {
-                barColor
-            }
-            return LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
-                setPadding(dp(10), dp(8), dp(10), dp(9))
-                val top = LinearLayout(this@SettingsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(
-                        TextView(this@SettingsActivity).apply {
-                            text = title
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-                            setTextColor(UiDimens.ALPHA_MUTED)
-                            setTypeface(typeface, Typeface.BOLD)
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.END
-                        },
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            marginEnd = dp(6)
-                        },
-                    )
-                    addView(
-                        TextView(this@SettingsActivity).apply {
-                            text = valueText
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                            setTextColor(valueColor)
-                            setTypeface(typeface, Typeface.BOLD)
-                            useTabularNumerals()
-                            maxLines = 1
-                        },
-                    )
-                }
-                addView(
-                    top,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
-                val bar = DeterminateProgressBarView(this@SettingsActivity, themeTokens, barColor).apply {
-                    setFraction(if (hasReading) fraction else 0f)
-                }
-                addView(
-                    bar,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)).apply {
-                        topMargin = dp(6)
-                    },
-                )
-            }
-        }
-
-        val ramFrac = SettingsUiLogic.freeToUsedFraction(readings.ramAvailBytes, readings.ramTotalBytes)
-        val ramPct = (ramFrac * 100f).toInt()
-        val intFrac = SettingsUiLogic.freeToUsedFraction(readings.internalFreeBytes, readings.internalTotalBytes)
-        val intPct = (intFrac * 100f).toInt()
-        val batPct = readings.batteryPercent
-        val batFrac = SettingsUiLogic.batteryFraction(batPct)
-        val secTotal = readings.secondaryTotalBytes
-        val secFree = readings.secondaryFreeBytes
-        val hasSec = secTotal != null && secFree != null && secTotal > 0L
-        val secFrac = if (hasSec) SettingsUiLogic.freeToUsedFraction(secFree!!, secTotal!!) else 0f
-        val secPct = (secFrac * 100f).toInt()
-
-        fun meterPairRow(left: View, right: View) = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(
-                right,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginStart = dp(8)
-                },
-            )
-        }
-
-        val metersBlock = LinearLayout(this).apply {
+        val readingsHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(8))
-            addView(
-                meterPairRow(
-                    meterTile(
-                        title = getString(R.string.system_ram),
-                        valueText = if (readings.ramTotalBytes > 0L) {
-                            getString(R.string.format_percent, ramPct)
-                        } else {
-                            getString(R.string.label_unavailable)
-                        },
-                        fraction = ramFrac,
-                        hasReading = readings.ramTotalBytes > 0L,
-                    ),
-                    meterTile(
-                        title = getString(R.string.system_internal_storage),
-                        valueText = if (readings.internalTotalBytes > 0L) {
-                            getString(R.string.format_percent, intPct)
-                        } else {
-                            getString(R.string.label_unavailable)
-                        },
-                        fraction = intFrac,
-                        hasReading = readings.internalTotalBytes > 0L,
-                    ),
-                ),
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { bottomMargin = dp(8) },
-            )
-            addView(
-                meterPairRow(
-                    meterTile(
-                        title = getString(R.string.system_battery),
-                        valueText = if (batPct != null) {
-                            getString(R.string.system_battery_percent, batPct)
-                        } else {
-                            getString(R.string.label_unavailable)
-                        },
-                        fraction = batFrac,
-                        hasReading = batPct != null,
-                        lowIsWarn = true,
-                    ),
-                    meterTile(
-                        title = getString(R.string.system_microsd),
-                        valueText = if (hasSec) {
-                            getString(R.string.format_percent, secPct)
-                        } else {
-                            getString(R.string.system_not_present)
-                        },
-                        fraction = secFrac,
-                        hasReading = hasSec,
-                    ),
-                ),
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ),
-            )
         }
+        renderSystemReadings(readingsHost, readings = null)
         systemCard.addView(
-            metersBlock,
+            readingsHost,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-
-        SystemInfoFormat.rows(readings).forEach { (label, value) ->
-            addDivider(systemCard)
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(7), dp(10), dp(7))
+        val gen = ++systemInfoGen
+        val expectedBuildGen = pageCache.generation
+        val appContext = applicationContext
+        PROBE_IO.execute {
+            val collected = SystemInfoCollector.collect(appContext)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (gen != systemInfoGen || expectedBuildGen != pageCache.generation) return@runOnUiThread
+                renderSystemReadings(readingsHost, collected)
             }
-            row.addView(rowLabel(resolveText(label)).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-            }, LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-            row.addView(TextView(this).apply {
-                text = resolveText(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(UiDimens.ALPHA_SECONDARY)
-                useTabularNumerals()
-                gravity = Gravity.END
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f,
-            ))
-            systemCard.addView(row, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
         }
+
         val refreshSys = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -5296,52 +5450,221 @@ class SettingsActivity : AppCompatActivity() {
             deviceProfileName(effectiveProfile.id),
         )
         addSection(
-            page = SettingsPage.SYSTEM,
+            root = root,
             title = getString(R.string.settings_page_system),
             card = systemCard,
             badgeText = systemBadge,
             badgeActive = topo.mode == SurfaceMode.DUAL,
         )
-        pageBodies.getValue(SettingsPage.ABOUT).addView(
+    }
+
+    private fun renderSystemReadings(host: LinearLayout, readings: SystemReadings?) {
+        host.removeAllViews()
+
+        fun meterTile(
+            title: String,
+            valueText: String,
+            fraction: Float,
+            hasReading: Boolean,
+            lowIsWarn: Boolean = false,
+        ): LinearLayout {
+            val barColor = if (hasReading) {
+                SettingsUiLogic.meterToneColor(fraction, accent, lowIsWarn)
+            } else {
+                UiDimens.ALPHA_SUBTLE
+            }
+            val valueColor = if (!hasReading) {
+                UiDimens.ALPHA_MUTED
+            } else if (barColor == accent) {
+                accentOnSunken
+            } else {
+                barColor
+            }
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
+                setPadding(dp(10), dp(8), dp(10), dp(9))
+                val top = LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        TextView(this@SettingsActivity).apply {
+                            text = title
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                            setTextColor(UiDimens.ALPHA_MUTED)
+                            setTypeface(typeface, Typeface.BOLD)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginEnd = dp(6)
+                        },
+                    )
+                    addView(
+                        TextView(this@SettingsActivity).apply {
+                            text = valueText
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                            setTextColor(valueColor)
+                            setTypeface(typeface, Typeface.BOLD)
+                            useTabularNumerals()
+                            maxLines = 1
+                        },
+                    )
+                }
+                addView(
+                    top,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+                val bar = DeterminateProgressBarView(this@SettingsActivity, themeTokens, barColor).apply {
+                    setFraction(if (hasReading) fraction else 0f)
+                }
+                addView(
+                    bar,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)).apply {
+                        topMargin = dp(6)
+                    },
+                )
+            }
+        }
+
+        fun meterPairRow(left: View, right: View) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(
+                right,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(8)
+                },
+            )
+        }
+
+        val placeholder = getString(R.string.glyph_ellipsis)
+        val ramFrac = if (readings != null) {
+            SettingsUiLogic.freeToUsedFraction(readings.ramAvailBytes, readings.ramTotalBytes)
+        } else 0f
+        val ramPct = (ramFrac * 100f).toInt()
+        val intFrac = if (readings != null) {
+            SettingsUiLogic.freeToUsedFraction(readings.internalFreeBytes, readings.internalTotalBytes)
+        } else 0f
+        val intPct = (intFrac * 100f).toInt()
+        val batPct = readings?.batteryPercent
+        val batFrac = SettingsUiLogic.batteryFraction(batPct)
+        val secTotal = readings?.secondaryTotalBytes
+        val secFree = readings?.secondaryFreeBytes
+        val hasSec = secTotal != null && secFree != null && secTotal > 0L
+        val secFrac = if (hasSec) SettingsUiLogic.freeToUsedFraction(secFree!!, secTotal!!) else 0f
+        val secPct = (secFrac * 100f).toInt()
+
+        val metersBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+            addView(
+                meterPairRow(
+                    meterTile(
+                        title = getString(R.string.system_ram),
+                        valueText = when {
+                            readings == null -> placeholder
+                            readings.ramTotalBytes > 0L -> getString(R.string.format_percent, ramPct)
+                            else -> getString(R.string.label_unavailable)
+                        },
+                        fraction = ramFrac,
+                        hasReading = readings != null && readings.ramTotalBytes > 0L,
+                    ),
+                    meterTile(
+                        title = getString(R.string.system_internal_storage),
+                        valueText = when {
+                            readings == null -> placeholder
+                            readings.internalTotalBytes > 0L -> getString(R.string.format_percent, intPct)
+                            else -> getString(R.string.label_unavailable)
+                        },
+                        fraction = intFrac,
+                        hasReading = readings != null && readings.internalTotalBytes > 0L,
+                    ),
+                ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(8) },
+            )
+            addView(
+                meterPairRow(
+                    meterTile(
+                        title = getString(R.string.system_battery),
+                        valueText = when {
+                            readings == null -> placeholder
+                            batPct != null -> getString(R.string.system_battery_percent, batPct)
+                            else -> getString(R.string.label_unavailable)
+                        },
+                        fraction = batFrac,
+                        hasReading = batPct != null,
+                        lowIsWarn = true,
+                    ),
+                    meterTile(
+                        title = getString(R.string.system_microsd),
+                        valueText = when {
+                            readings == null -> placeholder
+                            hasSec -> getString(R.string.format_percent, secPct)
+                            else -> getString(R.string.system_not_present)
+                        },
+                        fraction = secFrac,
+                        hasReading = hasSec,
+                    ),
+                ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        host.addView(
+            metersBlock,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        if (readings != null) {
+            SystemInfoFormat.rows(readings).forEach { (label, value) ->
+                addDivider(host)
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(10), dp(7), dp(10), dp(7))
+                }
+                row.addView(rowLabel(resolveText(label)).apply {
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                }, LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+                row.addView(TextView(this).apply {
+                    text = resolveText(value)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(UiDimens.ALPHA_SECONDARY)
+                    useTabularNumerals()
+                    gravity = Gravity.END
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f,
+                ))
+                host.addView(row, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }
+        }
+    }
+
+    private fun buildAboutPage(root: LinearLayout) {
+        root.addView(
             AboutPage.build(this, accent),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        val body = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        if (wide) {
-            body.addView(buildNavBlade(), LinearLayout.LayoutParams(
-                dp(SettingsUiLogic.navBladeWidthDp(screenWidthDp)),
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ).apply { marginEnd = dp(18) })
-        }
-        val host = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        pageHost = host
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            isVerticalFadingEdgeEnabled = true
-            setFadingEdgeLength(dp(18))
-            clipToPadding = false
-            setPadding(0, 0, 0, dp(12))
-            addView(host, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
-        contentScroll = scroll
-        body.addView(scroll, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f,
-        ))
-        shell.addView(body, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
-        ))
-        selectPage(currentPage)
-        return shell
     }
 
     private fun switchPageBy(delta: Int) {
@@ -5354,7 +5677,7 @@ class SettingsActivity : AppCompatActivity() {
         if (wasInNav) {
             navItems[nextPage]?.container?.requestFocus()
         } else {
-            val target = pageBodies[nextPage]?.let(::firstFocusableIn)
+            val target = pageCache.peek(nextPage)?.let(::firstFocusableIn)
                 ?: navItems[nextPage]?.container
                 ?: pageDropdownRow
             target?.requestFocus()
@@ -5389,5 +5712,38 @@ class SettingsActivity : AppCompatActivity() {
         captureTarget = null
         captureLabel = null
         return true
+    }
+
+    private companion object {
+        val PROBE_IO = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "gg-settings-probe").apply { isDaemon = true }
+        }
+        val ARCHIVE_IO = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "gg-settings-archive").apply { isDaemon = true }
+        }
+
+        @Volatile
+        var cachedBundledPackAssets: List<String>? = null
+
+        @Volatile
+        var cachedWallpaperLabel: Pair<String, String>? = null
+
+        fun resolveWallpaperDisplayName(
+            context: android.content.Context,
+            uriString: String,
+            fallback: String,
+        ): String = runCatching {
+            val uri = Uri.parse(uriString)
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { c ->
+                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+            } ?: uri.lastPathSegment ?: fallback
+        }.getOrDefault(fallback)
     }
 }

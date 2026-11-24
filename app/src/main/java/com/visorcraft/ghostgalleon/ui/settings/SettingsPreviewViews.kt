@@ -115,10 +115,66 @@ internal object SettingsPreviewLogic {
 }
 
 /**
+ * Precomputed cell layout cache for [ThemePreviewView] and
+ * [GridDensityPreviewView]. Recomputes only when viewport size or grid
+ * dimensions change so `onDraw()` allocates zero objects (including during
+ * continuous 120 Hz SeekBar drags). Pure; host-tested.
+ */
+internal class MiniGridCellCache {
+    private var cachedWidth: Float = -1f
+    private var cachedHeight: Float = -1f
+    private var cachedColumns: Int = -1
+    private var cachedRows: Int = -1
+    private var cachedGapPx: Float = -1f
+    private var cachedFocusedIndex: Int = -1
+
+    var cells: List<MiniCellRect> = emptyList()
+        private set
+
+    var recomputeCount: Int = 0
+        private set
+
+    fun ensure(
+        width: Float,
+        height: Float,
+        columns: Int,
+        rows: Int,
+        gapPx: Float,
+        focusedIndex: Int = 1,
+    ): List<MiniCellRect> {
+        if (cachedWidth == width &&
+            cachedHeight == height &&
+            cachedColumns == columns &&
+            cachedRows == rows &&
+            cachedGapPx == gapPx &&
+            cachedFocusedIndex == focusedIndex
+        ) {
+            return cells
+        }
+        cachedWidth = width
+        cachedHeight = height
+        cachedColumns = columns
+        cachedRows = rows
+        cachedGapPx = gapPx
+        cachedFocusedIndex = focusedIndex
+        cells = SettingsPreviewLogic.computeMiniGridCells(
+            width = width,
+            height = height,
+            columns = columns,
+            rows = rows,
+            gapPx = gapPx,
+            focusedIndex = focusedIndex,
+        )
+        recomputeCount++
+        return cells
+    }
+}
+
+/**
  * Compact live visual preview of the active [ThemeTokens] & accent color:
  * renders sunken canvas, subtle top accent aura, miniature deck cards with
  * optical nested corners, active accent focus ring, accent CTA pill, and dock.
- * Pure vector Canvas drawing — zero extra view inflation or rebuild churn.
+ * Pure vector Canvas drawing — zero extra view inflation or per-frame allocations.
  */
 internal class ThemePreviewView(
     context: Context,
@@ -143,11 +199,40 @@ internal class ThemePreviewView(
         strokeWidth = context.dpF(2)
     }
 
+    private val density = context.resources.displayMetrics.density
+    private val outerRadius = context.dpF(UiDimens.RADIUS_MD)
+    private val inset = hairlinePaint.strokeWidth * 0.5f
+    private val pad = context.dpF(10)
+    private val dockH = context.dpF(14)
+    private val gap = context.dpF(8)
+    private val dp2 = context.dpF(2)
+    private val dp3 = context.dpF(3)
+    private val dp35 = context.dpF(3.5f)
+    private val dp4 = context.dpF(4)
+    private val dp5 = context.dpF(5)
+    private val dp6 = context.dpF(6)
+    private val dp7 = context.dpF(7)
+    private val dp12 = context.dpF(12)
+    private val dp16 = context.dpF(16)
+    private val dp20 = context.dpF(20)
+    private val dp60 = context.dpF(60)
+    private val dp64 = context.dpF(64)
+    private val dp90 = context.dpF(90)
+
+    private val cellCache = MiniGridCellCache()
     private var lastGradientHeight = -1f
+    private var lastGradientAccent = 0
+    private var cachedWidth = 0f
+    private var cachedHeight = 0f
+    private var cachedDeckAreaH = 0f
+    private var cachedCardsAreaW = 0f
+    private var cachedTileRadius = 0f
+    private var cachedInnerTileRadius = 0f
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         syncPaints()
+        syncRadii()
     }
 
     fun updateTheme(nextTokens: ThemeTokens, nextAccent: Int) {
@@ -156,6 +241,10 @@ internal class ThemePreviewView(
         accent = nextAccent
         lastGradientHeight = -1f
         syncPaints()
+        syncRadii()
+        if (width > 0 && height > 0) {
+            rebuildGeometry(width.toFloat(), height.toFloat())
+        }
         invalidate()
     }
 
@@ -170,19 +259,25 @@ internal class ThemePreviewView(
         focusStrokePaint.color = accent
     }
 
-    override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
+    private fun syncRadii() {
+        cachedTileRadius = SettingsPreviewLogic.scaledCornerRadiusPx(
+            cardRadiusDp = tokens.cardRadiusDp,
+            density = density,
+        )
+        cachedInnerTileRadius = ThemePack.nestedRadiusDp(
+            outerRadiusDp = (cachedTileRadius / density).toInt(),
+            insetDp = 3,
+            minDp = 2,
+        ) * density
+    }
+
+    private fun rebuildGeometry(w: Float, h: Float) {
+        cachedWidth = w
+        cachedHeight = h
         if (w <= 0f || h <= 0f) return
-
-        val outerRadius = dpF(UiDimens.RADIUS_MD)
-        val inset = hairlinePaint.strokeWidth * 0.5f
-
-        // Sunken stage backdrop + subtle accent sheen at top edge.
-        rect.set(0f, 0f, w, h)
-        canvas.drawRoundRect(rect, outerRadius, outerRadius, bgPaint)
-        if (lastGradientHeight != h) {
+        if (lastGradientHeight != h || lastGradientAccent != accent) {
             lastGradientHeight = h
+            lastGradientAccent = accent
             auraPaint.shader = LinearGradient(
                 0f,
                 0f,
@@ -193,35 +288,44 @@ internal class ThemePreviewView(
                 Shader.TileMode.CLAMP,
             )
         }
-        canvas.drawRoundRect(rect, outerRadius, outerRadius, auraPaint)
-
-        val pad = dpF(10)
-        val dockH = dpF(14)
-        val gap = dpF(8)
-        val deckAreaH = (h - pad * 2f - dockH - dpF(6)).coerceAtLeast(dpF(20))
-        val ctaAreaW = (w * 0.28f).coerceAtLeast(dpF(64))
-        val cardsAreaW = (w - pad * 2f - ctaAreaW - gap).coerceAtLeast(dpF(60))
-
-        val tileRadius = SettingsPreviewLogic.scaledCornerRadiusPx(
-            cardRadiusDp = tokens.cardRadiusDp,
-            density = resources.displayMetrics.density,
-        )
-        val innerTileRadius = ThemePack.nestedRadiusDp(
-            outerRadiusDp = (tileRadius / resources.displayMetrics.density).toInt(),
-            insetDp = 3,
-            minDp = 2,
-        ) * resources.displayMetrics.density
-
-        // 3 miniature deck cards; middle card shows the crisp accent focus ring.
-        val cells = SettingsPreviewLogic.computeMiniGridCells(
-            width = cardsAreaW,
-            height = deckAreaH,
+        cachedDeckAreaH = (h - pad * 2f - dockH - dp6).coerceAtLeast(dp20)
+        val ctaAreaW = (w * 0.28f).coerceAtLeast(dp64)
+        cachedCardsAreaW = (w - pad * 2f - ctaAreaW - gap).coerceAtLeast(dp60)
+        cellCache.ensure(
+            width = cachedCardsAreaW,
+            height = cachedDeckAreaH,
             columns = 3,
             rows = 1,
             gapPx = gap,
             focusedIndex = 1,
         )
-        for (cell in cells) {
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        rebuildGeometry(w.toFloat(), h.toFloat())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        if (w != cachedWidth || h != cachedHeight || lastGradientHeight != h) {
+            rebuildGeometry(w, h)
+        }
+
+        // Sunken stage backdrop + subtle accent sheen at top edge.
+        rect.set(0f, 0f, w, h)
+        canvas.drawRoundRect(rect, outerRadius, outerRadius, bgPaint)
+        canvas.drawRoundRect(rect, outerRadius, outerRadius, auraPaint)
+
+        val tileRadius = cachedTileRadius
+        val innerTileRadius = cachedInnerTileRadius
+
+        // 3 miniature deck cards; middle card shows the crisp accent focus ring.
+        val cells = cellCache.cells
+        for (i in 0 until cells.size) {
+            val cell = cells[i]
             val l = pad + cell.left
             val t = pad + cell.top
             val r = pad + cell.right
@@ -230,8 +334,8 @@ internal class ThemePreviewView(
             canvas.drawRoundRect(rect, tileRadius, tileRadius, cardPaint)
 
             // Nested art badge inside card.
-            val artInset = dpF(5)
-            val artBottom = (b - dpF(12)).coerceAtLeast(t + artInset + dpF(6))
+            val artInset = dp5
+            val artBottom = (b - dp12).coerceAtLeast(t + artInset + dp6)
             rect.set(l + artInset, t + artInset, r - artInset, artBottom)
             canvas.drawRoundRect(
                 rect,
@@ -241,9 +345,9 @@ internal class ThemePreviewView(
             )
 
             // Tiny title line below nested art.
-            val lineTop = artBottom + dpF(3)
-            val lineH = dpF(3)
-            if (lineTop + lineH < b - dpF(2)) {
+            val lineTop = artBottom + dp3
+            val lineH = dp3
+            if (lineTop + lineH < b - dp2) {
                 rect.set(l + artInset, lineTop, l + (r - l) * 0.65f, lineTop + lineH)
                 canvas.drawRoundRect(rect, lineH * 0.5f, lineH * 0.5f, mutedPaint)
             }
@@ -258,40 +362,40 @@ internal class ThemePreviewView(
         }
 
         // Right-side mini hero preview: title bar, subtitle bar, filled accent CTA pill.
-        val ctaLeft = pad + cardsAreaW + gap
+        val ctaLeft = pad + cachedCardsAreaW + gap
         val ctaRight = w - pad
-        val ctaTop = pad + dpF(4)
-        val barH = dpF(5)
+        val ctaTop = pad + dp4
+        val barH = dp5
         rect.set(ctaLeft, ctaTop, ctaLeft + (ctaRight - ctaLeft) * 0.82f, ctaTop + barH)
         canvas.drawRoundRect(rect, barH * 0.5f, barH * 0.5f, elevatedPaint)
 
-        val subTop = ctaTop + barH + dpF(5)
-        rect.set(ctaLeft, subTop, ctaLeft + (ctaRight - ctaLeft) * 0.56f, subTop + dpF(3.5f))
-        canvas.drawRoundRect(rect, dpF(2), dpF(2), mutedPaint)
+        val subTop = ctaTop + barH + dp5
+        rect.set(ctaLeft, subTop, ctaLeft + (ctaRight - ctaLeft) * 0.56f, subTop + dp35)
+        canvas.drawRoundRect(rect, dp2, dp2, mutedPaint)
 
-        val pillH = dpF(16)
-        val pillTop = (pad + deckAreaH - pillH).coerceAtLeast(subTop + dpF(7))
+        val pillH = dp16
+        val pillTop = (pad + cachedDeckAreaH - pillH).coerceAtLeast(subTop + dp7)
         val pillR = pillH * 0.5f
         rect.set(ctaLeft, pillTop, ctaRight, pillTop + pillH)
         canvas.drawRoundRect(rect, pillR, pillR, accentPaint)
         // Contrast-checked glyph bar inside accent CTA pill.
         val glyphW = (ctaRight - ctaLeft) * 0.42f
-        val glyphH = dpF(3)
+        val glyphH = dp3
         val gx = ctaLeft + ((ctaRight - ctaLeft) - glyphW) * 0.5f
         val gy = pillTop + (pillH - glyphH) * 0.5f
         rect.set(gx, gy, gx + glyphW, gy + glyphH)
         canvas.drawRoundRect(rect, glyphH * 0.5f, glyphH * 0.5f, onAccentPaint)
 
         // Bottom mini dock strip.
-        val dockW = (w * 0.46f).coerceAtLeast(dpF(90))
+        val dockW = (w * 0.46f).coerceAtLeast(dp90)
         val dockLeft = (w - dockW) * 0.5f
-        val dockTop = h - pad - dockH + dpF(2)
+        val dockTop = h - pad - dockH + dp2
         rect.set(dockLeft, dockTop, dockLeft + dockW, dockTop + dockH)
         canvas.drawRoundRect(rect, dockH * 0.5f, dockH * 0.5f, cardPaint)
         canvas.drawRoundRect(rect, dockH * 0.5f, dockH * 0.5f, hairlinePaint)
         val dotCount = 4
-        val dotSize = dpF(6)
-        val dotGap = dpF(8)
+        val dotSize = dp6
+        val dotGap = gap
         val dotsW = dotCount * dotSize + (dotCount - 1) * dotGap
         var dx = dockLeft + (dockW - dotsW) * 0.5f
         val dy = dockTop + (dockH - dotSize) * 0.5f
@@ -299,8 +403,8 @@ internal class ThemePreviewView(
             rect.set(dx, dy, dx + dotSize, dy + dotSize)
             canvas.drawRoundRect(
                 rect,
-                dpF(2),
-                dpF(2),
+                dp2,
+                dp2,
                 if (i == 0) accentPaint else mutedPaint,
             )
             dx += dotSize + dotGap
@@ -315,7 +419,7 @@ internal class ThemePreviewView(
 /**
  * Live zero-rebuild preview of Grid columns, icon size, Game Mode card scale,
  * app name labels, and scroll axis (vertical rail vs horizontal page dots).
- * Mutating via [update] only invalidates this canvas.
+ * Mutating via [update] only invalidates this canvas; `onDraw()` allocates zero objects.
  */
 internal class GridDensityPreviewView(
     context: Context,
@@ -363,6 +467,46 @@ internal class GridDensityPreviewView(
         strokeWidth = context.dpF(1.75f)
     }
 
+    private val density = context.resources.displayMetrics.density
+    private val outerR = context.dpF(UiDimens.RADIUS_MD)
+    private val inset = hairlinePaint.strokeWidth * 0.5f
+    private val pad = context.dpF(10)
+    private val dividerGap = context.dpF(10)
+    private val gap = context.dpF(5)
+    private val dp1 = context.dpF(1)
+    private val dp2 = context.dpF(2)
+    private val dp22 = context.dpF(2.2f)
+    private val dp25 = context.dpF(2.5f)
+    private val dp4 = context.dpF(4)
+    private val dp5 = context.dpF(5)
+    private val dp6 = context.dpF(6)
+    private val dp7 = context.dpF(7)
+    private val dp8 = context.dpF(8)
+    private val dp10 = context.dpF(10)
+    private val dp22Px = context.dpF(22)
+    private val dp24 = context.dpF(24)
+    private val dp36 = context.dpF(36)
+    private val dp56 = context.dpF(56)
+    private val dp60 = context.dpF(60)
+    private val dp108 = context.dpF(108)
+    private val tileR = SettingsPreviewLogic.scaledCornerRadiusPx(
+        cardRadiusDp = tokens.cardRadiusDp,
+        density = density,
+        scale = 0.34f,
+    )
+    private val miniCardR = SettingsPreviewLogic.scaledCornerRadiusPx(
+        cardRadiusDp = tokens.cardRadiusDp,
+        density = density,
+        scale = 0.45f,
+    )
+
+    private val cellCache = MiniGridCellCache()
+    private var cachedWidth = 0f
+    private var cachedHeight = 0f
+    private var cachedGridW = 0f
+    private var cachedGridH = 0f
+    private var cachedIndicatorRight = 0f
+
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
@@ -382,45 +526,59 @@ internal class GridDensityPreviewView(
             gridDirection = gridDirection,
         )
         if (next != metrics) {
+            val layoutChanged = next.columns != metrics.columns ||
+                next.rows != metrics.rows ||
+                next.horizontal != metrics.horizontal
             metrics = next
+            if (layoutChanged && width > 0 && height > 0) {
+                rebuildGeometry(width.toFloat(), height.toFloat())
+            }
             invalidate()
         }
+    }
+
+    private fun rebuildGeometry(w: Float, h: Float) {
+        cachedWidth = w
+        cachedHeight = h
+        if (w <= 0f || h <= 0f) return
+        val carouselPanelW = (w * 0.24f).coerceIn(dp56, dp108)
+        val indicatorBottom = if (metrics.horizontal) dp10 else 0f
+        cachedIndicatorRight = if (!metrics.horizontal) dp8 else 0f
+        cachedGridW = (w - pad * 2f - carouselPanelW - dividerGap - cachedIndicatorRight).coerceAtLeast(dp60)
+        cachedGridH = (h - pad * 2f - indicatorBottom).coerceAtLeast(dp36)
+        cellCache.ensure(
+            width = cachedGridW,
+            height = cachedGridH,
+            columns = metrics.columns,
+            rows = metrics.rows,
+            gapPx = gap,
+            focusedIndex = 1.coerceAtMost(metrics.columns - 1),
+        )
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        rebuildGeometry(w.toFloat(), h.toFloat())
     }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
+        if (w != cachedWidth || h != cachedHeight) {
+            rebuildGeometry(w, h)
+        }
 
-        val outerR = dpF(UiDimens.RADIUS_MD)
-        val inset = hairlinePaint.strokeWidth * 0.5f
         rect.set(0f, 0f, w, h)
         canvas.drawRoundRect(rect, outerR, outerR, bgPaint)
 
-        val pad = dpF(10)
-        val dividerGap = dpF(10)
-        val carouselPanelW = (w * 0.24f).coerceIn(dpF(56), dpF(108))
-        val indicatorBottom = if (metrics.horizontal) dpF(10) else 0f
-        val indicatorRight = if (!metrics.horizontal) dpF(8) else 0f
-        val gridW = (w - pad * 2f - carouselPanelW - dividerGap - indicatorRight).coerceAtLeast(dpF(60))
-        val gridH = (h - pad * 2f - indicatorBottom).coerceAtLeast(dpF(36))
+        val gridW = cachedGridW
+        val gridH = cachedGridH
+        val cells = cellCache.cells
+        val labelReserve = if (metrics.showLabels) dp7 else 0f
 
-        val gap = dpF(5)
-        val cells = SettingsPreviewLogic.computeMiniGridCells(
-            width = gridW,
-            height = gridH,
-            columns = metrics.columns,
-            rows = metrics.rows,
-            gapPx = gap,
-            focusedIndex = 1.coerceAtMost(metrics.columns - 1),
-        )
-        val tileR = SettingsPreviewLogic.scaledCornerRadiusPx(
-            cardRadiusDp = tokens.cardRadiusDp,
-            density = resources.displayMetrics.density,
-            scale = 0.34f,
-        )
-
-        for (cell in cells) {
+        for (i in 0 until cells.size) {
+            val cell = cells[i]
             val l = pad + cell.left
             val t = pad + cell.top
             val r = pad + cell.right
@@ -430,13 +588,12 @@ internal class GridDensityPreviewView(
 
             val cellW = r - l
             val cellH = b - t
-            val labelReserve = if (metrics.showLabels) dpF(7) else 0f
-            val availH = (cellH - labelReserve - dpF(6)).coerceAtLeast(dpF(6))
-            val availW = (cellW - dpF(6)).coerceAtLeast(dpF(6))
-            val iconSize = (minOf(availW, availH) * metrics.iconScale).coerceAtLeast(dpF(5))
+            val availH = (cellH - labelReserve - dp6).coerceAtLeast(dp6)
+            val availW = (cellW - dp6).coerceAtLeast(dp6)
+            val iconSize = (minOf(availW, availH) * metrics.iconScale).coerceAtLeast(dp5)
             val ix = l + (cellW - iconSize) * 0.5f
             val iy = t + ((cellH - labelReserve) - iconSize) * 0.5f
-            val iconR = (iconSize * 0.24f).coerceAtLeast(dpF(2))
+            val iconR = (iconSize * 0.24f).coerceAtLeast(dp2)
             rect.set(ix, iy, ix + iconSize, iy + iconSize)
             canvas.drawRoundRect(
                 rect,
@@ -446,10 +603,10 @@ internal class GridDensityPreviewView(
             )
 
             if (metrics.showLabels) {
-                val barW = (cellW * 0.58f).coerceAtLeast(dpF(6))
-                val barH = dpF(2.5f)
+                val barW = (cellW * 0.58f).coerceAtLeast(dp6)
+                val barH = dp25
                 val bx = l + (cellW - barW) * 0.5f
-                val by = b - dpF(5)
+                val by = b - dp5
                 rect.set(bx, by, bx + barW, by + barH)
                 canvas.drawRoundRect(rect, barH * 0.5f, barH * 0.5f, labelPaint)
             }
@@ -465,9 +622,9 @@ internal class GridDensityPreviewView(
 
         // Scroll direction cue: horizontal page dots below grid vs vertical thumb on right.
         if (metrics.horizontal) {
-            val dotR = dpF(2.2f)
-            val dotGap = dpF(7)
-            val cy = h - pad + dpF(1) - dotR
+            val dotR = dp22
+            val dotGap = dp7
+            val cy = h - pad + dp1 - dotR
             val centerX = pad + gridW * 0.5f
             for (i in -1..1) {
                 canvas.drawCircle(
@@ -478,37 +635,33 @@ internal class GridDensityPreviewView(
                 )
             }
         } else {
-            val trackX = pad + gridW + dpF(4)
-            val trackW = dpF(2.5f)
-            rect.set(trackX, pad + dpF(4), trackX + trackW, pad + gridH - dpF(4))
+            val trackX = pad + gridW + dp4
+            val trackW = dp25
+            rect.set(trackX, pad + dp4, trackX + trackW, pad + gridH - dp4)
             canvas.drawRoundRect(rect, trackW * 0.5f, trackW * 0.5f, labelPaint)
-            rect.set(trackX, pad + dpF(4), trackX + trackW, pad + gridH * 0.44f)
+            rect.set(trackX, pad + dp4, trackX + trackW, pad + gridH * 0.44f)
             canvas.drawRoundRect(rect, trackW * 0.5f, trackW * 0.5f, accentPaint)
         }
 
         // Vertical hairline divider before Game Mode card-scale miniature.
-        val divX = pad + gridW + indicatorRight + dividerGap * 0.5f
+        val divX = pad + gridW + cachedIndicatorRight + dividerGap * 0.5f
         canvas.drawLine(divX, pad, divX, h - pad, hairlinePaint)
 
         // Right-side Game Mode carousel card scale silhouette driven by cardSizeDp.
         val cardBoxLeft = divX + dividerGap * 0.5f
-        val cardBoxW = (w - pad - cardBoxLeft).coerceAtLeast(dpF(24))
-        val cardBoxH = (h - pad * 2f).coerceAtLeast(dpF(24))
-        val miniCardH = (cardBoxH * metrics.cardRatio).coerceAtLeast(dpF(22))
+        val cardBoxW = (w - pad - cardBoxLeft).coerceAtLeast(dp24)
+        val cardBoxH = (h - pad * 2f).coerceAtLeast(dp24)
+        val miniCardH = (cardBoxH * metrics.cardRatio).coerceAtLeast(dp22Px)
         val miniCardW = (miniCardH * 0.74f).coerceAtMost(cardBoxW)
         val cl = cardBoxLeft + (cardBoxW - miniCardW) * 0.5f
         val ct = pad + (cardBoxH - miniCardH) * 0.5f
-        val miniCardR = SettingsPreviewLogic.scaledCornerRadiusPx(
-            cardRadiusDp = tokens.cardRadiusDp,
-            density = resources.displayMetrics.density,
-            scale = 0.45f,
-        )
         rect.set(cl, ct, cl + miniCardW, ct + miniCardH)
         canvas.drawRoundRect(rect, miniCardR, miniCardR, tilePaint)
-        val innerPad = dpF(4)
-        if (miniCardW > innerPad * 2 + dpF(4) && miniCardH > innerPad * 2 + dpF(4)) {
+        val innerPad = dp4
+        if (miniCardW > innerPad * 2 + dp4 && miniCardH > innerPad * 2 + dp4) {
+            val innerR = (miniCardR - dp2).coerceAtLeast(dp2)
             rect.set(cl + innerPad, ct + innerPad, cl + miniCardW - innerPad, ct + miniCardH - innerPad)
-            canvas.drawRoundRect(rect, (miniCardR - dpF(2)).coerceAtLeast(dpF(2)), (miniCardR - dpF(2)).coerceAtLeast(dpF(2)), iconPaint)
+            canvas.drawRoundRect(rect, innerR, innerR, iconPaint)
         }
         rect.set(cl, ct, cl + miniCardW, ct + miniCardH)
         canvas.drawRoundRect(rect, miniCardR, miniCardR, focusPaint)
@@ -600,8 +753,10 @@ internal object SecondSeatPreviewLogic {
         else -> id.trim().take(2).uppercase()
     }
 
-    fun isDpadAnchor(id: String): Boolean =
-        id.trim().lowercase() in setOf("up", "down", "left", "right")
+    fun isDpadAnchor(id: String): Boolean = when (id.trim().lowercase()) {
+        "up", "down", "left", "right" -> true
+        else -> false
+    }
 
     fun layoutDots(
         anchors: List<SeatAnchor>,
@@ -629,9 +784,50 @@ internal object SecondSeatPreviewLogic {
 }
 
 /**
+ * Reusable precomputed dot cache for [SecondSeatPreviewView]. Recomputes only
+ * when anchors or viewport dimensions change so `onDraw()` and highlight-only
+ * focus changes allocate zero objects. Pure; host-tested.
+ */
+internal class SecondSeatDotCache {
+    private var cachedAnchors: List<SeatAnchor>? = null
+    private var cachedWidth: Float = -1f
+    private var cachedHeight: Float = -1f
+    private var cachedPadPx: Float = -1f
+
+    var dots: List<SeatPreviewDot> = emptyList()
+        private set
+
+    var recomputeCount: Int = 0
+        private set
+
+    fun ensure(
+        anchors: List<SeatAnchor>,
+        widthPx: Float,
+        heightPx: Float,
+        padPx: Float,
+    ): List<SeatPreviewDot> {
+        if (cachedWidth == widthPx &&
+            cachedHeight == heightPx &&
+            cachedPadPx == padPx &&
+            (cachedAnchors === anchors || cachedAnchors == anchors)
+        ) {
+            return dots
+        }
+        cachedAnchors = anchors
+        cachedWidth = widthPx
+        cachedHeight = heightPx
+        cachedPadPx = padPx
+        dots = SecondSeatPreviewLogic.layoutDots(anchors, widthPx, heightPx, padPx)
+        recomputeCount++
+        return dots
+    }
+}
+
+/**
  * Live 2D miniature companion-panel canvas displaying every Second-Seat touch
  * anchor at its exact normalized `(nx, ny)` coordinate. Highlights whichever
- * anchor row currently has focus during coordinate editing.
+ * anchor row currently has focus during coordinate editing. Zero allocations
+ * inside `onDraw()`.
  */
 internal class SecondSeatPreviewView(
     context: Context,
@@ -685,6 +881,19 @@ internal class SecondSeatPreviewView(
         typeface = Typeface.DEFAULT_BOLD
     }
 
+    private val outerR = context.dpF(UiDimens.RADIUS_MD)
+    private val gridPad = context.dpF(6)
+    private val baseRadius = context.dpF(11)
+    private val dotPad = baseRadius + context.dpF(5)
+    private val highlightHaloOffset = context.dpF(1.5f)
+    private val borderInset = borderPaint.strokeWidth * 0.5f
+    private val dpadTextOffsetY = -(dpadTextPaint.descent() + dpadTextPaint.ascent()) * 0.5f
+    private val faceTextOffsetY = -(faceTextPaint.descent() + faceTextPaint.ascent()) * 0.5f
+
+    private val dotCache = SecondSeatDotCache()
+    private var cachedWidth = 0f
+    private var cachedHeight = 0f
+
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
@@ -692,6 +901,9 @@ internal class SecondSeatPreviewView(
     fun setAnchors(next: List<SeatAnchor>) {
         if (anchors != next) {
             anchors = next
+            if (width > 0 && height > 0) {
+                rebuildDots(width.toFloat(), height.toFloat())
+            }
             invalidate()
         }
     }
@@ -703,43 +915,60 @@ internal class SecondSeatPreviewView(
         }
     }
 
+    private fun rebuildDots(w: Float, h: Float) {
+        cachedWidth = w
+        cachedHeight = h
+        if (w <= 0f || h <= 0f) return
+        dotCache.ensure(anchors, w, h, dotPad)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        rebuildDots(w.toFloat(), h.toFloat())
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
+        if (w != cachedWidth || h != cachedHeight) {
+            rebuildDots(w, h)
+        }
 
-        val outerR = dpF(UiDimens.RADIUS_MD)
         rect.set(0f, 0f, w, h)
         canvas.drawRoundRect(rect, outerR, outerR, bgPaint)
 
         // Subtle alignment gridlines (25% / 50% / 75% X and 50% Y).
-        for (frac in floatArrayOf(0.25f, 0.5f, 0.75f)) {
-            canvas.drawLine(w * frac, dpF(6), w * frac, h - dpF(6), gridPaint)
+        val gridBottom = h - gridPad
+        for (i in GRIDLINE_FRACTIONS.indices) {
+            val x = w * GRIDLINE_FRACTIONS[i]
+            canvas.drawLine(x, gridPad, x, gridBottom, gridPaint)
         }
-        canvas.drawLine(dpF(6), h * 0.5f, w - dpF(6), h * 0.5f, gridPaint)
+        canvas.drawLine(gridPad, h * 0.5f, w - gridPad, h * 0.5f, gridPaint)
 
-        val baseRadius = dpF(11)
-        val pad = baseRadius + dpF(5)
-        val dots = SecondSeatPreviewLogic.layoutDots(anchors, w, h, pad)
-        for (dot in dots) {
+        val dots = dotCache.dots
+        for (i in 0 until dots.size) {
+            val dot = dots[i]
             val focused = dot.id == highlightedId
             val r = if (focused) baseRadius * 1.22f else baseRadius
             if (dot.isDpad) {
                 canvas.drawCircle(dot.xPx, dot.yPx, r, dpadFillPaint)
                 canvas.drawCircle(dot.xPx, dot.yPx, r, if (focused) highlightHaloPaint else dpadStrokePaint)
+                canvas.drawText(dot.glyph, dot.xPx, dot.yPx + dpadTextOffsetY, dpadTextPaint)
             } else {
                 canvas.drawCircle(dot.xPx, dot.yPx, r, faceFillPaint)
                 if (focused) {
-                    canvas.drawCircle(dot.xPx, dot.yPx, r + dpF(1.5f), highlightHaloPaint)
+                    canvas.drawCircle(dot.xPx, dot.yPx, r + highlightHaloOffset, highlightHaloPaint)
                 }
+                canvas.drawText(dot.glyph, dot.xPx, dot.yPx + faceTextOffsetY, faceTextPaint)
             }
-            val textPaint = if (dot.isDpad) dpadTextPaint else faceTextPaint
-            val textY = dot.yPx - (textPaint.descent() + textPaint.ascent()) * 0.5f
-            canvas.drawText(dot.glyph, dot.xPx, textY, textPaint)
         }
 
-        val inset = borderPaint.strokeWidth * 0.5f
-        rect.set(inset, inset, w - inset, h - inset)
+        rect.set(borderInset, borderInset, w - borderInset, h - borderInset)
         canvas.drawRoundRect(rect, outerR, outerR, borderPaint)
+    }
+
+    private companion object {
+        val GRIDLINE_FRACTIONS = floatArrayOf(0.25f, 0.5f, 0.75f)
     }
 }

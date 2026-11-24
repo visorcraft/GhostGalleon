@@ -8,7 +8,9 @@ import com.visorcraft.ghostgalleon.settings.BrowseChrome
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -313,5 +315,80 @@ class SettingsUiLogicTest {
         // 9-page Settings navigation wraps smoothly with AUDIO inserted
         assertEquals(8, SettingsUiLogic.stepPageIndex(0, -1, 9))
         assertEquals(0, SettingsUiLogic.stepPageIndex(8, 1, 9))
+    }
+
+    @Test
+    fun `SettingsPageCache builds each page lazily once until invalidate bumps generation`() {
+        val cache = SettingsPageCache<String, Any>()
+        var buildCalls = 0
+        val builtOrder = mutableListOf<String>()
+        fun build(page: String): Any {
+            buildCalls++
+            builtOrder.add(page)
+            return Any()
+        }
+
+        assertEquals(0, cache.generation)
+        assertEquals(0, cache.builtCount)
+        assertFalse(cache.isBuilt("DISPLAY_GRID"))
+        assertNull(cache.peek("SYSTEM"))
+
+        // Initial open builds ONLY the active page.
+        val firstDisplay = cache.getOrBuild("DISPLAY_GRID", ::build)
+        assertEquals(1, buildCalls)
+        assertEquals(1, cache.builtCount)
+        assertTrue(cache.isBuilt("DISPLAY_GRID"))
+        assertFalse(cache.isBuilt("SYSTEM"))
+        assertFalse(cache.isBuilt("ABOUT"))
+
+        // Revisiting an already-built page returns the exact cached instance with zero rebuilds.
+        assertSame(firstDisplay, cache.getOrBuild("DISPLAY_GRID", ::build))
+        assertSame(firstDisplay, cache.peek("DISPLAY_GRID"))
+        assertEquals(1, buildCalls)
+
+        // Switching to a second page lazily inflates only that page.
+        val firstStats = cache.getOrBuild("STATS", ::build)
+        assertEquals(2, buildCalls)
+        assertEquals(2, cache.builtCount)
+        assertEquals(listOf("DISPLAY_GRID", "STATS"), builtOrder)
+        assertSame(firstStats, cache.getOrBuild("STATS", ::build))
+        assertEquals(2, buildCalls)
+
+        // refreshSettingsUi() invalidates all cached pages and increments generation for async guards.
+        val gen1 = cache.invalidate()
+        assertEquals(1, gen1)
+        assertEquals(1, cache.generation)
+        assertEquals(0, cache.builtCount)
+        assertFalse(cache.isBuilt("DISPLAY_GRID"))
+        assertNull(cache.peek("DISPLAY_GRID"))
+
+        val rebuiltDisplay = cache.getOrBuild("DISPLAY_GRID", ::build)
+        assertNotSame(firstDisplay, rebuiltDisplay)
+        assertEquals(3, buildCalls)
+        assertEquals(1, cache.builtCount)
+
+        val gen2 = cache.invalidate()
+        assertEquals(2, gen2)
+        assertEquals(2, cache.generation)
+    }
+
+    @Test
+    fun `resolvePalette snapshots every WCAG-checked color consistently across all built-in themes`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val accent = tokens.accentColor
+            val palette = SettingsUiLogic.resolvePalette(tokens, accent)
+            assertEquals(accent, palette.accent)
+            assertEquals(tokens, palette.tokens)
+            assertEquals(SettingsUiLogic.accentOnSurface(accent, tokens), palette.accentOnCard)
+            assertEquals(SettingsUiLogic.accentOnSunken(accent, tokens), palette.accentOnSunken)
+            assertEquals(SettingsUiLogic.accentOnBlack(accent), palette.accentOnBlack)
+            assertEquals(SettingsUiLogic.accessibleOnAccent(accent), palette.onAccentFill)
+            assertEquals(SettingsUiLogic.activePillFocusRing(accent), palette.activeFocusRing)
+            val expectedNavBg = SettingsUiLogic.navActiveSurface(tokens, accent)
+            assertEquals(expectedNavBg, palette.navActiveBg)
+            assertEquals(ThemePack.accentTextColor(accent, expectedNavBg), palette.navActiveIconTint)
+            assertEquals(ThemePack.accentHairline(accent), palette.navActiveBorder)
+            assertEquals(ThemePack.hairlineDivider(tokens), palette.hairline)
+        }
     }
 }

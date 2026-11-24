@@ -172,6 +172,7 @@ object HintBar {
     ) : ReplacementSpan() {
 
         private val rect = RectF()
+        private val cachedFm = Paint.FontMetrics()
 
         override fun getSize(
             paint: Paint,
@@ -221,12 +222,16 @@ object HintBar {
             val savedStroke = paint.strokeWidth
             val savedFakeBold = paint.isFakeBoldText
             val savedAntiAlias = paint.isAntiAlias
-            val baseFm = paint.fontMetrics
+            paint.getFontMetrics(cachedFm)
+            val baseAscent = cachedFm.ascent
+            val baseDescent = cachedFm.descent
 
             paint.isAntiAlias = true
             paint.textSize = baseSize * 0.90f
             paint.isFakeBoldText = true
-            val badgeFm = paint.fontMetrics
+            paint.getFontMetrics(cachedFm)
+            val badgeAscent = cachedFm.ascent
+            val badgeDescent = cachedFm.descent
             val textWidth = paint.measureText(text, start, end)
 
             val padH = baseSize * 0.36f
@@ -234,8 +239,8 @@ object HintBar {
             val pillWidth = maxOf(minPill, textWidth + padH * 2f)
             val margin = baseSize * 0.12f
 
-            val centerY = y + (baseFm.ascent + baseFm.descent) * 0.5f
-            val halfH = ((baseFm.descent - baseFm.ascent) * 0.62f).coerceAtLeast(1f)
+            val centerY = y + (baseAscent + baseDescent) * 0.5f
+            val halfH = ((baseDescent - baseAscent) * 0.62f).coerceAtLeast(1f)
             val pillTop = maxOf(top.toFloat() + 0.5f, centerY - halfH)
             val pillBottom = minOf(bottom.toFloat() - 0.5f, centerY + halfH)
             val left = x + margin
@@ -257,7 +262,7 @@ object HintBar {
             paint.style = Paint.Style.FILL
             paint.color = textColor
             val textX = left + (pillWidth - textWidth) * 0.5f
-            val textY = (pillTop + pillBottom) * 0.5f - (badgeFm.ascent + badgeFm.descent) * 0.5f
+            val textY = (pillTop + pillBottom) * 0.5f - (badgeAscent + badgeDescent) * 0.5f
             canvas.drawText(text, start, end, textX, textY, paint)
 
             paint.textSize = baseSize

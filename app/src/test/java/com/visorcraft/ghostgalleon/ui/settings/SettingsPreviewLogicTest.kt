@@ -5,6 +5,8 @@ import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -118,5 +120,61 @@ class SettingsPreviewLogicTest {
         assertEquals(50f, clamped[1].yPx, 0.01f)
 
         assertTrue(SecondSeatPreviewLogic.layoutDots(SecondSeatPolicy.DEFAULT_ANCHORS, 0f, 100f, 10f).isEmpty())
+    }
+
+    @Test
+    fun `MiniGridCellCache reuses precomputed cells across unchanged frames and invalidates on resize or column change`() {
+        val cache = MiniGridCellCache()
+        val first = cache.ensure(width = 300f, height = 120f, columns = 5, rows = 2, gapPx = 5f, focusedIndex = 1)
+        assertEquals(10, first.size)
+        assertEquals(1, cache.recomputeCount)
+
+        // Repeated frames (e.g. 120 Hz icon/card slider drags) reuse the exact cached list with zero recomputation.
+        repeat(60) {
+            val hit = cache.ensure(width = 300f, height = 120f, columns = 5, rows = 2, gapPx = 5f, focusedIndex = 1)
+            assertSame(first, hit)
+        }
+        assertEquals(1, cache.recomputeCount)
+
+        // Changing columns recomputes cleanly.
+        val nextCols = cache.ensure(width = 300f, height = 120f, columns = 6, rows = 2, gapPx = 5f, focusedIndex = 1)
+        assertNotSame(first, nextCols)
+        assertEquals(12, nextCols.size)
+        assertEquals(2, cache.recomputeCount)
+
+        // Resizing viewport recomputes cleanly.
+        val resized = cache.ensure(width = 360f, height = 120f, columns = 6, rows = 2, gapPx = 5f, focusedIndex = 1)
+        assertNotSame(nextCols, resized)
+        assertEquals(3, cache.recomputeCount)
+        assertTrue(resized.last().right > nextCols.last().right)
+    }
+
+    @Test
+    fun `SecondSeatDotCache reuses precomputed dots across redraws and recomputes on anchor or viewport changes`() {
+        val cache = SecondSeatDotCache()
+        val initial = SecondSeatPolicy.DEFAULT_ANCHORS
+        val first = cache.ensure(initial, widthPx = 320f, heightPx = 180f, padPx = 16f)
+        assertEquals(initial.size, first.size)
+        assertEquals(1, cache.recomputeCount)
+
+        // Same reference or structurally equal anchor list hits cache (zero allocations on highlight/redraw).
+        assertSame(first, cache.ensure(initial, widthPx = 320f, heightPx = 180f, padPx = 16f))
+        assertSame(first, cache.ensure(initial.toList(), widthPx = 320f, heightPx = 180f, padPx = 16f))
+        assertEquals(1, cache.recomputeCount)
+
+        // Mutating an anchor coordinate invalidates and moves that dot.
+        val moved = initial.map { if (it.id == "a") SeatAnchor("a", 0.1f, 0.2f) else it }
+        val afterMove = cache.ensure(moved, widthPx = 320f, heightPx = 180f, padPx = 16f)
+        assertNotSame(first, afterMove)
+        assertEquals(2, cache.recomputeCount)
+        val dotA = afterMove.first { it.id == "a" }
+        assertEquals(16f + 0.1f * 288f, dotA.xPx, 0.01f)
+        assertEquals(16f + 0.2f * 148f, dotA.yPx, 0.01f)
+
+        // Verify DPAD classification handles whitespace and uppercase cleanly.
+        assertTrue(SecondSeatPreviewLogic.isDpadAnchor(" UP "))
+        assertTrue(SecondSeatPreviewLogic.isDpadAnchor("left"))
+        assertFalse(SecondSeatPreviewLogic.isDpadAnchor("a"))
+        assertFalse(SecondSeatPreviewLogic.isDpadAnchor("start"))
     }
 }
