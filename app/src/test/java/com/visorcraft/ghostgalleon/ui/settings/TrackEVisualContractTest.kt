@@ -6,6 +6,7 @@ import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.ControllerLabLogic
 import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -143,7 +144,29 @@ class TrackEVisualContractTest {
                 "Warning amber on sunken failed on ${tokens.id}",
                 ThemePack.contrastRatio(SettingsUiLogic.COLOR_WARNING_AMBER, sunken) >= ThemePack.MIN_TEXT_CONTRAST,
             )
+
+            val palette = SettingsUiLogic.resolvePalette(tokens, accent)
+            assertTrue(
+                "Settings focusStroke on card failed WCAG 1.4.11 on ${tokens.id}",
+                ThemePack.contrastRatio(palette.focusStroke, card) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            assertTrue(
+                "Settings focusStroke on chipIdle failed WCAG 1.4.11 on ${tokens.id}",
+                ThemePack.contrastRatio(palette.focusStroke, tokens.chipIdle) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            assertTrue(
+                "Settings focusStroke on sunken failed WCAG 1.4.11 on ${tokens.id}",
+                ThemePack.contrastRatio(palette.focusStroke, sunken) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
         }
+        assertTrue(
+            "Settings minimum touch comfort must be >= 44dp",
+            SettingsUiLogic.MIN_CONTROL_TOUCH_DP >= 44,
+        )
+        assertTrue(
+            "Settings SeekBar minimum touch comfort must be >= 44dp",
+            SettingsUiLogic.SEEKBAR_MIN_HEIGHT_DP >= 44,
+        )
     }
 
     @Test

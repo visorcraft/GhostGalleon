@@ -12,14 +12,18 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -31,6 +35,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
@@ -76,6 +81,7 @@ import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.system.SystemReadings
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
+import com.visorcraft.ghostgalleon.ui.DeckDialogTokens
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -87,6 +93,7 @@ import com.visorcraft.ghostgalleon.ui.hideStatusBar
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.themeName
+import com.visorcraft.ghostgalleon.ui.toast
 import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 import java.io.File
 import java.text.NumberFormat
@@ -311,6 +318,161 @@ internal object SettingsUiLogic {
     /** Show the compact L1·R1 shoulder cue pill on wide displays without crowding narrow panels. */
     fun shouldShowShoulderCue(isWide: Boolean): Boolean = isWide
 
+    /** Show a compact L1·R1 shoulder cue inside the narrow page dropdown on handheld panels. */
+    fun shouldShowDropdownShoulderCue(isWide: Boolean): Boolean = !isWide
+
+    /** Minimum accessible touch target height (dp) for Settings chips and controls. */
+    const val MIN_CONTROL_TOUCH_DP: Int = UiDimens.TOUCH_MIN_DP
+
+    /** Segmented pill height inside a 46dp sunken track (40dp pill + 3dp top/bottom padding). */
+    const val SEGMENTED_PILL_HEIGHT_DP: Int = 40
+    const val SEGMENTED_TRACK_PADDING_DP: Int = 3
+
+    /** Minimum touch comfort height for Settings SeekBars. */
+    const val SEEKBAR_MIN_HEIGHT_DP: Int = 46
+
+    /** Subtle cancelable alpha micro-fade on user-initiated Settings page transitions. */
+    const val PAGE_TRANSITION_DURATION_MS: Long = 95L
+    const val PAGE_TRANSITION_START_ALPHA: Float = 0.65f
+
+    /** Muted opacity for Audio sub-controls bypassed by master mute or section toggle. */
+    const val AUDIO_MUTED_ALPHA: Float = 0.50f
+
+    /** Cancelable audition feedback duration & bump scale for Audio Sound Test Pad pills. */
+    const val TEST_PAD_PULSE_DURATION_MS: Long = 140L
+    const val TEST_PAD_PULSE_SCALE: Float = 1.04f
+
+    /**
+     * Pure vertical scroll target keeping a nav blade item (`[itemTop, itemBottom]`)
+     * visible inside `[scrollY, scrollY + viewportH]` with optional [marginPx] padding.
+     * Leaves [scrollY] untouched when the item already fits comfortably in view. Host-tested.
+     */
+    fun navScrollTargetY(
+        itemTop: Int,
+        itemBottom: Int,
+        scrollY: Int,
+        viewportH: Int,
+        marginPx: Int = 0,
+    ): Int {
+        val cur = scrollY.coerceAtLeast(0)
+        if (viewportH <= 0) return cur
+        val pad = marginPx.coerceAtLeast(0)
+        val top = (itemTop - pad).coerceAtLeast(0)
+        val bottom = (itemBottom + pad).coerceAtLeast(top)
+        val itemH = bottom - top
+        return when {
+            top < cur -> top
+            bottom > cur + viewportH -> {
+                if (itemH >= viewportH) top else (bottom - viewportH).coerceAtLeast(0)
+            }
+            else -> cur
+        }
+    }
+
+    /**
+     * Starting alpha for Settings page switches: returns [PAGE_TRANSITION_START_ALPHA]
+     * only when animations are enabled and the switch was [userInitiated], else `1f`.
+     * Pure; host-tested.
+     */
+    fun pageTransitionAlpha(animatorsEnabled: Boolean, userInitiated: Boolean): Float =
+        if (animatorsEnabled && userInitiated) PAGE_TRANSITION_START_ALPHA else 1f
+
+    internal data class RankedSettingsMatch(
+        val jump: SettingsJump,
+        val matchedKeyword: String?,
+    )
+
+    /**
+     * Live-filter and rank Settings quick-jump matches.
+     * - Blank [query] returns the full directory in order (`matchedKeyword = null`).
+     * - Non-blank [query] orders label prefix -> label contains -> keyword prefix ->
+     *   keyword/pageId contains, preserving original order within each tier and
+     *   extracting the matched keyword token for subtitle preview.
+     * Pure; host-tested.
+     */
+    fun rankSettingsMatches(
+        query: String,
+        jumps: List<SettingsJump>,
+    ): List<RankedSettingsMatch> {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) {
+            return jumps.map { RankedSettingsMatch(it, matchedKeyword = null) }
+        }
+        val scored = mutableListOf<Pair<Int, RankedSettingsMatch>>()
+        for (jump in jumps) {
+            val labelLower = jump.label.lowercase()
+            val tokens = jump.keywords.split(' ', ',', ';').filter { it.isNotBlank() }
+            val prefixKw = tokens.firstOrNull { it.lowercase().startsWith(needle) }
+            val containsKw = prefixKw ?: tokens.firstOrNull { it.lowercase().contains(needle) }
+            val distinctKw = containsKw?.takeIf { !it.equals(jump.label, ignoreCase = true) }
+            val tierAndSnippet: Pair<Int, String?>? = when {
+                labelLower.startsWith(needle) -> 0 to distinctKw
+                labelLower.contains(needle) -> 1 to distinctKw
+                prefixKw != null -> 2 to prefixKw
+                containsKw != null -> 3 to containsKw
+                jump.keywords.lowercase().contains(needle) -> 3 to needle
+                jump.pageId.lowercase().contains(needle) -> 4 to null
+                else -> null
+            }
+            if (tierAndSnippet != null) {
+                scored.add(
+                    tierAndSnippet.first to RankedSettingsMatch(jump, tierAndSnippet.second),
+                )
+            }
+        }
+        return scored.sortedBy { it.first }.map { it.second }
+    }
+
+    /**
+     * Clamped target focus index after removing the item at [removedIndex],
+     * leaving [remainingCount] rows. Returns `-1` when the list is now empty.
+     * Pure; host-tested.
+     */
+    fun nextFocusIndexAfterRemove(removedIndex: Int, remainingCount: Int): Int {
+        if (remainingCount <= 0) return -1
+        return removedIndex.coerceIn(0, remainingCount - 1)
+    }
+
+    internal enum class ControlActionGroup {
+        NAVIGATION,
+        DECK_SHORTCUTS,
+        DUAL_SCREEN_HOST,
+    }
+
+    /** Classify every remappable [Action] into one of 3 scannable Controls subsections. Pure; host-tested. */
+    fun controlGroupFor(action: Action): ControlActionGroup = when (action) {
+        Action.NAV_UP,
+        Action.NAV_DOWN,
+        Action.NAV_LEFT,
+        Action.NAV_RIGHT,
+        Action.CONFIRM,
+        Action.BACK,
+        -> ControlActionGroup.NAVIGATION
+
+        Action.SWAP_SCREENS,
+        Action.CLAIM_HOST,
+        Action.RELEASE_HOST,
+        Action.TOGGLE_SEAT,
+        -> ControlActionGroup.DUAL_SCREEN_HOST
+
+        Action.TOGGLE_MODE,
+        Action.OPEN_SETTINGS,
+        Action.PAGE_PREV,
+        Action.PAGE_NEXT,
+        Action.OPEN_QUICK_PANEL,
+        Action.SEARCH_LIBRARY,
+        Action.TOGGLE_FAVORITE,
+        Action.SHOW_DETAILS,
+        Action.OPEN_SESSION_SWITCHER,
+        Action.TOGGLE_PLAY_HUD,
+        Action.NONE,
+        -> ControlActionGroup.DECK_SHORTCUTS
+    }
+
+    /** Opacity for Audio sub-controls beneath Master Audio and an optional section toggle. Pure; host-tested. */
+    fun audioSubControlAlpha(masterOn: Boolean, sectionOn: Boolean = true): Float =
+        if (masterOn && sectionOn) 1f else AUDIO_MUTED_ALPHA
+
     internal data class ShellPaddingDp(val horizontal: Int, val top: Int, val bottom: Int)
 
     /** Responsive shell padding that reclaims vertical breathing room on ~540dp Sugar panels. */
@@ -356,6 +518,14 @@ internal object SettingsUiLogic {
      */
     fun resolvePalette(tokens: ThemeTokens, accent: Int): SettingsPalette {
         val navActiveBg = navActiveSurface(tokens, accent)
+        val cardFill = ThemePack.cardFill(tokens)
+        val focusSurface = if (ThemePack.relativeLuminance(tokens.chipIdle) >
+            ThemePack.relativeLuminance(cardFill)
+        ) {
+            tokens.chipIdle
+        } else {
+            cardFill
+        }
         return SettingsPalette(
             accent = accent,
             tokens = tokens,
@@ -364,6 +534,7 @@ internal object SettingsUiLogic {
             accentOnBlack = accentOnBlack(accent),
             onAccentFill = accessibleOnAccent(accent),
             activeFocusRing = activePillFocusRing(accent),
+            focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, focusSurface),
             navActiveBg = navActiveBg,
             navActiveIconTint = ThemePack.accentTextColor(accent, navActiveBg),
             navActiveBorder = ThemePack.accentHairline(accent),
@@ -381,6 +552,7 @@ internal data class SettingsPalette(
     val accentOnBlack: Int,
     val onAccentFill: Int,
     val activeFocusRing: Int,
+    val focusStroke: Int,
     val navActiveBg: Int,
     val navActiveIconTint: Int,
     val navActiveBorder: Int,
@@ -442,7 +614,9 @@ class SettingsActivity : AppCompatActivity() {
     private var isWideLayout: Boolean = false
     private var pageHost: LinearLayout? = null
     private var contentScroll: ScrollView? = null
+    private var navScroll: ScrollView? = null
     private val pageCache = SettingsPageCache<SettingsPage, LinearLayout>()
+    private val pageScrollY = mutableMapOf<SettingsPage, Int>()
     private val navItems = mutableMapOf<SettingsPage, NavRowViews>()
     private var pageDropdownRow: View? = null
     private var pageDropdownIcon: ImageView? = null
@@ -453,6 +627,8 @@ class SettingsActivity : AppCompatActivity() {
     private var wallpaperNameGen: Int = 0
     private var systemInfoGen: Int = 0
     private var bundledPacksValue: TextView? = null
+    private var collectionsValue: TextView? = null
+    private var romAddRow: View? = null
 
     private val remappable = listOf(
         Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
@@ -768,13 +944,59 @@ class SettingsActivity : AppCompatActivity() {
         } ?: getString(R.string.action_none)
     }
 
+    private data class ModalRowViews(val row: LinearLayout, val chip: TextView)
+
+    private fun styleModalChip(
+        chipView: TextView,
+        chipText: String,
+        tone: SettingsUiLogic.ModalChipTone,
+    ) {
+        val idleBg = when (tone) {
+            SettingsUiLogic.ModalChipTone.ACCENT -> pillDrawable(accent, 14)
+            SettingsUiLogic.ModalChipTone.DESTRUCTIVE ->
+                TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+            SettingsUiLogic.ModalChipTone.NEUTRAL ->
+                TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14)
+        }
+        val focusColor = when (tone) {
+            SettingsUiLogic.ModalChipTone.ACCENT -> activeFocusRing
+            SettingsUiLogic.ModalChipTone.DESTRUCTIVE ->
+                OverlayPrimitives.accessibleFocusStroke(
+                    UiDimens.COLOR_DESTRUCTIVE,
+                    ThemePack.cardFill(themeTokens),
+                )
+            SettingsUiLogic.ModalChipTone.NEUTRAL -> focusStroke
+        }
+        chipView.text = chipText
+        chipView.setTextColor(SettingsUiLogic.modalChipTextColor(tone, accent, themeTokens))
+        chipView.background = TileBackgrounds.pressableRow(
+            context = this@SettingsActivity,
+            accent = focusColor,
+            idleBackground = idleBg,
+            cornerRadiusDp = 14,
+            strokeDp = 2,
+        )
+    }
+
     private fun modalRow(
         label: String,
         chip: String,
         tone: SettingsUiLogic.ModalChipTone = SettingsUiLogic.ModalChipTone.NEUTRAL,
-        onChip: () -> Unit,
-    ): View =
-        LinearLayout(this).apply {
+        onChip: (TextView) -> Unit,
+    ): ModalRowViews {
+        val chipView = TextView(this@SettingsActivity).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            minWidth = dp(72)
+            minHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
+            isFocusable = true
+            val hp = dp(14); val vp = dp(6)
+            setPadding(hp, vp, hp, vp)
+            styleModalChip(this, chip, tone)
+            setOnClickListener { onChip(this) }
+        }
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(rowLabel(label).apply {
@@ -784,39 +1006,10 @@ class SettingsActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = dp(10)
             })
-            val idleBg = when (tone) {
-                SettingsUiLogic.ModalChipTone.ACCENT -> pillDrawable(accent, 14)
-                SettingsUiLogic.ModalChipTone.DESTRUCTIVE ->
-                    TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
-                SettingsUiLogic.ModalChipTone.NEUTRAL ->
-                    TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14)
-            }
-            val focusColor = if (tone == SettingsUiLogic.ModalChipTone.ACCENT) {
-                activeFocusRing
-            } else {
-                accent
-            }
-            addView(TextView(this@SettingsActivity).apply {
-                text = chip
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                setTextColor(SettingsUiLogic.modalChipTextColor(tone, accent, themeTokens))
-                setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                minWidth = dp(72)
-                minHeight = dp(38)
-                isFocusable = true
-                background = TileBackgrounds.pressableRow(
-                    context = this@SettingsActivity,
-                    accent = focusColor,
-                    idleBackground = idleBg,
-                    cornerRadiusDp = 14,
-                    strokeDp = 2,
-                )
-                val hp = dp(14); val vp = dp(6)
-                setPadding(hp, vp, hp, vp)
-                setOnClickListener { onChip() }
-            })
+            addView(chipView)
         }
+        return ModalRowViews(row, chipView)
+    }
 
     private fun modalEmpty(text: String): View = TextView(this).apply {
         this.text = text
@@ -829,33 +1022,53 @@ class SettingsActivity : AppCompatActivity() {
         setPadding(h, v, h, v)
     }
 
+    private fun restoreDialogListFocus(
+        chips: List<TextView>,
+        removedIndex: Int?,
+        dialog: AlertDialog?,
+    ) {
+        if (removedIndex == null) return
+        val nextIdx = SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex, chips.size)
+        val target: View? = if (nextIdx in chips.indices) {
+            chips[nextIdx]
+        } else {
+            dialog?.getButton(AlertDialog.BUTTON_NEGATIVE)
+        }
+        target?.post { target.requestFocus() }
+    }
+
     private fun showHiddenAppsDialog() {
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = dp(20)
             setPadding(pad, dp(8), pad, dp(8))
         }
-        fun rebuild() {
+        var dialogRef: AlertDialog? = null
+        fun rebuild(focusAfterRemove: Int? = null) {
             list.removeAllViews()
             val hidden = app.settings.hiddenPackages
                 .sortedBy { appLabel(it).lowercase() }
+            val chips = mutableListOf<TextView>()
             if (hidden.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_no_hidden_apps)))
             } else {
                 hidden.forEachIndexed { index, pkg ->
                     if (index > 0) addDivider(list)
-                    list.addView(modalRow(appLabel(pkg), getString(R.string.action_unhide)) {
+                    val built = modalRow(appLabel(pkg), getString(R.string.action_unhide)) {
                         app.updateSettings(app.settings.copy(
                             hiddenPackages = app.settings.hiddenPackages - pkg))
                         refreshAppsRows()
-                        rebuild()
-                    }, LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                        rebuild(focusAfterRemove = index)
+                    }
+                    chips.add(built.chip)
+                    list.addView(built.row, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
                 }
             }
+            restoreDialogListFocus(chips, focusAfterRemove, dialogRef)
         }
         rebuild()
-        DeckDialogs.customView(
+        dialogRef = DeckDialogs.customView(
             context = this,
             titleRes = R.string.settings_hidden_apps,
             view = dialogScroll(list),
@@ -887,28 +1100,33 @@ class SettingsActivity : AppCompatActivity() {
             val rom = app.romById[id]
             return rom?.name ?: id.substringAfterLast(':').ifBlank { id }
         }
-        fun rebuild() {
+        var dialogRef: AlertDialog? = null
+        fun rebuild(focusAfterRemove: Int? = null) {
             list.removeAllViews()
             val hidden = app.settings.hiddenRomIds
                 .sortedBy { romLabel(it).lowercase() }
+            val chips = mutableListOf<TextView>()
             if (hidden.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_no_hidden_roms)))
             } else {
                 hidden.forEachIndexed { index, id ->
                     if (index > 0) addDivider(list)
-                    list.addView(modalRow(romLabel(id), getString(R.string.action_unhide)) {
+                    val built = modalRow(romLabel(id), getString(R.string.action_unhide)) {
                         val next = com.visorcraft.ghostgalleon.library.HiddenRoms
                             .unhide(app.settings.hiddenRomIds, id)
                         app.updateSettings(app.settings.copy(hiddenRomIds = next))
                         refreshAppsRows()
-                        rebuild()
-                    }, LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                        rebuild(focusAfterRemove = index)
+                    }
+                    chips.add(built.chip)
+                    list.addView(built.row, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
                 }
             }
+            restoreDialogListFocus(chips, focusAfterRemove, dialogRef)
         }
         rebuild()
-        DeckDialogs.customView(
+        dialogRef = DeckDialogs.customView(
             context = this,
             titleRes = R.string.settings_hidden_roms,
             view = dialogScroll(list),
@@ -981,35 +1199,40 @@ class SettingsActivity : AppCompatActivity() {
             val pad = dp(20)
             setPadding(pad, dp(8), pad, dp(8))
         }
-        fun rebuild() {
+        var dialogRef: AlertDialog? = null
+        fun rebuild(focusAfterRemove: Int? = null) {
             list.removeAllViews()
             val dock = app.settings.dockSlots.filterNotNull()
+            val chips = mutableListOf<TextView>()
             if (dock.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_dock_empty)))
             } else {
                 dock.forEachIndexed { index, key ->
                     if (index > 0) addDivider(list)
+                    val built = modalRow(
+                        label = dockEntryLabel(key),
+                        chip = getString(R.string.action_remove),
+                        tone = SettingsUiLogic.ModalChipTone.DESTRUCTIVE,
+                    ) {
+                        app.updateSettings(app.settings.copy(
+                            dockSlots = app.settings.dockSlots.map {
+                                if (it == key) null else it
+                            }))
+                        refreshAppsRows()
+                        rebuild(focusAfterRemove = index)
+                    }
+                    chips.add(built.chip)
                     list.addView(
-                        modalRow(
-                            label = dockEntryLabel(key),
-                            chip = getString(R.string.action_remove),
-                            tone = SettingsUiLogic.ModalChipTone.DESTRUCTIVE,
-                        ) {
-                            app.updateSettings(app.settings.copy(
-                                dockSlots = app.settings.dockSlots.map {
-                                    if (it == key) null else it
-                                }))
-                            refreshAppsRows()
-                            rebuild()
-                        },
+                        built.row,
                         LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)),
+                            ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
                     )
                 }
             }
+            restoreDialogListFocus(chips, focusAfterRemove, dialogRef)
         }
         rebuild()
-        DeckDialogs.customView(
+        dialogRef = DeckDialogs.customView(
             context = this,
             titleRes = R.string.label_dock,
             view = dialogScroll(list),
@@ -1026,46 +1249,43 @@ class SettingsActivity : AppCompatActivity() {
         }
         fun yieldChip(on: Boolean): String =
             if (on) getString(R.string.label_yes) else getString(R.string.label_no)
-        fun rebuild() {
-            list.removeAllViews()
-            val apps = appLibrary.visible(app.settings)
-                .sortedBy { it.label.lowercase() }
-            if (apps.isEmpty()) {
-                list.addView(modalEmpty(getString(R.string.settings_no_apps)))
-                return
-            }
+        fun yieldTone(on: Boolean): SettingsUiLogic.ModalChipTone =
+            if (on) SettingsUiLogic.ModalChipTone.ACCENT else SettingsUiLogic.ModalChipTone.NEUTRAL
+        val apps = appLibrary.visible(app.settings)
+            .sortedBy { it.label.lowercase() }
+        if (apps.isEmpty()) {
+            list.addView(modalEmpty(getString(R.string.settings_no_apps)))
+        } else {
             apps.forEachIndexed { index, entry ->
                 if (index > 0) addDivider(list)
                 val pkg = entry.packageName
-                val on = app.settings.packageYield[pkg] == true
+                val initialOn = app.settings.packageYield[pkg] == true
+                val built = modalRow(
+                    label = entry.label,
+                    chip = yieldChip(initialOn),
+                    tone = yieldTone(initialOn),
+                ) { chipView ->
+                    val live = app.settings
+                    val nextOn = live.packageYield[pkg] != true
+                    val next = if (nextOn) {
+                        live.packageYield + (pkg to true)
+                    } else {
+                        live.packageYield - pkg
+                    }
+                    app.updateSettings(live.copy(packageYield = next))
+                    refreshAppsRows()
+                    // Mutate chip in place so gamepad D-pad focus and scroll never reset.
+                    styleModalChip(chipView, yieldChip(nextOn), yieldTone(nextOn))
+                }
                 list.addView(
-                    modalRow(
-                        label = entry.label,
-                        chip = yieldChip(on),
-                        tone = if (on) {
-                            SettingsUiLogic.ModalChipTone.ACCENT
-                        } else {
-                            SettingsUiLogic.ModalChipTone.NEUTRAL
-                        },
-                    ) {
-                        val live = app.settings
-                        val next = if (live.packageYield[pkg] == true) {
-                            live.packageYield - pkg
-                        } else {
-                            live.packageYield + (pkg to true)
-                        }
-                        app.updateSettings(live.copy(packageYield = next))
-                        refreshAppsRows()
-                        rebuild()
-                    },
+                    built.row,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(56),
+                        dp(60),
                     ),
                 )
             }
         }
-        rebuild()
         DeckDialogs.customView(
             context = this,
             titleRes = R.string.settings_package_yield,
@@ -1441,6 +1661,14 @@ class SettingsActivity : AppCompatActivity() {
         scrapeRow?.alpha = if (usable) 1f else 0.5f
     }
 
+    private fun refreshCollectionsBadge() {
+        collectionsValue?.apply {
+            val count = app.settings.collections.size
+            text = formatNumber(count)
+            styleStatusBadge(this, active = count > 0)
+        }
+    }
+
     private fun showCollectionsDialog() {
         val names = app.settings.collections.keys.sortedBy { it.lowercase() }
             .toMutableList()
@@ -1461,6 +1689,7 @@ class SettingsActivity : AppCompatActivity() {
                     val next = com.visorcraft.ghostgalleon.library.CollectionsOps
                         .createCollection(app.settings.collections, rawName)
                     app.updateSettings(app.settings.copy(collections = next))
+                    refreshCollectionsBadge()
                 }
             } else {
                 val name = names[which]
@@ -1508,11 +1737,21 @@ class SettingsActivity : AppCompatActivity() {
                                     newName,
                                 )
                             app.updateSettings(app.settings.copy(collections = next))
+                            refreshCollectionsBadge()
                         }
-                        3 -> {
+                        3 -> DeckDialogs.confirm(
+                            context = this,
+                            titleRes = R.string.deck_delete_collection,
+                            message = titleWithCount,
+                            positiveRes = R.string.action_delete,
+                            negativeRes = R.string.action_cancel,
+                            destructive = true,
+                        ) {
                             val next = com.visorcraft.ghostgalleon.library.CollectionsOps
                                 .deleteCollection(app.settings.collections, name)
                             app.updateSettings(app.settings.copy(collections = next))
+                            refreshCollectionsBadge()
+                            toast(R.string.format_deleted_named, name)
                         }
                     }
                 }
@@ -1859,17 +2098,32 @@ class SettingsActivity : AppCompatActivity() {
 
     private var folderRows: LinearLayout? = null
 
-    private fun removeRomFolder(uriString: String) {
+    private fun confirmRemoveRomFolder(uriString: String, index: Int) {
+        val folderLabel = resolveText(TreeLabels.label(uriString))
+        DeckDialogs.confirm(
+            context = this,
+            titleRes = R.string.action_remove,
+            message = folderLabel,
+            positiveRes = R.string.action_remove,
+            negativeRes = R.string.action_cancel,
+            destructive = true,
+        ) {
+            removeRomFolder(uriString, index)
+        }
+    }
+
+    private fun removeRomFolder(uriString: String, removedIndex: Int? = null) {
         runCatching {
             contentResolver.releasePersistableUriPermission(
                 Uri.parse(uriString), Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         app.updateSettings(app.settings.copy(
             romTreeUris = app.settings.romTreeUris - uriString))
-        refreshFolderRows()
+        toast(R.string.format_removed_from_named, getString(R.string.settings_page_library))
+        refreshFolderRows(focusAfterRemove = removedIndex)
     }
 
-    private fun refreshFolderRows() {
+    private fun refreshFolderRows(focusAfterRemove: Int? = null) {
         val rows = folderRows ?: return
         rows.removeAllViews()
         val trees = app.settings.romTreeUris
@@ -1909,8 +2163,16 @@ class SettingsActivity : AppCompatActivity() {
                     bottomMargin = dp(6)
                 },
             )
+            if (focusAfterRemove != null) {
+                romAddRow?.post { romAddRow?.requestFocus() }
+            }
             return
         }
+        val destructiveFocus = OverlayPrimitives.accessibleFocusStroke(
+            UiDimens.COLOR_DESTRUCTIVE,
+            ThemePack.cardFill(themeTokens),
+        )
+        val removeButtons = mutableListOf<View>()
         trees.forEachIndexed { index, uriString ->
             if (index > 0) addDivider(rows)
             val row = LinearLayout(this).apply {
@@ -1932,27 +2194,37 @@ class SettingsActivity : AppCompatActivity() {
                 ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-            row.addView(TextView(this).apply {
+            val removeBtn = TextView(this).apply {
                 setText(R.string.action_remove)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
                 setTextColor(UiDimens.COLOR_DESTRUCTIVE)
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
-                minHeight = dp(38)
+                minHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
                 isFocusable = true
                 background = TileBackgrounds.pressableRow(
                     context = this@SettingsActivity,
-                    accent = accent,
+                    accent = destructiveFocus,
                     idleBackground = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14),
                     cornerRadiusDp = 14,
                     strokeDp = 2,
                 )
                 val hp = dp(12); val vp = dp(6)
                 setPadding(hp, vp, hp, vp)
-                setOnClickListener { removeRomFolder(uriString) }
-            })
+                setOnClickListener { confirmRemoveRomFolder(uriString, index) }
+            }
+            removeButtons.add(removeBtn)
+            row.addView(removeBtn)
             rows.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
+        }
+        if (focusAfterRemove != null) {
+            val nextIdx = SettingsUiLogic.nextFocusIndexAfterRemove(
+                focusAfterRemove,
+                removeButtons.size,
+            )
+            val target = if (nextIdx in removeButtons.indices) removeButtons[nextIdx] else romAddRow
+            target?.post { target.requestFocus() }
         }
     }
 
@@ -2051,6 +2323,7 @@ class SettingsActivity : AppCompatActivity() {
     private val accentOnSunken get() = palette.accentOnSunken
     private val onAccentFill get() = palette.onAccentFill
     private val activeFocusRing get() = palette.activeFocusRing
+    private val focusStroke get() = palette.focusStroke
 
     private fun refreshPaletteSnapshot() {
         val s = app.settings
@@ -2089,12 +2362,14 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         cancelKeyCapture()
+        pageHost?.animate()?.cancel()
         app.scrapeJob.removeListener(scrapeListener)
         super.onPause()
     }
 
     override fun onDestroy() {
         cancelKeyCapture()
+        pageHost?.animate()?.cancel()
         super.onDestroy()
     }
 
@@ -2157,7 +2432,7 @@ class SettingsActivity : AppCompatActivity() {
         row.setPadding(dp(10), dp(6), dp(10), dp(6))
         row.background = TileBackgrounds.pressableRow(
             context = this,
-            accent = accent,
+            accent = focusStroke,
             cornerRadiusDp = 12,
             strokeDp = 2,
         )
@@ -2225,10 +2500,11 @@ class SettingsActivity : AppCompatActivity() {
         bindSelected: ((setSelected: (String) -> Unit) -> Unit)? = null,
         onSelect: (String) -> Unit,
     ): View {
+        val trackPad = dp(SettingsUiLogic.SEGMENTED_TRACK_PADDING_DP)
         val track = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 20)
-            setPadding(dp(3), dp(3), dp(3), dp(3))
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 23)
+            setPadding(trackPad, trackPad, trackPad, trackPad)
         }
         val pills = mutableMapOf<String, TextView>()
         var selected = current
@@ -2241,16 +2517,16 @@ class SettingsActivity : AppCompatActivity() {
                     pill.background = TileBackgrounds.pressableRow(
                         context = this@SettingsActivity,
                         accent = activeFocusRing,
-                        idleBackground = pillDrawable(accent, 17),
-                        cornerRadiusDp = 17,
+                        idleBackground = pillDrawable(accent, 20),
+                        cornerRadiusDp = 20,
                         strokeDp = 2,
                     )
                     pill.setTextColor(onAccentFill)
                 } else {
                     pill.background = TileBackgrounds.pressableRow(
                         context = this@SettingsActivity,
-                        accent = accent,
-                        cornerRadiusDp = 17,
+                        accent = focusStroke,
+                        cornerRadiusDp = 20,
                         strokeDp = 2,
                     )
                     pill.setTextColor(UiDimens.ALPHA_PRIMARY)
@@ -2285,7 +2561,7 @@ class SettingsActivity : AppCompatActivity() {
             pills[value] = pill
             orderedPills.add(pill)
             track.addView(pill, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(SettingsUiLogic.SEGMENTED_PILL_HEIGHT_DP)))
         }
         orderedPills.forEachIndexed { index, pill ->
             if (index > 0) pill.nextFocusLeftId = orderedPills[index - 1].id
@@ -2314,7 +2590,7 @@ class SettingsActivity : AppCompatActivity() {
         swatchColors: Map<String, Int> = emptyMap(),
         bindSelected: ((setSelected: (String) -> Unit) -> Unit)? = null,
         onSelect: (String) -> Unit,
-    ) {
+    ): View {
         addDividerIfNeeded(card)
         val control = segmented(options, current, swatchColors, bindSelected, onSelect)
         val scroller = HorizontalScrollView(this).apply {
@@ -2324,7 +2600,7 @@ class SettingsActivity : AppCompatActivity() {
             setFadingEdgeLength(dp(16))
             addView(control)
         }
-        if (SettingsUiLogic.shouldStackSegmented(options.size, isWideSettings())) {
+        return if (SettingsUiLogic.shouldStackSegmented(options.size, isWideSettings())) {
             val stacked = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -2350,6 +2626,7 @@ class SettingsActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
+            stacked
         } else {
             val inline = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -2377,6 +2654,7 @@ class SettingsActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
+            inline
         }
     }
 
@@ -2543,7 +2821,12 @@ class SettingsActivity : AppCompatActivity() {
         explicitDirection: Int? = null,
     ) {
         val prevPage = currentPage
+        val host = pageHost ?: return
+        val scroll = contentScroll
         if (prevPage != page) {
+            if (host.childCount > 0 && scroll != null) {
+                pageScrollY[prevPage] = scroll.scrollY
+            }
             cancelKeyCapture()
         }
         currentPage = page
@@ -2557,7 +2840,7 @@ class SettingsActivity : AppCompatActivity() {
                 app.playSfx(ev.cue, pan = ev.pan)
             }
         }
-        val host = pageHost ?: return
+        host.animate().cancel()
         host.removeAllViews()
         val body = pageCache.getOrBuild(page, ::buildPageBody)
         (body.parent as? ViewGroup)?.removeView(body)
@@ -2565,12 +2848,58 @@ class SettingsActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        contentScroll?.scrollTo(0, 0)
+        val targetScrollY = pageScrollY[page] ?: 0
+        scroll?.scrollTo(0, targetScrollY)
+        if (targetScrollY > 0 && scroll != null) {
+            scroll.post {
+                if (currentPage == page && !isFinishing && !isDestroyed) {
+                    scroll.scrollTo(0, targetScrollY)
+                }
+            }
+        }
+        val startAlpha = SettingsUiLogic.pageTransitionAlpha(
+            animatorsEnabled = UiDimens.areAnimationsEnabled(this),
+            userInitiated = userInitiated && prevPage != page,
+        )
+        if (startAlpha < 1f) {
+            host.alpha = startAlpha
+            host.animate()
+                .alpha(1f)
+                .setDuration(SettingsUiLogic.PAGE_TRANSITION_DURATION_MS)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
+            host.alpha = 1f
+        }
         paintNav()
+        scrollActiveNavIntoView(page)
         headerBreadcrumbLabel?.setText(page.titleRes)
         pageDropdownLabel?.setText(page.titleRes)
         pageDropdownIcon?.setImageResource(page.iconRes)
         wirePageFocusTraversal(body)
+    }
+
+    private fun scrollActiveNavIntoView(page: SettingsPage) {
+        val activeRow = navItems[page]?.container ?: return
+        val bladeScroll = navScroll ?: return
+        bladeScroll.post {
+            if (isFinishing || isDestroyed) return@post
+            val viewportH = bladeScroll.height - bladeScroll.paddingTop - bladeScroll.paddingBottom
+            val targetY = SettingsUiLogic.navScrollTargetY(
+                itemTop = activeRow.top,
+                itemBottom = activeRow.bottom,
+                scrollY = bladeScroll.scrollY,
+                viewportH = viewportH,
+                marginPx = dp(8),
+            )
+            if (targetY != bladeScroll.scrollY) {
+                if (UiDimens.areAnimationsEnabled(this)) {
+                    bladeScroll.smoothScrollTo(0, targetY)
+                } else {
+                    bladeScroll.scrollTo(0, targetY)
+                }
+            }
+        }
     }
 
     private fun paintNav() {
@@ -2600,7 +2929,7 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 TileBackgrounds.pressableRow(
                     context = this,
-                    accent = accent,
+                    accent = focusStroke,
                     cornerRadiusDp = 14,
                     strokeDp = 2,
                 )
@@ -2660,9 +2989,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         paintNav()
         // Short panels (e.g. single-display 16:9 landscape) cannot fit all
-        // eight entries: the blade must scroll and follow focus, so the
+        // nine entries: the blade must scroll and follow focus, so the
         // items below the fold (System/About) stay reachable at any height.
-        blade.addView(ScrollView(this).apply {
+        val bladeScroll = ScrollView(this).apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = false
             isVerticalFadingEdgeEnabled = true
@@ -2671,7 +3000,9 @@ class SettingsActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-        }, LinearLayout.LayoutParams(
+        }
+        navScroll = bladeScroll
+        blade.addView(bladeScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
@@ -2685,7 +3016,7 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             background = TileBackgrounds.pressableRow(
                 context = this@SettingsActivity,
-                accent = accent,
+                accent = focusStroke,
                 idleBackground = TileBackgrounds.card(this@SettingsActivity),
                 cornerRadiusDp = 18,
                 strokeDp = 2,
@@ -2719,6 +3050,31 @@ class SettingsActivity : AppCompatActivity() {
         }
         pageDropdownLabel = label
         row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (SettingsUiLogic.shouldShowDropdownShoulderCue(isWideLayout)) {
+            row.addView(
+                TextView(this).apply {
+                    text = SettingsUiLogic.SHOULDER_PAGE_HINT
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
+                    gravity = Gravity.CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    background = TileBackgrounds.sunkenField(
+                        this@SettingsActivity,
+                        cornerRadiusDp = UiDimens.RADIUS_SM,
+                    )
+                    setPadding(dp(8), dp(3), dp(8), dp(3))
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    marginStart = dp(8)
+                    marginEnd = dp(8)
+                },
+            )
+        }
         row.addView(
             ImageView(this).apply {
                 setImageResource(R.drawable.ic_dropdown)
@@ -2733,34 +3089,192 @@ class SettingsActivity : AppCompatActivity() {
     private fun showSettingsSearch() {
         app.playSfx(SoundCue.MODAL_OPEN)
         val jumps = settingsSearchIndex()
-        DeckDialogs.promptText(
+        val pageById = SettingsPage.entries.associateBy { it.name }
+        var dialogRef: AlertDialog? = null
+        var currentMatches = SettingsUiLogic.rankSettingsMatches("", jumps)
+
+        val (inputContainer, searchInput) = DeckDialogs.createInput(
             context = this,
-            titleRes = R.string.settings_search_hint,
             hintRes = R.string.settings_search_hint,
-            positiveRes = R.string.action_search,
-            emitSubmitSound = false,
-        ) { query ->
-            val hits = SettingsCatalog.matches(query, jumps)
-            if (hits.isEmpty()) {
-                app.playSfx(SoundCue.ERROR_DENY)
-                Toast.makeText(this, R.string.browse_no_matches_short, Toast.LENGTH_SHORT)
-                    .show()
-                return@promptText
+            singleLine = true,
+            selectAllOnFocus = false,
+        )
+        searchInput.imeOptions = EditorInfo.IME_ACTION_GO
+
+        val resultsList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = dp(20)
+            setPadding(pad, dp(6), pad, dp(8))
+        }
+        val resultsScroll = dialogScroll(resultsList)
+        val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
+        val topCue = OverlayPrimitives.scrollCueBar(this, cueColor)
+        val bottomCue = OverlayPrimitives.scrollCueBar(this, cueColor)
+        OverlayPrimitives.bindScrollCues(resultsScroll, topCue, bottomCue)
+
+        val scrollFrame = FrameLayout(this).apply {
+            addView(
+                resultsScroll,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                topCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(2),
+                    Gravity.TOP,
+                ),
+            )
+            addView(
+                bottomCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(2),
+                    Gravity.BOTTOM,
+                ),
+            )
+        }
+
+        fun pickMatch(pageId: String) {
+            dialogRef?.dismiss()
+            jumpToSettingsPage(pageId)
+        }
+
+        fun renderMatches(query: String) {
+            currentMatches = SettingsUiLogic.rankSettingsMatches(query, jumps)
+            resultsList.removeAllViews()
+            if (currentMatches.isEmpty()) {
+                resultsList.addView(modalEmpty(getString(R.string.browse_no_matches_short)))
+                return
             }
-            if (hits.size == 1) {
-                jumpToSettingsPage(hits[0].pageId)
-                return@promptText
+            currentMatches.forEachIndexed { index, match ->
+                if (index > 0) addDivider(resultsList)
+                val page = pageById[match.jump.pageId]
+                val isCurrent = page == currentPage
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(48)
+                    isFocusable = true
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    background = TileBackgrounds.pressableRow(
+                        context = this@SettingsActivity,
+                        accent = focusStroke,
+                        cornerRadiusDp = 12,
+                        strokeDp = 2,
+                    )
+                    setOnClickListener { pickMatch(match.jump.pageId) }
+                }
+                if (page != null) {
+                    row.addView(
+                        ImageView(this).apply {
+                            setImageResource(page.iconRes)
+                            imageTintList = ColorStateList.valueOf(
+                                if (isCurrent) accentOnCard else UiDimens.ALPHA_SECONDARY,
+                            )
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                        },
+                        LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) },
+                    )
+                }
+                val textCol = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(this@SettingsActivity).apply {
+                            text = match.jump.label
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                            setTextColor(UiDimens.ALPHA_PRIMARY)
+                            setTypeface(typeface, if (isCurrent) Typeface.BOLD else Typeface.NORMAL)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                        },
+                    )
+                    match.matchedKeyword?.let { kw ->
+                        addView(
+                            TextView(this@SettingsActivity).apply {
+                                text = kw
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                                setTextColor(accentOnCard)
+                                maxLines = 1
+                                ellipsize = TextUtils.TruncateAt.END
+                            },
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply { topMargin = dp(1) },
+                        )
+                    }
+                }
+                row.addView(
+                    textCol,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginEnd = dp(8)
+                    },
+                )
+                row.addView(
+                    drillChevron(),
+                    LinearLayout.LayoutParams(dp(18), dp(18)),
+                )
+                resultsList.addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
-            app.playSfx(SoundCue.MODAL_OPEN)
-            DeckDialogs.chooseItem(
-                context = this,
-                titleRes = R.string.settings_search_hint,
-                items = hits.map { it.label }.toTypedArray(),
-                emitPickSound = false,
-            ) { which ->
-                jumpToSettingsPage(hits[which].pageId)
+            resultsScroll.scrollTo(0, 0)
+        }
+
+        renderMatches("")
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                renderMatches(s?.toString().orEmpty())
+            }
+        })
+        searchInput.setOnEditorActionListener { _, actionId, event ->
+            if (DeckDialogTokens.isImeSubmitAction(actionId, event?.keyCode, event?.action)) {
+                val top = currentMatches.firstOrNull()
+                if (top != null) {
+                    pickMatch(top.jump.pageId)
+                } else {
+                    app.playSfx(SoundCue.ERROR_DENY)
+                }
+                true
+            } else {
+                false
             }
         }
+
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                inputContainer,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                scrollFrame,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(4) },
+            )
+        }
+        dialogRef = DeckDialogs.customView(
+            context = this,
+            titleRes = R.string.settings_search_hint,
+            view = sheet,
+            negativeRes = R.string.action_close,
+        )
     }
 
     private fun jumpToSettingsPage(pageId: String) {
@@ -2849,13 +3363,20 @@ class SettingsActivity : AppCompatActivity() {
         ))
     }
 
-    private fun toggle(card: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    private fun toggle(
+        card: LinearLayout,
+        label: String,
+        checked: Boolean,
+        onChange: (Boolean) -> Unit,
+    ): LinearLayout {
         addDividerIfNeeded(card)
         val sw = accentSwitch(checked, onChange)
+        val row = switchRow(label, sw)
         card.addView(
-            switchRow(label, sw),
+            row,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
         )
+        return row
     }
 
     private fun addActionRow(
@@ -2887,7 +3408,7 @@ class SettingsActivity : AppCompatActivity() {
         format: (Int) -> String = { formatNumber(it) },
         onLiveChange: ((Int) -> Unit)? = null,
         onChange: (Int) -> Unit,
-    ) {
+    ): Pair<LinearLayout, SeekBar> {
         addDividerIfNeeded(card)
         val labelRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2910,7 +3431,7 @@ class SettingsActivity : AppCompatActivity() {
         labelRow.addView(valueView)
         card.addView(labelRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        card.addView(SeekBar(this).apply {
+        val seekBar = SeekBar(this).apply {
             progressDrawable = ContextCompat.getDrawable(
                 this@SettingsActivity,
                 R.drawable.bg_seekbar_progress,
@@ -2925,11 +3446,11 @@ class SettingsActivity : AppCompatActivity() {
             progressBackgroundTintList = ColorStateList.valueOf(offTint)
             background = TileBackgrounds.focusableRow(
                 context = this@SettingsActivity,
-                accent = accent,
+                accent = focusStroke,
                 cornerRadiusDp = 12,
             )
-            minimumHeight = dp(42)
-            setPadding(dp(14), dp(8), dp(14), dp(10))
+            minimumHeight = dp(SettingsUiLogic.SEEKBAR_MIN_HEIGHT_DP)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
             this.max = max - min
             progress = value - min
             var trackingTouch = false
@@ -2953,10 +3474,12 @@ class SettingsActivity : AppCompatActivity() {
                     onChange(committed)
                 }
             })
-        }, LinearLayout.LayoutParams(
+        }
+        card.addView(seekBar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
+        return labelRow to seekBar
     }
 
     private fun buildContent(): View {
@@ -2964,8 +3487,11 @@ class SettingsActivity : AppCompatActivity() {
         val wide = isWideSettings()
         isWideLayout = wide
         cancelKeyCapture()
+        pageHost?.animate()?.cancel()
         pageCache.invalidate()
+        pageScrollY.clear()
         navItems.clear()
+        navScroll = null
         keyChipsByAction.clear()
         pageDropdownRow = null
         pageDropdownIcon = null
@@ -2995,6 +3521,8 @@ class SettingsActivity : AppCompatActivity() {
         scrapeRow = null
         scrapeProgressBar = null
         folderRows = null
+        romAddRow = null
+        collectionsValue = null
         bundledPacksValue = null
 
         val dm = resources.displayMetrics
@@ -3023,7 +3551,7 @@ class SettingsActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
-            background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+            background = TileBackgrounds.chromeButton(this@SettingsActivity, focusStroke)
             val backLabel = getString(R.string.action_back)
             contentDescription = backLabel
             tooltipText = backLabel
@@ -3098,7 +3626,7 @@ class SettingsActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
-            background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+            background = TileBackgrounds.chromeButton(this@SettingsActivity, focusStroke)
             val searchLabel = getString(R.string.settings_search_hint)
             contentDescription = searchLabel
             tooltipText = searchLabel
@@ -3822,11 +4350,11 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            minHeight = dp(38)
+            minHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
             isFocusable = true
             background = TileBackgrounds.pressableRow(
                 context = this@SettingsActivity,
-                accent = accent,
+                accent = focusStroke,
                 idleBackground = TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14),
                 cornerRadiusDp = 14,
                 strokeDp = 2,
@@ -4081,7 +4609,7 @@ class SettingsActivity : AppCompatActivity() {
                         gravity = Gravity.CENTER
                         background = TileBackgrounds.focusableRow(
                             context = this@SettingsActivity,
-                            accent = accent,
+                            accent = focusStroke,
                             idleBackground = TileBackgrounds.sunkenField(
                                 this@SettingsActivity,
                                 cornerRadiusDp = 10,
@@ -4172,19 +4700,50 @@ class SettingsActivity : AppCompatActivity() {
             updateDeadzoneBadge(n)
             app.updateSettings(app.settings.copy(stickDeadzone = n), notify = false)
         }
-        remappable.forEach { action ->
-            val boundCode = SettingsUiLogic.boundKeyCodeFor(action, app.settings.keyMap)
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+        val groupedActions = remappable.groupBy(SettingsUiLogic::controlGroupFor)
+        val groupTitles = mapOf(
+            SettingsUiLogic.ControlActionGroup.NAVIGATION to getString(R.string.quick_controller),
+            SettingsUiLogic.ControlActionGroup.DECK_SHORTCUTS to getString(
+                R.string.format_dot_pair,
+                getString(R.string.label_grid),
+                getString(R.string.label_game),
+            ),
+            SettingsUiLogic.ControlActionGroup.DUAL_SCREEN_HOST to getString(R.string.about_dual_screen),
+        )
+        SettingsUiLogic.ControlActionGroup.entries.forEach { group ->
+            val actions = groupedActions[group].orEmpty()
+            if (actions.isEmpty()) return@forEach
+            addDividerIfNeeded(controlsCard)
+            controlsCard.addView(
+                TextView(this).apply {
+                    text = groupTitles.getValue(group)
+                        .uppercase(resources.configuration.locales[0])
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextColor(accentOnCard)
+                    setTypeface(typeface, Typeface.BOLD)
+                    letterSpacing = 0.12f
+                    setPadding(dp(10), dp(12), dp(10), dp(4))
+                    OverlayPrimitives.markHeading(this)
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            actions.forEach { action ->
+                val boundCode = SettingsUiLogic.boundKeyCodeFor(action, app.settings.keyMap)
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                row.addView(rowLabel(resolveText(action.label())), LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                val chip = keyChip(boundCode)
+                keyChipsByAction[action] = chip
+                row.addView(chip)
+                row.setOnClickListener { startKeyCapture(action, chip) }
+                addActionRow(controlsCard, row)
             }
-            row.addView(rowLabel(resolveText(action.label())), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val chip = keyChip(boundCode)
-            keyChipsByAction[action] = chip
-            row.addView(chip)
-            row.setOnClickListener { startKeyCapture(action, chip) }
-            addActionRow(controlsCard, row)
         }
         addSection(
             root = root,
@@ -4207,8 +4766,28 @@ class SettingsActivity : AppCompatActivity() {
         var liveSfxVolume = s.sfxVolume
         var liveAmbientEnabled = s.ambientEnabled
         var liveAmbientVolume = s.ambientVolume
+        val masterDependentViews = mutableListOf<View>()
+        val sfxDependentViews = mutableListOf<View>()
+        val ambientDependentViews = mutableListOf<View>()
 
         fun refreshAudioBadges() {
+            val packPlayable = SoundPackId.fromId(liveSoundPack).isPlayable
+            val masterAlpha = SettingsUiLogic.audioSubControlAlpha(
+                masterOn = liveSoundEnabled,
+                sectionOn = true,
+            )
+            val sfxAlpha = SettingsUiLogic.audioSubControlAlpha(
+                masterOn = liveSoundEnabled,
+                sectionOn = packPlayable,
+            )
+            val ambientAlpha = SettingsUiLogic.audioSubControlAlpha(
+                masterOn = liveSoundEnabled,
+                sectionOn = liveAmbientEnabled && packPlayable,
+            )
+            masterDependentViews.forEach { it.alpha = masterAlpha }
+            sfxDependentViews.forEach { it.alpha = sfxAlpha }
+            ambientDependentViews.forEach { it.alpha = ambientAlpha }
+
             val sfxActive = SettingsUiLogic.isSfxAudioActive(
                 liveSoundEnabled, liveSoundPack, liveSfxVolume,
             )
@@ -4257,7 +4836,7 @@ class SettingsActivity : AppCompatActivity() {
             SoundPackId.OLED.id to ThemePack.OLED.accentColor,
             SoundPackId.NEON.id to ThemePack.NEON.accentColor,
         )
-        segmentedRow(
+        val soundPackRow = segmentedRow(
             card = audioSfxCard,
             label = getString(R.string.settings_audio_pack),
             options = packOptions,
@@ -4270,7 +4849,8 @@ class SettingsActivity : AppCompatActivity() {
             refreshAudioBadges()
             app.soundEngine.previewPack(pack)
         }
-        seek(
+        masterDependentViews.add(soundPackRow)
+        val (sfxVolLabel, sfxVolSeek) = seek(
             card = audioSfxCard,
             label = getString(R.string.settings_audio_sfx_volume),
             value = s.sfxVolume,
@@ -4287,6 +4867,8 @@ class SettingsActivity : AppCompatActivity() {
             refreshAudioBadges()
             app.soundEngine.audition(SoundCue.NAV_TICK)
         }
+        sfxDependentViews.add(sfxVolLabel)
+        sfxDependentViews.add(sfxVolSeek)
         val initialSfxActive = SettingsUiLogic.isSfxAudioActive(
             liveSoundEnabled, liveSoundPack, liveSfxVolume,
         )
@@ -4304,6 +4886,7 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         val audioTestPadCard = sectionCard()
+        sfxDependentViews.add(audioTestPadCard)
         audioTestPadCard.addView(
             TextView(this).apply {
                 setText(R.string.settings_audio_test_pad_hint)
@@ -4331,6 +4914,13 @@ class SettingsActivity : AppCompatActivity() {
             val rowPills = mutableListOf<TextView>()
             rowCues.forEachIndexed { colIndex, cue ->
                 val labelRes = padCueLabels.getValue(cue)
+                val pulseOverlay = GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = dpF(12)
+                    setStroke(strokePx(2), focusStroke)
+                    alpha = 0
+                }
+                var activeRimAnim: ValueAnimator? = null
                 val pill = TextView(this).apply {
                     id = View.generateViewId()
                     setText(labelRes)
@@ -4341,12 +4931,13 @@ class SettingsActivity : AppCompatActivity() {
                     gravity = Gravity.CENTER
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    minimumHeight = dp(44)
+                    minimumHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     isFocusable = true
+                    foreground = pulseOverlay
                     background = TileBackgrounds.pressableRow(
                         context = this@SettingsActivity,
-                        accent = accent,
+                        accent = focusStroke,
                         idleBackground = TileBackgrounds.sunkenField(
                             this@SettingsActivity,
                             cornerRadiusDp = 12,
@@ -4354,8 +4945,53 @@ class SettingsActivity : AppCompatActivity() {
                         cornerRadiusDp = 12,
                         strokeDp = 2,
                     )
+                    addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(v: View) = Unit
+                        override fun onViewDetachedFromWindow(v: View) {
+                            activeRimAnim?.cancel()
+                            activeRimAnim = null
+                            pulseOverlay.alpha = 0
+                            v.animate().cancel()
+                            v.scaleX = 1f
+                            v.scaleY = 1f
+                        }
+                    })
                     setOnClickListener {
                         app.soundEngine.audition(cue)
+                        activeRimAnim?.cancel()
+                        animate().cancel()
+                        if (UiDimens.areAnimationsEnabled(this@SettingsActivity)) {
+                            val halfMs = SettingsUiLogic.TEST_PAD_PULSE_DURATION_MS / 2L
+                            val peakScale = SettingsUiLogic.TEST_PAD_PULSE_SCALE
+                            animate()
+                                .scaleX(peakScale)
+                                .scaleY(peakScale)
+                                .setDuration(halfMs)
+                                .setInterpolator(DecelerateInterpolator())
+                                .withEndAction {
+                                    if (isAttachedToWindow) {
+                                        animate()
+                                            .scaleX(1f)
+                                            .scaleY(1f)
+                                            .setDuration(halfMs)
+                                            .setInterpolator(DecelerateInterpolator())
+                                            .start()
+                                    }
+                                }
+                                .start()
+                            activeRimAnim = ValueAnimator.ofInt(255, 0).apply {
+                                duration = SettingsUiLogic.TEST_PAD_PULSE_DURATION_MS
+                                interpolator = DecelerateInterpolator()
+                                addUpdateListener { anim ->
+                                    pulseOverlay.alpha = anim.animatedValue as Int
+                                }
+                                start()
+                            }
+                        } else {
+                            scaleX = 1f
+                            scaleY = 1f
+                            pulseOverlay.alpha = 0
+                        }
                     }
                 }
                 rowPills.add(pill)
@@ -4387,6 +5023,7 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         val audioCustomPackCard = sectionCard()
+        masterDependentViews.add(audioCustomPackCard)
         val customStatusTv = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
@@ -4428,7 +5065,7 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            minimumHeight = dp(44)
+            minimumHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
             setPadding(dp(14), dp(8), dp(14), dp(8))
             isFocusable = true
             background = TileBackgrounds.pressableRow(
@@ -4456,12 +5093,15 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            minimumHeight = dp(44)
+            minimumHeight = dp(SettingsUiLogic.MIN_CONTROL_TOUCH_DP)
             setPadding(dp(14), dp(8), dp(14), dp(8))
             isFocusable = true
             background = TileBackgrounds.pressableRow(
                 context = this@SettingsActivity,
-                accent = accent,
+                accent = OverlayPrimitives.accessibleFocusStroke(
+                    UiDimens.COLOR_DESTRUCTIVE,
+                    ThemePack.cardFill(themeTokens),
+                ),
                 idleBackground = TileBackgrounds.sunkenField(
                     this@SettingsActivity,
                     cornerRadiusDp = 12,
@@ -4506,12 +5146,17 @@ class SettingsActivity : AppCompatActivity() {
         refreshCustomSoundPackCard()
 
         val audioAmbientCard = sectionCard()
-        toggle(audioAmbientCard, getString(R.string.settings_audio_ambient), s.ambientEnabled) { on ->
+        val ambientToggleRow = toggle(
+            audioAmbientCard,
+            getString(R.string.settings_audio_ambient),
+            s.ambientEnabled,
+        ) { on ->
             liveAmbientEnabled = on
             app.updateSettings(app.settings.copy(ambientEnabled = on), notify = false)
             refreshAudioBadges()
         }
-        seek(
+        masterDependentViews.add(ambientToggleRow)
+        val (ambientVolLabel, ambientVolSeek) = seek(
             card = audioAmbientCard,
             label = getString(R.string.settings_audio_ambient_volume),
             value = s.ambientVolume,
@@ -4527,14 +5172,16 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(ambientVolume = n), notify = false)
             refreshAudioBadges()
         }
-        audioAmbientCard.addView(
-            TextView(this).apply {
-                setText(R.string.settings_audio_ambient_hint)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(UiDimens.ALPHA_SUBTLE)
-                setPadding(dp(10), dp(2), dp(10), dp(6))
-            },
-        )
+        val ambientHint = TextView(this).apply {
+            setText(R.string.settings_audio_ambient_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(UiDimens.ALPHA_SUBTLE)
+            setPadding(dp(10), dp(2), dp(10), dp(6))
+        }
+        audioAmbientCard.addView(ambientHint)
+        ambientDependentViews.add(ambientVolLabel)
+        ambientDependentViews.add(ambientVolSeek)
+        ambientDependentViews.add(ambientHint)
         val initialAmbientActive = SettingsUiLogic.isAmbientAudioActive(
             liveSoundEnabled, liveAmbientEnabled, liveSoundPack, liveAmbientVolume,
         )
@@ -4552,6 +5199,7 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         val audioEventsCard = sectionCard()
+        masterDependentViews.add(audioEventsCard)
         toggle(audioEventsCard, getString(R.string.settings_audio_boot_chime), s.bootChimeEnabled) { on ->
             app.updateSettings(app.settings.copy(bootChimeEnabled = on), notify = false)
         }
@@ -4568,6 +5216,7 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         val audioEtiquetteCard = sectionCard()
+        masterDependentViews.add(audioEtiquetteCard)
         toggle(audioEtiquetteCard, getString(R.string.settings_audio_respect_music), s.audioRespectMusic) { on ->
             app.updateSettings(app.settings.copy(audioRespectMusic = on), notify = false)
         }
@@ -4579,6 +5228,7 @@ class SettingsActivity : AppCompatActivity() {
             title = getString(R.string.settings_audio_section_etiquette),
             card = audioEtiquetteCard,
         )
+        refreshAudioBadges()
     }
 
     private fun buildLibraryPage(root: LinearLayout) {
@@ -4596,6 +5246,7 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setOnClickListener { romFolderPicker.launch(null) }
         }
+        romAddRow = addRow
         addRow.addView(rowLabel(getString(R.string.settings_add_rom_folder)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addRow.addView(TextView(this).apply {
@@ -4722,11 +5373,13 @@ class SettingsActivity : AppCompatActivity() {
         }
         collectionsRow.addView(rowLabel(getString(R.string.label_collections)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        collectionsRow.addView(TextView(this).apply {
+        val collectionsBadge = TextView(this).apply {
             val count = app.settings.collections.size
             text = formatNumber(count)
             styleStatusBadge(this, active = count > 0)
-        })
+        }
+        collectionsValue = collectionsBadge
+        collectionsRow.addView(collectionsBadge)
         addActionRow(libraryCard, collectionsRow, showChevron = true)
         val playersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -4735,8 +5388,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         playersRow.addView(rowLabel(getString(R.string.settings_default_players)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val hasPlayerOverrides = app.settings.defaultPlayers.isNotEmpty()
         playersRow.addView(TextView(this).apply {
-            text = if (app.settings.defaultPlayers.isEmpty()) {
+            text = if (!hasPlayerOverrides) {
                 getString(R.string.settings_system_defaults)
             } else {
                 resources.getQuantityString(
@@ -4745,8 +5399,9 @@ class SettingsActivity : AppCompatActivity() {
                     app.settings.defaultPlayers.size,
                 )
             }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            styleStatusBadge(this, active = hasPlayerOverrides)
         })
         addActionRow(libraryCard, playersRow, showChevron = true)
         var raHandoffSaveRow: View? = null
@@ -4845,14 +5500,12 @@ class SettingsActivity : AppCompatActivity() {
             rowLabel(getString(R.string.settings_import_lens_pack)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
+        val hasLensPack = !s.ramLensPackUri.isNullOrBlank()
         lensPackRow.addView(TextView(this).apply {
-            text = if (s.ramLensPackUri.isNullOrBlank()) {
-                getString(R.string.action_none)
-            } else {
-                getString(R.string.action_open)
-            }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
+            setText(if (hasLensPack) R.string.label_set else R.string.action_none)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            styleStatusBadge(this, active = hasLensPack)
         })
         addActionRow(libraryCard, lensPackRow, showChevron = true)
         val setupRow = LinearLayout(this).apply {
@@ -5707,7 +6360,33 @@ class SettingsActivity : AppCompatActivity() {
         app.updateSettings(app.settings.copy(keyMap = newMap))
         capturePulse?.cancel()
         capturePulse = null
-        captureLabel?.let { bindKeyChip(it, keyCode) }
+        val confirmedChip = captureLabel
+        confirmedChip?.let { chip ->
+            bindKeyChip(chip, keyCode)
+            app.playSfx(SoundCue.CONFIRM)
+            chip.animate().cancel()
+            if (UiDimens.areAnimationsEnabled(this) && chip.isAttachedToWindow) {
+                chip.animate()
+                    .scaleX(1.08f)
+                    .scaleY(1.08f)
+                    .setDuration(80L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .withEndAction {
+                        if (chip.isAttachedToWindow) {
+                            chip.animate()
+                                .scaleX(1f)
+                                .scaleY(1f)
+                                .setDuration(80L)
+                                .setInterpolator(DecelerateInterpolator())
+                                .start()
+                        }
+                    }
+                    .start()
+            } else {
+                chip.scaleX = 1f
+                chip.scaleY = 1f
+            }
+        }
         if (displaced != null && displaced != target) {
             keyChipsByAction[displaced]?.let { otherChip ->
                 bindKeyChip(otherChip, SettingsUiLogic.boundKeyCodeFor(displaced, newMap))

@@ -5,7 +5,10 @@ import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.BrowseChrome
+import com.visorcraft.ghostgalleon.settings.SettingsCatalog
+import com.visorcraft.ghostgalleon.settings.SettingsJump
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
@@ -389,6 +392,127 @@ class SettingsUiLogicTest {
             assertEquals(ThemePack.accentTextColor(accent, expectedNavBg), palette.navActiveIconTint)
             assertEquals(ThemePack.accentHairline(accent), palette.navActiveBorder)
             assertEquals(ThemePack.hairlineDivider(tokens), palette.hairline)
+            assertTrue(
+                "Palette focusStroke contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(palette.focusStroke, ThemePack.cardFill(tokens)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
         }
+    }
+
+    @Test
+    fun `navScrollTargetY keeps active nav item visible and pageTransitionAlpha gates reduced motion`() {
+        // Already visible: leaves scrollY unchanged.
+        assertEquals(0, SettingsUiLogic.navScrollTargetY(10, 60, scrollY = 0, viewportH = 200))
+        assertEquals(40, SettingsUiLogic.navScrollTargetY(60, 120, scrollY = 40, viewportH = 200))
+        // Below viewport: scrolls down just enough to reveal bottom edge.
+        assertEquals(70, SettingsUiLogic.navScrollTargetY(220, 270, scrollY = 0, viewportH = 200))
+        assertEquals(78, SettingsUiLogic.navScrollTargetY(220, 270, scrollY = 0, viewportH = 200, marginPx = 8))
+        // Above viewport: scrolls up to top edge.
+        assertEquals(30, SettingsUiLogic.navScrollTargetY(30, 80, scrollY = 100, viewportH = 200))
+        // Item taller than viewport: aligns top edge.
+        assertEquals(50, SettingsUiLogic.navScrollTargetY(50, 320, scrollY = 0, viewportH = 200))
+        // Unmeasured viewport: clamps scrollY safely.
+        assertEquals(20, SettingsUiLogic.navScrollTargetY(10, 50, scrollY = 20, viewportH = 0))
+        assertEquals(0, SettingsUiLogic.navScrollTargetY(10, 50, scrollY = -10, viewportH = 0))
+
+        // Page crossfade micro-fade only runs when animations enabled AND user-initiated.
+        val animatedStart = SettingsUiLogic.pageTransitionAlpha(animatorsEnabled = true, userInitiated = true)
+        assertTrue(animatedStart in 0f..0.99f)
+        assertEquals(1f, SettingsUiLogic.pageTransitionAlpha(animatorsEnabled = false, userInitiated = true), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.pageTransitionAlpha(animatorsEnabled = true, userInitiated = false), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.pageTransitionAlpha(animatorsEnabled = false, userInitiated = false), 0.0001f)
+    }
+
+    @Test
+    fun `rankSettingsMatches returns full directory on blank query and ranks prefix and keywords`() {
+        val jumps = listOf(
+            SettingsJump(SettingsCatalog.PAGE_DISPLAY, "Display & Grid", "theme display grid wallpaper"),
+            SettingsJump(SettingsCatalog.PAGE_APPS, "Apps", "apps hidden dock helper"),
+            SettingsJump(SettingsCatalog.PAGE_CONTROLS, "Controls", "controls remap deadzone haptics lab"),
+            SettingsJump(SettingsCatalog.PAGE_AUDIO, "Audio", "audio sound sfx volume ambient"),
+            SettingsJump(SettingsCatalog.PAGE_LIBRARY, "Library", "library rom folder rescan collections"),
+        )
+
+        // Empty query shows complete directory with null matched keyword snippets.
+        val all = SettingsUiLogic.rankSettingsMatches("   ", jumps)
+        assertEquals(jumps.size, all.size)
+        assertEquals(jumps.map { it.pageId }, all.map { it.jump.pageId })
+        assertTrue(all.all { it.matchedKeyword == null })
+
+        // Label prefix beats keyword match.
+        val audioHits = SettingsUiLogic.rankSettingsMatches("au", jumps)
+        assertEquals(SettingsCatalog.PAGE_AUDIO, audioHits.first().jump.pageId)
+
+        // Keyword prefix extracts matched term snippet.
+        val deadzoneHits = SettingsUiLogic.rankSettingsMatches("dead", jumps)
+        assertEquals(1, deadzoneHits.size)
+        assertEquals(SettingsCatalog.PAGE_CONTROLS, deadzoneHits[0].jump.pageId)
+        assertEquals("deadzone", deadzoneHits[0].matchedKeyword)
+
+        // Keyword contains extracts full token containing query.
+        val zoneHits = SettingsUiLogic.rankSettingsMatches("zone", jumps)
+        assertEquals(1, zoneHits.size)
+        assertEquals("deadzone", zoneHits[0].matchedKeyword)
+
+        // Label-contains outranks keyword-only match.
+        val gridHits = SettingsUiLogic.rankSettingsMatches("grid", jumps)
+        assertEquals(SettingsCatalog.PAGE_DISPLAY, gridHits.first().jump.pageId)
+
+        // Unknown query returns empty list.
+        assertTrue(SettingsUiLogic.rankSettingsMatches("zzzznotfound", jumps).isEmpty())
+    }
+
+    @Test
+    fun `dropdown shoulder cue, minimum touch comfort, and focus-after-remove behave cleanly`() {
+        assertTrue(SettingsUiLogic.shouldShowDropdownShoulderCue(isWide = false))
+        assertFalse(SettingsUiLogic.shouldShowDropdownShoulderCue(isWide = true))
+        assertTrue(SettingsUiLogic.MIN_CONTROL_TOUCH_DP >= 44)
+        assertTrue(SettingsUiLogic.SEEKBAR_MIN_HEIGHT_DP >= 44)
+        assertTrue(
+            SettingsUiLogic.SEGMENTED_PILL_HEIGHT_DP + SettingsUiLogic.SEGMENTED_TRACK_PADDING_DP * 2 >= 44,
+        )
+
+        // Clamped next focus index after removal in management dialogs.
+        assertEquals(0, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = 0, remainingCount = 3))
+        assertEquals(1, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = 1, remainingCount = 2))
+        assertEquals(1, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = 2, remainingCount = 2))
+        assertEquals(0, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = -1, remainingCount = 1))
+        assertEquals(-1, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = 0, remainingCount = 0))
+        assertEquals(-1, SettingsUiLogic.nextFocusIndexAfterRemove(removedIndex = 2, remainingCount = -1))
+    }
+
+    @Test
+    fun `controlGroupFor classifies all 20 remappable actions and audioSubControlAlpha dims when bypassed`() {
+        val remappable = listOf(
+            Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
+            Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS,
+            Action.TOGGLE_MODE, Action.OPEN_SETTINGS, Action.PAGE_PREV, Action.PAGE_NEXT,
+            Action.OPEN_QUICK_PANEL,
+            Action.SEARCH_LIBRARY, Action.TOGGLE_FAVORITE, Action.SHOW_DETAILS,
+            Action.OPEN_SESSION_SWITCHER, Action.TOGGLE_PLAY_HUD,
+            Action.CLAIM_HOST, Action.RELEASE_HOST, Action.TOGGLE_SEAT,
+        )
+        val grouped = remappable.groupBy(SettingsUiLogic::controlGroupFor)
+        assertEquals(6, grouped[SettingsUiLogic.ControlActionGroup.NAVIGATION]?.size)
+        assertEquals(10, grouped[SettingsUiLogic.ControlActionGroup.DECK_SHORTCUTS]?.size)
+        assertEquals(4, grouped[SettingsUiLogic.ControlActionGroup.DUAL_SCREEN_HOST]?.size)
+        assertEquals(
+            SettingsUiLogic.ControlActionGroup.NAVIGATION,
+            SettingsUiLogic.controlGroupFor(Action.CONFIRM),
+        )
+        assertEquals(
+            SettingsUiLogic.ControlActionGroup.DUAL_SCREEN_HOST,
+            SettingsUiLogic.controlGroupFor(Action.SWAP_SCREENS),
+        )
+        assertEquals(
+            SettingsUiLogic.ControlActionGroup.DECK_SHORTCUTS,
+            SettingsUiLogic.controlGroupFor(Action.OPEN_QUICK_PANEL),
+        )
+
+        assertEquals(1f, SettingsUiLogic.audioSubControlAlpha(masterOn = true, sectionOn = true), 0.0001f)
+        assertEquals(0.50f, SettingsUiLogic.audioSubControlAlpha(masterOn = false, sectionOn = true), 0.0001f)
+        assertEquals(0.50f, SettingsUiLogic.audioSubControlAlpha(masterOn = true, sectionOn = false), 0.0001f)
+        assertEquals(0.50f, SettingsUiLogic.audioSubControlAlpha(masterOn = false, sectionOn = false), 0.0001f)
     }
 }
