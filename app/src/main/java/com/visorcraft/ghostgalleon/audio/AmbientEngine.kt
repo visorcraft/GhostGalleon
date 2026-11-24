@@ -6,6 +6,8 @@ import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.math.abs
@@ -94,6 +96,9 @@ object AmbientEngineLogic {
         val shouldAbandonFocus: Boolean,
     )
 
+    /** Fallback ringer polling interval (ms) used ONLY when broadcast push registration fails. */
+    const val FALLBACK_RINGER_POLL_INTERVAL_MS: Long = 2_000L
+
     /** Android [AudioManager] ringer mode constants mirrored cleanly for pure JVM tests. */
     const val ANDROID_RINGER_MODE_SILENT: Int = 0
     const val ANDROID_RINGER_MODE_VIBRATE: Int = 1
@@ -104,6 +109,49 @@ object AmbientEngineLogic {
         ANDROID_RINGER_MODE_SILENT -> AudioPolicy.RingerState.SILENT
         ANDROID_RINGER_MODE_VIBRATE -> AudioPolicy.RingerState.VIBRATE
         else -> AudioPolicy.RingerState.NORMAL
+    }
+
+    /**
+     * Returns `true` when the 43 Hz streaming loop can execute its zero-IPC, zero-allocation
+     * steady-state chunk write directly without re-acquiring locks, probing `AudioManager`,
+     * or allocating `LoopInputs`/`TransitionPlan` objects.
+     *
+     * Any state mutation (`sync`, focus loss/gain, video duck, screen off, background,
+     * push ringer change, or `release`) advances [currentStateVersion], immediately breaking
+     * out of the fast path on the very next chunk.
+     */
+    fun canUseSteadyStateFastPath(
+        isPlaying: Boolean,
+        hasExplicitConfig: Boolean,
+        released: Boolean,
+        currentStateVersion: Long,
+        lastEvaluatedVersion: Long,
+        ringerPushActive: Boolean,
+        nowMs: Long = 0L,
+        lastFallbackRingerProbeMs: Long = 0L,
+    ): Boolean {
+        if (!isPlaying || !hasExplicitConfig || released) return false
+        if (currentStateVersion != lastEvaluatedVersion) return false
+        if (ringerPushActive) return true
+        val elapsed = nowMs - lastFallbackRingerProbeMs
+        return elapsed in 0L until FALLBACK_RINGER_POLL_INTERVAL_MS
+    }
+
+    /**
+     * Resolves the effective [AudioPolicy.RingerState] for ambient policy gating without
+     * issuing polling Binder IPCs whenever push broadcasts are active.
+     */
+    fun resolveEffectiveRingerState(
+        explicitStateRinger: AudioPolicy.RingerState,
+        pushedRinger: AudioPolicy.RingerState,
+        respectRinger: Boolean,
+        ringerPushActive: Boolean,
+        fallbackProbe: () -> AudioPolicy.RingerState,
+    ): AudioPolicy.RingerState {
+        if (explicitStateRinger != AudioPolicy.RingerState.NORMAL) return explicitStateRinger
+        if (!respectRinger) return AudioPolicy.RingerState.NORMAL
+        if (ringerPushActive) return pushedRinger
+        return fallbackProbe()
     }
 
     /** Resolves [AmbientConfig.soundPackId] against [AmbientConfig.themePackId]. */
@@ -262,19 +310,29 @@ class AmbientEngine(
     private val configProvider: () -> AmbientConfig = { AmbientConfig() },
 ) {
     private val appContext: Context = context.applicationContext
+    private val cacheDir: File = File(appContext.cacheDir, SoundEngineLogic.CACHE_DIR_NAME)
     private val audioManager: AudioManager? =
         appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private val ambientCacheCleaned = AtomicBoolean(false)
 
     private val lock = ReentrantLock()
     private val wakeCondition = lock.newCondition()
 
     private var stateVersion: Long = 0L
+    @Volatile
+    private var volatileStateVersion: Long = 0L
     private var desiredConfig: AmbientConfig = AmbientConfig()
     private var desiredState: AmbientRuntimeState = AmbientRuntimeState()
     private var hasExplicitConfig: Boolean = false
+    @Volatile
+    private var volatileHasExplicitConfig: Boolean = false
     private var videoPreviewDucked: Boolean = false
     private var focusState: AmbientEngineLogic.FocusState = AmbientEngineLogic.FocusState.NONE
+    private var pushedRingerState: AudioPolicy.RingerState = AudioPolicy.RingerState.NORMAL
+    private var hasReceivedRingerPush: Boolean = false
     private var released: Boolean = false
+    @Volatile
+    private var volatileReleased: Boolean = false
 
     @Volatile
     private var _isPlaying: Boolean = false
@@ -284,6 +342,28 @@ class AmbientEngine(
 
     private var workerThread: Thread? = null
     private var focusRequest: AudioFocusRequest? = null
+
+    private val ringerListener: (AudioPolicy.RingerState) -> Unit = { newState ->
+        onRingerStatePushed(newState)
+    }
+
+    private fun bumpStateVersionLocked() {
+        stateVersion++
+        volatileStateVersion = stateVersion
+    }
+
+    /** Handles push ringer-mode transitions from [SystemAudioMonitor] with 0 polling IPCs. */
+    internal fun onRingerStatePushed(newState: AudioPolicy.RingerState) {
+        lock.withLock {
+            hasReceivedRingerPush = true
+            if (released || pushedRingerState == newState) return
+            pushedRingerState = newState
+            bumpStateVersionLocked()
+            if (workerThread != null) {
+                wakeCondition.signalAll()
+            }
+        }
+    }
 
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
         lock.withLock {
@@ -306,7 +386,7 @@ class AmbientEngine(
                 }
                 else -> return@withLock
             }
-            stateVersion++
+            bumpStateVersionLocked()
             wakeCondition.signalAll()
         }
     }
@@ -332,7 +412,8 @@ class AmbientEngine(
             desiredConfig = config
             desiredState = state
             hasExplicitConfig = true
-            stateVersion++
+            volatileHasExplicitConfig = true
+            bumpStateVersionLocked()
             val shouldEnsureWorker = workerThread != null || (config.enabled && config.soundEnabled)
             if (shouldEnsureWorker) {
                 ensureWorkerLocked()
@@ -349,7 +430,7 @@ class AmbientEngine(
         lock.withLock {
             if (released || videoPreviewDucked == ducked) return
             videoPreviewDucked = ducked
-            stateVersion++
+            bumpStateVersionLocked()
             if (workerThread != null) {
                 wakeCondition.signalAll()
             }
@@ -361,7 +442,7 @@ class AmbientEngine(
         lock.withLock {
             if (released) return
             desiredState = desiredState.copy(screenOff = true)
-            stateVersion++
+            bumpStateVersionLocked()
             if (workerThread != null) {
                 wakeCondition.signalAll()
             }
@@ -373,7 +454,7 @@ class AmbientEngine(
         lock.withLock {
             if (released) return
             desiredState = desiredState.copy(activeAppActivityCount = 0)
-            stateVersion++
+            bumpStateVersionLocked()
             if (workerThread != null) {
                 wakeCondition.signalAll()
             }
@@ -388,8 +469,9 @@ class AmbientEngine(
         lock.withLock {
             if (released) return
             released = true
+            volatileReleased = true
             desiredState = desiredState.copy(activeAppActivityCount = 0, screenOff = true)
-            stateVersion++
+            bumpStateVersionLocked()
             wakeCondition.signalAll()
         }
     }
@@ -416,6 +498,23 @@ class AmbientEngine(
         var activePackLocal: SoundPackId? = null
         var appliedGain = 0f
         var appliedDucked = false
+        var lastEvaluatedVersion = -1L
+        var lastFallbackRingerProbeMs = 0L
+
+        // Subscribe to push RINGER_MODE_CHANGED_ACTION off-UI once on worker startup.
+        SystemAudioMonitor.addListener(ringerListener)
+        val ringerPushActive = SystemAudioMonitor.ensureRegistered(appContext)
+        val seededRinger = if (SystemAudioMonitor.isSeeded) {
+            SystemAudioMonitor.ringerState
+        } else {
+            lastFallbackRingerProbeMs = System.nanoTime() / 1_000_000L
+            safeRingerState()
+        }
+        lock.withLock {
+            if (!hasReceivedRingerPush) {
+                pushedRingerState = if (SystemAudioMonitor.isSeeded) SystemAudioMonitor.ringerState else seededRinger
+            }
+        }
 
         fun recoverFromWriteFailure(failedTrack: AudioTrack, observedVersion: Long) {
             stopAndReleaseTrack(failedTrack)
@@ -425,6 +524,7 @@ class AmbientEngine(
             activePackLocal = null
             appliedGain = 0f
             appliedDucked = false
+            lastEvaluatedVersion = -1L
             _isPlaying = false
             _activePack = null
             awaitNextStateVersion(observedVersion)
@@ -432,6 +532,33 @@ class AmbientEngine(
 
         try {
             while (true) {
+                // Zero-IPC, zero-allocation steady-state 43 Hz streaming fast path:
+                // while playing with unchanged stateVersion and active push ringer monitor,
+                // skip lock acquisition, AudioManager probes, and LoopInputs/TransitionPlan allocations.
+                val activeTrackFast = track
+                val activeLoopFast = cachedLoop
+                if (activeTrackFast != null &&
+                    activeLoopFast != null &&
+                    AmbientEngineLogic.canUseSteadyStateFastPath(
+                        isPlaying = playing,
+                        hasExplicitConfig = volatileHasExplicitConfig,
+                        released = volatileReleased,
+                        currentStateVersion = volatileStateVersion,
+                        lastEvaluatedVersion = lastEvaluatedVersion,
+                        ringerPushActive = ringerPushActive,
+                        nowMs = if (ringerPushActive) 0L else System.nanoTime() / 1_000_000L,
+                        lastFallbackRingerProbeMs = lastFallbackRingerProbeMs,
+                    )
+                ) {
+                    val writeRes = writeOneChunk(activeTrackFast, envelope, activeLoopFast, loopCursor, chunkBuffer)
+                    if (writeRes < 0) {
+                        recoverFromWriteFailure(activeTrackFast, lastEvaluatedVersion)
+                    } else {
+                        loopCursor = writeRes
+                    }
+                    continue
+                }
+
                 val inputs = lock.withLock {
                     val effectiveCfg = if (hasExplicitConfig) {
                         desiredConfig
@@ -442,6 +569,7 @@ class AmbientEngine(
                         version = stateVersion,
                         config = effectiveCfg,
                         state = desiredState,
+                        pushedRingerState = pushedRingerState,
                         released = released,
                         snapshot = AmbientEngineLogic.PlaybackSnapshot(
                             isPlaying = playing,
@@ -473,17 +601,30 @@ class AmbientEngine(
                 // audio focus so starting the launcher never interrupts user Spotify/podcasts.
                 val probedExternalMusic = rawState.externalMusicActive ||
                     (!playing && cfg.respectMusic && safeIsMusicActive())
-                val probedRinger = if (rawState.ringerState != AudioPolicy.RingerState.NORMAL) {
-                    rawState.ringerState
-                } else {
+                val probedRinger = AmbientEngineLogic.resolveEffectiveRingerState(
+                    explicitStateRinger = rawState.ringerState,
+                    pushedRinger = inputs.pushedRingerState,
+                    respectRinger = cfg.respectRinger,
+                    ringerPushActive = ringerPushActive,
+                ) {
                     safeRingerState()
                 }
-                val effectiveState = rawState.copy(
-                    externalMusicActive = probedExternalMusic,
-                    ringerState = probedRinger,
-                )
+                if (!ringerPushActive) {
+                    lastFallbackRingerProbeMs = System.nanoTime() / 1_000_000L
+                }
+                val effectiveState = if (probedExternalMusic == rawState.externalMusicActive &&
+                    probedRinger == rawState.ringerState
+                ) {
+                    rawState
+                } else {
+                    rawState.copy(
+                        externalMusicActive = probedExternalMusic,
+                        ringerState = probedRinger,
+                    )
+                }
 
                 val plan = AmbientEngineLogic.planTransition(cfg, effectiveState, inputs.snapshot)
+                lastEvaluatedVersion = inputs.version
 
                 when (plan.action) {
                     AmbientEngineLogic.Action.FADE_OUT_PAUSE -> {
@@ -659,6 +800,9 @@ class AmbientEngine(
             abandonFocusIfHeld()
             _isPlaying = false
             _activePack = null
+        } finally {
+            SystemAudioMonitor.removeListener(ringerListener)
+            SystemAudioMonitor.unregisterIfIdle()
         }
     }
 
@@ -666,6 +810,7 @@ class AmbientEngine(
         val version: Long,
         val config: AmbientConfig,
         val state: AmbientRuntimeState,
+        val pushedRingerState: AudioPolicy.RingerState,
         val released: Boolean,
         val snapshot: AmbientEngineLogic.PlaybackSnapshot,
     )
@@ -684,7 +829,11 @@ class AmbientEngine(
         cachedLoop: ShortArray?,
     ): ShortArray {
         if (cachedPack == pack && cachedLoop != null) return cachedLoop
-        return AmbientSynthesizer.synthesizeLoop(
+        if (ambientCacheCleaned.compareAndSet(false, true)) {
+            AmbientLoopCache.pruneStaleFiles(cacheDir)
+        }
+        return AmbientLoopCache.loadOrSynthesize(
+            cacheDir = cacheDir,
             pack = pack,
             durationSec = AmbientSynthesizer.DEFAULT_DURATION_SEC,
             sampleRate = AmbientSynthesizer.SAMPLE_RATE,

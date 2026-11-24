@@ -247,4 +247,123 @@ class AmbientEngineLogicTest {
         assertEquals(AmbientEngineLogic.Action.FADE_OUT_PAUSE, pausedPermanent.action)
         assertFalse(pausedPermanent.shouldRequestFocus)
     }
+
+    @Test
+    fun `steady-state 43Hz loop performs 0 AudioManager probes and wakes immediately on push ringer updates`() {
+        SystemAudioMonitor.resetForTest()
+        try {
+            SystemAudioMonitor.setPushActiveForTest(true)
+            var stateVersion = 1L
+            var lastEvaluatedVersion = 1L
+            var pushedRinger = AudioPolicy.RingerState.NORMAL
+            var fallbackProbeCalls = 0
+            var transitionReplanCalls = 0
+
+            val listener: (AudioPolicy.RingerState) -> Unit = { newState ->
+                if (pushedRinger != newState) {
+                    pushedRinger = newState
+                    stateVersion++
+                }
+            }
+            SystemAudioMonitor.addListener(listener)
+
+            // 1,000 steady-state chunks (~23.2 seconds at 43 Hz): ZERO IPCs and ZERO transition replans.
+            for (chunk in 0 until 1_000) {
+                val fast = AmbientEngineLogic.canUseSteadyStateFastPath(
+                    isPlaying = true,
+                    hasExplicitConfig = true,
+                    released = false,
+                    currentStateVersion = stateVersion,
+                    lastEvaluatedVersion = lastEvaluatedVersion,
+                    ringerPushActive = SystemAudioMonitor.isPushActive,
+                )
+                assertTrue("chunk $chunk must take zero-IPC fast path", fast)
+                if (!fast) {
+                    transitionReplanCalls++
+                }
+            }
+            assertEquals(0, fallbackProbeCalls)
+            assertEquals(0, transitionReplanCalls)
+
+            // Hardware silence switch fires push broadcast -> immediately breaks fast path with 0 polling IPCs!
+            SystemAudioMonitor.publishRingerState(AudioPolicy.RingerState.SILENT)
+            assertFalse(
+                AmbientEngineLogic.canUseSteadyStateFastPath(
+                    isPlaying = true,
+                    hasExplicitConfig = true,
+                    released = false,
+                    currentStateVersion = stateVersion,
+                    lastEvaluatedVersion = lastEvaluatedVersion,
+                    ringerPushActive = SystemAudioMonitor.isPushActive,
+                ),
+            )
+            val resolvedRinger = AmbientEngineLogic.resolveEffectiveRingerState(
+                explicitStateRinger = AudioPolicy.RingerState.NORMAL,
+                pushedRinger = pushedRinger,
+                respectRinger = true,
+                ringerPushActive = SystemAudioMonitor.isPushActive,
+            ) {
+                fallbackProbeCalls++
+                AudioPolicy.RingerState.NORMAL
+            }
+            assertEquals(AudioPolicy.RingerState.SILENT, resolvedRinger)
+            assertEquals("push mode must never invoke fallback probe", 0, fallbackProbeCalls)
+
+            val gain40 = AudioPolicy.volumePercentToGain(40)
+            val playingSnap = AmbientEngineLogic.PlaybackSnapshot(
+                isPlaying = true,
+                activePack = SoundPackId.GHOST,
+                currentVolumeGain = gain40,
+                focusState = AmbientEngineLogic.FocusState.GRANTED,
+            )
+            val silencePlan = AmbientEngineLogic.planTransition(
+                baseConfig(respectRinger = true),
+                foregroundState(ringerState = resolvedRinger),
+                playingSnap,
+            )
+            assertEquals(AmbientEngineLogic.Action.FADE_OUT_PAUSE, silencePlan.action)
+            assertTrue(silencePlan.shouldAbandonFocus)
+            lastEvaluatedVersion = stateVersion
+
+            // Returning ringer to NORMAL via push wakes and plans START immediately
+            SystemAudioMonitor.publishRingerState(AudioPolicy.RingerState.NORMAL)
+            assertTrue("stateVersion must bump on NORMAL push", stateVersion > lastEvaluatedVersion)
+            val resumePlan = AmbientEngineLogic.planTransition(
+                baseConfig(respectRinger = true),
+                foregroundState(ringerState = pushedRinger),
+                AmbientEngineLogic.PlaybackSnapshot(isPlaying = false),
+            )
+            assertEquals(AmbientEngineLogic.Action.START, resumePlan.action)
+            assertTrue(resumePlan.shouldRequestFocus)
+
+            // Fallback mode (when push broadcast registration unavailable): throttled to >= 2,000 ms
+            assertTrue(
+                AmbientEngineLogic.canUseSteadyStateFastPath(
+                    isPlaying = true,
+                    hasExplicitConfig = true,
+                    released = false,
+                    currentStateVersion = stateVersion,
+                    lastEvaluatedVersion = stateVersion,
+                    ringerPushActive = false,
+                    nowMs = 1_999L,
+                    lastFallbackRingerProbeMs = 0L,
+                ),
+            )
+            assertFalse(
+                AmbientEngineLogic.canUseSteadyStateFastPath(
+                    isPlaying = true,
+                    hasExplicitConfig = true,
+                    released = false,
+                    currentStateVersion = stateVersion,
+                    lastEvaluatedVersion = stateVersion,
+                    ringerPushActive = false,
+                    nowMs = AmbientEngineLogic.FALLBACK_RINGER_POLL_INTERVAL_MS,
+                    lastFallbackRingerProbeMs = 0L,
+                ),
+            )
+            SystemAudioMonitor.removeListener(listener)
+        } finally {
+            SystemAudioMonitor.resetForTest()
+        }
+    }
 }

@@ -59,6 +59,9 @@ object AmbientSynthesizer {
      * Synthesizes a seamlessly looping 16-bit interleaved stereo PCM ambient bed
      * (`[L0, R0, L1, R1, ...]`) for [pack].
      *
+     * Directly quantizes split L/R channels into the target [ShortArray] without
+     * allocating an intermediate 4.24 MiB interleaved `DoubleArray`.
+     *
      * Returns an empty [ShortArray] when [pack] is [SoundPackId.OFF].
      * [SoundPackId.AUTO] resolves to [SoundPackId.GHOST].
      */
@@ -68,7 +71,20 @@ object AmbientSynthesizer {
         sampleRate: Int = SAMPLE_RATE,
     ): ShortArray {
         if (pack == SoundPackId.OFF) return ShortArray(0)
-        return AudioMastering.toPcm16(synthesizeLoopFloat(pack, durationSec, sampleRate))
+        val (left, right) = synthesizeStereoChannels(pack, durationSec, sampleRate)
+        val loopFrames = left.size
+        val pcm = ShortArray(loopFrames * CHANNELS)
+        var outIdx = 0
+        for (i in 0 until loopFrames) {
+            val l = left[i]
+            val r = right[i]
+            val safeL = if (l.isFinite()) l.coerceIn(-1.0, 1.0) else 0.0
+            val safeR = if (r.isFinite()) r.coerceIn(-1.0, 1.0) else 0.0
+            pcm[outIdx] = (safeL * 32767.0).roundToInt().coerceIn(-32767, 32767).toShort()
+            pcm[outIdx + 1] = (safeR * 32767.0).roundToInt().coerceIn(-32767, 32767).toShort()
+            outIdx += 2
+        }
+        return pcm
     }
 
     /**
@@ -90,6 +106,24 @@ object AmbientSynthesizer {
         require(durationSec in 2.0..16.0) { "durationSec must be in 2.0..16.0 s, got $durationSec" }
         if (pack == SoundPackId.OFF) return DoubleArray(0)
 
+        val (left, right) = synthesizeStereoChannels(pack, durationSec, sampleRate)
+        val loopFrames = left.size
+        val interleaved = DoubleArray(loopFrames * CHANNELS)
+        for (i in 0 until loopFrames) {
+            interleaved[i * 2] = left[i]
+            interleaved[i * 2 + 1] = right[i]
+        }
+        return interleaved
+    }
+
+    private fun synthesizeStereoChannels(
+        pack: SoundPackId,
+        durationSec: Double,
+        sampleRate: Int,
+    ): Pair<DoubleArray, DoubleArray> {
+        require(sampleRate >= 8000) { "sampleRate must be >= 8000 Hz, got $sampleRate" }
+        require(durationSec in 2.0..16.0) { "durationSec must be in 2.0..16.0 s, got $durationSec" }
+
         val resolved = if (pack == SoundPackId.AUTO) SoundPackId.GHOST else pack
         val loopFrames = (durationSec * sampleRate).roundToInt().coerceAtLeast(1024)
         val exactDur = loopFrames.toDouble() / sampleRate.toDouble()
@@ -101,22 +135,33 @@ object AmbientSynthesizer {
         val noiseL = AudioDsp.SeededNoise(seedBase xor 0x1111_2222_3333_4444L)
         val noiseR = AudioDsp.SeededNoise(seedBase xor 0x5555_6666_7777_8888L)
 
-        val (targetRms, highPassHz, lowPassHz) = when (resolved) {
+        val targetRms: Double
+        val highPassHz: Double
+        val lowPassHz: Double
+        when (resolved) {
             SoundPackId.GHOST, SoundPackId.AUTO, SoundPackId.OFF -> {
                 renderGhostHarbor(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.068, 105.0, 4_800.0)
+                targetRms = 0.068
+                highPassHz = 105.0
+                lowPassHz = 4_800.0
             }
             SoundPackId.THREEDS -> {
                 renderThreeDsHorizon(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.064, 110.0, 5_600.0)
+                targetRms = 0.064
+                highPassHz = 110.0
+                lowPassHz = 5_600.0
             }
             SoundPackId.OLED -> {
                 renderOledMidnightHush(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.048, 150.0, 2_200.0)
+                targetRms = 0.048
+                highPassHz = 150.0
+                lowPassHz = 2_200.0
             }
             SoundPackId.NEON -> {
                 renderNeonSynthDrone(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.074, 105.0, 6_800.0)
+                targetRms = 0.074
+                highPassHz = 105.0
+                lowPassHz = 6_800.0
             }
         }
 
@@ -130,13 +175,7 @@ object AmbientSynthesizer {
             targetRms = targetRms,
             peakCeiling = AMBIENT_PEAK_CEILING,
         )
-
-        val interleaved = DoubleArray(loopFrames * CHANNELS)
-        for (i in 0 until loopFrames) {
-            interleaved[i * 2] = left[i]
-            interleaved[i * 2 + 1] = right[i]
-        }
-        return interleaved
+        return left to right
     }
 
     // =========================================================================
@@ -178,13 +217,17 @@ object AmbientSynthesizer {
         val a4 = snapHz(A4, durSec)
         val e5 = snapHz(E5, durSec)
         val invSr = 1.0 / sr
+        val twoPiInvDur = AudioDsp.TWO_PI / durSec
+        val twoPi2InvDur = AudioDsp.TWO_PI * (2.0 / durSec)
 
         for (i in 0 until n) {
             val t = i * invSr
-            val lfo1 = 0.5 + 0.5 * sin(AudioDsp.TWO_PI * (1.0 / durSec) * t)
-            val lfo2 = 0.5 + 0.5 * sin(AudioDsp.TWO_PI * (2.0 / durSec) * t + 1.1)
-            val panL = 0.85 + 0.15 * cos(AudioDsp.TWO_PI * (1.0 / durSec) * t)
-            val panR = 0.85 - 0.15 * cos(AudioDsp.TWO_PI * (1.0 / durSec) * t)
+            val lfoPhase = twoPiInvDur * t
+            val lfo1 = 0.5 + 0.5 * sin(lfoPhase)
+            val lfo2 = 0.5 + 0.5 * sin(twoPi2InvDur * t + 1.1)
+            val panCos = 0.15 * cos(lfoPhase)
+            val panL = 0.85 + panCos
+            val panR = 0.85 - panCos
 
             // Warm oak hull hum
             val hull = 0.24 * AudioDsp.sine(d3 * t) + 0.14 * AudioDsp.sine(a3 * t + 0.12)
@@ -344,40 +387,52 @@ object AmbientSynthesizer {
         val fs5L = snapHz(FS5, durSec)
         val fs5R = snapHz(FS5, durSec, cycleOffset = 1)
 
-        val rawL = DoubleArray(n)
-        val rawR = DoubleArray(n)
+        // Synthesize directly into zeroed [left]/[right] with precomputed harmonic weights
+        // (eliminating both 4.24 MiB transient rawL/rawR arrays and ~34M redundant trig calls).
+        val sawE3L = AudioDsp.sawHarmonicWeights(maxHarmonics = 6, freqHz = e3L, sampleRate = sr)
+        val sawE3R = AudioDsp.sawHarmonicWeights(maxHarmonics = 6, freqHz = e3R, sampleRate = sr)
+        val pulseB3L = AudioDsp.pulseHarmonicWeights(duty = 0.42, maxHarmonics = 5, freqHz = b3L, sampleRate = sr)
+        val pulseB3R = AudioDsp.pulseHarmonicWeights(duty = 0.42, maxHarmonics = 5, freqHz = b3R, sampleRate = sr)
+        val sawE4L = AudioDsp.sawHarmonicWeights(maxHarmonics = 7, freqHz = e4L, sampleRate = sr)
+        val sawE4R = AudioDsp.sawHarmonicWeights(maxHarmonics = 7, freqHz = e4R, sampleRate = sr)
+        val pulseGs4L = AudioDsp.pulseHarmonicWeights(duty = 0.32, maxHarmonics = 6, freqHz = gs4L, sampleRate = sr)
+        val pulseGs4R = AudioDsp.pulseHarmonicWeights(duty = 0.32, maxHarmonics = 6, freqHz = gs4R, sampleRate = sr)
+        val sawB4L = AudioDsp.sawHarmonicWeights(maxHarmonics = 6, freqHz = b4L, sampleRate = sr)
+        val sawB4R = AudioDsp.sawHarmonicWeights(maxHarmonics = 6, freqHz = b4R, sampleRate = sr)
+
         val invSr = 1.0 / sr
+        val shimmerRate = AudioDsp.TWO_PI * (2.0 / durSec)
 
         for (i in 0 until n) {
             val t = i * invSr
-            val shimmer = 0.55 + 0.45 * sin(AudioDsp.TWO_PI * (2.0 / durSec) * t)
+            val shimmer = 0.55 + 0.45 * sin(shimmerRate * t)
 
-            val bassL = AudioDsp.bandLimitedSaw(e3L * t, maxHarmonics = 6, freqHz = e3L, sampleRate = sr) * 0.26 +
-                AudioDsp.warmPulse(b3L * t, duty = 0.42, maxHarmonics = 5, freqHz = b3L, sampleRate = sr) * 0.18
-            val bassR = AudioDsp.bandLimitedSaw(e3R * t + 0.13, maxHarmonics = 6, freqHz = e3R, sampleRate = sr) * 0.26 +
-                AudioDsp.warmPulse(b3R * t + 0.21, duty = 0.42, maxHarmonics = 5, freqHz = b3R, sampleRate = sr) * 0.18
+            val bassL = AudioDsp.evalSawHarmonics(e3L * t, sawE3L) * 0.26 +
+                AudioDsp.evalPulseHarmonics(b3L * t, pulseB3L) * 0.18
+            val bassR = AudioDsp.evalSawHarmonics(e3R * t + 0.13, sawE3R) * 0.26 +
+                AudioDsp.evalPulseHarmonics(b3R * t + 0.21, pulseB3R) * 0.18
 
-            val midL = AudioDsp.bandLimitedSaw(e4L * t, maxHarmonics = 7, freqHz = e4L, sampleRate = sr) * 0.24 +
-                AudioDsp.warmPulse(gs4L * t, duty = 0.32, maxHarmonics = 6, freqHz = gs4L, sampleRate = sr) * 0.14 +
-                AudioDsp.bandLimitedSaw(b4L * t, maxHarmonics = 6, freqHz = b4L, sampleRate = sr) * 0.18 +
+            val midL = AudioDsp.evalSawHarmonics(e4L * t, sawE4L) * 0.24 +
+                AudioDsp.evalPulseHarmonics(gs4L * t, pulseGs4L) * 0.14 +
+                AudioDsp.evalSawHarmonics(b4L * t, sawB4L) * 0.18 +
                 AudioDsp.sine(fs5L * t) * 0.12 * shimmer
 
-            val midR = AudioDsp.bandLimitedSaw(e4R * t + 0.09, maxHarmonics = 7, freqHz = e4R, sampleRate = sr) * 0.24 +
-                AudioDsp.warmPulse(gs4R * t + 0.17, duty = 0.32, maxHarmonics = 6, freqHz = gs4R, sampleRate = sr) * 0.14 +
-                AudioDsp.bandLimitedSaw(b4R * t + 0.25, maxHarmonics = 6, freqHz = b4R, sampleRate = sr) * 0.18 +
+            val midR = AudioDsp.evalSawHarmonics(e4R * t + 0.09, sawE4R) * 0.24 +
+                AudioDsp.evalPulseHarmonics(gs4R * t + 0.17, pulseGs4R) * 0.14 +
+                AudioDsp.evalSawHarmonics(b4R * t + 0.25, sawB4R) * 0.18 +
                 AudioDsp.sine(fs5R * t + 0.31) * 0.12 * shimmer
 
-            rawL[i] = bassL + midL
-            rawR[i] = bassR + midR
+            left[i] = bassL + midL
+            right[i] = bassR + midR
         }
 
         // Slow circular-primed resonant LPF sweep (520 Hz <-> 1,850 Hz) for dreamy lo-fi analog warmth
-        applyCircularSweepLowPass(rawL, durSec, sr, minHz = 520.0, maxHz = 1850.0, q = 1.55, phaseOffset = 0.0)
-        applyCircularSweepLowPass(rawR, durSec, sr, minHz = 520.0, maxHz = 1850.0, q = 1.55, phaseOffset = 0.35)
+        applyCircularSweepLowPass(left, durSec, sr, minHz = 520.0, maxHz = 1850.0, q = 1.55, phaseOffset = 0.0)
+        applyCircularSweepLowPass(right, durSec, sr, minHz = 520.0, maxHz = 1850.0, q = 1.55, phaseOffset = 0.35)
 
         for (i in 0 until n) {
-            left[i] += rawL[i] * 0.78
-            right[i] += rawR[i] * 0.78
+            left[i] *= 0.78
+            right[i] *= 0.78
         }
 
         // Subtle warm lo-fi synth air
@@ -435,22 +490,30 @@ object AmbientSynthesizer {
         val warmupFrames = (FILTER_WARMUP_SEC * sr).roundToInt().coerceAtLeast(128)
         val totalFrames = warmupFrames + loopFrames + overlapFrames
 
-        val rawL = DoubleArray(loopFrames + overlapFrames)
-        val rawR = DoubleArray(loopFrames + overlapFrames)
-
         val bpL = AudioDsp.BiquadFilter.bandPass(baseHz, q, sr)
         val bpR = AudioDsp.BiquadFilter.bandPass(baseHz, q, sr)
         val invSr = 1.0 / sr
+        val swellOmega = AudioDsp.TWO_PI * (swellCycles / durSec)
+        val panOmega = AudioDsp.TWO_PI * (panCycles / durSec)
+        val sameCycles = swellCycles == panCycles
+        val halfPiInvOverlap = (0.5 * PI) / overlapFrames.toDouble()
         val updateStep = 64
         var brownStateL = 0.0
         var brownStateR = 0.0
 
+        // Stream filtered noise directly into [left]/[right] with inline constant-power
+        // circular overlap-add (eliminating 5.08 MiB of transient rawL/rawR arrays).
         for (i in 0 until totalFrames) {
             val logicalIdx = i - warmupFrames
-            val tMod = ((logicalIdx % loopFrames) + loopFrames) % loopFrames * invSr
-            if (i % updateStep == 0) {
-                val swell = sin(AudioDsp.TWO_PI * (swellCycles / durSec) * tMod)
-                val swellR = sin(AudioDsp.TWO_PI * (swellCycles / durSec) * tMod + 0.55)
+            val wrappedIdx = if (logicalIdx >= 0) {
+                if (logicalIdx < loopFrames) logicalIdx else logicalIdx - loopFrames
+            } else {
+                ((logicalIdx % loopFrames) + loopFrames) % loopFrames
+            }
+            val tMod = wrappedIdx * invSr
+            if ((i and (updateStep - 1)) == 0) {
+                val swell = sin(swellOmega * tMod)
+                val swellR = sin(swellOmega * tMod + 0.55)
                 val fcL = (baseHz + sweepHz * swell).coerceIn(80.0, sr * 0.40)
                 val fcR = (baseHz + sweepHz * swellR).coerceIn(80.0, sr * 0.40)
                 bpL.updateBandPass(fcL, q, sr)
@@ -470,26 +533,29 @@ object AmbientSynthesizer {
             val fR = bpR.processSample(sR)
 
             if (logicalIdx >= 0) {
-                val swellEnv = 0.72 + 0.28 * sin(AudioDsp.TWO_PI * (swellCycles / durSec) * tMod)
-                val panOsc = panDepth * sin(AudioDsp.TWO_PI * (panCycles / durSec) * tMod)
-                val gL = (1.0 - panOsc * 0.5) * swellEnv
-                val gR = (1.0 + panOsc * 0.5) * swellEnv
-                rawL[logicalIdx] = fL * gL
-                rawR[logicalIdx] = fR * gR
+                val swellSin = sin(swellOmega * tMod)
+                val swellEnv = 0.72 + 0.28 * swellSin
+                val panOsc = panDepth * if (sameCycles) swellSin else sin(panOmega * tMod)
+                val gL = (1.0 - panOsc * 0.5) * swellEnv * amp
+                val gR = (1.0 + panOsc * 0.5) * swellEnv * amp
+                when {
+                    logicalIdx < overlapFrames -> {
+                        val wIn = sin(logicalIdx * halfPiInvOverlap)
+                        left[logicalIdx] += fL * gL * wIn
+                        right[logicalIdx] += fR * gR * wIn
+                    }
+                    logicalIdx < loopFrames -> {
+                        left[logicalIdx] += fL * gL
+                        right[logicalIdx] += fR * gR
+                    }
+                    else -> {
+                        val k = logicalIdx - loopFrames
+                        val wOut = cos(k * halfPiInvOverlap)
+                        left[k] += fL * gL * wOut
+                        right[k] += fR * gR * wOut
+                    }
+                }
             }
-        }
-
-        // Constant-power circular overlap-add: tail[0] smoothly becomes frame 0 (exact continuation of frame L-1)
-        for (k in 0 until overlapFrames) {
-            val p = k.toDouble() / overlapFrames.toDouble()
-            val wIn = sin(0.5 * PI * p)
-            val wOut = cos(0.5 * PI * p)
-            left[k] += (rawL[k] * wIn + rawL[loopFrames + k] * wOut) * amp
-            right[k] += (rawR[k] * wIn + rawR[loopFrames + k] * wOut) * amp
-        }
-        for (k in overlapFrames until loopFrames) {
-            left[k] += rawL[k] * amp
-            right[k] += rawR[k] * amp
         }
     }
 
@@ -765,6 +831,10 @@ class AmbientFadeEnvelope(
     val isSilent: Boolean
         get() = playbackRamp.target <= 1e-6 && playbackRamp.current <= 1e-6
 
+    /** True when all three ramps (playback fade, ducking, volume) have settled at their targets. */
+    val isSettled: Boolean
+        get() = playbackRamp.isComplete && duckRamp.isComplete && volumeRamp.isComplete
+
     /** Starts a smooth half-cosine fade-in toward `1.0` (default `600 ms`). */
     fun fadeIn(durationMs: Int = AmbientSynthesizer.FADE_IN_MS) {
         playbackRamp.setTarget(1.0, msToFrames(durationMs))
@@ -841,6 +911,30 @@ class AmbientFadeEnvelope(
         }
         var cursor = ((loopFrameCursor % loopFrames) + loopFrames) % loopFrames
         var outIdx = 0
+        if (isSettled) {
+            val g = currentGain
+            if (g <= 0.0) {
+                outChunk.fill(0, 0, safeFrames * 2)
+                return (cursor + safeFrames) % loopFrames
+            }
+            var remaining = safeFrames
+            while (remaining > 0) {
+                val span = minOf(remaining, loopFrames - cursor)
+                var srcIdx = cursor * 2
+                var i = 0
+                while (i < span) {
+                    outChunk[outIdx] = (loopStereoPcm[srcIdx] * g).roundToInt().coerceIn(-32767, 32767).toShort()
+                    outChunk[outIdx + 1] = (loopStereoPcm[srcIdx + 1] * g).roundToInt().coerceIn(-32767, 32767).toShort()
+                    srcIdx += 2
+                    outIdx += 2
+                    i++
+                }
+                cursor += span
+                if (cursor >= loopFrames) cursor = 0
+                remaining -= span
+            }
+            return cursor
+        }
         repeat(safeFrames) {
             val g = nextFrameGain()
             val srcIdx = cursor * 2

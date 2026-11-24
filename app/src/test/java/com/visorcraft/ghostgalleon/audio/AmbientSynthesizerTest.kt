@@ -236,6 +236,114 @@ class AmbientSynthesizerTest {
         assertEquals(0.0, badEnv.volumeGain, 0.0)
         badEnv.setVolumeGain(Float.POSITIVE_INFINITY, durationMs = 0)
         assertEquals(0.0, badEnv.volumeGain, 0.0)
+
+        // 6. Settled steady-state chunk render matches frame-by-frame scaling bit-for-bit across wrap-around
+        val settledEnv = AmbientFadeEnvelope(sampleRate = sr, initialVolumeGain = 0.65f).apply {
+            fadeIn(0)
+            setDucked(false, durationMs = 0)
+        }
+        assertTrue(settledEnv.isSettled)
+        val settledChunk = ShortArray(1024 * 2)
+        val startCursor = (loop.size / 2) - 123
+        val nextCursor = settledEnv.renderLoopChunk(loop, startCursor, settledChunk, 1024)
+        val loopFrames = loop.size / 2
+        assertEquals((startCursor + 1024) % loopFrames, nextCursor)
+        val g = settledEnv.currentGain
+        for (f in 0 until 1024) {
+            val srcFrame = (startCursor + f) % loopFrames
+            val expL = Math.round(loop[srcFrame * 2] * g).toInt().coerceIn(-32767, 32767).toShort()
+            val expR = Math.round(loop[srcFrame * 2 + 1] * g).toInt().coerceIn(-32767, 32767).toShort()
+            assertEquals("settled L mismatch at $f", expL, settledChunk[f * 2])
+            assertEquals("settled R mismatch at $f", expR, settledChunk[f * 2 + 1])
+        }
+    }
+
+    @Test
+    fun `precomputed AudioDsp harmonic evaluators match textbook Lanczos Fourier formulas to 1e-12`() {
+        val duties = doubleArrayOf(0.12, 0.32, 0.42, 0.50, 0.78)
+        val harmonicCounts = intArrayOf(1, 3, 5, 6, 7, 12)
+        val phases = DoubleArray(40) { i -> i * 0.0731 + 0.011 }
+
+        for (h in harmonicCounts) {
+            val sawWeights = AudioDsp.sawHarmonicWeights(maxHarmonics = h, freqHz = 220.0, sampleRate = sr)
+            for (p in phases) {
+                val expectedSaw = referenceBandLimitedSaw(p, h, 220.0, sr)
+                val fastDirect = AudioDsp.bandLimitedSaw(p, maxHarmonics = h, freqHz = 220.0, sampleRate = sr)
+                val fastWeights = AudioDsp.evalSawHarmonics(p, sawWeights)
+                assertEquals("saw direct mismatch h=$h p=$p", expectedSaw, fastDirect, 1e-12)
+                assertEquals("saw precomputed mismatch h=$h p=$p", expectedSaw, fastWeights, 1e-12)
+            }
+            for (d in duties) {
+                val pulseWeights = AudioDsp.pulseHarmonicWeights(duty = d, maxHarmonics = h, freqHz = 220.0, sampleRate = sr)
+                for (p in phases) {
+                    val expectedPulse = referenceWarmPulse(p, d, h, 220.0, sr)
+                    val fastDirect = AudioDsp.warmPulse(p, duty = d, maxHarmonics = h, freqHz = 220.0, sampleRate = sr)
+                    val fastWeights = AudioDsp.evalPulseHarmonics(p, pulseWeights)
+                    assertEquals("pulse direct mismatch h=$h d=$d p=$p", expectedPulse, fastDirect, 1e-12)
+                    assertEquals("pulse precomputed mismatch h=$h d=$d p=$p", expectedPulse, fastWeights, 1e-12)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `synthesizeLoop direct PCM matches synthesizeLoopFloat bit-for-bit and meets synthesis speed budget`() {
+        // Warm JIT briefly with 2s renders
+        AmbientSynthesizer.synthesizeLoop(SoundPackId.NEON, durationSec = 2.0)
+
+        val timings = StringBuilder()
+        for (pack in SoundPackId.CONCRETE_PACKS) {
+            val t0 = System.nanoTime()
+            val directPcm = AmbientSynthesizer.synthesizeLoop(pack)
+            val elapsedMs = (System.nanoTime() - t0) / 1_000_000.0
+            timings.append("$pack=${"%.1f".format(elapsedMs)}ms ")
+
+            val floatStereo = AmbientSynthesizer.synthesizeLoopFloat(pack)
+            val viaFloatPcm = AudioMastering.toPcm16(floatStereo)
+            assertArrayEquals("$pack direct PCM must match float->PCM bit-for-bit", viaFloatPcm, directPcm)
+            assertTrue("$pack 6s ambient synthesis too slow: ${"%.1f".format(elapsedMs)}ms", elapsedMs < 400.0)
+        }
+        println("AmbientSynthesizerTest (6s stereo synthesis): $timings")
+    }
+
+    private fun referenceBandLimitedSaw(
+        phaseCycles: Double,
+        maxHarmonics: Int,
+        freqHz: Double,
+        sampleRate: Int,
+    ): Double {
+        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
+        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
+        var acc = 0.0
+        for (k in 1..harmonics) {
+            val sigmaArg = kotlin.math.PI * k / (harmonics + 1.0)
+            val sigma = kotlin.math.sin(sigmaArg) / sigmaArg
+            val polarity = if (k % 2 == 1) 1.0 else -1.0
+            val amp = polarity * (2.0 / (k * kotlin.math.PI)) * sigma
+            acc += amp * kotlin.math.sin(AudioDsp.TWO_PI * k * phaseCycles)
+        }
+        return acc.coerceIn(-1.25, 1.25)
+    }
+
+    private fun referenceWarmPulse(
+        phaseCycles: Double,
+        duty: Double,
+        maxHarmonics: Int,
+        freqHz: Double,
+        sampleRate: Int,
+    ): Double {
+        val d = duty.coerceIn(0.08, 0.92)
+        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
+        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
+        var acc = 0.0
+        val normFactor = 1.0 / (2.0 * kotlin.math.sin(kotlin.math.PI * d).coerceAtLeast(0.15) / kotlin.math.PI).coerceAtLeast(0.5)
+        for (k in 1..harmonics) {
+            val sigmaArg = kotlin.math.PI * k / (harmonics + 1.0)
+            val sigma = kotlin.math.sin(sigmaArg) / sigmaArg
+            val amp = (2.0 / (k * kotlin.math.PI)) * kotlin.math.sin(k * kotlin.math.PI * d) * sigma
+            acc += amp * kotlin.math.cos(AudioDsp.TWO_PI * k * phaseCycles)
+        }
+        return (acc * normFactor).coerceIn(-1.25, 1.25)
     }
 
     private fun normalizedDistance(a: DoubleArray, b: DoubleArray): Double {

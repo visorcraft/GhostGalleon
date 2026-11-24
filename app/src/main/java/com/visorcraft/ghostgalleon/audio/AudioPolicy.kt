@@ -54,18 +54,77 @@ object AudioPolicy {
         val right: Float,
     )
 
+    private const val REPEAT_LUT_MAX_STREAK: Int = 64
+
+    private val VOLUME_GAIN_LUT: FloatArray = FloatArray(101) { pct ->
+        when (pct) {
+            0 -> 0f
+            100 -> 1f
+            else -> {
+                val p = pct / 100.0
+                val minLinear = 10.0.pow(-VOLUME_TAPER_DB / 20.0)
+                val raw = 10.0.pow((p - 1.0) * VOLUME_TAPER_DB / 20.0)
+                ((raw - minLinear) / (1.0 - minLinear)).toFloat().coerceIn(0f, 1f)
+            }
+        }
+    }
+
+    private val REPEAT_GAIN_LUT: FloatArray = FloatArray(REPEAT_LUT_MAX_STREAK + 1) { streak ->
+        if (streak == 0) {
+            1.0f
+        } else {
+            (REPEAT_MIN_GAIN + (1.0 - REPEAT_MIN_GAIN) * exp(-streak.toDouble() / 4.5))
+                .toFloat()
+                .coerceIn(REPEAT_MIN_GAIN, 1.0f)
+        }
+    }
+
+    private val REPEAT_PITCH_LUT: FloatArray = FloatArray(REPEAT_LUT_MAX_STREAK + 1) { streak ->
+        if (streak == 0) {
+            1.0f
+        } else {
+            val s = streak.toDouble()
+            val lift = 0.032 * (1.0 - exp(-s / 5.0))
+            val microWave = 0.012 * sin(s * 1.35)
+            (1.0 + lift + microWave)
+                .toFloat()
+                .coerceIn(REPEAT_MIN_PITCH, REPEAT_MAX_PITCH)
+        }
+    }
+
+    private val UNITY_REPEAT_EXPRESSION: RepeatExpression = RepeatExpression(
+        gainMultiplier = 1.0f,
+        pitchRate = 1.0f,
+    )
+
+    private val ZERO_STEREO_GAINS: StereoGains = StereoGains(left = 0f, right = 0f)
+
     /**
      * Converts a UI volume percentage (`0..100`) into linear amplitude (`0f..1f`)
      * along a smooth 38 dB perceptual logarithmic taper with exact endpoints (`0 -> 0f`, `100 -> 1f`).
      */
-    fun volumePercentToGain(percent: Int): Float {
-        val clamped = percent.coerceIn(0, 100)
-        if (clamped == 0) return 0f
-        if (clamped == 100) return 1f
-        val p = clamped / 100.0
-        val minLinear = 10.0.pow(-VOLUME_TAPER_DB / 20.0)
-        val raw = 10.0.pow((p - 1.0) * VOLUME_TAPER_DB / 20.0)
-        return ((raw - minLinear) / (1.0 - minLinear)).toFloat().coerceIn(0f, 1f)
+    fun volumePercentToGain(percent: Int): Float =
+        VOLUME_GAIN_LUT[percent.coerceIn(0, 100)]
+
+    /** Zero-allocation velocity gain multiplier for [repeatExpression]. */
+    fun repeatGainMultiplier(streak: Int): Float {
+        if (streak <= 0) return 1.0f
+        if (streak <= REPEAT_LUT_MAX_STREAK) return REPEAT_GAIN_LUT[streak]
+        return (REPEAT_MIN_GAIN + (1.0 - REPEAT_MIN_GAIN) * exp(-streak.toDouble() / 4.5))
+            .toFloat()
+            .coerceIn(REPEAT_MIN_GAIN, 1.0f)
+    }
+
+    /** Zero-allocation pitch rate multiplier for [repeatExpression]. */
+    fun repeatPitchRate(streak: Int): Float {
+        if (streak <= 0) return 1.0f
+        if (streak <= REPEAT_LUT_MAX_STREAK) return REPEAT_PITCH_LUT[streak]
+        val s = streak.toDouble()
+        val lift = 0.032 * (1.0 - exp(-s / 5.0))
+        val microWave = 0.012 * sin(s * 1.35)
+        return (1.0 + lift + microWave)
+            .toFloat()
+            .coerceIn(REPEAT_MIN_PITCH, REPEAT_MAX_PITCH)
     }
 
     /**
@@ -75,18 +134,11 @@ object AudioPolicy {
      * Fresh single presses (`streak <= 0`) play at exact unity (`1.0f, 1.0f`).
      */
     fun repeatExpression(streak: Int): RepeatExpression {
-        if (streak <= 0) return RepeatExpression(gainMultiplier = 1.0f, pitchRate = 1.0f)
-        val s = streak.toDouble()
-        val gain = (REPEAT_MIN_GAIN + (1.0 - REPEAT_MIN_GAIN) * exp(-s / 4.5))
-            .toFloat()
-            .coerceIn(REPEAT_MIN_GAIN, 1.0f)
-        // Gentle upward lift as the user glides + tiny organic micro-undulation
-        val lift = 0.032 * (1.0 - exp(-s / 5.0))
-        val microWave = 0.012 * sin(s * 1.35)
-        val pitch = (1.0 + lift + microWave)
-            .toFloat()
-            .coerceIn(REPEAT_MIN_PITCH, REPEAT_MAX_PITCH)
-        return RepeatExpression(gainMultiplier = gain, pitchRate = pitch)
+        if (streak <= 0) return UNITY_REPEAT_EXPRESSION
+        return RepeatExpression(
+            gainMultiplier = repeatGainMultiplier(streak),
+            pitchRate = repeatPitchRate(streak),
+        )
     }
 
     /**
@@ -115,12 +167,14 @@ object AudioPolicy {
      * using exact constant-power stereo panning (`left^2 + right^2 == masterGain^2`).
      */
     fun stereoGains(masterGain: Float, pan: Float): StereoGains {
-        if (!masterGain.isFinite()) return StereoGains(0f, 0f)
+        if (!masterGain.isFinite()) return ZERO_STEREO_GAINS
         val g = masterGain.coerceIn(0f, 1f)
-        if (g <= 0f) return StereoGains(0f, 0f)
+        if (g <= 0f) return ZERO_STEREO_GAINS
         val safePan = if (pan.isFinite()) pan else 0f
-        val (l, r) = AudioDsp.constantPowerPan(safePan)
-        return StereoGains(left = g * l, right = g * r)
+        return StereoGains(
+            left = g * AudioDsp.constantPowerPanLeft(safePan),
+            right = g * AudioDsp.constantPowerPanRight(safePan),
+        )
     }
 
     /**

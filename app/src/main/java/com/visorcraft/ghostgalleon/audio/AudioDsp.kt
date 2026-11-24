@@ -17,6 +17,138 @@ object AudioDsp {
 
     const val SAMPLE_RATE: Int = 44100
     const val TWO_PI: Double = 2.0 * PI
+    private const val MAX_CACHED_HARMONICS: Int = 32
+
+    // Precomputed Lanczos sigma factors indexed by [harmonics][k - 1] for H in 1..32.
+    private val LANCZOS_SIGMA: Array<DoubleArray> = Array(MAX_CACHED_HARMONICS + 1) { h ->
+        if (h == 0) {
+            DoubleArray(0)
+        } else {
+            DoubleArray(h) { idx ->
+                val k = idx + 1
+                val sigmaArg = PI * k / (h + 1.0)
+                sin(sigmaArg) / sigmaArg
+            }
+        }
+    }
+
+    // Precomputed Lanczos-windowed band-limited sawtooth weights indexed by [harmonics][k - 1].
+    private val SAW_HARMONIC_WEIGHTS: Array<DoubleArray> = Array(MAX_CACHED_HARMONICS + 1) { h ->
+        if (h == 0) {
+            DoubleArray(0)
+        } else {
+            val sigmas = LANCZOS_SIGMA[h]
+            DoubleArray(h) { idx ->
+                val k = idx + 1
+                val polarity = if ((k and 1) == 1) 1.0 else -1.0
+                polarity * (2.0 / (k * PI)) * sigmas[idx]
+            }
+        }
+    }
+
+    /**
+     * Resolves precomputed Lanczos-windowed harmonic weights for [bandLimitedSaw].
+     * Zero allocations for `harmonics <= 32`; reuse across sample loops via [evalSawHarmonics].
+     */
+    fun sawHarmonicWeights(
+        maxHarmonics: Int = 8,
+        freqHz: Double = 440.0,
+        sampleRate: Int = SAMPLE_RATE,
+    ): DoubleArray {
+        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
+        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
+        if (harmonics <= MAX_CACHED_HARMONICS) return SAW_HARMONIC_WEIGHTS[harmonics]
+        return DoubleArray(harmonics) { idx ->
+            val k = idx + 1
+            val sigmaArg = PI * k / (harmonics + 1.0)
+            val sigma = sin(sigmaArg) / sigmaArg
+            val polarity = if ((k and 1) == 1) 1.0 else -1.0
+            polarity * (2.0 / (k * PI)) * sigma
+        }
+    }
+
+    /**
+     * Precomputes normalized Lanczos-windowed duty harmonic weights for [warmPulse].
+     * Reuse across sample loops via [evalPulseHarmonics] to eliminate per-sample trig overhead.
+     */
+    fun pulseHarmonicWeights(
+        duty: Double = 0.5,
+        maxHarmonics: Int = 7,
+        freqHz: Double = 440.0,
+        sampleRate: Int = SAMPLE_RATE,
+    ): DoubleArray {
+        val d = duty.coerceIn(0.08, 0.92)
+        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
+        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
+        val sinPiD = sin(PI * d)
+        val normFactor = 1.0 / (2.0 * sinPiD.coerceAtLeast(0.15) / PI).coerceAtLeast(0.5)
+        val sigmas = if (harmonics <= MAX_CACHED_HARMONICS) LANCZOS_SIGMA[harmonics] else null
+        val twoCosPiD = 2.0 * cos(PI * d)
+        var sPrev = 0.0
+        var sCurr = sinPiD
+        return DoubleArray(harmonics) { idx ->
+            val k = idx + 1
+            val sinKPiD = if (k == 1) {
+                sCurr
+            } else {
+                val next = twoCosPiD * sCurr - sPrev
+                sPrev = sCurr
+                sCurr = next
+                next
+            }
+            val sigma = if (sigmas != null) {
+                sigmas[idx]
+            } else {
+                val sigmaArg = PI * k / (harmonics + 1.0)
+                sin(sigmaArg) / sigmaArg
+            }
+            ((2.0 / (k * PI)) * sinKPiD * sigma) * normFactor
+        }
+    }
+
+    /** Evaluates a sawtooth sample from precomputed [weights] using 1 `sin` + 1 `cos` + Chebyshev recurrence. */
+    fun evalSawHarmonics(phaseCycles: Double, weights: DoubleArray): Double {
+        val h = weights.size
+        if (h == 0) return 0.0
+        val theta = TWO_PI * phaseCycles
+        val s1 = sin(theta)
+        if (h == 1) return (weights[0] * s1).coerceIn(-1.25, 1.25)
+        val twoC1 = 2.0 * cos(theta)
+        var sPrev = 0.0
+        var sCurr = s1
+        var acc = weights[0] * s1
+        var i = 1
+        while (i < h) {
+            val sNext = twoC1 * sCurr - sPrev
+            acc += weights[i] * sNext
+            sPrev = sCurr
+            sCurr = sNext
+            i++
+        }
+        return acc.coerceIn(-1.25, 1.25)
+    }
+
+    /** Evaluates a warm pulse sample from precomputed [weights] using 1 `cos` + Chebyshev recurrence. */
+    fun evalPulseHarmonics(phaseCycles: Double, weights: DoubleArray): Double {
+        val h = weights.size
+        if (h == 0) return 0.0
+        val theta = TWO_PI * phaseCycles
+        val c1 = cos(theta)
+        if (h == 1) return (weights[0] * c1).coerceIn(-1.25, 1.25)
+        val twoC1 = 2.0 * c1
+        var cPrev = 1.0
+        var cCurr = c1
+        var acc = weights[0] * c1
+        var i = 1
+        while (i < h) {
+            val cNext = twoC1 * cCurr - cPrev
+            acc += weights[i] * cNext
+            cPrev = cCurr
+            cCurr = cNext
+            i++
+        }
+        return acc.coerceIn(-1.25, 1.25)
+    }
 
     /** Pure sine oscillator for normalized phase in cycles (`0.0..1.0`, wrapping seamlessly). */
     fun sine(phaseCycles: Double): Double = sin(TWO_PI * phaseCycles)
@@ -48,13 +180,33 @@ object AudioDsp {
         val d = duty.coerceIn(0.08, 0.92)
         val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
         val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
-        var acc = 0.0
-        val normFactor = 1.0 / (2.0 * sin(PI * d).coerceAtLeast(0.15) / PI).coerceAtLeast(0.5)
-        for (k in 1..harmonics) {
-            val sigmaArg = PI * k / (harmonics + 1.0)
-            val sigma = sin(sigmaArg) / sigmaArg
-            val amp = (2.0 / (k * PI)) * sin(k * PI * d) * sigma
-            acc += amp * cos(TWO_PI * k * phaseCycles)
+        val sinPiD = sin(PI * d)
+        val normFactor = 1.0 / (2.0 * sinPiD.coerceAtLeast(0.15) / PI).coerceAtLeast(0.5)
+        val sigmas = if (harmonics <= MAX_CACHED_HARMONICS) LANCZOS_SIGMA[harmonics] else null
+        val twoCosPiD = 2.0 * cos(PI * d)
+        val c1 = cos(TWO_PI * phaseCycles)
+        val twoC1 = 2.0 * c1
+        var dPrev = 0.0
+        var dCurr = sinPiD
+        var cPrev = 1.0
+        var cCurr = c1
+        var acc = (2.0 / PI) * sinPiD * (sigmas?.get(0) ?: (sin(PI / (harmonics + 1.0)) / (PI / (harmonics + 1.0)))) * c1
+        var k = 2
+        while (k <= harmonics) {
+            val dNext = twoCosPiD * dCurr - dPrev
+            dPrev = dCurr
+            dCurr = dNext
+            val cNext = twoC1 * cCurr - cPrev
+            cPrev = cCurr
+            cCurr = cNext
+            val sigma = if (sigmas != null) {
+                sigmas[k - 1]
+            } else {
+                val sigmaArg = PI * k / (harmonics + 1.0)
+                sin(sigmaArg) / sigmaArg
+            }
+            acc += (2.0 / (k * PI)) * dCurr * sigma * cCurr
+            k++
         }
         return (acc * normFactor).coerceIn(-1.25, 1.25)
     }
@@ -77,19 +229,7 @@ object AudioDsp {
         maxHarmonics: Int = 8,
         freqHz: Double = 440.0,
         sampleRate: Int = SAMPLE_RATE,
-    ): Double {
-        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
-        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
-        var acc = 0.0
-        for (k in 1..harmonics) {
-            val sigmaArg = PI * k / (harmonics + 1.0)
-            val sigma = sin(sigmaArg) / sigmaArg
-            val polarity = if (k % 2 == 1) 1.0 else -1.0
-            val amp = polarity * (2.0 / (k * PI)) * sigma
-            acc += amp * sin(TWO_PI * k * phaseCycles)
-        }
-        return acc.coerceIn(-1.25, 1.25)
-    }
+    ): Double = evalSawHarmonics(phaseCycles, sawHarmonicWeights(maxHarmonics, freqHz, sampleRate))
 
     /**
      * Multi-partial glassy bell oscillator combining fundamental (`1.0x`), warm octave
@@ -471,6 +611,18 @@ object AudioDsp {
         val clamped = if (pan.isFinite()) pan.coerceIn(-1f, 1f).toDouble() else 0.0
         val angle = (PI * 0.25) * (clamped + 1.0)
         return cos(angle).toFloat() to sin(angle).toFloat()
+    }
+
+    /** Zero-allocation left-channel gain of [constantPowerPan]. */
+    fun constantPowerPanLeft(pan: Float): Float {
+        val clamped = if (pan.isFinite()) pan.coerceIn(-1f, 1f).toDouble() else 0.0
+        return cos((PI * 0.25) * (clamped + 1.0)).toFloat()
+    }
+
+    /** Zero-allocation right-channel gain of [constantPowerPan]. */
+    fun constantPowerPanRight(pan: Float): Float {
+        val clamped = if (pan.isFinite()) pan.coerceIn(-1f, 1f).toDouble() else 0.0
+        return sin((PI * 0.25) * (clamped + 1.0)).toFloat()
     }
 
     /** Converts mono [samples] into interleaved stereo `[L0, R0, L1, R1, ...]` using [constantPowerPan]. */

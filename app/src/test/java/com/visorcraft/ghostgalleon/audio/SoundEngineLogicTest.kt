@@ -626,4 +626,237 @@ class SoundEngineLogicTest {
         assertEquals(fallback[SoundCue.BACK], merged[SoundCue.BACK])
         assertEquals(fallback[SoundCue.LAUNCH_GAME], merged[SoundCue.LAUNCH_GAME])
     }
+
+    @Test
+    fun `tiered CORE_LOAD_CUES and SECONDARY_LOAD_CUES partition all cues with core interactive cues first`() {
+        val core = SoundEngineLogic.CORE_LOAD_CUES
+        val secondary = SoundEngineLogic.SECONDARY_LOAD_CUES
+
+        assertTrue("core tier must be disjoint from secondary tier", core.toSet().intersect(secondary.toSet()).isEmpty())
+        assertEquals(SoundCue.entries.size, core.size + secondary.size)
+        assertEquals(core + secondary, SoundEngineLogic.LOAD_ORDER)
+
+        // Core interactive cues load in Tier 1
+        assertTrue(SoundCue.BOOT_CHIME in core)
+        assertTrue(SoundCue.NAV_TICK in core)
+        assertTrue(SoundCue.CONFIRM in core)
+        assertTrue(SoundCue.BACK in core)
+        assertTrue(SoundCue.LAUNCH_GAME in core)
+        assertTrue(SoundCue.LAUNCH_APP in core)
+        assertTrue(SoundCue.ERROR_DENY in core)
+
+        // Rare / celebration cues wait in Tier 2
+        assertTrue(SoundCue.RA_ACHIEVEMENT in secondary)
+        assertTrue(SoundCue.SETUP_COMPLETE in secondary)
+        assertTrue(SoundCue.DESTRUCTIVE in secondary)
+    }
+
+    @Test
+    fun `AsyncAudioProbe never blocks caller thread, coalesces bursts, honors TTL and push ringer, and preserves own-ambient masking`() {
+        assertTrue(
+            "system audio probe TTL must be >= 1000 ms",
+            SoundEngineLogic.SYSTEM_AUDIO_CACHE_TTL_MS >= 1_000L,
+        )
+
+        val probe = AsyncAudioProbe()
+        val pendingTasks = ArrayDeque<() -> Unit>()
+        var workerProbeRuns = 0
+        var lastNeedRinger = false
+        var lastNeedMusic = false
+        var now = 10_000L
+
+        // 1. Push ringer active + respectMusic = false -> 0 background probes needed at all!
+        val skippedPushOnly = probe.maybeScheduleRefresh(
+            nowMs = now,
+            queryRinger = true,
+            queryMusic = false,
+            ringerPushActive = true,
+            dispatch = { pendingTasks.addLast(it) },
+            clockMs = { now },
+        ) { _, _, _, _ -> workerProbeRuns++ }
+        assertFalse("push ringer with music disabled needs zero probes", skippedPushOnly)
+        assertEquals(0, pendingTasks.size)
+
+        // 2. Burst of 50 rapid NAV_TICK calls with respectMusic = true -> non-blocking & coalesced into 1 worker task!
+        var scheduledCount = 0
+        repeat(50) {
+            val scheduled = probe.maybeScheduleRefresh(
+                nowMs = now,
+                queryRinger = true,
+                queryMusic = true,
+                ringerPushActive = true,
+                dispatch = { pendingTasks.addLast(it) },
+                clockMs = { now },
+            ) { needRinger, needMusic, epoch, ringerVer ->
+                workerProbeRuns++
+                lastNeedRinger = needRinger
+                lastNeedMusic = needMusic
+                probe.applyProbeResults(
+                    systemMusicActive = true,
+                    completedAtMs = now,
+                    expectedEpoch = epoch,
+                    expectedRingerPushVersion = ringerVer,
+                )
+            }
+            if (scheduled) scheduledCount++
+        }
+        assertEquals("50-tick burst must schedule exactly 1 coalesced async probe", 1, scheduledCount)
+        assertEquals("probe must NOT run synchronously on caller thread", 0, workerProbeRuns)
+        assertTrue(probe.isRefreshInFlight())
+
+        // Execute queued worker task off-UI
+        pendingTasks.removeFirst().invoke()
+        assertEquals(1, workerProbeRuns)
+        assertFalse("push active must skip ringer IPC even in worker", lastNeedRinger)
+        assertTrue("music IPC should run in worker", lastNeedMusic)
+        assertFalse(probe.isRefreshInFlight())
+        assertTrue(probe.cachedSystemMusicActive)
+
+        // 3. CRITICAL invariant: isOwnAmbientPlaying masks cachedSystemMusicActive == true
+        assertFalse(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = probe.cachedSystemMusicActive,
+                ownAmbientPlaying = true,
+            ),
+        )
+        assertTrue(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = probe.cachedSystemMusicActive,
+                ownAmbientPlaying = false,
+            ),
+        )
+
+        // 4. Within 1,000 ms TTL -> zero refreshes scheduled
+        now += SoundEngineLogic.SYSTEM_AUDIO_CACHE_TTL_MS - 1L
+        assertFalse(
+            probe.maybeScheduleRefresh(
+                nowMs = now,
+                queryRinger = true,
+                queryMusic = true,
+                ringerPushActive = true,
+                dispatch = { pendingTasks.addLast(it) },
+                clockMs = { now },
+            ) { _, _, _, _ -> workerProbeRuns++ },
+        )
+
+        // 5. At TTL boundary -> schedules next refresh; invalidate() while in-flight prevents stale timestamp commit
+        now += 1L
+        assertTrue(
+            probe.maybeScheduleRefresh(
+                nowMs = now,
+                queryRinger = true,
+                queryMusic = true,
+                ringerPushActive = false,
+                dispatch = { pendingTasks.addLast(it) },
+                clockMs = { now },
+            ) { needRinger, needMusic, epoch, ringerVer ->
+                workerProbeRuns++
+                lastNeedRinger = needRinger
+                lastNeedMusic = needMusic
+                probe.applyProbeResults(
+                    ringerState = AudioPolicy.RingerState.VIBRATE,
+                    systemMusicActive = false,
+                    completedAtMs = now,
+                    expectedEpoch = epoch,
+                    expectedRingerPushVersion = ringerVer,
+                )
+            },
+        )
+        // App foregrounded while probe in flight -> invalidates epoch
+        probe.invalidate()
+        pendingTasks.removeFirst().invoke()
+        assertTrue("fallback mode without push must query ringer on worker", lastNeedRinger)
+        assertEquals(AudioPolicy.RingerState.VIBRATE, probe.cachedRingerState)
+        assertEquals(Long.MIN_VALUE, probe.lastProbeMs)
+
+        // Push ringer updates cachedRingerState instantaneously without touching Binder
+        probe.onRingerPushed(AudioPolicy.RingerState.SILENT)
+        assertEquals(AudioPolicy.RingerState.SILENT, probe.cachedRingerState)
+    }
+
+    @Test
+    fun `in-flight worker probe cannot overwrite a concurrent push ringer transition`() {
+        val probe = AsyncAudioProbe()
+        val pendingTasks = ArrayDeque<() -> Unit>()
+        var now = 20_000L
+
+        // Start a worker probe while ringer is NORMAL.
+        assertTrue(
+            probe.maybeScheduleRefresh(
+                nowMs = now,
+                queryRinger = true,
+                queryMusic = true,
+                ringerPushActive = false,
+                dispatch = { pendingTasks.addLast(it) },
+                clockMs = { now },
+            ) { _, _, epoch, ringerVer ->
+                // Simulate stale snapshot NORMAL captured before blocking isMusicActive IPC,
+                // while RINGER_MODE_CHANGED_ACTION fired SILENT on the main thread in between!
+                probe.applyProbeResults(
+                    ringerState = AudioPolicy.RingerState.NORMAL,
+                    systemMusicActive = true,
+                    completedAtMs = now + 5L,
+                    expectedEpoch = epoch,
+                    expectedRingerPushVersion = ringerVer,
+                )
+            },
+        )
+
+        // Concurrent push broadcast flips ringer to SILENT BEFORE worker completes.
+        probe.onRingerPushed(AudioPolicy.RingerState.SILENT)
+        assertEquals(AudioPolicy.RingerState.SILENT, probe.cachedRingerState)
+
+        // Slow worker now completes and tries to commit stale NORMAL alongside fresh music=true.
+        pendingTasks.removeFirst().invoke()
+
+        assertEquals(
+            "stale worker probe must NEVER clobber concurrent push SILENT state",
+            AudioPolicy.RingerState.SILENT,
+            probe.cachedRingerState,
+        )
+        assertTrue("fresh music probe result must still commit", probe.cachedSystemMusicActive)
+        assertEquals(now + 5L, probe.lastProbeMs)
+    }
+
+    @Test
+    fun `allocation-free resolvePlayParams matches computePlayParams bit-for-bit across volumes, streaks, and pans`() {
+        val volumes = intArrayOf(0, 1, 35, 75, 100)
+        val streaks = intArrayOf(0, 1, 5, 15, 64, 80)
+        val pans = floatArrayOf(-1f, -0.28f, 0f, 0.28f, 1f, Float.NaN)
+        for (cue in listOf(SoundCue.NAV_TICK, SoundCue.CONFIRM, SoundCue.RA_ACHIEVEMENT)) {
+            for (vol in volumes) {
+                for (streak in streaks) {
+                    for (pan in pans) {
+                        val expected = SoundEngineLogic.computePlayParams(
+                            cue = cue,
+                            sfxVolumePercent = vol,
+                            pan = pan,
+                            repeatStreak = streak,
+                            externalMusicActive = (streak % 2 == 0),
+                            hasKeepSession = (vol == 75),
+                        )
+                        var called = false
+                        val res = SoundEngineLogic.resolvePlayParams(
+                            cue = cue,
+                            sfxVolumePercent = vol,
+                            pan = pan,
+                            repeatStreak = streak,
+                            externalMusicActive = (streak % 2 == 0),
+                            hasKeepSession = (vol == 75),
+                        ) { l, r, rate, prio ->
+                            called = true
+                            assertNotNull(expected)
+                            assertEquals(expected!!.leftGain, l, 0f)
+                            assertEquals(expected.rightGain, r, 0f)
+                            assertEquals(expected.rate, rate, 0f)
+                            assertEquals(expected.priority, prio)
+                            true
+                        }
+                        assertEquals(expected != null, called)
+                        assertEquals(expected != null, res)
+                    }
+                }
+            }
+        }
+    }
 }

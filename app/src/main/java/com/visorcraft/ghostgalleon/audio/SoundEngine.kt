@@ -70,7 +70,7 @@ object SoundEngineLogic {
     const val MAX_PLAYBACK_RATE: Float = 2.0f
     const val MIN_AUDIBLE_GAIN: Float = 1e-4f
     const val PREVIEW_SECOND_NOTE_DELAY_MS: Long = 110L
-    const val SYSTEM_AUDIO_CACHE_TTL_MS: Long = 250L
+    const val SYSTEM_AUDIO_CACHE_TTL_MS: Long = 1_000L
     const val BOOT_CHIME_PENDING_TTL_MS: Long = 2_500L
 
     // Matches android.media.AudioManager.RINGER_MODE_* constants without importing android.*
@@ -123,29 +123,46 @@ object SoundEngineLogic {
         PreviewStep(cue = SoundCue.CONFIRM, delayMs = PREVIEW_SECOND_NOTE_DELAY_MS, pan = 0.10f),
     )
 
-    private val PRIORITY_LOAD_CUES: List<SoundCue> = listOf(
+    /**
+     * Tier 1 (core interactive & boot cues): synthesized/validated and loaded into `SoundPool`
+     * first so immediate D-pad navigation, confirm/back, launch, error, and boot chime become
+     * playable immediately before secondary cues finish loading.
+     */
+    val CORE_LOAD_CUES: List<SoundCue> = listOf(
         SoundCue.BOOT_CHIME,
         SoundCue.NAV_TICK,
         SoundCue.CONFIRM,
         SoundCue.BACK,
         SoundCue.NAV_EDGE_BUMP,
         SoundCue.NAV_PAGE_TURN,
-        SoundCue.DOCK_ENTER,
-        SoundCue.DOCK_EXIT,
-        SoundCue.MODAL_OPEN,
-        SoundCue.MODAL_CLOSE,
         SoundCue.LAUNCH_GAME,
         SoundCue.LAUNCH_APP,
+        SoundCue.ERROR_DENY,
+        SoundCue.DOCK_ENTER,
+        SoundCue.DOCK_EXIT,
+    )
+
+    private val SECONDARY_PRIORITY_CUES: List<SoundCue> = listOf(
+        SoundCue.MODAL_OPEN,
+        SoundCue.MODAL_CLOSE,
         SoundCue.SWAP_DISPLAY,
         SoundCue.MODE_TOGGLE,
         SoundCue.FILTER_SELECT,
     )
 
     /**
-     * Cold-start synthesis/load order: interactive & boot cues first so immediate UI inputs
-     * become audible within milliseconds while rare celebration cues finish behind them.
+     * Tier 2 (secondary/rare cues): scheduled on `AUDIO_SYNTH` immediately after [CORE_LOAD_CUES]
+     * so cold start & rapid pack switches never block core interactive SFX behind rare cues.
      */
-    val LOAD_ORDER: List<SoundCue> = (PRIORITY_LOAD_CUES + SoundCue.entries).distinct()
+    val SECONDARY_LOAD_CUES: List<SoundCue> = run {
+        val coreSet = CORE_LOAD_CUES.toHashSet()
+        (SECONDARY_PRIORITY_CUES + SoundCue.entries).distinct().filter { it !in coreSet }
+    }
+
+    /**
+     * Complete cold-start synthesis/load order: [CORE_LOAD_CUES] followed by [SECONDARY_LOAD_CUES].
+     */
+    val LOAD_ORDER: List<SoundCue> = CORE_LOAD_CUES + SECONDARY_LOAD_CUES
 
     private val CONCRETE_PACK_IDS: Set<String> = SoundPackId.CONCRETE_PACKS.map { it.id }.toSet()
     private val VALID_CUE_NAMES: Set<String> = SoundCue.entries.map { it.name.lowercase() }.toSet()
@@ -164,7 +181,13 @@ object SoundEngineLogic {
     }
 
     /** Normalizes a user-selected custom SAF sound pack tree URI (trimmed, or empty if unset). */
-    fun normalizeCustomPackUri(uri: String?): String = uri?.trim().orEmpty()
+    fun normalizeCustomPackUri(uri: String?): String {
+        if (uri.isNullOrEmpty()) return ""
+        val first = uri[0]
+        val last = uri[uri.length - 1]
+        if (first > ' ' && last > ' ') return uri
+        return uri.trim()
+    }
 
     /**
      * Merges materialized custom SAF cue paths over procedural fallback paths so any missing
@@ -335,6 +358,50 @@ object SoundEngineLogic {
     }
 
     /**
+     * Allocation-free hot-path playback parameter resolver for [SoundEngine.play].
+     * Invokes [onPlayable] with primitive `(leftGain, rightGain, rate, priority)` when audible,
+     * returning `false` directly when muted/inaudible without creating temporary data objects.
+     */
+    inline fun resolvePlayParams(
+        cue: SoundCue,
+        sfxVolumePercent: Int,
+        pan: Float = 0f,
+        repeatStreak: Int = 0,
+        pitchMul: Float = 1f,
+        volumeMul: Float = 1f,
+        respectMusic: Boolean = true,
+        externalMusicActive: Boolean = false,
+        videoPreviewUnmuted: Boolean = false,
+        hasKeepSession: Boolean = false,
+        playHudQuiet: Boolean = true,
+        onPlayable: (leftGain: Float, rightGain: Float, rate: Float, priority: Int) -> Boolean,
+    ): Boolean {
+        val baseGain = AudioPolicy.volumePercentToGain(sfxVolumePercent)
+        if (baseGain <= MIN_AUDIBLE_GAIN) return false
+
+        val exprGain = AudioPolicy.repeatGainMultiplier(repeatStreak)
+        val exprPitch = AudioPolicy.repeatPitchRate(repeatStreak)
+        val duck = AudioPolicy.sfxDuckFactor(
+            cue = cue,
+            respectMusic = respectMusic,
+            externalMusicActive = externalMusicActive,
+            videoPreviewUnmuted = videoPreviewUnmuted,
+            hasKeepSession = hasKeepSession,
+            playHudQuiet = playHudQuiet,
+        )
+        val safeVolMul = if (volumeMul.isFinite()) volumeMul.coerceIn(0f, 1.5f) else 1f
+        val masterGain = (baseGain * exprGain * duck * safeVolMul).coerceIn(0f, 1f)
+        if (masterGain <= MIN_AUDIBLE_GAIN) return false
+
+        val safePan = if (pan.isFinite()) pan.coerceIn(-1f, 1f) else 0f
+        val leftGain = (masterGain * AudioDsp.constantPowerPanLeft(safePan)).coerceIn(0f, 1f)
+        val rightGain = (masterGain * AudioDsp.constantPowerPanRight(safePan)).coerceIn(0f, 1f)
+        val safePitchMul = if (pitchMul.isFinite()) pitchMul else 1f
+        val rate = (exprPitch * safePitchMul).coerceIn(MIN_PLAYBACK_RATE, MAX_PLAYBACK_RATE)
+        return onPlayable(leftGain, rightGain, rate, cue.priority)
+    }
+
+    /**
      * Computes stereo gains, playback rate, and priority for a standard [SoundEngine.play] call.
      * Returns `null` when the resulting gain is inaudible.
      */
@@ -351,32 +418,29 @@ object SoundEngineLogic {
         hasKeepSession: Boolean = false,
         playHudQuiet: Boolean = true,
     ): PlayParams? {
-        val baseGain = AudioPolicy.volumePercentToGain(sfxVolumePercent)
-        if (baseGain <= MIN_AUDIBLE_GAIN) return null
-
-        val expr = AudioPolicy.repeatExpression(repeatStreak)
-        val duck = AudioPolicy.sfxDuckFactor(
+        var result: PlayParams? = null
+        resolvePlayParams(
             cue = cue,
+            sfxVolumePercent = sfxVolumePercent,
+            pan = pan,
+            repeatStreak = repeatStreak,
+            pitchMul = pitchMul,
+            volumeMul = volumeMul,
             respectMusic = respectMusic,
             externalMusicActive = externalMusicActive,
             videoPreviewUnmuted = videoPreviewUnmuted,
             hasKeepSession = hasKeepSession,
             playHudQuiet = playHudQuiet,
-        )
-        val safeVolMul = if (volumeMul.isFinite()) volumeMul.coerceIn(0f, 1.5f) else 1f
-        val masterGain = (baseGain * expr.gainMultiplier * duck * safeVolMul).coerceIn(0f, 1f)
-        if (masterGain <= MIN_AUDIBLE_GAIN) return null
-
-        val safePan = if (pan.isFinite()) pan.coerceIn(-1f, 1f) else 0f
-        val stereo = AudioPolicy.stereoGains(masterGain, safePan)
-        val safePitchMul = if (pitchMul.isFinite()) pitchMul else 1f
-        val rate = (expr.pitchRate * safePitchMul).coerceIn(MIN_PLAYBACK_RATE, MAX_PLAYBACK_RATE)
-        return PlayParams(
-            leftGain = stereo.left.coerceIn(0f, 1f),
-            rightGain = stereo.right.coerceIn(0f, 1f),
-            rate = rate,
-            priority = cue.priority,
-        )
+        ) { leftGain, rightGain, rate, priority ->
+            result = PlayParams(
+                leftGain = leftGain,
+                rightGain = rightGain,
+                rate = rate,
+                priority = priority,
+            )
+            true
+        }
+        return result
     }
 
     /**
@@ -452,12 +516,19 @@ class SoundEngine(
     private val previewLock = Any()
     private val pendingPreviewRunnables = mutableListOf<Runnable>()
 
-    @Volatile
-    private var lastSystemProbeMs: Long = Long.MIN_VALUE
-    @Volatile
-    private var cachedRingerState: AudioPolicy.RingerState = AudioPolicy.RingerState.NORMAL
-    @Volatile
-    private var cachedSystemMusicActive: Boolean = false
+    private val systemProbe = AsyncAudioProbe()
+    private val ringerListener: (AudioPolicy.RingerState) -> Unit = { newState ->
+        systemProbe.onRingerPushed(newState)
+    }
+
+    init {
+        // Pure in-memory subscription (0 Binder IPCs on constructor/UI thread).
+        // Receiver registration & initial probe run off-UI on AUDIO_SYNTH.
+        SystemAudioMonitor.addListener(ringerListener)
+        if (SystemAudioMonitor.isSeeded) {
+            systemProbe.onRingerPushed(SystemAudioMonitor.ringerState)
+        }
+    }
 
     private class PoolSession(
         val generation: Long,
@@ -533,6 +604,7 @@ class SoundEngine(
      * - Bumps the atomic generation counter and loads the new pack asynchronously on pack/theme switch.
      */
     fun syncWithSettings() {
+        SystemAudioMonitor.addListener(ringerListener)
         invalidateSystemProbe()
         val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
         val nextPack = config.resolvedPack()
@@ -589,6 +661,13 @@ class SoundEngine(
                 if (shouldClearCustomCache) {
                     AUDIO_SYNTH.execute { CustomSoundPackLoader.clearCache(appContext) }
                 }
+                if (nextPack.isPlayable) {
+                    scheduleSystemProbeRefresh(
+                        nowMs = SystemClock.elapsedRealtime(),
+                        queryRinger = config.respectRinger,
+                        queryMusic = config.respectMusic,
+                    )
+                }
             }
             SoundEngineLogic.SyncAction.RELEASE_TO_IDLE -> {
                 pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
@@ -610,6 +689,12 @@ class SoundEngine(
                     if (shouldClearCustomCache) {
                         CustomSoundPackLoader.clearCache(appContext)
                     }
+                    refreshSystemProbeOnWorker(
+                        needRinger = true,
+                        needMusic = true,
+                        epoch = systemProbe.currentEpoch(),
+                        ringerPushVersion = systemProbe.currentRingerPushVersion(),
+                    )
                     loadPackSession(nextPack, nextCustomUri, loadGen)
                 }
             }
@@ -653,7 +738,11 @@ class SoundEngine(
         volumeMul: Float = 1f,
     ): Boolean {
         if (backgrounded.get()) return false
-        val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
+        val config = try {
+            configProvider()
+        } catch (_: Throwable) {
+            SoundEngineConfig()
+        }
         val effectivePack = config.resolvedPack()
         if (!effectivePack.isPlayable) return false
         val effectiveCustomUri = SoundEngineLogic.normalizeCustomPackUri(config.customSoundPackUri)
@@ -674,11 +763,16 @@ class SoundEngine(
         val sampleId = session.sampleIds.get(cue.ordinal)
         if (sampleId == 0 || !session.loadedSampleIds.contains(sampleId)) return false
 
-        val runtime = runCatching { runtimeStateProvider() }.getOrDefault(SoundRuntimeState())
+        val runtime = try {
+            runtimeStateProvider()
+        } catch (_: Throwable) {
+            SoundRuntimeState()
+        }
         val nowMs = SystemClock.elapsedRealtime()
-        refreshSystemProbeIfNeeded(nowMs, config.respectRinger, config.respectMusic)
+        // Non-blocking: read @Volatile cached values immediately and refresh off-UI on TTL expiry.
+        scheduleSystemProbeRefresh(nowMs, config.respectRinger, config.respectMusic)
 
-        val ringerState = cachedRingerState
+        val ringerState = effectiveRingerState()
         val externalMusicActive = effectiveExternalMusicActive()
 
         val allowed = AudioPolicy.shouldPlaySfx(
@@ -698,7 +792,7 @@ class SoundEngine(
         )
         if (!allowed) return false
 
-        val params = SoundEngineLogic.computePlayParams(
+        return SoundEngineLogic.resolvePlayParams(
             cue = cue,
             sfxVolumePercent = config.sfxVolumePercent,
             pan = pan,
@@ -710,10 +804,13 @@ class SoundEngine(
             videoPreviewUnmuted = config.videoPreviewUnmuted,
             hasKeepSession = runtime.hasKeepSession,
             playHudQuiet = config.playHudQuiet,
-        ) ?: return false
-
-        if (!cooldownTracker.tryAcquire(cue, nowMs)) return false
-        return playOnSession(session, sampleId, params)
+        ) { leftGain, rightGain, rate, priority ->
+            if (!cooldownTracker.tryAcquire(cue, nowMs)) {
+                false
+            } else {
+                playOnSession(session, sampleId, leftGain, rightGain, rate, priority)
+            }
+        }
     }
 
     /**
@@ -824,6 +921,8 @@ class SoundEngine(
         pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
         cancelPendingPreviews()
         cooldownTracker.reset()
+        SystemAudioMonitor.removeListener(ringerListener)
+        SystemAudioMonitor.unregisterIfIdle()
         stopSessionStreams(activeSession.get())
         stopSessionStreams(auditionSession.get())
         val oldActive: PoolSession?
@@ -847,7 +946,7 @@ class SoundEngine(
     private fun canAudition(config: SoundEngineConfig, targetPack: SoundPackId): Boolean {
         val runtime = runCatching { runtimeStateProvider() }.getOrDefault(SoundRuntimeState())
         val nowMs = SystemClock.elapsedRealtime()
-        refreshSystemProbeIfNeeded(nowMs, config.respectRinger, config.respectMusic)
+        scheduleSystemProbeRefresh(nowMs, config.respectRinger, config.respectMusic)
         return SoundEngineLogic.shouldAudition(
             soundEnabled = config.soundEnabled,
             targetPack = targetPack,
@@ -855,7 +954,7 @@ class SoundEngine(
             screenOff = runtime.screenOff,
             backgrounded = backgrounded.get(),
             respectRinger = config.respectRinger,
-            ringerState = cachedRingerState,
+            ringerState = effectiveRingerState(),
         )
     }
 
@@ -1026,20 +1125,25 @@ class SoundEngine(
         val runtime = runCatching { runtimeStateProvider() }.getOrDefault(SoundRuntimeState())
         if (runtime.screenOff) return
         val nowMs = SystemClock.elapsedRealtime()
-        refreshSystemProbeIfNeeded(nowMs, config.respectRinger, config.respectMusic)
+        scheduleSystemProbeRefresh(nowMs, config.respectRinger, config.respectMusic)
 
-        val params = SoundEngineLogic.computeAuditionParams(
+        val sampleId = session.sampleIds.get(step.cue.ordinal)
+        if (sampleId == 0 || !session.loadedSampleIds.contains(sampleId)) return
+
+        SoundEngineLogic.resolvePlayParams(
             cue = step.cue,
             sfxVolumePercent = config.sfxVolumePercent,
             pan = step.pan,
+            repeatStreak = 0,
+            pitchMul = 1f,
+            volumeMul = 1f,
             respectMusic = config.respectMusic,
             externalMusicActive = effectiveExternalMusicActive(),
             videoPreviewUnmuted = config.videoPreviewUnmuted,
-        ) ?: return
-
-        val sampleId = session.sampleIds.get(step.cue.ordinal)
-        if (sampleId != 0 && session.loadedSampleIds.contains(sampleId)) {
-            playOnSession(session, sampleId, params)
+            hasKeepSession = false,
+            playHudQuiet = false,
+        ) { leftGain, rightGain, rate, priority ->
+            playOnSession(session, sampleId, leftGain, rightGain, rate, priority)
         }
     }
 
@@ -1126,24 +1230,36 @@ class SoundEngine(
             retireSession(existingAudition)
         }
 
-        for (cue in SoundEngineLogic.LOAD_ORDER) {
+        // Tier 1: load core interactive & boot cues immediately so D-pad navigation, confirm/back,
+        // launch, error, and boot chime become playable first.
+        if (!loadCueBatch(session, pack, customPaths, SoundEngineLogic.CORE_LOAD_CUES, generation)) {
+            return
+        }
+
+        // Tier 2: queue secondary/rare cues as a follow-up task on AUDIO_SYNTH so pending probes,
+        // auditions, or rapid pack switches never wait behind secondary cues.
+        AUDIO_SYNTH.execute {
+            loadCueBatch(session, pack, customPaths, SoundEngineLogic.SECONDARY_LOAD_CUES, generation)
+        }
+    }
+
+    private fun loadCueBatch(
+        session: PoolSession,
+        pack: SoundPackId,
+        customPaths: Map<SoundCue, String>,
+        cues: List<SoundCue>,
+        generation: Long,
+    ): Boolean {
+        for (cue in cues) {
             if (!generationGate.isCurrent(generation) || session.released) {
                 retireSession(session)
-                return
+                return false
             }
-            val customCueMap = customPaths[cue]?.let { mapOf(cue to it) }.orEmpty()
-            val fallbackCueMap = if (customCueMap.isEmpty()) {
-                ensureCachedWav(pack, cue)?.absolutePath?.let { mapOf(cue to it) }.orEmpty()
-            } else {
-                emptyMap()
-            }
-            val resolvedPath = SoundEngineLogic.resolveCueLoadPaths(
-                customPaths = customCueMap,
-                fallbackPaths = fallbackCueMap,
-            )[cue] ?: continue
+            val customPath = customPaths[cue]?.takeIf { it.isNotBlank() }
+            val resolvedPath = customPath ?: ensureCachedWav(pack, cue)?.absolutePath ?: continue
             if (!generationGate.isCurrent(generation) || session.released) {
                 retireSession(session)
-                return
+                return false
             }
             var sampleId = runCatching {
                 session.pool.load(resolvedPath, 1)
@@ -1151,7 +1267,7 @@ class SoundEngine(
                 Log.w(TAG, "SoundPool.load failed for $pack/$cue ($resolvedPath)", it)
             }.getOrDefault(0)
             // Graceful fallback to procedural WAV if a user-provided custom file fails to load.
-            if (sampleId == 0 && customCueMap.isNotEmpty()) {
+            if (sampleId == 0 && customPath != null) {
                 val fallbackFile = ensureCachedWav(pack, cue)
                 if (fallbackFile != null && generationGate.isCurrent(generation) && !session.released) {
                     sampleId = runCatching {
@@ -1169,6 +1285,7 @@ class SoundEngine(
                 }
             }
         }
+        return true
     }
 
     private fun maybeFirePendingBootChime(session: PoolSession? = activeSession.get()): Boolean {
@@ -1214,8 +1331,12 @@ class SoundEngine(
         runCatching {
             if (!cacheDir.isDirectory) return
             val children = cacheDir.listFiles() ?: return
+            // AmbientLoopCache owns `ambient_*` files on gg-ambient-stream; never delete them here.
+            val sfxNames = children
+                .filter { it.isFile && !AmbientLoopCache.isAmbientCacheArtifact(it.name) }
+                .map { it.name }
             val staleNames = SoundEngineLogic.staleCacheFiles(
-                fileNames = children.map { it.name },
+                fileNames = sfxNames,
                 currentVersion = cacheVersion,
             ).toHashSet()
             for (child in children) {
@@ -1297,25 +1418,29 @@ class SoundEngine(
     private fun playOnSession(
         session: PoolSession,
         sampleId: Int,
-        params: SoundEngineLogic.PlayParams,
+        leftGain: Float,
+        rightGain: Float,
+        rate: Float,
+        priority: Int,
     ): Boolean {
         if (session.released) return false
         val readLock = session.lock.readLock()
         if (!readLock.tryLock()) return false
         try {
             if (session.released) return false
-            val streamId = runCatching {
+            val streamId = try {
                 session.pool.play(
                     sampleId,
-                    params.leftGain,
-                    params.rightGain,
-                    params.priority,
+                    leftGain,
+                    rightGain,
+                    priority,
                     0,
-                    params.rate,
+                    rate,
                 )
-            }.onFailure {
-                Log.w(TAG, "SoundPool.play failed", it)
-            }.getOrDefault(0)
+            } catch (t: Throwable) {
+                Log.w(TAG, "SoundPool.play failed", t)
+                0
+            }
             if (streamId != 0) {
                 session.recordStream(streamId)
                 return true
@@ -1368,39 +1493,92 @@ class SoundEngine(
     }
 
     private fun invalidateSystemProbe() {
-        lastSystemProbeMs = Long.MIN_VALUE
+        systemProbe.invalidate()
     }
 
+    private fun effectiveRingerState(): AudioPolicy.RingerState =
+        if (SystemAudioMonitor.isPushActive && SystemAudioMonitor.isSeeded) {
+            SystemAudioMonitor.ringerState
+        } else {
+            systemProbe.cachedRingerState
+        }
+
     private fun effectiveExternalMusicActive(): Boolean {
-        val ownAmbient = runCatching { isOwnAmbientPlaying() }.getOrDefault(false)
+        val ownAmbient = try {
+            isOwnAmbientPlaying()
+        } catch (_: Throwable) {
+            false
+        }
         return SoundEngineLogic.isExternalMusicActive(
-            systemMusicActive = cachedSystemMusicActive,
+            systemMusicActive = systemProbe.cachedSystemMusicActive,
             ownAmbientPlaying = ownAmbient,
         )
     }
 
-    private fun refreshSystemProbeIfNeeded(
+    /**
+     * Non-blocking TTL-gated system audio probe scheduler.
+     * NEVER executes `AudioManager` Binder IPCs on the calling/UI thread: dispatches
+     * coalesced background refreshes onto [AUDIO_SYNTH], and skips polling `ringerMode`
+     * completely once [SystemAudioMonitor] push broadcasts are active.
+     */
+    private fun scheduleSystemProbeRefresh(
         nowMs: Long,
         queryRinger: Boolean,
         queryMusic: Boolean,
     ) {
-        if (!queryRinger && !queryMusic) return
-        if (!SoundEngineLogic.shouldRefreshSystemProbe(lastSystemProbeMs, nowMs)) return
-        val am = audioManager
-        if (am != null) {
-            if (queryRinger) {
+        systemProbe.maybeScheduleRefresh(
+            nowMs = nowMs,
+            queryRinger = queryRinger,
+            queryMusic = queryMusic,
+            ringerPushActive = SystemAudioMonitor.isPushActive,
+            ttlMs = SoundEngineLogic.SYSTEM_AUDIO_CACHE_TTL_MS,
+            dispatch = { task -> AUDIO_SYNTH.execute(task) },
+            clockMs = { SystemClock.elapsedRealtime() },
+        ) { needRinger, needMusic, epoch, ringerPushVersion ->
+            refreshSystemProbeOnWorker(needRinger, needMusic, epoch, ringerPushVersion)
+        }
+    }
+
+    private fun refreshSystemProbeOnWorker(
+        needRinger: Boolean,
+        needMusic: Boolean,
+        epoch: Long,
+        ringerPushVersion: Long,
+    ) {
+        val pushActive = SystemAudioMonitor.ensureRegistered(appContext)
+        // When push broadcasts are active and seeded, SystemAudioMonitor.ringerState is
+        // authoritative — never snapshot & write a stale ringer value across the isMusicActive IPC.
+        val ringerResult: AudioPolicy.RingerState? = if (pushActive && SystemAudioMonitor.isSeeded) {
+            null
+        } else if (needRinger) {
+            val am = audioManager
+            if (am != null) {
                 val rawMode = runCatching { am.ringerMode }
                     .getOrDefault(SoundEngineLogic.ANDROID_RINGER_MODE_NORMAL)
-                cachedRingerState = SoundEngineLogic.mapRingerMode(rawMode)
-            }
-            if (queryMusic) {
-                cachedSystemMusicActive = runCatching { am.isMusicActive }.getOrDefault(false)
+                SoundEngineLogic.mapRingerMode(rawMode)
+            } else {
+                AudioPolicy.RingerState.NORMAL
             }
         } else {
-            cachedRingerState = AudioPolicy.RingerState.NORMAL
-            cachedSystemMusicActive = false
+            null
         }
-        lastSystemProbeMs = nowMs
+        val musicResult: Boolean? = if (needMusic) {
+            val am = audioManager
+            if (am != null) {
+                runCatching { am.isMusicActive }.getOrDefault(false)
+            } else {
+                false
+            }
+        } else {
+            null
+        }
+        systemProbe.applyProbeResults(
+            ringerState = ringerResult,
+            systemMusicActive = musicResult,
+            completedAtMs = SystemClock.elapsedRealtime(),
+            expectedEpoch = epoch,
+            expectedRingerPushVersion = ringerPushVersion,
+        )
     }
 
     private companion object {

@@ -1,5 +1,9 @@
 package com.visorcraft.ghostgalleon.audio
 
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
 /**
  * Pure Kotlin RIFF/WAVE PCM-16 encoder and header inspector.
  *
@@ -11,6 +15,7 @@ object WavEncoder {
     const val HEADER_BYTES: Int = 44
     const val AUDIO_FORMAT_PCM: Int = 1
     const val BITS_PER_SAMPLE: Int = 16
+    private const val IO_CHUNK_BYTES: Int = 16 * 1024
 
     /** Parsed metadata from a 44-byte RIFF/WAVE PCM header. */
     data class WavInfo(
@@ -108,6 +113,139 @@ object WavEncoder {
             val hi = wav[off + 1].toInt() and 0xFF
             ((hi shl 8) or lo).toShort()
         }
+    }
+
+    /**
+     * Streams 16-bit signed linear PCM [samples] directly to [file] using a small 16 KiB
+     * chunk buffer (avoiding a full-file transient `ByteArray` copy for multi-megabyte loops).
+     */
+    fun writePcm16ToFile(
+        file: File,
+        samples: ShortArray,
+        sampleRate: Int = AudioDsp.SAMPLE_RATE,
+        channels: Int = 1,
+    ) {
+        require(sampleRate > 0) { "sampleRate must be positive, got $sampleRate" }
+        require(channels in 1..2) { "channels must be 1 (mono) or 2 (stereo), got $channels" }
+        if (channels == 2) {
+            require(samples.size % 2 == 0) { "stereo sample array must have even length, got ${samples.size}" }
+        }
+        val bytesPerSample = BITS_PER_SAMPLE / 8
+        val dataBytes = samples.size * bytesPerSample
+        val header = ByteArray(HEADER_BYTES)
+        writeHeader(header, sampleRate, channels, dataBytes)
+
+        val buf = ByteArray(IO_CHUNK_BYTES)
+        FileOutputStream(file).use { out ->
+            out.write(header)
+            var idx = 0
+            val total = samples.size
+            while (idx < total) {
+                var bytePos = 0
+                while (idx < total && bytePos + 2 <= buf.size) {
+                    val v = samples[idx++].toInt()
+                    buf[bytePos] = (v and 0xFF).toByte()
+                    buf[bytePos + 1] = ((v ushr 8) and 0xFF).toByte()
+                    bytePos += 2
+                }
+                out.write(buf, 0, bytePos)
+            }
+            out.flush()
+        }
+    }
+
+    /**
+     * Validates a cached WAV [file] against exact PCM-16 format, [expectedSampleRate],
+     * [expectedChannels], and [expectedSampleCount], then streams the payload directly into
+     * a [ShortArray] with a 16 KiB read buffer. Returns `null` on missing, corrupt,
+     * truncated, or mismatched files.
+     */
+    fun readPcm16FromFile(
+        file: File,
+        expectedSampleRate: Int,
+        expectedChannels: Int,
+        expectedSampleCount: Int,
+    ): ShortArray? {
+        if (expectedSampleRate <= 0 || expectedChannels !in 1..2 || expectedSampleCount <= 0) return null
+        if (expectedChannels == 2 && expectedSampleCount % 2 != 0) return null
+        if (!file.isFile) return null
+        val expectedDataBytes = expectedSampleCount.toLong() * 2L
+        if (expectedDataBytes > Int.MAX_VALUE.toLong()) return null
+        val expectedFileBytes = HEADER_BYTES.toLong() + expectedDataBytes
+        if (file.length() != expectedFileBytes) return null
+
+        FileInputStream(file).use { input ->
+            val header = ByteArray(HEADER_BYTES)
+            if (!readFully(input, header, HEADER_BYTES)) return null
+            val info = inspectHeader(header) ?: return null
+            if (info.audioFormat != AUDIO_FORMAT_PCM ||
+                info.bitsPerSample != BITS_PER_SAMPLE ||
+                info.channels != expectedChannels ||
+                info.sampleRate != expectedSampleRate ||
+                info.dataBytes != expectedDataBytes.toInt()
+            ) {
+                return null
+            }
+
+            val out = ShortArray(expectedSampleCount)
+            val buf = ByteArray(IO_CHUNK_BYTES)
+            var sampleIdx = 0
+            var remainingBytes = info.dataBytes
+            var carry = 0
+            while (remainingBytes > 0) {
+                val want = minOf(buf.size - carry, remainingBytes)
+                val n = input.read(buf, carry, want)
+                if (n <= 0) return null
+                remainingBytes -= n
+                val avail = carry + n
+                val usableBytes = avail and 1.inv()
+                var off = 0
+                while (off < usableBytes) {
+                    val lo = buf[off].toInt() and 0xFF
+                    val hi = buf[off + 1].toInt() and 0xFF
+                    out[sampleIdx++] = ((hi shl 8) or lo).toShort()
+                    off += 2
+                }
+                if (avail != usableBytes) {
+                    buf[0] = buf[usableBytes]
+                    carry = 1
+                } else {
+                    carry = 0
+                }
+            }
+            if (carry != 0 || sampleIdx != expectedSampleCount) return null
+            return out
+        }
+    }
+
+    private fun writeHeader(dst: ByteArray, sampleRate: Int, channels: Int, dataBytes: Int) {
+        val bytesPerSample = BITS_PER_SAMPLE / 8
+        val chunkSize = 36 + dataBytes
+        val byteRate = sampleRate * channels * bytesPerSample
+        val blockAlign = channels * bytesPerSample
+        writeAscii(dst, 0, "RIFF")
+        writeInt32Le(dst, 4, chunkSize)
+        writeAscii(dst, 8, "WAVE")
+        writeAscii(dst, 12, "fmt ")
+        writeInt32Le(dst, 16, 16)
+        writeInt16Le(dst, 20, AUDIO_FORMAT_PCM)
+        writeInt16Le(dst, 22, channels)
+        writeInt32Le(dst, 24, sampleRate)
+        writeInt32Le(dst, 28, byteRate)
+        writeInt16Le(dst, 32, blockAlign)
+        writeInt16Le(dst, 34, BITS_PER_SAMPLE)
+        writeAscii(dst, 36, "data")
+        writeInt32Le(dst, 40, dataBytes)
+    }
+
+    private fun readFully(input: FileInputStream, dst: ByteArray, length: Int): Boolean {
+        var offset = 0
+        while (offset < length) {
+            val n = input.read(dst, offset, length - offset)
+            if (n <= 0) return false
+            offset += n
+        }
+        return true
     }
 
     private fun writeAscii(dst: ByteArray, offset: Int, text: String) {
