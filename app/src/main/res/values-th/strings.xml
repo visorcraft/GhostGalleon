@@ -479,6 +479,13 @@
     <string name="settings_audio_section_etiquette">มารยาทเสียง</string>
     <string name="settings_audio_respect_music">เคารพเพลงจากแอปอื่น</string>
     <string name="settings_audio_respect_ringer">เคารพโหมดเงียบและสั่น</string>
+    <string name="settings_audio_section_custom_pack">ชุดเสียงกำหนดเอง</string>
+    <string name="settings_audio_custom_default">ค่าเริ่มต้น (สังเคราะห์)</string>
+    <string name="settings_audio_custom_pick">เลือกโฟลเดอร์</string>
+    <string name="settings_audio_custom_hint">วางไฟล์ .wav, .ogg, .flac, .mp3 หรือ .m4a โดยตั้งชื่อตามเสียง (เช่น nav_tick.wav, confirm.ogg) เสียงที่ไม่มีจะใช้ชุดเสียงที่เลือกไว้แทน</string>
+    <string name="settings_audio_custom_no_matches">ไม่พบไฟล์เสียงที่ตรงกัน</string>
+    <string name="quick_audio_on">เสียง: เปิด</string>
+    <string name="quick_audio_off">เสียง: ปิด</string>
     <string name="settings_input_assist">ตัวช่วยอินพุต</string>
     <string name="settings_input_assist_open_system">เปิดการตั้งค่าการเข้าถึงของระบบ</string>
     <string name="settings_winlator_cockpit">ค็อกพิต Winlator</string>

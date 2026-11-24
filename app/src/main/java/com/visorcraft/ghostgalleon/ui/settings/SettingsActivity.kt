@@ -1147,6 +1147,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private var wallpaperValue: TextView? = null
     private var wallpaperClear: View? = null
+    private var customSoundPackBadge: TextView? = null
+    private var customSoundPackStatus: TextView? = null
+    private var customSoundPackClear: View? = null
+    private var customPackScanGen: Int = 0
     private var raUserValue: TextView? = null
     private var raKeyValue: TextView? = null
 
@@ -1567,6 +1571,105 @@ class SettingsActivity : AppCompatActivity() {
                 refreshFolderRows()
             }
         }
+
+    private val customSoundPackPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri != null) {
+                val previousUri = app.settings.customSoundPackUri.trim()
+                val nextUri = uri.toString()
+                if (previousUri.isNotEmpty() && previousUri != nextUri) {
+                    runCatching {
+                        contentResolver.releasePersistableUriPermission(
+                            Uri.parse(previousUri),
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                    }
+                }
+                runCatching {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
+                app.updateSettings(
+                    app.settings.copy(customSoundPackUri = nextUri),
+                    notify = false,
+                )
+                refreshCustomSoundPackCard()
+                app.soundEngine.audition(SoundCue.CONFIRM)
+            }
+        }
+
+    private fun clearCustomSoundPack() {
+        val prev = app.settings.customSoundPackUri.trim()
+        if (prev.isNotEmpty()) {
+            runCatching {
+                contentResolver.releasePersistableUriPermission(
+                    Uri.parse(prev),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+        app.updateSettings(
+            app.settings.copy(customSoundPackUri = ""),
+            notify = false,
+        )
+        app.soundEngine.clearCustomSoundPackCacheAsync()
+        app.playSfx(SoundCue.DESTRUCTIVE)
+        refreshCustomSoundPackCard()
+    }
+
+    private fun refreshCustomSoundPackCard() {
+        val uri = app.settings.customSoundPackUri.trim()
+        val scanGen = ++customPackScanGen
+        customSoundPackClear?.visibility = if (uri.isNotEmpty()) View.VISIBLE else View.GONE
+        if (uri.isEmpty()) {
+            customSoundPackStatus?.apply {
+                setText(R.string.settings_audio_custom_default)
+                setTextColor(UiDimens.ALPHA_SECONDARY)
+            }
+            customSoundPackBadge?.apply {
+                setText(R.string.label_default)
+                styleStatusBadge(this, active = false)
+            }
+            return
+        }
+        val folderName = resolveText(TreeLabels.label(uri))
+        customSoundPackStatus?.apply {
+            text = getString(
+                R.string.format_dot_pair,
+                folderName,
+                getString(R.string.settings_scanning),
+            )
+            setTextColor(accentOnCard)
+        }
+        customSoundPackBadge?.apply {
+            setText(R.string.settings_scanning)
+            styleStatusBadge(this, active = true)
+        }
+        app.soundEngine.scanCustomSoundPackAsync(uri) { result ->
+            if (isFinishing || isDestroyed || scanGen != customPackScanGen) return@scanCustomSoundPackAsync
+            if (app.settings.customSoundPackUri.trim() != uri) return@scanCustomSoundPackAsync
+            val matched = result.totalMatched
+            val detail = if (matched > 0) {
+                resources.getQuantityString(R.plurals.count_items, matched, matched)
+            } else {
+                getString(R.string.settings_audio_custom_no_matches)
+            }
+            customSoundPackStatus?.apply {
+                text = getString(R.string.format_dot_pair, folderName, detail)
+                setTextColor(if (matched > 0) accentOnCard else UiDimens.ALPHA_SECONDARY)
+            }
+            customSoundPackBadge?.apply {
+                text = if (matched > 0) {
+                    resources.getQuantityString(R.plurals.count_items, matched, matched)
+                } else {
+                    formatNumber(0)
+                }
+                styleStatusBadge(this, active = matched > 0)
+            }
+        }
+    }
 
     private var folderRows: LinearLayout? = null
 
@@ -2462,7 +2565,7 @@ class SettingsActivity : AppCompatActivity() {
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
         SettingsJump(SettingsCatalog.PAGE_AUDIO, getString(R.string.settings_page_audio),
-            "audio sound sfx volume pack ambient soundscape chime boot achievement video music ringer mute test"),
+            "audio sound sfx volume pack custom folder wav ogg ambient soundscape chime boot achievement video music ringer mute test"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
             "library rom folder rescan hidden collections players retroarch network commands talk ferry save warm continue cinema"),
         SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
@@ -3988,6 +4091,125 @@ class SettingsActivity : AppCompatActivity() {
             title = getString(R.string.settings_audio_section_test_pad),
             card = audioTestPadCard,
         )
+
+        val audioCustomPackCard = sectionCard()
+        val customStatusTv = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+        customSoundPackStatus = customStatusTv
+        audioCustomPackCard.addView(
+            customStatusTv,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        audioCustomPackCard.addView(
+            TextView(this).apply {
+                setText(R.string.settings_audio_custom_hint)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(UiDimens.ALPHA_SUBTLE)
+                setPadding(dp(10), dp(0), dp(10), dp(10))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val customButtonsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(10), dp(6))
+        }
+        val pickCustomBtn = TextView(this).apply {
+            id = View.generateViewId()
+            setText(R.string.settings_audio_custom_pick)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(onAccentFill)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            minimumHeight = dp(44)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            isFocusable = true
+            background = TileBackgrounds.pressableRow(
+                context = this@SettingsActivity,
+                accent = activeFocusRing,
+                idleBackground = TileBackgrounds.accentPill(
+                    this@SettingsActivity,
+                    accent = accent,
+                    cornerRadiusDp = 12,
+                ),
+                cornerRadiusDp = 12,
+                strokeDp = 2,
+            )
+            setOnClickListener {
+                app.playSfx(SoundCue.MODAL_OPEN)
+                customSoundPackPicker.launch(null)
+            }
+        }
+        val clearCustomBtn = TextView(this).apply {
+            id = View.generateViewId()
+            setText(R.string.action_clear)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(UiDimens.COLOR_DESTRUCTIVE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            minimumHeight = dp(44)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            isFocusable = true
+            background = TileBackgrounds.pressableRow(
+                context = this@SettingsActivity,
+                accent = accent,
+                idleBackground = TileBackgrounds.sunkenField(
+                    this@SettingsActivity,
+                    cornerRadiusDp = 12,
+                ),
+                cornerRadiusDp = 12,
+                strokeDp = 2,
+            )
+            setOnClickListener { clearCustomSoundPack() }
+        }
+        pickCustomBtn.nextFocusRightId = clearCustomBtn.id
+        clearCustomBtn.nextFocusLeftId = pickCustomBtn.id
+        customSoundPackClear = clearCustomBtn
+        customButtonsRow.addView(
+            pickCustomBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        customButtonsRow.addView(
+            clearCustomBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = dp(8) },
+        )
+        audioCustomPackCard.addView(
+            customButtonsRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val hasCustomPack = s.customSoundPackUri.isNotBlank()
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_custom_pack),
+            card = audioCustomPackCard,
+            badgeText = getString(
+                if (hasCustomPack) R.string.settings_scanning else R.string.label_default,
+            ),
+            badgeActive = hasCustomPack,
+            onBadgeView = { customSoundPackBadge = it },
+        )
+        refreshCustomSoundPackCard()
 
         val audioAmbientCard = sectionCard()
         toggle(audioAmbientCard, getString(R.string.settings_audio_ambient), s.ambientEnabled) { on ->

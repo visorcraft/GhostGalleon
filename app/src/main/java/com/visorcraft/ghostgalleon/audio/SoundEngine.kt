@@ -36,6 +36,7 @@ data class SoundEngineConfig(
     val achievementChimeEnabled: Boolean = true,
     val playHudQuiet: Boolean = true,
     val videoPreviewUnmuted: Boolean = false,
+    val customSoundPackUri: String = "",
 ) {
     /** Resolves the effective concrete pack, or [SoundPackId.OFF] when disabled. */
     fun resolvedPack(): SoundPackId = SoundEngineLogic.resolveEffectivePack(
@@ -162,14 +163,28 @@ object SoundEngineLogic {
         return configuredPack.resolve(themePackId)
     }
 
+    /** Normalizes a user-selected custom SAF sound pack tree URI (trimmed, or empty if unset). */
+    fun normalizeCustomPackUri(uri: String?): String = uri?.trim().orEmpty()
+
+    /**
+     * Merges materialized custom SAF cue paths over procedural fallback paths so any missing
+     * cue cleanly falls back to the active built-in sound pack.
+     */
+    fun resolveCueLoadPaths(
+        customPaths: Map<SoundCue, String>,
+        fallbackPaths: Map<SoundCue, String>,
+    ): Map<SoundCue, String> = CustomSoundPackMatcher.resolveWithFallback(customPaths, fallbackPaths)
+
     /**
      * Decides whether [SoundEngine.syncWithSettings] should no-op, release to idle,
-     * or switch to a new concrete pack.
+     * or switch to a new concrete pack (or custom SAF sound pack override).
      */
     fun planSync(
         currentTargetPack: SoundPackId,
         nextEffectivePack: SoundPackId,
         hasActiveOrPendingSession: Boolean,
+        currentCustomPackUri: String = "",
+        nextCustomPackUri: String = "",
     ): SyncAction {
         if (!nextEffectivePack.isPlayable) {
             return if (hasActiveOrPendingSession || currentTargetPack != SoundPackId.OFF) {
@@ -178,7 +193,12 @@ object SoundEngineLogic {
                 SyncAction.NO_OP
             }
         }
-        return if (hasActiveOrPendingSession && currentTargetPack == nextEffectivePack) {
+        val curCustom = normalizeCustomPackUri(currentCustomPackUri)
+        val nextCustom = normalizeCustomPackUri(nextCustomPackUri)
+        return if (hasActiveOrPendingSession &&
+            currentTargetPack == nextEffectivePack &&
+            curCustom == nextCustom
+        ) {
             SyncAction.NO_OP
         } else {
             SyncAction.SWITCH_PACK
@@ -421,6 +441,8 @@ class SoundEngine(
     private val stateLock = Any()
     @Volatile
     private var targetPack: SoundPackId = SoundPackId.OFF
+    @Volatile
+    private var targetCustomPackUri: String = ""
     private var pendingLoadGeneration: Long = NO_GENERATION
 
     private val activeSession = AtomicReference<PoolSession?>(null)
@@ -440,6 +462,7 @@ class SoundEngine(
     private class PoolSession(
         val generation: Long,
         val pack: SoundPackId,
+        val customPackUri: String,
         val pool: SoundPool,
         maxTrackedStreams: Int,
     ) {
@@ -513,22 +536,30 @@ class SoundEngine(
         invalidateSystemProbe()
         val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
         val nextPack = config.resolvedPack()
+        val nextCustomUri = SoundEngineLogic.normalizeCustomPackUri(config.customSoundPackUri)
 
         val oldSession: PoolSession?
         val action: SoundEngineLogic.SyncAction
         val loadGen: Long
+        val shouldClearCustomCache: Boolean
 
         synchronized(stateLock) {
             val currentSession = activeSession.get()
             val hasSession = (currentSession != null && !currentSession.released) ||
                 (pendingLoadGeneration == generationGate.current() && pendingLoadGeneration != NO_GENERATION)
+            shouldClearCustomCache = targetCustomPackUri.isNotEmpty() && nextCustomUri.isEmpty()
             action = SoundEngineLogic.planSync(
                 currentTargetPack = targetPack,
                 nextEffectivePack = nextPack,
                 hasActiveOrPendingSession = hasSession,
+                currentCustomPackUri = targetCustomPackUri,
+                nextCustomPackUri = nextCustomUri,
             )
             when (action) {
                 SoundEngineLogic.SyncAction.NO_OP -> {
+                    if (shouldClearCustomCache) {
+                        targetCustomPackUri = ""
+                    }
                     oldSession = null
                     loadGen = NO_GENERATION
                 }
@@ -537,6 +568,7 @@ class SoundEngine(
                     stopSessionStreams(auditionSession.get())
                     loadGen = generationGate.advance()
                     targetPack = SoundPackId.OFF
+                    targetCustomPackUri = nextCustomUri
                     pendingLoadGeneration = NO_GENERATION
                     oldSession = activeSession.getAndSet(null)
                     oldSession?.released = true
@@ -544,6 +576,7 @@ class SoundEngine(
                 SoundEngineLogic.SyncAction.SWITCH_PACK -> {
                     loadGen = generationGate.advance()
                     targetPack = nextPack
+                    targetCustomPackUri = nextCustomUri
                     pendingLoadGeneration = loadGen
                     oldSession = activeSession.getAndSet(null)
                     oldSession?.released = true
@@ -552,25 +585,56 @@ class SoundEngine(
         }
 
         when (action) {
-            SoundEngineLogic.SyncAction.NO_OP -> Unit
+            SoundEngineLogic.SyncAction.NO_OP -> {
+                if (shouldClearCustomCache) {
+                    AUDIO_SYNTH.execute { CustomSoundPackLoader.clearCache(appContext) }
+                }
+            }
             SoundEngineLogic.SyncAction.RELEASE_TO_IDLE -> {
                 pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
                 cancelPendingPreviews()
                 val oldAudition = detachAuditionSession()
-                if (oldSession != null || oldAudition != null) {
+                if (oldSession != null || oldAudition != null || shouldClearCustomCache) {
                     AUDIO_SYNTH.execute {
                         retireSession(oldSession)
                         retireSession(oldAudition)
+                        if (shouldClearCustomCache) {
+                            CustomSoundPackLoader.clearCache(appContext)
+                        }
                     }
                 }
             }
             SoundEngineLogic.SyncAction.SWITCH_PACK -> {
                 AUDIO_SYNTH.execute {
                     retireSession(oldSession)
-                    loadPackSession(nextPack, loadGen)
+                    if (shouldClearCustomCache) {
+                        CustomSoundPackLoader.clearCache(appContext)
+                    }
+                    loadPackSession(nextPack, nextCustomUri, loadGen)
                 }
             }
         }
+    }
+
+    /**
+     * Scans a user-selected SAF sound pack folder off the UI thread on [AUDIO_SYNTH]
+     * and delivers [CustomPackScanResult] back on the main looper.
+     */
+    fun scanCustomSoundPackAsync(
+        treeUriString: String?,
+        onResult: (CustomPackScanResult) -> Unit,
+    ) {
+        AUDIO_SYNTH.execute {
+            val result = runCatching {
+                CustomSoundPackLoader.scanTree(appContext, treeUriString)
+            }.getOrDefault(CustomPackScanResult(cueEntries = emptyMap(), totalMatched = 0))
+            mainHandler.post { onResult(result) }
+        }
+    }
+
+    /** Clears materialized `custom_*` sound pack cache directories off the UI thread. */
+    fun clearCustomSoundPackCacheAsync() {
+        AUDIO_SYNTH.execute { CustomSoundPackLoader.clearCache(appContext) }
     }
 
     /**
@@ -592,11 +656,16 @@ class SoundEngine(
         val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
         val effectivePack = config.resolvedPack()
         if (!effectivePack.isPlayable) return false
+        val effectiveCustomUri = SoundEngineLogic.normalizeCustomPackUri(config.customSoundPackUri)
 
         val session = activeSession.get()
-        if (session == null || session.released || session.pack != effectivePack) {
-            // Self-heal if theme or pack changed before syncWithSettings() was called.
-            if (targetPack != effectivePack) {
+        if (session == null ||
+            session.released ||
+            session.pack != effectivePack ||
+            session.customPackUri != effectiveCustomUri
+        ) {
+            // Self-heal if theme, pack, or custom SAF folder changed before syncWithSettings() was called.
+            if (targetPack != effectivePack || targetCustomPackUri != effectiveCustomUri) {
                 syncWithSettings()
             }
             return false
@@ -761,6 +830,7 @@ class SoundEngine(
         synchronized(stateLock) {
             generationGate.advance()
             targetPack = SoundPackId.OFF
+            targetCustomPackUri = ""
             pendingLoadGeneration = NO_GENERATION
             oldActive = activeSession.getAndSet(null)
             oldActive?.released = true
@@ -860,6 +930,7 @@ class SoundEngine(
         val session = PoolSession(
             generation = token,
             pack = targetPack,
+            customPackUri = "",
             pool = pool,
             maxTrackedStreams = SoundEngineLogic.AUDITION_MAX_STREAMS,
         )
@@ -983,9 +1054,24 @@ class SoundEngine(
         callbacks.forEach { mainHandler.removeCallbacks(it) }
     }
 
-    private fun loadPackSession(pack: SoundPackId, generation: Long) {
+    private fun loadPackSession(pack: SoundPackId, customPackUri: String, generation: Long) {
         if (!generationGate.isCurrent(generation)) return
         ensureStaleCacheCleaned()
+
+        val customPaths: Map<SoundCue, String> = if (customPackUri.isNotEmpty()) {
+            runCatching {
+                CustomSoundPackLoader.materializeToCache(
+                    context = appContext,
+                    treeUriString = customPackUri,
+                    includeAmbient = false,
+                ).cachedCuePaths
+            }.onFailure {
+                Log.w(TAG, "CustomSoundPackLoader failed for $customPackUri", it)
+            }.getOrDefault(emptyMap())
+        } else {
+            emptyMap()
+        }
+        if (!generationGate.isCurrent(generation)) return
 
         val pool = runCatching {
             buildSoundPool(SoundEngineLogic.MAX_STREAMS)
@@ -1001,6 +1087,7 @@ class SoundEngine(
         val session = PoolSession(
             generation = generation,
             pack = pack,
+            customPackUri = customPackUri,
             pool = pool,
             maxTrackedStreams = SoundEngineLogic.MAX_STREAMS,
         )
@@ -1044,16 +1131,36 @@ class SoundEngine(
                 retireSession(session)
                 return
             }
-            val wavFile = ensureCachedWav(pack, cue) ?: continue
+            val customCueMap = customPaths[cue]?.let { mapOf(cue to it) }.orEmpty()
+            val fallbackCueMap = if (customCueMap.isEmpty()) {
+                ensureCachedWav(pack, cue)?.absolutePath?.let { mapOf(cue to it) }.orEmpty()
+            } else {
+                emptyMap()
+            }
+            val resolvedPath = SoundEngineLogic.resolveCueLoadPaths(
+                customPaths = customCueMap,
+                fallbackPaths = fallbackCueMap,
+            )[cue] ?: continue
             if (!generationGate.isCurrent(generation) || session.released) {
                 retireSession(session)
                 return
             }
-            val sampleId = runCatching {
-                session.pool.load(wavFile.absolutePath, 1)
+            var sampleId = runCatching {
+                session.pool.load(resolvedPath, 1)
             }.onFailure {
-                Log.w(TAG, "SoundPool.load failed for $pack/$cue", it)
+                Log.w(TAG, "SoundPool.load failed for $pack/$cue ($resolvedPath)", it)
             }.getOrDefault(0)
+            // Graceful fallback to procedural WAV if a user-provided custom file fails to load.
+            if (sampleId == 0 && customCueMap.isNotEmpty()) {
+                val fallbackFile = ensureCachedWav(pack, cue)
+                if (fallbackFile != null && generationGate.isCurrent(generation) && !session.released) {
+                    sampleId = runCatching {
+                        session.pool.load(fallbackFile.absolutePath, 1)
+                    }.onFailure {
+                        Log.w(TAG, "Fallback SoundPool.load failed for $pack/$cue", it)
+                    }.getOrDefault(0)
+                }
+            }
             if (sampleId != 0) {
                 session.sampleIds.set(cue.ordinal, sampleId)
                 maybeFirePendingAudition(session)

@@ -557,4 +557,73 @@ class SoundEngineLogicTest {
         // Backwards clock skew never triggers belatedly
         assertFalse(SoundEngineLogic.isPendingBootChimeValid(2_000L, 1_999L))
     }
+
+    @Test
+    fun `planSync triggers reload on customSoundPackUri changes and resolveCueLoadPaths falls back cleanly`() {
+        val uriA = "content://com.android.externalstorage.documents/tree/primary%3Asfx_a"
+        val uriB = "content://com.android.externalstorage.documents/tree/primary%3Asfx_b"
+
+        assertEquals("", SoundEngineLogic.normalizeCustomPackUri(null))
+        assertEquals("", SoundEngineLogic.normalizeCustomPackUri("   "))
+        assertEquals(uriA, SoundEngineLogic.normalizeCustomPackUri("  $uriA  "))
+
+        // Same built-in pack + same custom URI -> NO_OP
+        assertEquals(
+            SoundEngineLogic.SyncAction.NO_OP,
+            SoundEngineLogic.planSync(
+                currentTargetPack = SoundPackId.GHOST,
+                nextEffectivePack = SoundPackId.GHOST,
+                hasActiveOrPendingSession = true,
+                currentCustomPackUri = uriA,
+                nextCustomPackUri = " $uriA ",
+            ),
+        )
+        // Picking a custom SAF folder over same built-in pack -> SWITCH_PACK
+        assertEquals(
+            SoundEngineLogic.SyncAction.SWITCH_PACK,
+            SoundEngineLogic.planSync(
+                currentTargetPack = SoundPackId.GHOST,
+                nextEffectivePack = SoundPackId.GHOST,
+                hasActiveOrPendingSession = true,
+                currentCustomPackUri = "",
+                nextCustomPackUri = uriA,
+            ),
+        )
+        // Switching to a different custom SAF folder -> SWITCH_PACK
+        assertEquals(
+            SoundEngineLogic.SyncAction.SWITCH_PACK,
+            SoundEngineLogic.planSync(
+                currentTargetPack = SoundPackId.GHOST,
+                nextEffectivePack = SoundPackId.GHOST,
+                hasActiveOrPendingSession = true,
+                currentCustomPackUri = uriA,
+                nextCustomPackUri = uriB,
+            ),
+        )
+        // Clearing custom SAF folder back to procedural -> SWITCH_PACK
+        assertEquals(
+            SoundEngineLogic.SyncAction.SWITCH_PACK,
+            SoundEngineLogic.planSync(
+                currentTargetPack = SoundPackId.GHOST,
+                nextEffectivePack = SoundPackId.GHOST,
+                hasActiveOrPendingSession = true,
+                currentCustomPackUri = uriA,
+                nextCustomPackUri = "",
+            ),
+        )
+
+        // Cue fallback merges partial custom cues over complete procedural fallback
+        val fallback = SoundCue.entries.associateWith { "/cache/ghost_v1_${it.name.lowercase()}.wav" }
+        val custom = mapOf(
+            SoundCue.NAV_TICK to "/cache/custom_abc/nav_tick_1024_10.ogg",
+            SoundCue.CONFIRM to "/cache/custom_abc/confirm_2048_10.wav",
+            SoundCue.BACK to "   ", // blank entry ignored in favor of fallback
+        )
+        val merged = SoundEngineLogic.resolveCueLoadPaths(custom, fallback)
+        assertEquals(SoundCue.entries.size, merged.size)
+        assertEquals("/cache/custom_abc/nav_tick_1024_10.ogg", merged[SoundCue.NAV_TICK])
+        assertEquals("/cache/custom_abc/confirm_2048_10.wav", merged[SoundCue.CONFIRM])
+        assertEquals(fallback[SoundCue.BACK], merged[SoundCue.BACK])
+        assertEquals(fallback[SoundCue.LAUNCH_GAME], merged[SoundCue.LAUNCH_GAME])
+    }
 }

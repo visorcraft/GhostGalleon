@@ -508,6 +508,13 @@
     <string name="settings_audio_section_etiquette">Audio etiquette</string>
     <string name="settings_audio_respect_music">Respect external music</string>
     <string name="settings_audio_respect_ringer">Respect silent &amp; vibrate mode</string>
+    <string name="settings_audio_section_custom_pack">Custom sound pack</string>
+    <string name="settings_audio_custom_default">Default (procedural)</string>
+    <string name="settings_audio_custom_pick">Choose folder</string>
+    <string name="settings_audio_custom_hint">Place .wav, .ogg, .flac, .mp3, or .m4a files named after cues (e.g. nav_tick.wav, confirm.ogg). Missing cues fall back to the active pack.</string>
+    <string name="settings_audio_custom_no_matches">No matching cues found</string>
+    <string name="quick_audio_on">Sound: On</string>
+    <string name="quick_audio_off">Sound: Off</string>
     <string name="settings_input_assist">Input assist</string>
     <string name="settings_input_assist_open_system">Opens system Accessibility settings</string>
     <string name="settings_winlator_cockpit">Winlator cockpit</string>

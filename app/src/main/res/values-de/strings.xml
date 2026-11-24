@@ -480,6 +480,13 @@
     <string name="settings_audio_section_etiquette">Audioverhalten</string>
     <string name="settings_audio_respect_music">Externe Musik respektieren</string>
     <string name="settings_audio_respect_ringer">Lautlos- &amp; Vibrationsmodus respektieren</string>
+    <string name="settings_audio_section_custom_pack">Eigenes Soundpaket</string>
+    <string name="settings_audio_custom_default">Standard (prozedural)</string>
+    <string name="settings_audio_custom_pick">Ordner wählen</string>
+    <string name="settings_audio_custom_hint">Lege .wav-, .ogg-, .flac-, .mp3- oder .m4a-Dateien mit Signalnamen ab (z. B. nav_tick.wav, confirm.ogg). Fehlende Klänge nutzen das aktive Paket.</string>
+    <string name="settings_audio_custom_no_matches">Keine passenden Klänge gefunden</string>
+    <string name="quick_audio_on">Ton: Ein</string>
+    <string name="quick_audio_off">Ton: Aus</string>
     <string name="settings_input_assist">Eingabehilfe</string>
     <string name="settings_input_assist_open_system">Öffnet die System-Bedienungshilfen</string>
     <string name="settings_winlator_cockpit">Winlator-Cockpit</string>

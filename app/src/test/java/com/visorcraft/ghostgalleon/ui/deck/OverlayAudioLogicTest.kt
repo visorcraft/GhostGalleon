@@ -130,6 +130,12 @@ class OverlayAudioLogicTest {
                 QuickPanelNav.TileGlyph.ICON_RANDOM,
             ),
         )
+        assertNull(
+            OverlayAudioLogic.quickPanelActionCue(
+                QuickPanelNav.TileRole.STANDARD,
+                QuickPanelNav.TileGlyph.ICON_AUDIO,
+            ),
+        )
 
         // AppPicker highlight vs edge bump
         assertEquals(SoundCue.NAV_EDGE_BUMP, OverlayAudioLogic.appPickerMoveEvent(changedCount = 0).cue)

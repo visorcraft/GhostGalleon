@@ -5006,12 +5006,15 @@ object CompanionPanel {
             )
         } else {
             addChip(actionChip(labelRes = R.string.action_swap, filled = true) {
-                app.swapInteractiveDisplay()
+                val swapped = app.swapInteractiveDisplay()
+                app.playSfx(OverlayAudioLogic.swapCueFor(swapped = swapped))
             })
             addChip(actionChip(labelRes = R.string.play_hud_end) {
+                app.playSfx(SoundCue.CONFIRM)
                 app.clearOpenSession()
             })
             addChip(actionChip(labelRes = R.string.play_hud_reclaim) {
+                app.playSfx(SoundCue.CONFIRM)
                 app.noteReturnToLauncher()
                 hud.visibility = View.GONE
                 if (app.liveCompanion() == null) {

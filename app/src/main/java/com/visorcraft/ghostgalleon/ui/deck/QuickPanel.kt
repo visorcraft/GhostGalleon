@@ -56,6 +56,7 @@ internal object QuickPanelNav {
         ICON_RANDOM,
         ICON_RAIL,
         ICON_THEME_SWATCH,
+        ICON_AUDIO,
         ICON_CONTROLLER,
         ICON_CLOSE,
     }
@@ -113,10 +114,15 @@ internal object QuickPanelNav {
         TileGlyph.ICON_CONTINUE -> R.drawable.ic_chevron_right
         TileGlyph.ICON_RANDOM -> R.drawable.ic_swap
         TileGlyph.ICON_RAIL -> R.drawable.ic_folder
+        TileGlyph.ICON_AUDIO -> R.drawable.ic_nav_audio
         TileGlyph.ICON_CONTROLLER -> R.drawable.ic_status_bolt
         TileGlyph.ICON_CLOSE -> R.drawable.ic_close
         TileGlyph.ICON_THEME_SWATCH, TileGlyph.NONE -> null
     }
+
+    /** Localized label resource for the Quick Panel instant sound toggle tile. */
+    fun audioToggleLabelRes(soundEnabled: Boolean): Int =
+        if (soundEnabled) R.string.quick_audio_on else R.string.quick_audio_off
 
     /** Crisp translucent rim for the Theme tile's live accent swatch dot. */
     fun swatchBorderColor(accent: Int): Int {
@@ -342,6 +348,12 @@ class QuickPanel(
                 label = context.getString(R.string.quick_theme),
                 glyph = QuickPanelNav.TileGlyph.ICON_THEME_SWATCH,
             ) { cycleTheme(app) },
+        )
+        core.add(
+            Cell(
+                label = context.getString(QuickPanelNav.audioToggleLabelRes(app.settings.soundEnabled)),
+                glyph = QuickPanelNav.TileGlyph.ICON_AUDIO,
+            ) { toggleAudio(app) },
         )
         core.add(
             Cell(
@@ -721,6 +733,20 @@ class QuickPanel(
         topScrollCue?.setBackgroundColor(cueColor)
         bottomScrollCue?.setBackgroundColor(cueColor)
         paint(animateFocus = false, scrollToFocused = false)
+        activity.toast(label)
+    }
+
+    private fun toggleAudio(app: GhostGalleonApp) {
+        val nextEnabled = !app.settings.soundEnabled
+        app.updateSettings(app.settings.copy(soundEnabled = nextEnabled), notify = false)
+        val label = activity.getString(QuickPanelNav.audioToggleLabelRes(nextEnabled))
+        tileViews.firstOrNull { it.cell.glyph == QuickPanelNav.TileGlyph.ICON_AUDIO }?.let { bound ->
+            bound.labelView.text = label
+            bound.container.contentDescription = label
+        }
+        if (nextEnabled) {
+            app.soundEngine.audition(SoundCue.CONFIRM)
+        }
         activity.toast(label)
     }
 }

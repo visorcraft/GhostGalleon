@@ -25,6 +25,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.AudioHapticCohesion
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.input.StickThresholds
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
@@ -235,7 +237,10 @@ class ControllerLabActivity : AppCompatActivity() {
             contentDescription = backLabel
             tooltipText = backLabel
             isFocusable = true
-            setOnClickListener { finish() }
+            setOnClickListener {
+                app.playSfx(SoundCue.BACK)
+                finish()
+            }
         }
         header.addView(backBtn, LinearLayout.LayoutParams(dp(44), dp(44)))
 
@@ -589,7 +594,10 @@ class ControllerLabActivity : AppCompatActivity() {
                 strokeDp = 2,
             )
             setPadding(dp(14), dp(6), dp(14), dp(6))
-            setOnClickListener { clearLabState() }
+            setOnClickListener {
+                app.playSfx(SoundCue.DESTRUCTIVE)
+                clearLabState()
+            }
         }
         bindBtn.nextFocusDownId = clearLogBtn.id
         clearLogBtn.nextFocusUpId = bindBtn.id
@@ -672,6 +680,7 @@ class ControllerLabActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.repeatCount == 0) app.playSfx(SoundCue.BACK)
             finish()
             return true
         }
@@ -699,11 +708,25 @@ class ControllerLabActivity : AppCompatActivity() {
             updateAxisReadout(hatYBar, hatYVal, hy, 0.5f)
             val nextHat = ControllerLabLogic.padIndicatorsForHat(hx, hy)
             if (nextHat != pressedHatDirs) {
+                val newlyPressed = nextHat - pressedHatDirs
                 val changed = (pressedHatDirs union nextHat)
                 pressedHatDirs.clear()
                 pressedHatDirs.addAll(nextHat)
                 seenIndicators.addAll(nextHat)
                 changed.forEach(::stylePadIndicator)
+                val firstNew = newlyPressed.firstOrNull()
+                if (firstNew != null && AudioHapticCohesion.shouldEmitGamepadAudio(
+                        soundEnabled = app.settings.soundEnabled,
+                        actionHandled = true,
+                        isKeyDown = true,
+                    )
+                ) {
+                    val hatAction = ControllerLabLogic.mappedAction(firstNew.keyCode, app.settings.keyMap)
+                    app.playSfx(
+                        cue = AudioHapticCohesion.cueForKeyTest(hatAction),
+                        pan = AudioHapticCohesion.panForKeyTest(hatAction),
+                    )
+                }
             }
             return true
         }
@@ -778,9 +801,11 @@ class ControllerLabActivity : AppCompatActivity() {
     private fun bindLastKey() {
         val code = lastKeyCode
         if (code == null) {
+            app.playSfx(SoundCue.ERROR_DENY)
             Toast.makeText(this, R.string.controller_no_key, Toast.LENGTH_SHORT).show()
             return
         }
+        app.playSfx(SoundCue.MODAL_OPEN)
         val actions = listOf(
             Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
             Action.CONFIRM, Action.BACK, Action.SWAP_SCREENS, Action.TOGGLE_MODE,
@@ -811,6 +836,18 @@ class ControllerLabActivity : AppCompatActivity() {
 
     private fun paintKey(keyCode: Int, action: Int, event: KeyEvent) {
         lastKeyCode = keyCode
+        if (AudioHapticCohesion.shouldEmitGamepadAudio(
+                soundEnabled = app.settings.soundEnabled,
+                actionHandled = true,
+                isKeyDown = action == KeyEvent.ACTION_DOWN && event.repeatCount == 0,
+            )
+        ) {
+            val mapped = ControllerLabLogic.mappedAction(keyCode, app.settings.keyMap)
+            app.playSfx(
+                cue = AudioHapticCohesion.cueForKeyTest(mapped),
+                pan = AudioHapticCohesion.panForKeyTest(mapped),
+            )
+        }
         ControllerLabLogic.padIndicatorForKeyCode(keyCode)?.let { indicator ->
             if (action == KeyEvent.ACTION_DOWN) {
                 pressedButtons.add(indicator)

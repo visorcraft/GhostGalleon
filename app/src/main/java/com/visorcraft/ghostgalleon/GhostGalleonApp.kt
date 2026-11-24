@@ -21,6 +21,7 @@ import com.visorcraft.ghostgalleon.art.SgdbScraper
 import com.visorcraft.ghostgalleon.audio.AmbientConfig
 import com.visorcraft.ghostgalleon.audio.AmbientEngine
 import com.visorcraft.ghostgalleon.audio.AmbientRuntimeState
+import com.visorcraft.ghostgalleon.audio.AudioHapticCohesion
 import com.visorcraft.ghostgalleon.audio.AudioLifecycleEvents
 import com.visorcraft.ghostgalleon.audio.AudioPolicy
 import com.visorcraft.ghostgalleon.audio.BootChimeGate
@@ -376,6 +377,7 @@ class GhostGalleonApp : Application() {
                         bootChimeEnabled = s.bootChimeEnabled,
                         achievementChimeEnabled = s.raAchievementChime,
                         videoPreviewUnmuted = isVideoPreviewUnmutedActive,
+                        customSoundPackUri = s.customSoundPackUri,
                     )
                 } else {
                     SoundEngineConfig(themePackId = ThemePack.GHOST.id)
@@ -392,7 +394,11 @@ class GhostGalleonApp : Application() {
         )
     }
 
-    /** Play a UI/system SFX cue via [soundEngine]. Non-blocking and focus-safe. */
+    /**
+     * Play a UI/system SFX cue via [soundEngine]. Non-blocking, focus-safe, and enforces
+     * Companion Play-HUD quiet etiquette during active KEEP sessions (suppressing navigation
+     * chatter while preserving intentional Play-HUD actions and `RA_ACHIEVEMENT` fanfare).
+     */
     fun playSfx(
         cue: SoundCue,
         pan: Float = 0f,
@@ -400,8 +406,13 @@ class GhostGalleonApp : Application() {
         pitchMul: Float = 1f,
         volumeMul: Float = 1f,
     ) {
-        soundEngine.play(
+        val effectiveCue = AudioHapticCohesion.resolveForPlayHud(
             cue = cue,
+            keepSessionActive = isKeepSessionActive,
+            playHudQuiet = true,
+        ) ?: return
+        soundEngine.play(
+            cue = effectiveCue,
             pan = pan,
             repeatStreak = repeatStreak,
             pitchMul = pitchMul,
@@ -2796,7 +2807,8 @@ class GhostGalleonApp : Application() {
             prev.audioRespectRinger != next.audioRespectRinger ||
             prev.bootChimeEnabled != next.bootChimeEnabled ||
             prev.raAchievementChime != next.raAchievementChime ||
-            prev.videoPreviewAudio != next.videoPreviewAudio
+            prev.videoPreviewAudio != next.videoPreviewAudio ||
+            prev.customSoundPackUri != next.customSoundPackUri
 
     private fun ambientSettingsChanged(prev: Settings, next: Settings): Boolean =
         prev.themePackId != next.themePackId ||

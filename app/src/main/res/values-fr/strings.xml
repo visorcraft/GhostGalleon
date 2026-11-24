@@ -479,6 +479,13 @@
     <string name="settings_audio_section_etiquette">Comportement audio</string>
     <string name="settings_audio_respect_music">Respecter la musique externe</string>
     <string name="settings_audio_respect_ringer">Respecter les modes silencieux et vibreur</string>
+    <string name="settings_audio_section_custom_pack">Pack sonore personnalisé</string>
+    <string name="settings_audio_custom_default">Par défaut (procédural)</string>
+    <string name="settings_audio_custom_pick">Choisir un dossier</string>
+    <string name="settings_audio_custom_hint">Placez des fichiers .wav, .ogg, .flac, .mp3 ou .m4a nommés selon le son (ex. nav_tick.wav, confirm.ogg). Les sons absents utilisent le pack actif.</string>
+    <string name="settings_audio_custom_no_matches">Aucun son correspondant trouvé</string>
+    <string name="quick_audio_on">Son : Activé</string>
+    <string name="quick_audio_off">Son : Coupé</string>
     <string name="settings_input_assist">Assistance saisie</string>
     <string name="settings_input_assist_open_system">Ouvre les paramètres d’accessibilité du système</string>
     <string name="settings_winlator_cockpit">Cockpit Winlator</string>

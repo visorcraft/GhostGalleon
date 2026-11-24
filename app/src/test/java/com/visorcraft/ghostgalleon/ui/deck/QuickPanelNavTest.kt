@@ -108,10 +108,13 @@ class QuickPanelNavTest {
         assertEquals(R.drawable.ic_settings, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_SETTINGS))
         assertEquals(R.drawable.ic_swap, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_DISPLAY))
         assertEquals(R.drawable.ic_chevron_right, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CONTINUE))
+        assertEquals(R.drawable.ic_nav_audio, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_AUDIO))
         assertEquals(R.drawable.ic_close, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CLOSE))
         assertNotNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_RAIL))
         assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_THEME_SWATCH))
         assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.NONE))
+        assertEquals(R.string.quick_audio_on, QuickPanelNav.audioToggleLabelRes(soundEnabled = true))
+        assertEquals(R.string.quick_audio_off, QuickPanelNav.audioToggleLabelRes(soundEnabled = false))
 
         // OLED light accent gets dark translucent border; dark accents get white translucent border.
         assertEquals(0x66000000, QuickPanelNav.swatchBorderColor(ThemePack.OLED.accentColor))

@@ -76,8 +76,8 @@ object OverlayAudioLogic {
     /**
      * Action cue for activating a [QuickPanel] tile.
      *
-     * Close, Theme, Continue, and Random return `null` because their own handlers emit
-     * `MODAL_CLOSE`, theme-pack preview/`CONFIRM`, or `LAUNCH_*`/`ERROR_DENY`.
+     * Close, Theme, Continue, Random, and Audio toggle return `null` because their own handlers
+     * emit `MODAL_CLOSE`, theme-pack preview/`CONFIRM`, `LAUNCH_*`/`ERROR_DENY`, or unmute `CONFIRM`.
      */
     internal fun quickPanelActionCue(
         role: QuickPanelNav.TileRole,
@@ -87,6 +87,7 @@ object OverlayAudioLogic {
         glyph == QuickPanelNav.TileGlyph.ICON_THEME_SWATCH -> null
         glyph == QuickPanelNav.TileGlyph.ICON_CONTINUE -> null
         glyph == QuickPanelNav.TileGlyph.ICON_RANDOM -> null
+        glyph == QuickPanelNav.TileGlyph.ICON_AUDIO -> null
         else -> SoundCue.CONFIRM
     }
 
