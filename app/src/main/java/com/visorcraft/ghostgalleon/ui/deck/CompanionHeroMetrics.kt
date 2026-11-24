@@ -142,6 +142,24 @@ object CompanionHeroMetrics {
             .coerceAtLeast(0)
     }
 
+    /** Minimum vertical clearance (dp) below the ship required to show the idle prompt above HintBar. */
+    const val BRAND_CAPTION_MIN_CLEARANCE_DP = 56
+
+    /**
+     * True when the empty-selection brand scene has enough room beneath the
+     * ship silhouette to display the idle prompt cleanly above [HintBar].
+     */
+    fun brandCaptionFitsBelowShip(
+        panelHeightPx: Int,
+        shipLayout: BrandShipLayout,
+        density: Float,
+    ): Boolean {
+        if (panelHeightPx <= 0 || density <= 0f) return false
+        val shipBottomPx = shipLayout.topMarginPx + shipLayout.sizePx
+        val remainingDp = (panelHeightPx - shipBottomPx) / density
+        return remainingDp >= BRAND_CAPTION_MIN_CLEARANCE_DP
+    }
+
     // --- Role bar clearance & PERF_HUD card grid ----------------------------
 
     /** Width (dp) at or above which centered role chips clear the top-end StatusPill. */

@@ -123,6 +123,7 @@ import java.io.File
 object CompanionPanel {
 
     private const val TAG_HERO_ICON = "hero_icon"
+    private const val TAG_HERO_APP_PEDESTAL = "hero_app_pedestal"
     private const val TAG_HERO_NAME = "hero_name"
     private const val TAG_HERO_SUB = "hero_sub"
     private const val TAG_HERO_META = "hero_meta"
@@ -853,6 +854,37 @@ object CompanionPanel {
         rim.setStroke(context.strokePx(1), rimColor)
     }
 
+    private fun applyAppPedestalFrame(
+        pedestal: FrameLayout,
+        accentColor: Int,
+        artSizePx: Int,
+        elevationDp: Float,
+    ) {
+        val context = pedestal.context
+        val radiusPx = context.dpF(CompanionHeroStyle.ART_CORNER_RADIUS_DP)
+        val base = GradientDrawable().apply {
+            setColor(0x14FFFFFF)
+            cornerRadius = radiusPx
+        }
+        val glow = GradientDrawable().apply {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            cornerRadius = radiusPx
+            colors = intArrayOf(
+                CompanionHeroStyle.appPedestalGlowColor(accentColor),
+                Color.TRANSPARENT,
+            )
+            setGradientCenter(0.5f, 0.5f)
+            gradientRadius = (artSizePx * 0.56f).coerceAtLeast(1f)
+        }
+        pedestal.background = LayerDrawable(arrayOf(base, glow))
+        applyHeroArtFrame(
+            target = pedestal,
+            accentColor = accentColor,
+            elevationDp = elevationDp,
+            cornerRadiusDp = CompanionHeroStyle.ART_CORNER_RADIUS_DP,
+        )
+    }
+
     private fun animateHeroTextSettle(view: View, density: Float) {
         view.animate().cancel()
         if (!ValueAnimator.areAnimatorsEnabled()) {
@@ -1142,26 +1174,47 @@ object CompanionPanel {
         if (name == null) return false
         val dens = context.resources.displayMetrics.density
         val hDp = context.resources.displayMetrics.heightPixels / dens
-        val targetPx = (CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens).toInt()
+        val appHeroSpec = CompanionHeroMetrics.forPanel(hDp)
+        val targetPx = (appHeroSpec.artSizeDp * dens).toInt()
         val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
         val appAlreadyBound = name.getTag(R.id.hero_bound_id) == entry.packageName
         val previousAppName = name.text
+        val appGlow = glowColor(context, entry.packageName, settings)
         if (!appAlreadyBound) {
             CustomIcon.bind(
                 icon, iconLoader(context),
                 appCtx.artCache,
                 settings, entry.packageName, targetPx)
             animateHeroArtSettle(icon)
+            view.findViewWithTag<FrameLayout>(TAG_HERO_APP_PEDESTAL)?.let { pedestal ->
+                applyAppPedestalFrame(
+                    pedestal = pedestal,
+                    accentColor = appGlow,
+                    artSizePx = targetPx,
+                    elevationDp = CompanionHeroStyle.artElevationDp(appHeroSpec.artSizeDp),
+                )
+            }
         }
         name.setTag(R.id.hero_bound_id, entry.packageName)
         name.text = entry.label
+        val appSub = view.findViewWithTag<TextView>(TAG_HERO_SUB)
+        if (appSub != null) {
+            appSub.text = context.resolveText(
+                HeroDetail.compactSubline(
+                    context.getString(R.string.label_app),
+                    romMetaLine(settings, entry.packageName),
+                    null,
+                ),
+            )
+        }
         if (CompanionHeroStyle.shouldAnimateSelection(appAlreadyBound, previousAppName, entry.label)) {
             animateHeroTextSettle(name, dens)
+            if (appSub != null) animateHeroTextSettle(appSub, dens)
         }
         // Cached glow (no PM + 16×16 average every NAV).
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
             context,
-            glowColor(context, entry.packageName, settings),
+            appGlow,
         )
         return true
     }
@@ -2776,13 +2829,34 @@ object CompanionPanel {
                 )
             }
         } else if (selectedEntry != null) {
-            val icon = ImageView(context)
-            icon.tag = TAG_HERO_ICON
+            val appGlow = glowColor(context, selectedEntry.packageName, settings)
+            val pedestalInset = dp(CompanionHeroStyle.appPedestalInsetDp(heroSpec.artSizeDp))
+            val pedestal = FrameLayout(context).apply {
+                tag = TAG_HERO_APP_PEDESTAL
+                setPadding(pedestalInset, pedestalInset, pedestalInset, pedestalInset)
+            }
+            applyAppPedestalFrame(
+                pedestal = pedestal,
+                accentColor = appGlow,
+                artSizePx = artPx,
+                elevationDp = CompanionHeroStyle.artElevationDp(heroSpec.artSizeDp),
+            )
+            val icon = ImageView(context).apply {
+                tag = TAG_HERO_ICON
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
             CustomIcon.bind(
                 icon, iconLoader(context),
                 (activity.application as GhostGalleonApp).artCache,
                 settings, selectedEntry.packageName, artPx)
-            hero.addView(icon, LinearLayout.LayoutParams(artPx, artPx))
+            pedestal.addView(
+                icon,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            hero.addView(pedestal, LinearLayout.LayoutParams(artPx, artPx))
             hero.addView(TextView(context).apply {
                 tag = TAG_HERO_NAME
                 setTag(R.id.hero_bound_id, selectedEntry.packageName)
@@ -2803,6 +2877,28 @@ object CompanionPanel {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
+            hero.addView(TextView(context).apply {
+                tag = TAG_HERO_SUB
+                text = context.resolveText(
+                    HeroDetail.compactSubline(
+                        context.getString(R.string.label_app),
+                        romMetaLine(settings, selectedEntry.packageName),
+                        null,
+                    ),
+                )
+                setTextSize(
+                    TypedValue.COMPLEX_UNIT_SP,
+                    if (heroSpec.artSizeDp < 180) 13f else 15f,
+                )
+                setTextColor(0xB3FFFFFF.toInt())
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(heroSpec.nameSidePadDp), dp(2), dp(heroSpec.nameSidePadDp), 0)
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
         } else {
             // Layered brand fallback, full-panel: clouds + sea behind the
             // content column (transparent so the scene shows edge to edge).
@@ -2815,9 +2911,9 @@ object CompanionPanel {
             // Clouds/sea are exact vertical slices of one 1280×720 scene
             // (432px sky, 288px water), stacked 3:2 so the horizon keeps its
             // authored 60/40 split (CENTER_CROP trims width overflow). Every
-            // layer is optional: no sky/sea = glow panel, no ship anim (or
-            // pre-API-28) = ic_brand_ship, no rain = none. hero_ocean_anim is
-            // the legacy single-file background when the slice pair is incomplete.
+            // layer is optional: no sky/sea = programmatic dusk-horizon scene,
+            // no ship anim (or pre-API-28) = ic_brand_ship, no rain = none.
+            val tokens = com.visorcraft.ghostgalleon.settings.ThemePack.resolve(settings)
             val clouds = loadAnimated(context, "hero_clouds_anim")
             val sea = loadAnimated(context, "hero_sea_anim")
             val ocean = if (clouds == null || sea == null) {
@@ -2842,15 +2938,62 @@ object CompanionPanel {
                 content.background = null
             } else {
                 val singles = listOfNotNull(clouds, sea ?: ocean)
-                singles.forEach { anim ->
-                    root.addView(ImageView(context).apply {
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        showAnimated(anim)
-                    }, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
+                if (singles.isNotEmpty()) {
+                    singles.forEach { anim ->
+                        root.addView(ImageView(context).apply {
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            showAnimated(anim)
+                        }, FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT))
+                    }
+                    content.background = null
+                } else {
+                    // Programmatic 3:2 dusk-horizon backdrop grounding the galleon waterline.
+                    val palette = CompanionHeroStyle.brandHorizonPalette(
+                        panelLift = tokens.panelLift,
+                        accentColor = settings.accentColor,
+                    )
+                    val horizonColumn = LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    horizonColumn.addView(
+                        View(context).apply {
+                            background = GradientDrawable(
+                                GradientDrawable.Orientation.TOP_BOTTOM,
+                                intArrayOf(0xFF000000.toInt(), palette.skyMid, palette.skyHorizon),
+                            )
+                        },
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f),
+                    )
+                    horizonColumn.addView(
+                        View(context).apply {
+                            setBackgroundColor(palette.horizonLine)
+                        },
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            context.strokePx(1),
+                        ),
+                    )
+                    horizonColumn.addView(
+                        View(context).apply {
+                            background = GradientDrawable(
+                                GradientDrawable.Orientation.TOP_BOTTOM,
+                                intArrayOf(palette.seaTop, 0xFF000000.toInt()),
+                            )
+                        },
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f),
+                    )
+                    root.addView(
+                        horizonColumn,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    content.background = null
                 }
-                if (singles.isNotEmpty()) content.background = null
             }
             // z-order: bg (already added) → content (later) → ship → rain.
             // Transparent content regions show the ship on the waterline.
@@ -2873,7 +3016,24 @@ object CompanionPanel {
                     topMargin = shipLayout.topMarginPx
                 })
             }
-            val tokens = com.visorcraft.ghostgalleon.settings.ThemePack.resolve(settings)
+            if (CompanionHeroMetrics.brandCaptionFitsBelowShip(dm.heightPixels, shipLayout, density)) {
+                hero.gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
+                hero.addView(
+                    TextView(context).apply {
+                        setText(R.string.deck_select_game_or_app)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                        setTextColor(UiDimens.ALPHA_MUTED)
+                        gravity = Gravity.CENTER
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(dp(24), 0, dp(24), dp(8))
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
             if (tokens.heroRain) {
                 frontRain = loadAnimated(context, "hero_rain_anim")
             }

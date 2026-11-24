@@ -105,4 +105,17 @@ class CompanionHeroMetricsTest {
         }
         assertEquals(2, CompanionHeroMetrics.perfCardColumnSpan(6, 7))
     }
+
+    @Test
+    fun `brandCaptionFitsBelowShip allows caption on Sugar 540dp and rejects cramped windows`() {
+        val density = 2f
+        val sugar = CompanionHeroMetrics.brandShipLayout(panelHeightPx = 1080, density = density)
+        assertTrue(
+            CompanionHeroMetrics.brandCaptionFitsBelowShip(1080, sugar, density),
+        )
+        val tiny = CompanionHeroMetrics.brandShipLayout(panelHeightPx = 420, density = density)
+        assertFalse(
+            CompanionHeroMetrics.brandCaptionFitsBelowShip(420, tiny, density),
+        )
+    }
 }

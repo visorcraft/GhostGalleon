@@ -63,6 +63,47 @@ object CompanionHeroStyle {
         return ((0x34 shl 24) or rgb) to ((0x26 shl 24) or rgb)
     }
 
+    /** Inner padding (dp) framing transparent Android app icons inside the app hero pedestal. */
+    fun appPedestalInsetDp(artSizeDp: Int): Int =
+        (artSizeDp * 0.11f).toInt().coerceIn(12, 26)
+
+    /** Subtle radial pedestal bloom color behind an Android app icon (~18% alpha). */
+    fun appPedestalGlowColor(accentColor: Int): Int =
+        (0x2E shl 24) or (accentColor and 0x00FFFFFF)
+
+    /**
+     * Programmatic dusk-horizon gradient endpoints (sky horizon tint, sea top tint,
+     * hairline sheen) when animated clouds/sea raw assets are absent on the empty
+     * companion panel. Keeps OLED black at top & bottom edges.
+     */
+    data class HorizonPalette(
+        val skyMid: Int,
+        val skyHorizon: Int,
+        val horizonLine: Int,
+        val seaTop: Int,
+    )
+
+    fun brandHorizonPalette(panelLift: Int, accentColor: Int): HorizonPalette {
+        fun blend(a: Int, b: Int, bWeightPct: Int): Int {
+            val aW = 100 - bWeightPct
+            val r = (((a shr 16) and 0xFF) * aW + ((b shr 16) and 0xFF) * bWeightPct) / 100
+            val g = (((a shr 8) and 0xFF) * aW + ((b shr 8) and 0xFF) * bWeightPct) / 100
+            val bl = ((a and 0xFF) * aW + (b and 0xFF) * bWeightPct) / 100
+            return (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or
+                (g.coerceIn(0, 255) shl 8) or bl.coerceIn(0, 255)
+        }
+        val skyMid = blend(0xFF000000.toInt(), panelLift, 75)
+        val skyHorizon = blend(panelLift, accentColor, 18)
+        val horizonLine = (0x33 shl 24) or (blend(0xFFFFFFFF.toInt(), accentColor, 35) and 0x00FFFFFF)
+        val seaTop = blend(0xFF000000.toInt(), skyHorizon, 55)
+        return HorizonPalette(
+            skyMid = skyMid,
+            skyHorizon = skyHorizon,
+            horizonLine = horizonLine,
+            seaTop = seaTop,
+        )
+    }
+
     /**
      * Gate for in-place selection micro-transitions: animate only when binding
      * a new title whose displayed string actually changed, never on same-ROM

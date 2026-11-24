@@ -112,4 +112,23 @@ class CompanionHeroStyleTest {
             stackDp <= 540,
         )
     }
+
+    @Test
+    fun `app pedestal inset and brand horizon palette keep opaque dark surfaces and subtle hairline`() {
+        assertTrue(CompanionHeroStyle.appPedestalInsetDp(132) in 12..26)
+        assertTrue(CompanionHeroStyle.appPedestalInsetDp(240) in 12..26)
+        assertTrue(CompanionHeroStyle.appPedestalInsetDp(132) < CompanionHeroStyle.appPedestalInsetDp(240))
+
+        for (pack in ThemePack.BUILTINS) {
+            val palette = CompanionHeroStyle.brandHorizonPalette(pack.panelLift, pack.accentColor)
+            assertEquals(0xFF, (palette.skyMid ushr 24) and 0xFF)
+            assertEquals(0xFF, (palette.skyHorizon ushr 24) and 0xFF)
+            assertEquals(0xFF, (palette.seaTop ushr 24) and 0xFF)
+            assertEquals(0x33, (palette.horizonLine ushr 24) and 0xFF)
+            assertTrue(
+                "Horizon sea surface for ${pack.id} must stay dark for muted prompt legibility",
+                ThemePack.contrastRatio(0x99FFFFFF.toInt(), palette.seaTop) >= 4.5,
+            )
+        }
+    }
 }
