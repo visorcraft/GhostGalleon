@@ -149,7 +149,7 @@ object HintBar {
             val raw = text.toString()
             if (raw == lastRawText) return
             lastRawText = raw
-            contentDescription = raw
+            contentDescription = CompanionA11y.plainHintDescription(raw)
             val styled = formatStyled(context, raw)
             applyingStyled = true
             try {

@@ -33,8 +33,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
@@ -46,6 +48,7 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.children
 import kotlin.math.abs
 import com.visorcraft.ghostgalleon.GhostGalleonApp
@@ -157,6 +160,7 @@ object CompanionPanel {
     /** High-contrast warm gold for favorite star indicator on OLED dark surfaces. */
     private const val FAVORITE_STAR_COLOR = 0xFFFFD54F.toInt()
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
+    private const val TAG_PERF_CARD_PREFIX = "perf_card_"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
     private const val TAG_PERF_BAR_PREFIX = "perf_bar_"
     private const val TAG_PERF_DOT_PREFIX = "perf_dot_"
@@ -1900,7 +1904,11 @@ object CompanionPanel {
             tag = TAG_TOP_STRIP
             clipChildren = true
             clipToPadding = true
-            contentDescription = TopStripMetrics.accessibilitySummary(resolvedTitle, resolvedSub)
+            contentDescription = CompanionA11y.heroSummary(
+                title = resolvedTitle,
+                subline = resolvedSub,
+                raLine = model.raLine?.let(context::resolveText),
+            )
         }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2278,7 +2286,11 @@ object CompanionPanel {
             if (fav.visibility != nextVis) fav.visibility = nextVis
         }
         view.findViewWithTag<View>(TAG_TOP_STRIP)?.contentDescription =
-            TopStripMetrics.accessibilitySummary(nextTitle, nextSubtitle)
+            CompanionA11y.heroSummary(
+                title = nextTitle,
+                subline = nextSubtitle,
+                raLine = ra.takeIf { it.visibility == View.VISIBLE }?.text?.toString(),
+            )
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
             panelBackground(context, stripAccent)
         view.findViewWithTag<View>(TAG_STRIP_DIVIDER)
@@ -2582,6 +2594,7 @@ object CompanionPanel {
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 isClickable = true
                 isFocusable = true
+                markAccessibleButton(this)
                 bindResumeChipGestures(
                     view = this,
                     cont = cont,
@@ -2662,6 +2675,7 @@ object CompanionPanel {
                     dp(heroSpec.nameSidePadDp),
                     dp(4),
                 )
+                ViewCompat.setAccessibilityHeading(this, true)
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3011,6 +3025,7 @@ object CompanionPanel {
                     dp(heroSpec.nameSidePadDp),
                     dp(4),
                 )
+                ViewCompat.setAccessibilityHeading(this, true)
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3255,10 +3270,23 @@ object CompanionPanel {
         return if (insetPx > 0) InsetDrawable(ripple, 0, insetPx, 0, insetPx) else ripple
     }
 
+    private fun markAccessibleButton(view: View) {
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfo,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
+    }
+
     private fun attachChipTactileFeedback(
         view: View,
         onFocused: (() -> Unit)? = null,
     ) {
+        markAccessibleButton(view)
         var pressed = false
         var focused = false
         fun updateScale() {
@@ -3436,6 +3464,7 @@ object CompanionPanel {
             setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
+            ViewCompat.setAccessibilityHeading(this, true)
         })
         col.addView(TextView(context).apply {
             setText(R.string.deck_perf_live_hint)
@@ -3475,10 +3504,18 @@ object CompanionPanel {
             val dotPx = dp(PerfHudMetrics.STATUS_DOT_DP)
             val meterHeightPx = dp(PerfHudMetrics.METER_HEIGHT_DP)
             rows.forEachIndexed { index, (label, value) ->
+                val resolvedLabel = context.resolveText(label)
+                val resolvedValue = context.resolveText(value)
                 val card = LinearLayout(context).apply {
+                    tag = TAG_PERF_CARD_PREFIX + index
                     orientation = LinearLayout.VERTICAL
                     background = TileBackgrounds.card(context)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    contentDescription = CompanionA11y.metricCardDescription(
+                        resolvedLabel,
+                        resolvedValue,
+                    )
                 }
                 val headerRow = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -3487,12 +3524,13 @@ object CompanionPanel {
                 }
                 headerRow.addView(
                     TextView(context).apply {
-                        text = context.resolveText(label)
+                        text = resolvedLabel
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                         setTextColor(UiDimens.ALPHA_MUTED)
                         maxLines = 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                         includeFontPadding = false
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                     },
                     LinearLayout.LayoutParams(
                         0,
@@ -3523,7 +3561,7 @@ object CompanionPanel {
                 )
                 card.addView(TextView(context).apply {
                     tag = TAG_PERF_VALUE_PREFIX + index
-                    text = context.resolveText(value)
+                    text = resolvedValue
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                     setTypeface(typeface, Typeface.BOLD)
                     setTextColor(UiDimens.ALPHA_PRIMARY)
@@ -3531,6 +3569,7 @@ object CompanionPanel {
                     maxLines = 2
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     includeFontPadding = false
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3570,7 +3609,11 @@ object CompanionPanel {
                 val tv = col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
                     ?: return@forEachIndexed
                 val next = context.resolveText(value)
-                if (tv.text?.toString() != next) tv.text = next
+                if (tv.text?.toString() != next) {
+                    tv.text = next
+                    col.findViewWithTag<View>(TAG_PERF_CARD_PREFIX + index)?.contentDescription =
+                        CompanionA11y.metricCardDescription(context.resolveText(label), next)
+                }
                 val meter = PerfHudMetrics.meterForRow(label, readings)
                 val nextTextColor = PerfHudMetrics.valueTextColor(meter?.severity)
                 if (tv.currentTextColor != nextTextColor) tv.setTextColor(nextTextColor)
@@ -3667,6 +3710,7 @@ object CompanionPanel {
                 letterSpacing = 0.12f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
+                ViewCompat.setAccessibilityHeading(this, true)
             })
             target.addView(TextView(activity).apply {
                 setText(R.string.deck_pin_cta_subtitle)
@@ -4121,6 +4165,7 @@ object CompanionPanel {
             letterSpacing = 0.12f
             gravity = if (compact) Gravity.START else Gravity.CENTER
             includeFontPadding = false
+            ViewCompat.setAccessibilityHeading(this, true)
         }
         val titleTv = TextView(activity).apply {
             text = label
@@ -4306,6 +4351,7 @@ object CompanionPanel {
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
             includeFontPadding = false
+            ViewCompat.setAccessibilityHeading(this, true)
         })
         val artPx = dp(hdr.artDp)
         hud.addView(
@@ -4379,6 +4425,7 @@ object CompanionPanel {
             setTextColor(UiDimens.ALPHA_MUTED)
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         })
         val postureInsetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
         val postureBtn = TextView(activity).apply {
@@ -4583,6 +4630,7 @@ object CompanionPanel {
                                 includeFontPadding = false
                                 maxLines = 1
                                 ellipsize = android.text.TextUtils.TruncateAt.END
+                                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
                             },
                             LinearLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
