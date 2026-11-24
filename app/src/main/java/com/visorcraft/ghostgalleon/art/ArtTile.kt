@@ -3,13 +3,11 @@ package com.visorcraft.ghostgalleon.art
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Outline
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -20,6 +18,7 @@ import androidx.core.view.children
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
+import com.visorcraft.ghostgalleon.ui.deck.OutlineCache
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 
 /**
@@ -72,8 +71,7 @@ object ArtTile {
         )
         val overlay = ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
-            clipToOutline = true
-            outlineProvider = roundedOutline(radiusPx)
+            applyRoundedOutline(this, radiusPx)
             addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
         }
         frame.addView(overlay, FrameLayout.LayoutParams(
@@ -87,6 +85,10 @@ object ArtTile {
     /** The overlay ImageView inside a frame built by [view], if any. */
     fun overlay(frame: ViewGroup): ImageView? =
         frame.children.filterIsInstance<ImageView>().firstOrNull()
+
+    /** The [PlatformTile] placeholder TextView inside a frame built by [view], if any. */
+    fun placeholder(frame: ViewGroup): TextView? =
+        frame.children.filterIsInstance<TextView>().firstOrNull()
 
     /**
      * (Re)bind an overlay to a ROM: restores the placeholder and clears any
@@ -120,12 +122,11 @@ object ArtTile {
         overlay.setPadding(0, 0, 0, 0)
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
-        showPlaceholder(overlay)
         overlay.tag = rom.id
-        overlay.clipToOutline = true
-        overlay.outlineProvider = roundedOutline(radiusPx)
+        applyRoundedOutline(overlay, radiusPx)
 
         var syncGrid = true
+        var syncPainted = false
         cache.load(
             context, rom, targetPx,
             artOverrides = artOverrides,
@@ -150,6 +151,7 @@ object ArtTile {
                     frameKind = ArtTileMetrics.ArtFrameKind.COVER_ART,
                     revealMode = mode,
                 )
+                if (syncGrid) syncPainted = true
                 return@onGrid
             }
             // Logo fallback on the decode thread (no main-thread disk stat).
@@ -176,6 +178,7 @@ object ArtTile {
                         frameKind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
                         revealMode = mode,
                     )
+                    if (syncGrid && syncLogo) syncPainted = true
                     return@onLogo
                 }
                 val logo = HeroDetail.logoUri(rom) ?: return@onLogo
@@ -203,6 +206,7 @@ object ArtTile {
                             frameKind = ArtTileMetrics.ArtFrameKind.LOGO_OVERLAY,
                             revealMode = mode,
                         )
+                        if (syncGrid && syncLogo && syncLocal) syncPainted = true
                     }
                 }
                 syncLocal = false
@@ -210,14 +214,23 @@ object ArtTile {
             syncLogo = false
         }
         syncGrid = false
+        if (!syncPainted) {
+            showPlaceholder(overlay)
+        }
     }
 
     private fun placeholderOf(overlay: ImageView): TextView? =
         (overlay.parent as? ViewGroup)?.children?.filterIsInstance<TextView>()?.firstOrNull()
 
     private fun showPlaceholder(overlay: ImageView) {
-        placeholderOf(overlay)?.visibility = View.VISIBLE
-        (overlay.parent as? View)?.background = null
+        val placeholder = placeholderOf(overlay)
+        if (placeholder != null && placeholder.visibility != View.VISIBLE) {
+            placeholder.visibility = View.VISIBLE
+        }
+        val parent = overlay.parent as? View
+        if (parent != null && parent.background != null) {
+            parent.background = null
+        }
     }
 
     private fun hidePlaceholderWithBacking(
@@ -227,25 +240,32 @@ object ArtTile {
     ) {
         // INVISIBLE (not GONE) preserves layout bounds and findViewWithTag
         // lookup stability (e.g. CompanionPanel TAG_HERO_ICON).
-        placeholderOf(overlay)?.visibility = View.INVISIBLE
-        val parent = overlay.parent as? View ?: return
-        val density = context.resources.displayMetrics.density
-        parent.background = GradientDrawable().apply {
-            setColor(TileBackgrounds.surfaceSunken(context))
-            cornerRadius = radiusPx
-            setStroke(
-                ArtTileMetrics.backingStrokePx(density),
-                TileBackgrounds.hairlineDivider(context),
-            )
+        val placeholder = placeholderOf(overlay)
+        if (placeholder != null && placeholder.visibility != View.INVISIBLE) {
+            placeholder.visibility = View.INVISIBLE
         }
+        val parent = overlay.parent as? View ?: return
+        val wantRadius = if (radiusPx.isNaN() || radiusPx <= 0f) 0f else radiusPx
+        val wantFill = TileBackgrounds.surfaceSunken(context)
+        val existing = parent.background as? GradientDrawable
+        if (existing != null &&
+            existing.cornerRadius == wantRadius &&
+            existing.color?.defaultColor == wantFill
+        ) {
+            return
+        }
+        parent.background = TileBackgrounds.artBackingPx(context, radiusPx)
     }
 
-    private fun roundedOutline(radiusPx: Float): ViewOutlineProvider =
-        object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-            }
+    private fun applyRoundedOutline(overlay: ImageView, radiusPx: Float) {
+        val target = OutlineCache.roundedRect(radiusPx)
+        if (overlay.outlineProvider !== target) {
+            overlay.outlineProvider = target
         }
+        if (!overlay.clipToOutline) {
+            overlay.clipToOutline = true
+        }
+    }
 
     private fun applyRounded(
         overlay: ImageView,

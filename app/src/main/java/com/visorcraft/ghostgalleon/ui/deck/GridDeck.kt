@@ -62,6 +62,73 @@ import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
 
+/**
+ * Pure, host-tested visual state snapshot painted onto a [GridDeck] cell.
+ * Comparing previous vs next state skips unchanged cells on D-pad NAV ticks
+ * so at most 2 cells (previous + next) mutate instead of all 16–96 attached
+ * cells across every horizontal page.
+ */
+internal data class GridCellVisualState(
+    val position: Int,
+    val role: MoveChoreography.SlotRole,
+    val slotKey: String?,
+    val isBlank: Boolean,
+    val isMissingRom: Boolean,
+    val accent: Int,
+    val surfaceFill: Int,
+    val moveActive: Boolean,
+    val moveLifted: Boolean,
+    val docked: Boolean,
+    val favorited: Boolean,
+    val slotCount: Int,
+)
+
+/** Content subtree kind for same-kind view reuse in [GridDeck]. Pure; host-tested. */
+internal enum class GridCellKind {
+    ROM,
+    APP,
+    FOLDER,
+    MISSING_ROM,
+    BLANK,
+}
+
+/** Pure dirty-diff and subtree-reuse rules for [GridDeck]. Host-tested. */
+internal object GridVisualDiff {
+
+    fun needsVisualRepaint(
+        previous: GridCellVisualState?,
+        next: GridCellVisualState,
+        forceRepaint: Boolean = false,
+    ): Boolean = forceRepaint || previous == null || previous != next
+
+    fun classifyCellKind(
+        slotKey: String?,
+        hasResolvedRom: Boolean,
+        hasResolvedApp: Boolean,
+        isFolder: Boolean,
+        isRomKey: Boolean,
+    ): GridCellKind = when {
+        hasResolvedRom -> GridCellKind.ROM
+        isFolder && slotKey != null -> GridCellKind.FOLDER
+        hasResolvedApp -> GridCellKind.APP
+        isRomKey -> GridCellKind.MISSING_ROM
+        else -> GridCellKind.BLANK
+    }
+
+    /** True when an existing cell subtree of [existingKind] can be rebound in place for [nextKind]. */
+    fun canReuseSubtree(
+        existingKind: GridCellKind?,
+        nextKind: GridCellKind,
+        existingShowLabels: Boolean,
+        nextShowLabels: Boolean,
+    ): Boolean {
+        if (existingKind == null || existingKind != nextKind) return false
+        if (existingKind == GridCellKind.BLANK) return true
+        if (existingShowLabels != nextShowLabels) return false
+        return existingKind == GridCellKind.ROM || existingKind == GridCellKind.APP
+    }
+}
+
 // The curated grid: renders settings.gridSlots — ordered, null = blank
 // ("+") cell — padded up to a whole number of rows (GridSlots.paddedCount)
 // so an incomplete row never shows. Padded cells are ordinary blank slots:
@@ -112,15 +179,32 @@ class GridDeck(
     private val visibleByPkg by lazy {
         library.all(settings).associateBy { it.packageName }
     }
-    // ROM slots hold "rom:<entry id>" values (SlotKey); resolve them against
-    // the ROM index snapshot. A ROM that drops out of the library renders as
-    // a dimmed "Missing" tile but keeps its slot value (removable via
-    // long-press).
-    private val romByKey by lazy { roms.associateBy { SlotKey.rom(it.id) } }
+    // ROM slots hold "rom:<entry id>" values (SlotKey); resolve them in O(1)
+    // through GhostGalleonApp.romById (avoiding a 6k-20k LinkedHashMap copy on
+    // every GridDeck build), falling back to a lazy map only if a distinct list
+    // was supplied.
+    private val romByIdFallback by lazy { roms.associateBy { it.id } }
 
-    // Cached resolved theme tokens for this immutable settings snapshot so hot
-    // selection / scroll paths never re-parse themeCustomJson on every NAV tick.
+    private fun romForId(id: String): RomEntry? {
+        val app = activity.application as? GhostGalleonApp
+        if (app != null && app.romEntries === roms) {
+            return app.romById[id]
+        }
+        return romByIdFallback[id]
+    }
+
+    private fun romForKey(key: String?): RomEntry? =
+        SlotKey.romId(key)?.let(::romForId)
+
+    // O(1) dock-pin membership for hot badge and TalkBack state checks.
+    private val dockKeySet by lazy {
+        settings.dockSlots.filterNotNullTo(HashSet())
+    }
+
+    // Cached resolved theme tokens and card surface fill for this immutable
+    // settings snapshot so hot selection / scroll paths never re-resolve JSON.
     private val themeTokens by lazy { ThemePack.resolve(settings) }
+    private val surfaceFillColor by lazy { ThemePack.cardFill(themeTokens) }
 
     // Cached move-mode drawable templates cloned via constantState so rapid
     // move-mode swaps avoid repeated GradientDrawable allocations.
@@ -198,6 +282,35 @@ class GridDeck(
         DockSlots.visibleCount(dockMove.working ?: settings.dockSlots),
         slotCount, settings.gridColumns)
 
+    private class GridCellHolder(
+        val kind: GridCellKind,
+        var boundKey: String? = null,
+        val cellWidth: Int = 0,
+        val iconSize: Int = 0,
+        val labelSpec: GridLabelMetrics.Spec,
+        val showLabels: Boolean = false,
+        val bodyView: View,
+        val artPlaceholder: TextView? = null,
+        val artOverlay: ImageView? = null,
+        val appIcon: ImageView? = null,
+        val labelView: TextView? = null,
+        var dockBadge: FrameLayout? = null,
+        var dockDot: View? = null,
+        var favBadge: TextView? = null,
+        var badgeCornerDock: GridBadgeMetrics.BadgeCorner = GridBadgeMetrics.BadgeCorner.NONE,
+        var badgeCornerFav: GridBadgeMetrics.BadgeCorner = GridBadgeMetrics.BadgeCorner.NONE,
+        var badgeCellWidth: Int = -1,
+        var visualState: GridCellVisualState? = null,
+    ) {
+        fun matchesMetrics(
+            wantCellWidth: Int,
+            wantIconSize: Int,
+            wantLabelSpec: GridLabelMetrics.Spec,
+        ): Boolean = cellWidth == wantCellWidth &&
+            iconSize == wantIconSize &&
+            labelSpec == wantLabelSpec
+    }
+
     private class PageGeometry(
         val cellsPerPage: Int,
         val visibleRows: Int,
@@ -247,7 +360,10 @@ class GridDeck(
     // this pass. In move mode the cell CONTENTS may also have swapped, so
     // visible cells are fully re-populated.
     private fun rebindVisibleCells(repopulate: Boolean = moveIndex != null) {
-        cancelPulseAnimator()
+        if (pulseAnimator != null) {
+            cancelPulseAnimator()
+        }
+        val moving = moveIndex
         val selected = selectedIndex()
         forEachAttachedCell { frame, position, adapter ->
             if (repopulate) {
@@ -255,7 +371,7 @@ class GridDeck(
             } else {
                 applySelectionVisuals(frame, position, position == selected)
             }
-            if (position == moveIndex) startPulse(frame)
+            if (position == moving) startPulse(frame)
         }
     }
 
@@ -295,6 +411,7 @@ class GridDeck(
             frame.animate().cancel()
             frame.translationY = 0f
             frame.alpha = 1f
+            (frame.tag as? GridCellHolder)?.visualState = null
         }
     }
 
@@ -401,18 +518,41 @@ class GridDeck(
         position: Int,
         selected: Boolean,
         animate: Boolean = frame.isLaidOut,
+        forceRepaint: Boolean = false,
     ) {
-        val cell = frame.getChildAt(0) ?: return
+        val holder = frame.tag as? GridCellHolder
+        val cell = holder?.bodyView ?: frame.getChildAt(0) ?: return
         val ctx = frame.context
-        val isBlank = cell is TextView
+        val isBlank = holder?.kind == GridCellKind.BLANK || cell is TextView
+        val key = slotPackages().getOrNull(position)
+        val isMissing = key != null && SlotKey.isRom(key) && romForKey(key) == null
+        val moving = moveIndex
         val role = MoveChoreography.resolveRole(
             position = position,
             selectedIndex = if (selected) position else null,
-            movingIndex = moveIndex,
+            movingIndex = moving,
             surfaceFocused = state.dockSlot == null,
         )
+        val surfaceFill = surfaceFillColor
+        val nextState = GridCellVisualState(
+            position = position,
+            role = role,
+            slotKey = key,
+            isBlank = isBlank,
+            isMissingRom = isMissing,
+            accent = settings.accentColor,
+            surfaceFill = surfaceFill,
+            moveActive = moving != null,
+            moveLifted = position == moving,
+            docked = key != null && key in dockKeySet,
+            favorited = key != null && key in settings.favorites,
+            slotCount = slotCount,
+        )
+        if (!GridVisualDiff.needsVisualRepaint(holder?.visualState, nextState, forceRepaint)) {
+            return
+        }
+        holder?.visualState = nextState
         val spec = MoveChoreography.gridVisualSpec(role, isBlank)
-        val surfaceFill = TileBackgrounds.surfaceColor(ctx)
 
         cell.background = when (role) {
             MoveChoreography.SlotRole.LIFTED -> {
@@ -442,11 +582,14 @@ class GridDeck(
                     MoveChoreography.SlotRole.NORMAL -> BLANK_PLUS_IDLE_COLOR
                 },
             )
-        } else if (cell is LinearLayout && cell.childCount > 1) {
-            val labelView = cell.getChildAt(cell.childCount - 1) as? TextView
+        } else {
+            val labelView = holder?.labelView
+                ?: if (cell is LinearLayout && cell.childCount > 1) {
+                    cell.getChildAt(cell.childCount - 1) as? TextView
+                } else {
+                    null
+                }
             if (labelView != null) {
-                val key = slotPackages().getOrNull(position)
-                val isMissing = key != null && SlotKey.isRom(key) && romByKey[key] == null
                 val style = GridLabelMetrics.labelStyleForRole(role, isMissing)
                 labelView.setTextColor(style.textColor)
                 labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
@@ -514,12 +657,12 @@ class GridDeck(
         } else {
             null
         }
-        val dockLabel = if (key in settings.dockSlots) {
+        val dockLabel = if (key in dockKeySet) {
             activity.getString(R.string.label_dock)
         } else {
             null
         }
-        val romEntry = key.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+        val romEntry = romForKey(key)
         if (romEntry != null) {
             return DeckAccessibility.gridSlotDescription(
                 primaryLabel = RomNames.display(romEntry, settings.romNames),
@@ -661,6 +804,10 @@ class GridDeck(
             slotCount = slotCount,
             cellsPerPage = geometry.cellsPerPage,
         )
+        if (stripState.currentPage == lastPaintedPage) return
+        val prevPage = lastPaintedPage
+        lastPaintedPage = stripState.currentPage
+
         val prevAlpha = if (stripState.canPagePrev) {
             GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
         } else {
@@ -691,10 +838,6 @@ class GridDeck(
                 btn.alpha = nextAlpha
             }
         }
-
-        if (stripState.currentPage == lastPaintedPage) return
-        val prevPage = lastPaintedPage
-        lastPaintedPage = stripState.currentPage
 
         val density = dots.resources.displayMetrics.density
         val activeW = (GridPageIndicatorMetrics.ACTIVE_PILL_WIDTH_DP * density).toInt()
@@ -976,7 +1119,7 @@ class GridDeck(
             DeckCornerMetrics.folderThumbRadiusDp(themeTokens),
         )
         SlotKey.romId(key)?.let { id ->
-            val rom = app.romEntry(id) ?: return
+            val rom = romForId(id) ?: return
             image.tag = key
             var syncHit = true
             app.artCache.load(
@@ -1002,7 +1145,7 @@ class GridDeck(
 
     private fun memberLabel(key: String): String {
         SlotKey.romId(key)?.let { id ->
-            return (activity.application as GhostGalleonApp).romEntry(id)?.name ?: key
+            return romForId(id)?.name ?: key
         }
         if (SlotKey.isFolder(key)) {
             val fid = SlotKey.folderId(key)
@@ -1742,17 +1885,17 @@ class GridDeck(
                 }
                 SlotMenu.Choice.OPEN_WITH -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let
-                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    val rom = romForId(id) ?: return@let
                     openWithForRom(rom)
                 }
                 SlotMenu.Choice.PLAYER -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let
-                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    val rom = romForId(id) ?: return@let
                     showPlayerProfileMenu(rom)
                 }
                 SlotMenu.Choice.SCREENS -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let
-                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    val rom = romForId(id) ?: return@let
                     showScreensPlotMenu(rom)
                 }
                 SlotMenu.Choice.SET_ART -> key?.let { k ->
@@ -1830,7 +1973,7 @@ class GridDeck(
                 SlotMenu.Choice.SEARCH_LIBRARY -> openLibrarySearch()
                 SlotMenu.Choice.DOWNLOAD_ART -> key?.let { k ->
                     val id = SlotKey.romId(k) ?: return@let
-                    val rom = roms.firstOrNull { it.id == id } ?: return@let
+                    val rom = romForId(id) ?: return@let
                     requestMissingArtwork(activity, rom)
                 }
                 SlotMenu.Choice.MIRROR_TO_COLLECTION -> key?.let { k ->
@@ -1869,7 +2012,7 @@ class GridDeck(
             settings.folders[fid]?.name?.takeIf { it.isNotBlank() }?.let { return it }
         }
         SlotKey.romId(key)?.let { id ->
-            roms.firstOrNull { it.id == id }?.let { rom ->
+            romForId(id)?.let { rom ->
                 return RomNames.display(rom, settings.romNames)
             }
         }
@@ -1891,8 +2034,7 @@ class GridDeck(
     }
 
     private fun gridRelatedOptions(key: String): List<com.visorcraft.ghostgalleon.library.GameDetails.RelatedOption> {
-        val rom = SlotKey.romId(key)?.let { id -> roms.firstOrNull { it.id == id } }
-            ?: return emptyList()
+        val rom = romForKey(key) ?: return emptyList()
         val chrome = settings.browseChrome
         return com.visorcraft.ghostgalleon.library.GameDetails.relatedOptions(
             platformId = rom.platformId,
@@ -1952,7 +2094,7 @@ class GridDeck(
     }
 
     private fun showGridDetails(key: String) {
-        val rom = SlotKey.romId(key)?.let { id -> roms.firstOrNull { it.id == id } }
+        val rom = romForKey(key)
         val identity = rom?.let {
             (activity.application as GhostGalleonApp).romIdentities[it.id]
         }
@@ -2041,8 +2183,7 @@ class GridDeck(
     // EMPTY field removes the override (same as "Reset name"); Cancel keeps
     // everything as-is. The settings update hot-reloads every surface.
     private fun showRenameDialog(key: String) {
-        val romId = SlotKey.romId(key)
-        val rom = romId?.let { id -> roms.firstOrNull { it.id == id } }
+        val rom = romForKey(key)
         val current = if (rom != null) {
             RomNames.display(rom, settings.romNames)
         } else {
@@ -2359,18 +2500,19 @@ class GridDeck(
                 accessibilityDelegate = GRID_SLOT_ROLE_DELEGATE
             }
             val boundKey = frame.getTag(R.id.grid_cell_key) as? String
-            // Reuse convertView when the slot key is unchanged and we are not
-            // in move mode (contents may have swapped). Selection-only path
-            // already uses applySelectionVisuals — mirror that for scroll.
+            val holder = frame.tag as? GridCellHolder
+            // Reuse convertView when the slot key and metrics are unchanged and
+            // we are not in move mode (contents may have swapped). Selection-only
+            // path already uses applySelectionVisuals — mirror that for scroll.
             if (convertView != null &&
                 boundKey == key &&
                 moveIndex == null &&
-                frame.childCount > 0
+                frame.childCount > 0 &&
+                holder?.matchesMetrics(cellWidth, iconSize, labelSpec) == true
             ) {
                 applySelectionVisuals(frame, absPos, absPos == selectedIndex(), animate = false)
             } else {
                 populateFrame(frame, absPos)
-                frame.setTag(R.id.grid_cell_key, key)
             }
             val existingLp = frame.layoutParams
             if (!DeckHotPathCache.layoutParamsUnchanged(
@@ -2385,130 +2527,298 @@ class GridDeck(
             return frame
         }
 
-        // (Re)builds a cell for the slot at [position]: a filled tile
-        // (app icon or ROM cover/platform tile + optional label + scrimmed
-        // corner badges) or a recessed blank "+" tile, then selection visuals.
+        // (Re)builds or rebinds a cell for the slot at [position]: reuses
+        // existing view subtrees in place for same-kind recycled cells
+        // (ROM->ROM, APP->APP, BLANK->BLANK) instead of calling removeAllViews().
         fun populateFrame(frame: FrameLayout, position: Int) {
-            val density = context.resources.displayMetrics.density
-
-            frame.removeAllViews()
             val key = slotPackages().getOrNull(position)
-            val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+            val romEntry = romForKey(key)
             val isFolder = SlotKey.isFolder(key)
             val appEntry = key
                 ?.takeUnless { SlotKey.isRom(it) || SlotKey.isFolder(it) }
                 ?.let { visibleByPkg[it] }
-            when {
-                romEntry != null -> {
-                    frame.addView(buildRomCell(romEntry), FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
-                }
-                isFolder && key != null -> {
-                    frame.addView(buildFolderCell(key), FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
-                }
-                appEntry != null -> {
-                    frame.addView(buildFilledCell(appEntry), FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
-                }
-                SlotKey.isRom(key) -> {
-                    // Unresolvable ROM slot (deleted ROM, card out, library
-                    // changed): the platform tile at 40% alpha with a dim
-                    // "Missing" label. The slot stays filled — long-press
-                    // still offers Move/Remove and launch toasts.
-                    frame.addView(buildMissingCell(key!!), FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
-                }
-                else -> {
-                    // Blank slot (or a value that no longer resolves): recessed
-                    // outline surface with a clean subtle "+".
-                    frame.addView(TextView(context).apply {
-                        setText(R.string.glyph_add)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
-                        setTextColor(BLANK_PLUS_IDLE_COLOR)
-                        gravity = Gravity.CENTER
-                    }, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT))
+            val nextKind = GridVisualDiff.classifyCellKind(
+                slotKey = key,
+                hasResolvedRom = romEntry != null,
+                hasResolvedApp = appEntry != null,
+                isFolder = isFolder,
+                isRomKey = SlotKey.isRom(key),
+            )
+            val filled = key != null && (romEntry != null || appEntry != null || isFolder)
+            val existing = frame.tag as? GridCellHolder
+
+            // Fast path 1: exact same key & metrics (e.g., untouched sibling
+            // slots during a move-mode swap) — zero view churn.
+            if (existing != null &&
+                existing.kind == nextKind &&
+                existing.boundKey == key &&
+                existing.showLabels == settings.showLabels &&
+                existing.matchesMetrics(cellWidth, iconSize, labelSpec) &&
+                frame.childCount > 0
+            ) {
+                syncBadges(frame, existing, key, filled)
+                frame.setTag(R.id.grid_cell_key, key)
+                applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+                return
+            }
+
+            // Fast path 2: same-kind subtree reuse (ROM->ROM, APP->APP,
+            // BLANK->BLANK) — rebind icon/art/label/badges in place.
+            if (existing != null &&
+                existing.matchesMetrics(cellWidth, iconSize, labelSpec) &&
+                GridVisualDiff.canReuseSubtree(
+                    existingKind = existing.kind,
+                    nextKind = nextKind,
+                    existingShowLabels = existing.showLabels,
+                    nextShowLabels = settings.showLabels,
+                ) &&
+                frame.childCount > 0
+            ) {
+                when (nextKind) {
+                    GridCellKind.ROM -> {
+                        val placeholder = existing.artPlaceholder
+                        val overlay = existing.artOverlay
+                        if (placeholder != null && overlay != null && romEntry != null) {
+                            val radiusDp = innerArtRadiusDp()
+                            PlatformTile.restyle(placeholder, context, romEntry.platformId, radiusDp)
+                            ArtTile.bind(
+                                overlay = overlay,
+                                cache = (activity.application as GhostGalleonApp).artCache,
+                                rom = romEntry,
+                                targetPx = iconSize,
+                                cornerRadiusDp = radiusDp,
+                                artOverrides = settings.artOverrides,
+                            )
+                            existing.labelView?.text = RomNames.display(romEntry, settings.romNames)
+                            existing.boundKey = key
+                            syncBadges(frame, existing, key, filled = true)
+                            frame.setTag(R.id.grid_cell_key, key)
+                            applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+                            return
+                        }
+                    }
+                    GridCellKind.APP -> {
+                        val icon = existing.appIcon
+                        if (icon != null && appEntry != null) {
+                            CustomIcon.bind(
+                                image = icon,
+                                iconLoader = iconLoader,
+                                cache = (activity.application as GhostGalleonApp).artCache,
+                                settings = settings,
+                                packageName = appEntry.packageName,
+                                targetPx = iconSize,
+                                cornerRadiusPx = context.dpF(innerArtRadiusDp()),
+                            )
+                            existing.labelView?.text = appEntry.label
+                            existing.boundKey = key
+                            syncBadges(frame, existing, key, filled = true)
+                            frame.setTag(R.id.grid_cell_key, key)
+                            applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+                            return
+                        }
+                    }
+                    GridCellKind.BLANK -> {
+                        existing.boundKey = key
+                        syncBadges(frame, existing, key = null, filled = false)
+                        frame.setTag(R.id.grid_cell_key, key)
+                        applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+                        return
+                    }
+                    GridCellKind.FOLDER, GridCellKind.MISSING_ROM -> Unit
                 }
             }
-            val filled = key != null && (romEntry != null || appEntry != null || isFolder)
+
+            // Slow path: first inflation, kind transition, metrics resize, or
+            // folder/missing rebuild.
+            existing?.appIcon?.let { com.visorcraft.ghostgalleon.art.ArtCache.dropDisplayed(it) }
+            frame.removeAllViews()
+            val holder = when {
+                romEntry != null -> buildRomCell(romEntry)
+                isFolder && key != null -> buildFolderCell(key)
+                appEntry != null -> buildFilledCell(appEntry)
+                SlotKey.isRom(key) -> buildMissingCell(key!!)
+                else -> buildBlankCell()
+            }
+            holder.boundKey = key
+            frame.addView(
+                holder.bodyView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            frame.tag = holder
+            frame.setTag(R.id.grid_cell_key, key)
+            syncBadges(frame, holder, key, filled)
+            applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+        }
+
+        private fun syncBadges(
+            frame: FrameLayout,
+            holder: GridCellHolder,
+            key: String?,
+            filled: Boolean,
+        ) {
+            val badgePlacement = if (filled && key != null) {
+                GridBadgeMetrics.placement(
+                    isFavorite = key in settings.favorites,
+                    isPinnedToDock = key in dockKeySet,
+                )
+            } else {
+                NO_BADGES
+            }
+            val needsDock = badgePlacement.dockCorner != GridBadgeMetrics.BadgeCorner.NONE
+            val needsFav = badgePlacement.favoriteCorner != GridBadgeMetrics.BadgeCorner.NONE
+            if (!needsDock && !needsFav) {
+                holder.dockBadge?.visibility = View.GONE
+                holder.favBadge?.visibility = View.GONE
+                holder.badgeCornerDock = GridBadgeMetrics.BadgeCorner.NONE
+                holder.badgeCornerFav = GridBadgeMetrics.BadgeCorner.NONE
+                return
+            }
+            val density = context.resources.displayMetrics.density
             val badgeSpec = GridBadgeMetrics.compute(
                 cellWidthPx = cellWidth,
                 cardRadiusDp = themeTokens.cardRadiusDp,
                 density = density,
             )
-            val badgePlacement = if (filled && key != null) {
-                GridBadgeMetrics.placement(
-                    isFavorite = key in settings.favorites,
-                    isPinnedToDock = key in settings.dockSlots,
-                )
-            } else {
-                GridBadgeMetrics.Placement(
-                    GridBadgeMetrics.BadgeCorner.NONE,
-                    GridBadgeMetrics.BadgeCorner.NONE,
-                )
-            }
             // Dock pin badge: luminous accent dot centered inside an 80% dark
             // circular scrim so it stays legible over bright cover artwork.
-            if (badgePlacement.dockCorner != GridBadgeMetrics.BadgeCorner.NONE) {
-                val scrim = FrameLayout(context).apply {
-                    background = cornerBadgeScrim(context)
-                    elevation = context.dpF(2)
-                }
-                val dot = View(context).apply {
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(GridBadgeMetrics.dockDotColor(settings.accentColor))
-                    }
-                }
-                scrim.addView(
-                    dot,
-                    FrameLayout.LayoutParams(
-                        badgeSpec.dockDotSizePx,
-                        badgeSpec.dockDotSizePx,
-                        Gravity.CENTER,
-                    ),
-                )
+            if (needsDock) {
                 val isEnd = badgePlacement.dockCorner == GridBadgeMetrics.BadgeCorner.TOP_END
                 val dockGravity = Gravity.TOP or if (isEnd) Gravity.END else Gravity.START
-                frame.addView(scrim, FrameLayout.LayoutParams(
-                    badgeSpec.badgeSizePx, badgeSpec.badgeSizePx, dockGravity).apply {
-                    topMargin = badgeSpec.insetPx
-                    if (isEnd) marginEnd = badgeSpec.insetPx else marginStart = badgeSpec.insetPx
-                })
+                val existingDock = holder.dockBadge
+                if (existingDock == null) {
+                    val scrim = FrameLayout(context).apply {
+                        background = cornerBadgeScrim(context)
+                        elevation = context.dpF(2)
+                    }
+                    val dot = View(context).apply {
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(GridBadgeMetrics.dockDotColor(settings.accentColor))
+                        }
+                    }
+                    scrim.addView(
+                        dot,
+                        FrameLayout.LayoutParams(
+                            badgeSpec.dockDotSizePx,
+                            badgeSpec.dockDotSizePx,
+                            Gravity.CENTER,
+                        ),
+                    )
+                    frame.addView(
+                        scrim,
+                        FrameLayout.LayoutParams(
+                            badgeSpec.badgeSizePx,
+                            badgeSpec.badgeSizePx,
+                            dockGravity,
+                        ).apply {
+                            topMargin = badgeSpec.insetPx
+                            if (isEnd) marginEnd = badgeSpec.insetPx else marginStart = badgeSpec.insetPx
+                        },
+                    )
+                    holder.dockBadge = scrim
+                    holder.dockDot = dot
+                } else {
+                    if (existingDock.visibility != View.VISIBLE) {
+                        existingDock.visibility = View.VISIBLE
+                    }
+                    if (holder.badgeCornerDock != badgePlacement.dockCorner ||
+                        holder.badgeCellWidth != cellWidth
+                    ) {
+                        existingDock.layoutParams = FrameLayout.LayoutParams(
+                            badgeSpec.badgeSizePx,
+                            badgeSpec.badgeSizePx,
+                            dockGravity,
+                        ).apply {
+                            topMargin = badgeSpec.insetPx
+                            if (isEnd) marginEnd = badgeSpec.insetPx else marginStart = badgeSpec.insetPx
+                        }
+                        holder.dockDot?.layoutParams = FrameLayout.LayoutParams(
+                            badgeSpec.dockDotSizePx,
+                            badgeSpec.dockDotSizePx,
+                            Gravity.CENTER,
+                        )
+                    }
+                }
+                holder.badgeCornerDock = badgePlacement.dockCorner
+            } else {
+                holder.dockBadge?.visibility = View.GONE
+                holder.badgeCornerDock = GridBadgeMetrics.BadgeCorner.NONE
             }
             // Favorite badge: ★ inside a matching dark circular scrim at top-end.
-            if (badgePlacement.favoriteCorner != GridBadgeMetrics.BadgeCorner.NONE) {
-                val star = TextView(context).apply {
-                    setText(R.string.glyph_favorite)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeSpec.starTextSp)
-                    setTextColor(GridBadgeMetrics.FAVORITE_STAR_COLOR)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    background = cornerBadgeScrim(context)
-                    elevation = context.dpF(2)
+            if (needsFav) {
+                val existingFav = holder.favBadge
+                if (existingFav == null) {
+                    val star = TextView(context).apply {
+                        setText(R.string.glyph_favorite)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeSpec.starTextSp)
+                        setTextColor(GridBadgeMetrics.FAVORITE_STAR_COLOR)
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        background = cornerBadgeScrim(context)
+                        elevation = context.dpF(2)
+                    }
+                    frame.addView(
+                        star,
+                        FrameLayout.LayoutParams(
+                            badgeSpec.badgeSizePx,
+                            badgeSpec.badgeSizePx,
+                            Gravity.TOP or Gravity.END,
+                        ).apply {
+                            topMargin = badgeSpec.insetPx
+                            marginEnd = badgeSpec.insetPx
+                        },
+                    )
+                    holder.favBadge = star
+                } else {
+                    if (existingFav.visibility != View.VISIBLE) {
+                        existingFav.visibility = View.VISIBLE
+                    }
+                    if (holder.badgeCornerFav != badgePlacement.favoriteCorner ||
+                        holder.badgeCellWidth != cellWidth
+                    ) {
+                        existingFav.setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeSpec.starTextSp)
+                        existingFav.layoutParams = FrameLayout.LayoutParams(
+                            badgeSpec.badgeSizePx,
+                            badgeSpec.badgeSizePx,
+                            Gravity.TOP or Gravity.END,
+                        ).apply {
+                            topMargin = badgeSpec.insetPx
+                            marginEnd = badgeSpec.insetPx
+                        }
+                    }
                 }
-                frame.addView(star, FrameLayout.LayoutParams(
-                    badgeSpec.badgeSizePx,
-                    badgeSpec.badgeSizePx,
-                    Gravity.TOP or Gravity.END,
-                ).apply {
-                    topMargin = badgeSpec.insetPx
-                    marginEnd = badgeSpec.insetPx
-                })
+                holder.badgeCornerFav = badgePlacement.favoriteCorner
+            } else {
+                holder.favBadge?.visibility = View.GONE
+                holder.badgeCornerFav = GridBadgeMetrics.BadgeCorner.NONE
             }
-            applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+            holder.badgeCellWidth = cellWidth
+        }
+
+        private fun buildBlankCell(): GridCellHolder {
+            val plus = TextView(context).apply {
+                setText(R.string.glyph_add)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+                setTextColor(BLANK_PLUS_IDLE_COLOR)
+                gravity = Gravity.CENTER
+            }
+            return GridCellHolder(
+                kind = GridCellKind.BLANK,
+                cellWidth = cellWidth,
+                iconSize = iconSize,
+                labelSpec = labelSpec,
+                showLabels = settings.showLabels,
+                bodyView = plus,
+            )
         }
 
         private fun buildTileRipple(ctx: Context): RippleDrawable {
             val radiusPx = ctx.dpF(GridTileFeedbackMetrics.gridTileRippleRadiusDp(themeTokens))
             val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
-                surfaceFill = TileBackgrounds.surfaceColor(ctx),
+                surfaceFill = surfaceFillColor,
                 accent = settings.accentColor,
             )
             val mask = GradientDrawable().apply {
@@ -2571,7 +2881,7 @@ class GridDeck(
             )
         }
 
-        private fun buildFolderCell(key: String): View {
+        private fun buildFolderCell(key: String): GridCellHolder {
             val folderId = SlotKey.folderId(key)
             val spec = folderId?.let { settings.folders[it] }
             val name = spec?.name ?: folderId ?: context.getString(R.string.label_folder)
@@ -2670,10 +2980,20 @@ class GridDeck(
                 },
             )
             cell.addView(iconBox, LinearLayout.LayoutParams(iconSize, iconSize))
-            if (settings.showLabels) {
-                cell.addView(buildCellLabel(name), labelParams())
+            val label = if (settings.showLabels) {
+                buildCellLabel(name).also { cell.addView(it, labelParams()) }
+            } else {
+                null
             }
-            return cell
+            return GridCellHolder(
+                kind = GridCellKind.FOLDER,
+                cellWidth = cellWidth,
+                iconSize = iconSize,
+                labelSpec = labelSpec,
+                showLabels = settings.showLabels,
+                bodyView = cell,
+                labelView = label,
+            )
         }
 
         private fun buildFolderMosaic(
@@ -2729,7 +3049,7 @@ class GridDeck(
                 }
             }
             val app = activity.application as GhostGalleonApp
-            val rom = memberKey.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+            val rom = romForKey(memberKey)
             if (rom != null) {
                 return ArtTile.view(
                     context = context,
@@ -2784,27 +3104,38 @@ class GridDeck(
         // ROM tile: cached artwork over the platform placeholder (async
         // fill; placeholder shows until/unless art arrives) plus the custom or
         // original ROM display name under the same showLabels setting as apps.
-        private fun buildRomCell(entry: RomEntry): View {
+        private fun buildRomCell(entry: RomEntry): GridCellHolder {
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
             }
-            cell.addView(
-                ArtTile.view(
-                    context,
-                    (activity.application as GhostGalleonApp).artCache,
-                    entry,
-                    targetPx = iconSize,
-                    cornerRadiusDp = innerArtRadiusDp(),
-                    artOverrides = settings.artOverrides,
-                ),
-                LinearLayout.LayoutParams(iconSize, iconSize))
-            if (settings.showLabels) {
+            val artView = ArtTile.view(
+                context,
+                (activity.application as GhostGalleonApp).artCache,
+                entry,
+                targetPx = iconSize,
+                cornerRadiusDp = innerArtRadiusDp(),
+                artOverrides = settings.artOverrides,
+            ) as ViewGroup
+            cell.addView(artView, LinearLayout.LayoutParams(iconSize, iconSize))
+            val label = if (settings.showLabels) {
                 val displayName = RomNames.display(entry, settings.romNames)
-                cell.addView(buildCellLabel(displayName), labelParams())
+                buildCellLabel(displayName).also { cell.addView(it, labelParams()) }
+            } else {
+                null
             }
-            return cell
+            return GridCellHolder(
+                kind = GridCellKind.ROM,
+                cellWidth = cellWidth,
+                iconSize = iconSize,
+                labelSpec = labelSpec,
+                showLabels = settings.showLabels,
+                bodyView = cell,
+                artPlaceholder = ArtTile.placeholder(artView),
+                artOverlay = ArtTile.overlay(artView),
+                labelView = label,
+            )
         }
 
         // "Missing" tile for a rom:<id> slot whose entry no longer resolves
@@ -2812,7 +3143,7 @@ class GridDeck(
         // at 40% alpha with a dim "Missing" label, so it reads as a broken
         // reference instead of a blank "+" while staying a normal filled
         // slot (long-press menu, launch toast, selection ring).
-        private fun buildMissingCell(key: String): View {
+        private fun buildMissingCell(key: String): GridCellHolder {
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -2851,17 +3182,23 @@ class GridDeck(
                 ).apply { setMargins(tileInset, tileInset, tileInset, tileInset) },
             )
             cell.addView(missingBox, LinearLayout.LayoutParams(iconSize, iconSize))
-            cell.addView(
-                buildCellLabel(
-                    context.getString(R.string.label_missing),
-                    GridBadgeMetrics.MISSING_LABEL_COLOR,
-                ),
-                labelParams(),
+            val label = buildCellLabel(
+                context.getString(R.string.label_missing),
+                GridBadgeMetrics.MISSING_LABEL_COLOR,
             )
-            return cell
+            cell.addView(label, labelParams())
+            return GridCellHolder(
+                kind = GridCellKind.MISSING_ROM,
+                cellWidth = cellWidth,
+                iconSize = iconSize,
+                labelSpec = labelSpec,
+                showLabels = settings.showLabels,
+                bodyView = cell,
+                labelView = label,
+            )
         }
 
-        private fun buildFilledCell(entry: AppEntry): View {
+        private fun buildFilledCell(entry: AppEntry): GridCellHolder {
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -2876,10 +3213,21 @@ class GridDeck(
             )
             cell.addView(icon, LinearLayout.LayoutParams(iconSize, iconSize))
             // Optional app-name label ("Show app names" setting).
-            if (settings.showLabels) {
-                cell.addView(buildCellLabel(entry.label), labelParams())
+            val label = if (settings.showLabels) {
+                buildCellLabel(entry.label).also { cell.addView(it, labelParams()) }
+            } else {
+                null
             }
-            return cell
+            return GridCellHolder(
+                kind = GridCellKind.APP,
+                cellWidth = cellWidth,
+                iconSize = iconSize,
+                labelSpec = labelSpec,
+                showLabels = settings.showLabels,
+                bodyView = cell,
+                appIcon = icon,
+                labelView = label,
+            )
         }
     }
 
@@ -2891,6 +3239,10 @@ class GridDeck(
         const val FOLDER_GHOST_WELL_FILL = 0x12FFFFFF
         const val FOLDER_GHOST_WELL_STROKE = 0x10FFFFFF
         const val PAGE_STRIP_RIPPLE_COLOR = 0x33FFFFFF
+        val NO_BADGES = GridBadgeMetrics.Placement(
+            GridBadgeMetrics.BadgeCorner.NONE,
+            GridBadgeMetrics.BadgeCorner.NONE,
+        )
         val GRID_SLOT_ROLE_DELEGATE = object : View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(
                 host: View,

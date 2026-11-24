@@ -37,6 +37,31 @@ import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
 
+/**
+ * Pure, host-tested painted visual state for one [DockBar] slot. Skipping
+ * slots whose painted state is unchanged cuts D-pad dock walks from mutating
+ * all 4–9 slots (animators, drawable clones, TalkBack strings) to `<= 2` slots
+ * per tick.
+ */
+internal data class DockSlotVisualState(
+    val index: Int,
+    val role: MoveChoreography.SlotRole,
+    val slotKey: String?,
+    val isBlank: Boolean,
+    val accent: Int,
+    val surfaceFill: Int,
+    val visibleTotal: Int,
+)
+
+/** Pure dirty-diff decision for [DockBar.updateFocus]. Host-tested. */
+internal object DockVisualDiff {
+    fun needsRepaint(
+        previous: DockSlotVisualState?,
+        next: DockSlotVisualState,
+        forceRepaint: Boolean = false,
+    ): Boolean = forceRepaint || previous == null || previous != next
+}
+
 // The dock bar pinned at the bottom edge of BOTH launcher decks: a
 // wrap-content card bar (just wide enough for its visible slots, centered)
 // holding the auto-growing dock row. The bar renders
@@ -63,7 +88,13 @@ class DockBar(
     private val onTap: (Int) -> Unit,
     private val onLongPress: (Int) -> Unit,
 ) {
+    private class SlotHolder(
+        var boundKey: String? = null,
+        var visualState: DockSlotVisualState? = null,
+    )
+
     private val slotFrames = mutableListOf<FrameLayout>()
+    private val slotHolders = mutableListOf<SlotHolder>()
     private var moveHintBanner: LinearLayout? = null
     private var moveDotView: View? = null
     private var moveDotAnimator: ObjectAnimator? = null
@@ -77,19 +108,28 @@ class DockBar(
     private var paintedMoving: Int? = null
     private var focusPainted = false
     private val themeTokens by lazy { ThemePack.resolve(settings) }
+    private val surfaceFillColor by lazy { ThemePack.cardFill(themeTokens) }
     private var slotTemplateKey: DeckHotPathCache.TemplateKey? = null
     private var focusedSlotTemplate: GradientDrawable? = null
     private var liftedSlotTemplate: GradientDrawable? = null
     private var dropSlotTemplate: GradientDrawable? = null
 
     // Dock tiles resolve like grid slots: apps through the FULL cache (a
-    // hidden app stays docked and launchable), ROMs through the library
-    // snapshot. An app key that no longer resolves (uninstalled) renders
-    // as a blank "+" slot — tapping it opens the picker and overwrites.
+    // hidden app stays docked and launchable), ROMs through O(1) app.romById
+    // (avoiding a 6k-20k LinkedHashMap copy on every deck build).
     private val appByPkg by lazy {
         library.all(settings).associateBy { it.packageName }
     }
-    private val romByKey by lazy { roms.associateBy { SlotKey.rom(it.id) } }
+    private val romByIdFallback by lazy { roms.associateBy { it.id } }
+
+    private fun romForKey(key: String?): RomEntry? {
+        val id = SlotKey.romId(key) ?: return null
+        val app = activity.application as? GhostGalleonApp
+        if (app != null && app.romEntries === roms) {
+            return app.romById[id]
+        }
+        return romByIdFallback[id]
+    }
 
     fun keyAt(index: Int): String? = slots().getOrNull(index)
 
@@ -209,20 +249,24 @@ class DockBar(
             slotSize,
         ))
         slotFrames.clear()
+        slotHolders.clear()
         repeat(visibleSlots) { index ->
+            val holder = SlotHolder()
             val frame = FrameLayout(context).apply {
                 clipChildren = false
                 clipToPadding = false
                 foreground = dockSlotRipple(context, slotRadiusDp)
                 accessibilityDelegate = DOCK_SLOT_ROLE_DELEGATE
+                tag = holder
             }
             frame.setOnClickListener { onTap(index) }
             frame.setOnLongClickListener {
                 onLongPress(index)
                 true
             }
-            populate(frame, index)
+            populate(frame, index, holder)
             slotFrames.add(frame)
+            slotHolders.add(holder)
             bar.addView(frame, LinearLayout.LayoutParams(slotSize, slotSize).apply {
                 marginStart = spec.slotMarginHPx
                 marginEnd = spec.slotMarginHPx
@@ -252,14 +296,16 @@ class DockBar(
 
     // One slot's content: app icon / ROM cover art (async via ArtTile over
     // platform placeholder) / dimmed missing tile / recessed "+" placeholder.
-    private fun populate(frame: FrameLayout, index: Int) {
+    private fun populate(frame: FrameLayout, index: Int, holder: SlotHolder) {
         val context = frame.context
         val iconSize = DockBarMetrics.iconSizePx(slotSize)
         val innerRadiusPx = context.dpF(innerContentRadiusDp)
 
         frame.removeAllViews()
         val key = keyAt(index)
-        val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+        holder.boundKey = key
+        holder.visualState = null
+        val romEntry = romForKey(key)
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
         val primaryLabel = when {
             romEntry != null -> RomNames.display(romEntry, settings.romNames)
@@ -315,7 +361,7 @@ class DockBar(
 
     private fun dockSlotRipple(context: Context, cornerRadiusDp: Int): RippleDrawable {
         val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
-            surfaceFill = TileBackgrounds.surfaceColor(context),
+            surfaceFill = surfaceFillColor,
             accent = settings.accentColor,
         )
         val mask = GradientDrawable().apply {
@@ -325,10 +371,16 @@ class DockBar(
         return RippleDrawable(ColorStateList.valueOf(rippleColor), null, mask)
     }
 
-    // Repopulates every slot's contents (a dock move swapped keys in the
-    // working copy) without rebuilding the bar.
+    // Repopulates only slots whose key changed (e.g. a dock move swapped two
+    // keys in the working copy) without rebuilding the bar or untouched slots.
     fun rebind() {
-        slotFrames.forEachIndexed { index, frame -> populate(frame, index) }
+        for (index in 0 until slotFrames.size) {
+            val frame = slotFrames[index]
+            val holder = slotHolders[index]
+            if (holder.boundKey != keyAt(index)) {
+                populate(frame, index, holder)
+            }
+        }
         focusPainted = false
     }
 
@@ -375,24 +427,50 @@ class DockBar(
     // Moves the accent ring, subtle scale lift, and elevation to [focused]
     // (null = no dock focus, ring returns to deck content) and applies
     // lifted / drop-target choreography while a dock move is in flight.
+    // Dirty-diffs per slot so D-pad walks mutate <= 2 slots per tick.
     fun updateFocus(focused: Int?, moving: Int? = null) {
         if (focusPainted && paintedFocus == focused && paintedMoving == moving) {
             return
         }
-        cancelPulseAnimator()
+        val movingChanged = paintedMoving != moving
+        if (movingChanged || moving == null) {
+            cancelPulseAnimator()
+        }
         paintedFocus = focused
         paintedMoving = moving
         focusPainted = true
-        slotFrames.forEachIndexed { index, frame ->
-            val ctx = frame.context
+        val surfaceFill = surfaceFillColor
+        val visibleTotal = slotFrames.size.coerceAtLeast(1)
+        val accent = settings.accentColor
+        val animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled()
+        for (index in 0 until slotFrames.size) {
+            val frame = slotFrames[index]
+            val holder = slotHolders[index]
             val role = MoveChoreography.resolveRole(
                 position = index,
                 selectedIndex = focused,
                 movingIndex = moving,
                 surfaceFocused = focused != null,
             )
-            val spec = MoveChoreography.dockVisualSpec(role, isBlank(index))
-            val surfaceFill = TileBackgrounds.surfaceColor(ctx)
+            val blank = isBlank(index)
+            val nextState = DockSlotVisualState(
+                index = index,
+                role = role,
+                slotKey = keyAt(index),
+                isBlank = blank,
+                accent = accent,
+                surfaceFill = surfaceFill,
+                visibleTotal = visibleTotal,
+            )
+            if (!DockVisualDiff.needsRepaint(holder.visualState, nextState)) {
+                if (role == MoveChoreography.SlotRole.LIFTED && pulseAnimator == null) {
+                    startPulse(frame)
+                }
+                continue
+            }
+            holder.visualState = nextState
+            val ctx = frame.context
+            val spec = MoveChoreography.dockVisualSpec(role, blank)
             frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
                 role == MoveChoreography.SlotRole.LIFTED
             updateSlotDescription(frame, index, role == MoveChoreography.SlotRole.LIFTED)
@@ -414,7 +492,7 @@ class DockBar(
             }
             frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
             val allowMotion = DeckMotionPolicy.shouldAnimate(
-                animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                animatorsEnabled = animatorsEnabled,
                 isLaidOut = frame.isLaidOut,
             )
             if (role == MoveChoreography.SlotRole.LIFTED) {
@@ -450,7 +528,7 @@ class DockBar(
     private fun updateSlotDescription(frame: FrameLayout, index: Int, isMoving: Boolean) {
         val ctx = frame.context
         val key = keyAt(index)
-        val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+        val romEntry = romForKey(key)
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
         val primary = when {
             romEntry != null -> RomNames.display(romEntry, settings.romNames)
@@ -504,11 +582,14 @@ class DockBar(
     private fun cancelAllAnimations() {
         cancelPulseAnimator()
         cancelMoveDotAnimator()
-        slotFrames.forEach { frame ->
+        for (i in 0 until slotFrames.size) {
+            val frame = slotFrames[i]
             frame.animate().cancel()
             frame.translationY = 0f
             frame.alpha = 1f
+            slotHolders.getOrNull(i)?.visualState = null
         }
+        focusPainted = false
     }
 
     private fun startPulse(frame: FrameLayout) {

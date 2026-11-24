@@ -1,7 +1,5 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.graphics.Outline
-import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.ImageView
 import com.visorcraft.ghostgalleon.R
@@ -35,15 +33,16 @@ object CustomIcon {
         cornerRadiusPx: Float = 0f,
     ) {
         ArtCache.dropDisplayed(image)
-        applyStockFraming(image)
-        image.setImageDrawable(iconLoader.load(packageName, targetPx))
         val uri = settings.customIcons[packageName]
         if (uri == null) {
             image.setTag(R.id.custom_icon_key, null)
+            applyStockFraming(image)
+            image.setImageDrawable(iconLoader.load(packageName, targetPx))
             return
         }
         image.setTag(R.id.custom_icon_key, packageName)
         var syncHit = true
+        var syncApplied = false
         cache.loadUri(
             image.context,
             key = cacheKey(packageName),
@@ -57,30 +56,42 @@ object CustomIcon {
             ) {
                 applyCustomFraming(image, cornerRadiusPx)
                 ArtCache.showDisplayed(image, bitmap)
+                if (syncHit) syncApplied = true
             }
         }
         syncHit = false
+        if (!syncApplied) {
+            applyStockFraming(image)
+            image.setImageDrawable(iconLoader.load(packageName, targetPx))
+        }
     }
 
     private fun applyStockFraming(image: ImageView) {
-        image.scaleType = ImageView.ScaleType.FIT_CENTER
+        if (image.scaleType != ImageView.ScaleType.FIT_CENTER) {
+            image.scaleType = ImageView.ScaleType.FIT_CENTER
+        }
         if (image.clipToOutline) {
             image.clipToOutline = false
-            image.outlineProvider = ViewOutlineProvider.BACKGROUND
+            if (image.outlineProvider !== ViewOutlineProvider.BACKGROUND) {
+                image.outlineProvider = ViewOutlineProvider.BACKGROUND
+            }
         }
     }
 
     private fun applyCustomFraming(image: ImageView, cornerRadiusPx: Float) {
         if (cornerRadiusPx > 0f) {
-            image.scaleType = ImageView.ScaleType.CENTER_CROP
-            image.outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, cornerRadiusPx)
-                }
+            if (image.scaleType != ImageView.ScaleType.CENTER_CROP) {
+                image.scaleType = ImageView.ScaleType.CENTER_CROP
             }
-            image.clipToOutline = true
+            val targetOutline = OutlineCache.roundedRect(cornerRadiusPx)
+            if (image.outlineProvider !== targetOutline) {
+                image.outlineProvider = targetOutline
+            }
+            if (!image.clipToOutline) {
+                image.clipToOutline = true
+            }
         } else {
-            image.scaleType = ImageView.ScaleType.FIT_CENTER
+            applyStockFraming(image)
         }
     }
 }
