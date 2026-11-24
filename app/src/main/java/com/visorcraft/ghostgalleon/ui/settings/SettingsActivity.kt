@@ -26,12 +26,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -78,6 +79,7 @@ import com.visorcraft.ghostgalleon.ui.hideStatusBar
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.themeName
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 import java.io.File
 import java.text.NumberFormat
 
@@ -1391,18 +1393,19 @@ class SettingsActivity : AppCompatActivity() {
             addView(control)
         }
 
-    private fun accentSwitch(checked: Boolean, onChange: (Boolean) -> Unit): Switch =
-        Switch(this).apply {
+    private fun accentSwitch(checked: Boolean, onChange: (Boolean) -> Unit): SwitchCompat =
+        SwitchCompat(this).apply {
             val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
-            thumbTintList = ColorStateList(states, intArrayOf(accent, offTint))
-            trackTintList = ColorStateList(
-                states, intArrayOf(withAlpha(accent, 0x66), offTint))
+            thumbDrawable = ContextCompat.getDrawable(this@SettingsActivity, R.drawable.bg_switch_thumb)?.mutate()
+            trackDrawable = ContextCompat.getDrawable(this@SettingsActivity, R.drawable.bg_switch_track)?.mutate()
+            thumbTintList = ColorStateList(states, intArrayOf(onAccentFill, 0xCCFFFFFF.toInt()))
+            trackTintList = ColorStateList(states, intArrayOf(accent, 0x33FFFFFF))
             isChecked = checked
             isFocusable = false
             setOnCheckedChangeListener { _, isOn -> onChange(isOn) }
         }
 
-    private fun switchRow(label: String, sw: Switch): LinearLayout =
+    private fun switchRow(label: String, sw: SwitchCompat): LinearLayout =
         controlRow(label, sw).apply {
             styleFocusableRow(this)
             setOnClickListener { if (sw.isEnabled) sw.toggle() }
@@ -2046,26 +2049,41 @@ class SettingsActivity : AppCompatActivity() {
             min: Int,
             max: Int,
             format: (Int) -> String = { formatNumber(it) },
+            onLiveChange: ((Int) -> Unit)? = null,
             onChange: (Int) -> Unit,
         ) {
             addDividerIfNeeded(card)
             val labelRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(6), dp(10), 0)
+                setPadding(dp(10), dp(8), dp(10), dp(2))
             }
             labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) })
             val valueView = TextView(this).apply {
                 text = format(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(accentOnCard)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                setTextColor(accentOnSunken)
                 setTypeface(typeface, Typeface.BOLD)
+                useTabularNumerals()
+                gravity = Gravity.CENTER
+                minWidth = dp(44)
+                background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
             }
             labelRow.addView(valueView)
             card.addView(labelRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             card.addView(SeekBar(this).apply {
+                progressDrawable = ContextCompat.getDrawable(
+                    this@SettingsActivity,
+                    R.drawable.bg_seekbar_progress,
+                )?.mutate()
+                thumb = ContextCompat.getDrawable(
+                    this@SettingsActivity,
+                    R.drawable.bg_seekbar_thumb,
+                )?.mutate()
+                splitTrack = false
                 progressTintList = ColorStateList.valueOf(accent)
                 thumbTintList = ColorStateList.valueOf(accent)
                 progressBackgroundTintList = ColorStateList.valueOf(offTint)
@@ -2074,17 +2092,19 @@ class SettingsActivity : AppCompatActivity() {
                     accent = accent,
                     cornerRadiusDp = 12,
                 )
-                minimumHeight = dp(40)
-                setPadding(dp(14), dp(6), dp(14), dp(8))
+                minimumHeight = dp(42)
+                setPadding(dp(14), dp(8), dp(14), dp(10))
                 this.max = max - min
                 progress = value - min
                 var trackingTouch = false
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
                         if (fromUser) {
-                            valueView.text = format(p + min)
+                            val current = p + min
+                            valueView.text = format(current)
+                            onLiveChange?.invoke(current)
                             // Gamepad D-pad left/right adjusts SeekBar without touch events.
-                            if (!trackingTouch) onChange(p + min)
+                            if (!trackingTouch) onChange(current)
                         }
                     }
                     override fun onStartTrackingTouch(sb: SeekBar) {
@@ -2092,7 +2112,9 @@ class SettingsActivity : AppCompatActivity() {
                     }
                     override fun onStopTrackingTouch(sb: SeekBar) {
                         trackingTouch = false
-                        onChange(sb.progress + min)
+                        val committed = sb.progress + min
+                        onLiveChange?.invoke(committed)
+                        onChange(committed)
                     }
                 })
             }, LinearLayout.LayoutParams(
@@ -2132,6 +2154,16 @@ class SettingsActivity : AppCompatActivity() {
             val tokens = ThemePack.byId(packId)
             applyThemeAndRefresh(ThemePack.applyToSettings(app.settings, tokens))
         }
+        val themePreview = ThemePreviewView(this, themeTokens, accent)
+        displayCard.addView(
+            themePreview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(88)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(4)
+                bottomMargin = dp(10)
+            },
+        )
         val themeImportRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2533,6 +2565,39 @@ class SettingsActivity : AppCompatActivity() {
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_companion_section), companionCard)
 
         val gridCard = sectionCard()
+        var liveGridCols = s.gridColumns
+        var liveIconDp = s.iconSizeDp
+        var liveCardDp = s.cardSizeDp
+        var liveShowLabels = s.showLabels
+        var liveGridDir = s.gridDirection
+        val gridPreview = GridDensityPreviewView(
+            context = this,
+            tokens = themeTokens,
+            accent = accent,
+            columns = liveGridCols,
+            iconSizeDp = liveIconDp,
+            cardSizeDp = liveCardDp,
+            showLabels = liveShowLabels,
+            gridDirection = liveGridDir,
+        )
+        fun updateGridPreview() {
+            gridPreview.update(
+                columns = liveGridCols,
+                iconSizeDp = liveIconDp,
+                cardSizeDp = liveCardDp,
+                showLabels = liveShowLabels,
+                gridDirection = liveGridDir,
+            )
+        }
+        gridCard.addView(
+            gridPreview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(104)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(6)
+                bottomMargin = dp(8)
+            },
+        )
         segmentedRow(
             card = gridCard,
             label = getString(R.string.settings_grid_scrolling),
@@ -2541,20 +2606,53 @@ class SettingsActivity : AppCompatActivity() {
                 "horizontal" to getString(R.string.label_horizontal),
             ),
             current = s.gridDirection,
-        ) { app.updateSettings(app.settings.copy(gridDirection = it)) }
-        seek(gridCard, getString(R.string.settings_grid_columns), s.gridColumns, 3, 8) {
+        ) {
+            liveGridDir = it
+            updateGridPreview()
+            app.updateSettings(app.settings.copy(gridDirection = it))
+        }
+        seek(
+            card = gridCard,
+            label = getString(R.string.settings_grid_columns),
+            value = s.gridColumns,
+            min = 3,
+            max = 8,
+            onLiveChange = { liveGridCols = it; updateGridPreview() },
+        ) {
+            liveGridCols = it
+            updateGridPreview()
             app.updateSettings(app.settings.copy(gridColumns = it))
         }
-        seek(gridCard, getString(R.string.settings_icon_size), s.iconSizeDp, 48, 128) {
+        seek(
+            card = gridCard,
+            label = getString(R.string.settings_icon_size),
+            value = s.iconSizeDp,
+            min = 48,
+            max = 128,
+            onLiveChange = { liveIconDp = it; updateGridPreview() },
+        ) {
+            liveIconDp = it
+            updateGridPreview()
             app.updateSettings(app.settings.copy(iconSizeDp = it))
         }
-        seek(gridCard, getString(R.string.settings_card_size), s.cardSizeDp, 120, 320) {
+        seek(
+            card = gridCard,
+            label = getString(R.string.settings_card_size),
+            value = s.cardSizeDp,
+            min = 120,
+            max = 320,
+            onLiveChange = { liveCardDp = it; updateGridPreview() },
+        ) {
+            liveCardDp = it
+            updateGridPreview()
             app.updateSettings(
                 app.settings.copy(cardSizeDp = it),
                 chromeOnly = true,
             )
         }
         toggle(gridCard, getString(R.string.settings_show_app_names), s.showLabels) {
+            liveShowLabels = it
+            updateGridPreview()
             app.updateSettings(app.settings.copy(showLabels = it))
         }
         val wallpaperRow = LinearLayout(this).apply {
@@ -3073,7 +3171,7 @@ class SettingsActivity : AppCompatActivity() {
         })
         addActionRow(libraryCard, playersRow)
         var raHandoffSaveRow: View? = null
-        var raHandoffSaveSwitch: Switch? = null
+        var raHandoffSaveSwitch: SwitchCompat? = null
         fun refreshRaHandoffSaveEnabled() {
             val talk = app.settings.raNetworkCommands
             raHandoffSaveRow?.isEnabled = talk
@@ -3114,7 +3212,7 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(raTheaterEnabled = on))
         }
         var warmLoadRow: View? = null
-        var warmLoadSwitch: Switch? = null
+        var warmLoadSwitch: SwitchCompat? = null
         fun refreshWarmLoadEnabled() {
             val on = app.settings.warmResumeEnabled
             warmLoadRow?.isEnabled = on
