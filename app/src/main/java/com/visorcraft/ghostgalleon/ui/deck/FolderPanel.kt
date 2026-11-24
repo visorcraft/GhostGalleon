@@ -624,14 +624,17 @@ class FolderPanel(
             GridWrapNav.clampIndex(nav.selectedCell, cells.size)
         }
         val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
+        val surfaceFill = TileBackgrounds.surfaceColor(context)
+        val focusStrokeColor = DeckThemeContrast.accessibleFocusStroke(accentColor, surfaceFill)
+        val animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled()
         cells.forEachIndexed { index, cell ->
             val selected = index == activeCell
             cell.isSelected = selected
             cell.background = if (selected) {
                 TileBackgrounds.focusStroke(
                     context = context,
-                    accent = accentColor,
-                    fill = TileBackgrounds.surfaceColor(context),
+                    accent = focusStrokeColor,
+                    fill = surfaceFill,
                     cornerRadiusDp = cellRadiusDp,
                     strokeDp = 3,
                 )
@@ -651,7 +654,7 @@ class FolderPanel(
             val scale = if (selected) FolderPanelMetrics.CELL_FOCUS_SCALE else 1f
             cell.translationZ = if (selected) context.dpF(FolderPanelMetrics.CELL_FOCUS_ELEVATION_DP) else 0f
             cell.animate().cancel()
-            if (cell.isLaidOut) {
+            if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, cell.isLaidOut)) {
                 cell.animate()
                     .scaleX(scale)
                     .scaleY(scale)
@@ -670,7 +673,7 @@ class FolderPanel(
             val style = FolderPanelMetrics.mirrorButtonStyle(
                 focused = focused,
                 accent = accentColor,
-                surfaceFill = TileBackgrounds.surfaceColor(context),
+                surfaceFill = surfaceFill,
                 chipIdleFill = TileBackgrounds.chipIdleColor(context),
                 hairlineColor = TileBackgrounds.hairlineDivider(context),
             )
@@ -684,7 +687,7 @@ class FolderPanel(
             btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
             btn.translationZ = if (style.elevationDp > 0f) context.dpF(style.elevationDp) else 0f
             btn.animate().cancel()
-            if (btn.isLaidOut) {
+            if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, btn.isLaidOut)) {
                 btn.animate()
                     .scaleX(style.scale)
                     .scaleY(style.scale)
@@ -717,6 +720,7 @@ class FolderPanel(
         memberKeys.removeAt(idx)
         nav = FolderPanelNav.afterRemoval(nav, memberKeys.size)
         rebuildGrid()
+        if (!DeckMotionPolicy.shouldAnimate(DeckMotionPolicy.areSystemAnimatorsEnabled())) return
         gridHost?.let { grid ->
             grid.animate().cancel()
             grid.alpha = 0.82f

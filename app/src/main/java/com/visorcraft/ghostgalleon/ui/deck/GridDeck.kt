@@ -239,6 +239,7 @@ class GridDeck(
     }
 
     private fun triggerScrollFeedback(cue: GridScrollFeedback.Cue) {
+        if (!DeckMotionPolicy.shouldAnimate(DeckMotionPolicy.areSystemAnimatorsEnabled())) return
         when (cue) {
             GridScrollFeedback.Cue.None -> return
             is GridScrollFeedback.Cue.PageFlipped -> {
@@ -375,7 +376,10 @@ class GridDeck(
                 )
             }
             MoveChoreography.SlotRole.FOCUSED ->
-                TileBackgrounds.selected(ctx, settings.accentColor)
+                TileBackgrounds.selected(
+                    ctx,
+                    DeckThemeContrast.accessibleFocusStroke(settings.accentColor, surfaceFill),
+                )
             MoveChoreography.SlotRole.NORMAL ->
                 if (isBlank) TileBackgrounds.blankSlot(ctx) else TileBackgrounds.card(ctx)
         }
@@ -406,13 +410,17 @@ class GridDeck(
         frame.contentDescription = slotAccessibilityDescription(position, role)
         frame.animate().cancel()
         frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
+        val allowMotion = DeckMotionPolicy.shouldAnimate(
+            animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+            isLaidOut = animate,
+        )
         if (role == MoveChoreography.SlotRole.LIFTED) {
             // Breathing pulse drives scale/float/alpha for the lifted tile.
             frame.scaleX = spec.scale
             frame.scaleY = spec.scale
             frame.translationY = 0f
             frame.alpha = spec.alpha
-        } else if (animate) {
+        } else if (allowMotion) {
             frame.animate()
                 .scaleX(spec.scale)
                 .scaleY(spec.scale)
@@ -524,6 +532,7 @@ class GridDeck(
     // so it reads unmistakably as "in hand" without harsh opacity washout.
     private fun startPulse(frame: FrameLayout) {
         cancelPulseAnimator()
+        if (!DeckMotionPolicy.shouldPulse(DeckMotionPolicy.areSystemAnimatorsEnabled())) return
         val floatPx = frame.dpF(MoveChoreography.GRID_FLOAT_DP)
         val scaleX = ObjectAnimator.ofFloat(
             frame, View.SCALE_X,
@@ -595,6 +604,10 @@ class GridDeck(
         val dots = pageDotsView ?: return
         val geometry = pageGeometry ?: return
         if (pagePillViews.isEmpty()) return
+        val allowMotion = DeckMotionPolicy.shouldAnimate(
+            animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+            isLaidOut = animate,
+        )
         val stripState = GridPageIndicatorMetrics.stripState(
             selectedSlot = selectedIndex(),
             slotCount = slotCount,
@@ -614,7 +627,7 @@ class GridDeck(
             btn.isEnabled = stripState.canPagePrev
             btn.isClickable = stripState.canPagePrev
             btn.animate().cancel()
-            if (animate) {
+            if (allowMotion) {
                 btn.animate().alpha(prevAlpha).setDuration(GridPageIndicatorMetrics.PILL_ANIM_MS).start()
             } else {
                 btn.alpha = prevAlpha
@@ -624,7 +637,7 @@ class GridDeck(
             btn.isEnabled = stripState.canPageNext
             btn.isClickable = stripState.canPageNext
             btn.animate().cancel()
-            if (animate) {
+            if (allowMotion) {
                 btn.animate().alpha(nextAlpha).setDuration(GridPageIndicatorMetrics.PILL_ANIM_MS).start()
             } else {
                 btn.alpha = nextAlpha
@@ -664,7 +677,7 @@ class GridDeck(
             val startColor = if (pageIndex == prevPage) activeColor else inactiveColor
             val changed = startW != targetW || startColor != targetColor
 
-            if (animate && changed && prevPage >= 0) {
+            if (allowMotion && changed && prevPage >= 0) {
                 val anim = ValueAnimator.ofFloat(0f, 1f).apply {
                     duration = GridPageIndicatorMetrics.PILL_ANIM_MS
                     interpolator = FOCUS_INTERPOLATOR

@@ -374,7 +374,10 @@ class DockBar(
                 }
                 MoveChoreography.SlotRole.FOCUSED -> TileBackgrounds.focusStroke(
                     context = ctx,
-                    accent = settings.accentColor,
+                    accent = DeckThemeContrast.accessibleFocusStroke(
+                        settings.accentColor,
+                        surfaceFill,
+                    ),
                     fill = surfaceFill,
                     cornerRadiusDp = slotRadiusDp,
                     strokeDp = 3,
@@ -382,13 +385,17 @@ class DockBar(
                 MoveChoreography.SlotRole.NORMAL -> null
             }
             frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
+            val allowMotion = DeckMotionPolicy.shouldAnimate(
+                animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                isLaidOut = frame.isLaidOut,
+            )
             if (role == MoveChoreography.SlotRole.LIFTED) {
                 frame.scaleX = spec.scale
                 frame.scaleY = spec.scale
                 frame.translationY = 0f
                 frame.alpha = spec.alpha
                 startPulse(frame)
-            } else if (frame.isLaidOut) {
+            } else if (allowMotion) {
                 frame.animate()
                     .scaleX(spec.scale)
                     .scaleY(spec.scale)
@@ -478,6 +485,7 @@ class DockBar(
 
     private fun startPulse(frame: FrameLayout) {
         cancelPulseAnimator()
+        if (!DeckMotionPolicy.shouldPulse(DeckMotionPolicy.areSystemAnimatorsEnabled())) return
         val floatPx = frame.dpF(MoveChoreography.DOCK_FLOAT_DP)
         val scaleX = ObjectAnimator.ofFloat(
             frame, View.SCALE_X,
@@ -523,12 +531,14 @@ class DockBar(
         }
         if (show) {
             cancelMoveDotAnimator()
-            moveDotView?.let { dot ->
-                moveDotAnimator = ObjectAnimator.ofFloat(dot, View.ALPHA, 1f, 0.35f).apply {
-                    duration = MoveChoreography.PULSE_DURATION_MS
-                    repeatMode = ValueAnimator.REVERSE
-                    repeatCount = ValueAnimator.INFINITE
-                    start()
+            if (DeckMotionPolicy.shouldPulse(DeckMotionPolicy.areSystemAnimatorsEnabled())) {
+                moveDotView?.let { dot ->
+                    moveDotAnimator = ObjectAnimator.ofFloat(dot, View.ALPHA, 1f, 0.35f).apply {
+                        duration = MoveChoreography.PULSE_DURATION_MS
+                        repeatMode = ValueAnimator.REVERSE
+                        repeatCount = ValueAnimator.INFINITE
+                        start()
+                    }
                 }
             }
         } else {

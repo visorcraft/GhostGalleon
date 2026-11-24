@@ -142,6 +142,12 @@ private fun polishChromeButton(
     }
     button.accessibilityDelegate = CHROME_BUTTON_ROLE_DELEGATE
     button.setOnTouchListener { v, event ->
+        if (!DeckMotionPolicy.shouldAnimate(DeckMotionPolicy.areSystemAnimatorsEnabled())) {
+            v.animate().cancel()
+            v.scaleX = 1f
+            v.scaleY = 1f
+            return@setOnTouchListener false
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 v.animate().cancel()
