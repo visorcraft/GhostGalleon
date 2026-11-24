@@ -1,8 +1,10 @@
 package com.visorcraft.ghostgalleon.ui
 
+import android.view.KeyEvent
 import com.visorcraft.ghostgalleon.settings.Action
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ControllerLabLogicTest {
@@ -40,5 +42,68 @@ class ControllerLabLogicTest {
         assertEquals(Action.CONFIRM, ControllerLabLogic.mappedAction(96, map))
         assertEquals(Action.BACK, ControllerLabLogic.mappedAction(97, map))
         assertNull(ControllerLabLogic.mappedAction(99, map))
+    }
+
+    @Test
+    fun `deadzoneMarkers map release and engage hysteresis symmetrically around center`() {
+        // Default 50%: release = 0.50 -> (0.25, 0.75); engage = 0.70 -> (0.15, 0.85).
+        val def = ControllerLabLogic.deadzoneMarkers(50)
+        assertEquals(0.25f, def.releaseFracNeg, 0.0001f)
+        assertEquals(0.75f, def.releaseFracPos, 0.0001f)
+        assertEquals(0.15f, def.engageFracNeg, 0.0001f)
+        assertEquals(0.85f, def.engageFracPos, 0.0001f)
+
+        // Clamped extremes remain symmetric and engage stays outside release.
+        for (pct in listOf(0, 20, 45, 80, 100)) {
+            val m = ControllerLabLogic.deadzoneMarkers(pct)
+            assertEquals(1f, m.releaseFracNeg + m.releaseFracPos, 0.0001f)
+            assertEquals(1f, m.engageFracNeg + m.engageFracPos, 0.0001f)
+            assertTrue(m.engageFracNeg < m.releaseFracNeg)
+            assertTrue(m.engageFracPos > m.releaseFracPos)
+        }
+    }
+
+    @Test
+    fun `updatePeaks tracks extreme positive and negative deflections and clamps invalid inputs`() {
+        var peaks = AxisPeakState()
+        peaks = ControllerLabLogic.updatePeaks(peaks, 0.4f)
+        assertEquals(0f, peaks.minNeg, 0.0001f)
+        assertEquals(0.4f, peaks.maxPos, 0.0001f)
+
+        peaks = ControllerLabLogic.updatePeaks(peaks, -0.82f)
+        assertEquals(-0.82f, peaks.minNeg, 0.0001f)
+        assertEquals(0.4f, peaks.maxPos, 0.0001f)
+
+        peaks = ControllerLabLogic.updatePeaks(peaks, 0.2f)
+        assertEquals(-0.82f, peaks.minNeg, 0.0001f)
+        assertEquals(0.4f, peaks.maxPos, 0.0001f)
+
+        peaks = ControllerLabLogic.updatePeaks(peaks, Float.NaN)
+        assertEquals(-0.82f, peaks.minNeg, 0.0001f)
+        assertEquals(0.4f, peaks.maxPos, 0.0001f)
+
+        peaks = ControllerLabLogic.updatePeaks(peaks, 2.5f)
+        assertEquals(1f, peaks.maxPos, 0.0001f)
+        assertEquals(1f, ControllerLabLogic.valueToBarFrac(1f), 0.0001f)
+        assertEquals(0f, ControllerLabLogic.valueToBarFrac(-1f), 0.0001f)
+        assertEquals(0.5f, ControllerLabLogic.valueToBarFrac(0f), 0.0001f)
+    }
+
+    @Test
+    fun `padIndicator lookup maps standard buttons and HAT directions`() {
+        assertEquals(PadIndicator.A, ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_BUTTON_A))
+        assertEquals(PadIndicator.L1, ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_BUTTON_L1))
+        assertEquals(PadIndicator.DPAD_UP, ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_DPAD_UP))
+        assertNull(ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_VOLUME_UP))
+
+        assertTrue(ControllerLabLogic.padIndicatorsForHat(0f, 0f).isEmpty())
+        assertEquals(
+            setOf(PadIndicator.DPAD_LEFT, PadIndicator.DPAD_UP),
+            ControllerLabLogic.padIndicatorsForHat(-1f, -1f),
+        )
+        assertEquals(
+            setOf(PadIndicator.DPAD_RIGHT, PadIndicator.DPAD_DOWN),
+            ControllerLabLogic.padIndicatorsForHat(0.8f, 0.9f),
+        )
     }
 }

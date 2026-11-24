@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.TextUtils
 import android.util.TypedValue
@@ -24,12 +25,15 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.input.StickThresholds
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.label
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.settings.SettingsUiLogic
+import java.text.NumberFormat
 import java.util.Locale
+import kotlin.math.abs
 
 /** Pure bipolar center-zero bar geometry (`[0..1]` fractions of track width). */
 internal data class AxisBarSpan(
@@ -38,6 +42,38 @@ internal data class AxisBarSpan(
     val clampedValue: Float,
 )
 
+/** Symmetric deadzone release/engage marker positions (`[0..1]` of track width). */
+internal data class DeadzoneMarkers(
+    val releaseFracNeg: Float,
+    val releaseFracPos: Float,
+    val engageFracNeg: Float,
+    val engageFracPos: Float,
+)
+
+/** Accumulated peak negative/positive deflections in `[-1..0]` and `[0..1]`. */
+internal data class AxisPeakState(
+    val minNeg: Float = 0f,
+    val maxPos: Float = 0f,
+)
+
+/** Standard handheld gamepad indicators illuminated live in Controller Lab. */
+internal enum class PadIndicator(val keyCode: Int, val glyph: String) {
+    L2(KeyEvent.KEYCODE_BUTTON_L2, "L2"),
+    L1(KeyEvent.KEYCODE_BUTTON_L1, "L1"),
+    SELECT(KeyEvent.KEYCODE_BUTTON_SELECT, "SL"),
+    START(KeyEvent.KEYCODE_BUTTON_START, "ST"),
+    R1(KeyEvent.KEYCODE_BUTTON_R1, "R1"),
+    R2(KeyEvent.KEYCODE_BUTTON_R2, "R2"),
+    DPAD_LEFT(KeyEvent.KEYCODE_DPAD_LEFT, "\u25C0"),
+    DPAD_UP(KeyEvent.KEYCODE_DPAD_UP, "\u25B2"),
+    DPAD_DOWN(KeyEvent.KEYCODE_DPAD_DOWN, "\u25BC"),
+    DPAD_RIGHT(KeyEvent.KEYCODE_DPAD_RIGHT, "\u25B6"),
+    Y(KeyEvent.KEYCODE_BUTTON_Y, "Y"),
+    X(KeyEvent.KEYCODE_BUTTON_X, "X"),
+    B(KeyEvent.KEYCODE_BUTTON_B, "B"),
+    A(KeyEvent.KEYCODE_BUTTON_A, "A"),
+}
+
 /**
  * Pure, host-tested diagnostics math for [ControllerLabActivity].
  */
@@ -45,6 +81,8 @@ internal object ControllerLabLogic {
 
     fun clampAxis(raw: Float): Float =
         if (raw.isNaN() || raw.isInfinite()) 0f else raw.coerceIn(-1f, 1f)
+
+    fun valueToBarFrac(raw: Float): Float = 0.5f + clampAxis(raw) * 0.5f
 
     fun axisBarSpan(raw: Float): AxisBarSpan {
         val v = clampAxis(raw)
@@ -55,12 +93,50 @@ internal object ControllerLabLogic {
         }
     }
 
+    fun deadzoneMarkers(deadzonePercent: Int): DeadzoneMarkers {
+        val release = StickThresholds.release(deadzonePercent)
+        val engage = StickThresholds.engage(deadzonePercent)
+        return DeadzoneMarkers(
+            releaseFracNeg = 0.5f - release * 0.5f,
+            releaseFracPos = 0.5f + release * 0.5f,
+            engageFracNeg = 0.5f - engage * 0.5f,
+            engageFracPos = 0.5f + engage * 0.5f,
+        )
+    }
+
+    fun updatePeaks(current: AxisPeakState, raw: Float): AxisPeakState {
+        val v = clampAxis(raw)
+        return AxisPeakState(
+            minNeg = minOf(current.minNeg, v),
+            maxPos = maxOf(current.maxPos, v),
+        )
+    }
+
+    fun padIndicatorForKeyCode(keyCode: Int): PadIndicator? =
+        PadIndicator.entries.firstOrNull { it.keyCode == keyCode }
+
+    fun padIndicatorsForHat(
+        hatX: Float,
+        hatY: Float,
+        threshold: Float = 0.5f,
+    ): Set<PadIndicator> {
+        val x = clampAxis(hatX)
+        val y = clampAxis(hatY)
+        val out = mutableSetOf<PadIndicator>()
+        if (x <= -threshold) out.add(PadIndicator.DPAD_LEFT)
+        if (x >= threshold) out.add(PadIndicator.DPAD_RIGHT)
+        if (y <= -threshold) out.add(PadIndicator.DPAD_UP)
+        if (y >= threshold) out.add(PadIndicator.DPAD_DOWN)
+        return out
+    }
+
     fun mappedAction(keyCode: Int, keyMap: Map<Int, Action>): Action? = keyMap[keyCode]
 }
 
 /**
  * Live gamepad/key probe for remapping verification. Displays framed live key
- * + mapped Ghost Galleon action badge, bipolar Stick/HAT visual axis gauges,
+ * + mapped Ghost Galleon action badge, live hardware button matrix, bipolar
+ * Stick/HAT visual axis gauges with deadzone & peak-deflection markers,
  * accent-pill bind CTA, and monospace event log.
  */
 class ControllerLabActivity : AppCompatActivity() {
@@ -77,11 +153,26 @@ class ControllerLabActivity : AppCompatActivity() {
     private lateinit var stickYVal: TextView
     private lateinit var hatXVal: TextView
     private lateinit var hatYVal: TextView
+    private lateinit var logCountBadge: TextView
     private lateinit var log: TextView
     private val recent = ArrayDeque<String>()
+    private var totalLogEvents: Int = 0
     private var lastKeyCode: Int? = null
     private var accentColor: Int = ThemePack.GHOST.accentColor
+    private var accentOnCard: Int = UiDimens.ALPHA_PRIMARY
     private var accentOnSunken: Int = UiDimens.ALPHA_PRIMARY
+    private var onAccent: Int = UiDimens.ALPHA_PRIMARY
+    private var sunkenSurface: Int = 0xFF101014.toInt()
+    private var hairline: Int = ThemePack.HAIRLINE_LIGHT
+    private var stickReleaseThreshold: Float = 0.5f
+    private val padViews = mutableMapOf<PadIndicator, TextView>()
+    private val pressedButtons = mutableSetOf<PadIndicator>()
+    private val pressedHatDirs = mutableSetOf<PadIndicator>()
+    private val seenIndicators = mutableSetOf<PadIndicator>()
+
+    private val integerFormat by lazy(LazyThreadSafetyMode.NONE) {
+        NumberFormat.getIntegerInstance(resources.configuration.locales[0])
+    }
 
     private val app get() = application as GhostGalleonApp
 
@@ -95,11 +186,14 @@ class ControllerLabActivity : AppCompatActivity() {
 
         val tokens = ThemePack.resolve(app.settings)
         accentColor = app.settings.accentColor
-        val sunkenSurface = ThemePack.surfaceSunken(tokens)
-        val hairline = ThemePack.hairlineDivider(tokens)
+        sunkenSurface = ThemePack.surfaceSunken(tokens)
+        hairline = ThemePack.hairlineDivider(tokens)
+        accentOnCard = ThemePack.accentTextColor(accentColor, ThemePack.cardFill(tokens))
         accentOnSunken = ThemePack.accentTextColor(accentColor, sunkenSurface)
-        val onAccent = SettingsUiLogic.accessibleOnAccent(accentColor)
+        onAccent = SettingsUiLogic.accessibleOnAccent(accentColor)
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accentColor)
+        val deadzonePercent = app.settings.stickDeadzone
+        stickReleaseThreshold = StickThresholds.release(deadzonePercent)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -113,6 +207,7 @@ class ControllerLabActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val backBtn = ImageView(this).apply {
+            id = View.generateViewId()
             setImageResource(R.drawable.ic_back)
             imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -208,21 +303,95 @@ class ControllerLabActivity : AppCompatActivity() {
             text = getString(R.string.controller_action_empty)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
-            setPadding(0, dp(6), 0, dp(12))
+            useTabularNumerals()
+            setPadding(0, dp(6), 0, dp(10))
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
         keyCard.addView(actionLine)
+
+        // Live hardware button indicator matrix (shoulders/system + D-pad/face).
+        padViews.clear()
+        val matrixContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = TileBackgrounds.sunkenField(this@ControllerLabActivity, cornerRadiusDp = 12)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        fun buildPadRow(items: List<PadIndicator>): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            items.forEachIndexed { idx, indicator ->
+                val badge = TextView(this@ControllerLabActivity).apply {
+                    text = indicator.glyph
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                padViews[indicator] = badge
+                addView(
+                    badge,
+                    LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+                        if (idx > 0) marginStart = dp(5)
+                    },
+                )
+            }
+        }
+        val topPadRow = listOf(
+            PadIndicator.L2,
+            PadIndicator.L1,
+            PadIndicator.SELECT,
+            PadIndicator.START,
+            PadIndicator.R1,
+            PadIndicator.R2,
+        )
+        val bottomPadRow = listOf(
+            PadIndicator.DPAD_LEFT,
+            PadIndicator.DPAD_UP,
+            PadIndicator.DPAD_DOWN,
+            PadIndicator.DPAD_RIGHT,
+            PadIndicator.Y,
+            PadIndicator.X,
+            PadIndicator.B,
+            PadIndicator.A,
+        )
+        matrixContainer.addView(
+            buildPadRow(topPadRow),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(6) },
+        )
+        matrixContainer.addView(
+            buildPadRow(bottomPadRow),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        refreshAllPadIndicators()
+        keyCard.addView(
+            matrixContainer,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(12) },
+        )
+
         val bindBtn = TextView(this).apply {
+            id = View.generateViewId()
             setText(R.string.controller_bind_last)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTextColor(onAccent)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             isFocusable = true
-            minHeight = dp(44)
+            contentDescription = getString(R.string.controller_bind_last)
+            minHeight = dp(UiDimens.TOUCH_MIN_DP)
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            background = TileBackgrounds.focusableRow(
+            background = TileBackgrounds.pressableRow(
                 context = this@ControllerLabActivity,
                 accent = activeFocusRing,
                 idleBackground = TileBackgrounds.accentPill(
@@ -235,6 +404,8 @@ class ControllerLabActivity : AppCompatActivity() {
             )
             setOnClickListener { bindLastKey() }
         }
+        backBtn.nextFocusDownId = bindBtn.id
+        bindBtn.nextFocusUpId = backBtn.id
         keyCard.addView(
             bindBtn,
             LinearLayout.LayoutParams(
@@ -250,18 +421,24 @@ class ControllerLabActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
         )
 
-        // Card 2: Analog & HAT visual center-zero bars.
+        // Card 2: Analog & HAT visual center-zero bars with deadzone & peak markers.
         val axisCard = labCard()
         axisLine = TextView(this).apply {
             text = getString(R.string.controller_axes_empty)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
             typeface = Typeface.MONOSPACE
+            useTabularNumerals()
             setPadding(0, 0, 0, dp(10))
         }
         axisCard.addView(axisLine)
 
-        fun buildAxisCell(axisConst: Int): Triple<LinearLayout, AxisBarView, TextView> {
+        val deadzoneTicks = ControllerLabLogic.deadzoneMarkers(deadzonePercent)
+
+        fun buildAxisCell(
+            axisConst: Int,
+            showDeadzone: Boolean,
+        ): Triple<LinearLayout, AxisBarView, TextView> {
             val axisTag = MotionEvent.axisToString(axisConst).removePrefix("AXIS_")
             val col = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -284,6 +461,7 @@ class ControllerLabActivity : AppCompatActivity() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
                 typeface = Typeface.MONOSPACE
+                useTabularNumerals()
             }
             top.addView(valTv)
             col.addView(
@@ -293,18 +471,25 @@ class ControllerLabActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { bottomMargin = dp(4) },
             )
-            val bar = AxisBarView(this, sunkenSurface, hairline, accentColor)
+            val bar = AxisBarView(
+                context = this,
+                trackColor = sunkenSurface,
+                borderColor = hairline,
+                fillColor = accentColor,
+                deadzoneMarkers = if (showDeadzone) deadzoneTicks else null,
+                engageTickColor = accentOnSunken,
+            )
             col.addView(
                 bar,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(12)),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)),
             )
             return Triple(col, bar, valTv)
         }
 
-        val (sxCell, sxBar, sxVal) = buildAxisCell(MotionEvent.AXIS_X)
-        val (syCell, syBar, syVal) = buildAxisCell(MotionEvent.AXIS_Y)
-        val (hxCell, hxBar, hxVal) = buildAxisCell(MotionEvent.AXIS_HAT_X)
-        val (hyCell, hyBar, hyVal) = buildAxisCell(MotionEvent.AXIS_HAT_Y)
+        val (sxCell, sxBar, sxVal) = buildAxisCell(MotionEvent.AXIS_X, showDeadzone = true)
+        val (syCell, syBar, syVal) = buildAxisCell(MotionEvent.AXIS_Y, showDeadzone = true)
+        val (hxCell, hxBar, hxVal) = buildAxisCell(MotionEvent.AXIS_HAT_X, showDeadzone = false)
+        val (hyCell, hyBar, hyVal) = buildAxisCell(MotionEvent.AXIS_HAT_Y, showDeadzone = false)
         stickXBar = sxBar; stickXVal = sxVal
         stickYBar = syBar; stickYVal = syVal
         hatXBar = hxBar; hatXVal = hxVal
@@ -343,17 +528,67 @@ class ControllerLabActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
         )
 
-        // Card 3: Monospace scrollable event log inside sunken field.
+        // Card 3: Monospace scrollable event log inside sunken field with count & Clear pill.
         val logCard = labCard()
+        val logHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        logCountBadge = TextView(this).apply {
+            text = integerFormat.format(0)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(accentOnSunken)
+            setTypeface(typeface, Typeface.BOLD)
+            useTabularNumerals()
+            gravity = Gravity.CENTER
+            minWidth = dp(36)
+            background = TileBackgrounds.valueBadge(this@ControllerLabActivity, accentColor)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+        logHeader.addView(logCountBadge)
+        logHeader.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
+        val clearLogBtn = TextView(this).apply {
+            id = View.generateViewId()
+            setText(R.string.action_clear)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isFocusable = true
+            contentDescription = getString(R.string.action_clear)
+            minHeight = dp(36)
+            background = TileBackgrounds.pressableRow(
+                context = this@ControllerLabActivity,
+                accent = accentColor,
+                idleBackground = TileBackgrounds.chipIdle(this@ControllerLabActivity, cornerRadiusDp = 12),
+                cornerRadiusDp = 12,
+                strokeDp = 2,
+            )
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            setOnClickListener { clearLabState() }
+        }
+        bindBtn.nextFocusDownId = clearLogBtn.id
+        clearLogBtn.nextFocusUpId = bindBtn.id
+        logHeader.addView(clearLogBtn)
+        logCard.addView(
+            logHeader,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) },
+        )
         log = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
             typeface = Typeface.MONOSPACE
+            useTabularNumerals()
             setLineSpacing(dpF(2), 1f)
             text = getString(R.string.glyph_dash)
         }
         val logBox = ScrollView(this).apply {
             background = TileBackgrounds.sunkenField(this@ControllerLabActivity, cornerRadiusDp = 12)
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(14))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             minimumHeight = dp(96)
             addView(
@@ -378,6 +613,8 @@ class ControllerLabActivity : AppCompatActivity() {
 
         val outerScroll = ScrollView(this).apply {
             isFillViewport = true
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
             addView(
                 content,
                 ViewGroup.LayoutParams(
@@ -427,13 +664,84 @@ class ControllerLabActivity : AppCompatActivity() {
             val hx = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_X))
             val hy = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_Y))
             axisLine.text = getString(R.string.controller_axes_values, x, y, hx, hy)
-            stickXBar.setAxisValue(x); stickXVal.text = formatAxisValue(x)
-            stickYBar.setAxisValue(y); stickYVal.text = formatAxisValue(y)
-            hatXBar.setAxisValue(hx); hatXVal.text = formatAxisValue(hx)
-            hatYBar.setAxisValue(hy); hatYVal.text = formatAxisValue(hy)
+            updateAxisReadout(stickXBar, stickXVal, x, stickReleaseThreshold)
+            updateAxisReadout(stickYBar, stickYVal, y, stickReleaseThreshold)
+            updateAxisReadout(hatXBar, hatXVal, hx, 0.5f)
+            updateAxisReadout(hatYBar, hatYVal, hy, 0.5f)
+            val nextHat = ControllerLabLogic.padIndicatorsForHat(hx, hy)
+            if (nextHat != pressedHatDirs) {
+                val changed = (pressedHatDirs union nextHat)
+                pressedHatDirs.clear()
+                pressedHatDirs.addAll(nextHat)
+                seenIndicators.addAll(nextHat)
+                changed.forEach(::stylePadIndicator)
+            }
             return true
         }
         return super.onGenericMotionEvent(event)
+    }
+
+    private fun updateAxisReadout(
+        bar: AxisBarView,
+        label: TextView,
+        value: Float,
+        highlightThreshold: Float,
+    ) {
+        bar.setAxisValue(value)
+        label.text = formatAxisValue(value)
+        label.setTextColor(
+            if (abs(value) >= highlightThreshold) accentOnCard else UiDimens.ALPHA_SECONDARY,
+        )
+    }
+
+    private fun clearLabState() {
+        recent.clear()
+        totalLogEvents = 0
+        logCountBadge.text = integerFormat.format(0)
+        log.text = getString(R.string.glyph_dash)
+        stickXBar.resetPeaks()
+        stickYBar.resetPeaks()
+        hatXBar.resetPeaks()
+        hatYBar.resetPeaks()
+        seenIndicators.clear()
+        refreshAllPadIndicators()
+    }
+
+    private fun refreshAllPadIndicators() {
+        PadIndicator.entries.forEach(::stylePadIndicator)
+    }
+
+    private fun stylePadIndicator(indicator: PadIndicator) {
+        val tv = padViews[indicator] ?: return
+        val active = indicator in pressedButtons || indicator in pressedHatDirs
+        val seen = indicator in seenIndicators
+        val bg = GradientDrawable().apply {
+            cornerRadius = dpF(8)
+            when {
+                active -> {
+                    setColor(accentColor)
+                }
+                seen -> {
+                    setColor(ThemePack.cardFill(ThemePack.resolve(app.settings)))
+                    setStroke(strokePx(1), ThemePack.accentHairline(accentColor))
+                }
+                else -> {
+                    setColor(sunkenSurface)
+                    setStroke(strokePx(1), hairline)
+                }
+            }
+        }
+        tv.background = bg
+        tv.setTextColor(
+            when {
+                active -> onAccent
+                seen -> accentOnCard
+                else -> UiDimens.ALPHA_MUTED
+            },
+        )
+        val scale = if (active) 1.06f else 1f
+        tv.scaleX = scale
+        tv.scaleY = scale
     }
 
     private fun bindLastKey() {
@@ -472,6 +780,15 @@ class ControllerLabActivity : AppCompatActivity() {
 
     private fun paintKey(keyCode: Int, action: Int, event: KeyEvent) {
         lastKeyCode = keyCode
+        ControllerLabLogic.padIndicatorForKeyCode(keyCode)?.let { indicator ->
+            if (action == KeyEvent.ACTION_DOWN) {
+                pressedButtons.add(indicator)
+                seenIndicators.add(indicator)
+            } else if (action == KeyEvent.ACTION_UP) {
+                pressedButtons.remove(indicator)
+            }
+            stylePadIndicator(indicator)
+        }
         val actionName = when (action) {
             KeyEvent.ACTION_DOWN -> getString(R.string.controller_action_down)
             KeyEvent.ACTION_UP -> getString(R.string.controller_action_up)
@@ -509,6 +826,8 @@ class ControllerLabActivity : AppCompatActivity() {
     }
 
     private fun pushLog(line: String) {
+        totalLogEvents++
+        logCountBadge.text = integerFormat.format(totalLogEvents)
         recent.addFirst(line)
         while (recent.size > 24) recent.removeLast()
         log.text = recent.joinToString("\n")
@@ -517,15 +836,21 @@ class ControllerLabActivity : AppCompatActivity() {
     private fun formatAxisValue(value: Float): String =
         String.format(Locale.US, "%+.2f", value)
 
-    /** Lightweight center-zero bipolar gauge driven by [ControllerLabLogic.axisBarSpan]. */
+    /**
+     * Lightweight center-zero bipolar gauge driven by [ControllerLabLogic.axisBarSpan],
+     * with symmetric stick deadzone release/engage markers and live peak-deflection ticks.
+     */
     private class AxisBarView(
         context: Context,
         trackColor: Int,
         borderColor: Int,
         fillColor: Int,
+        private val deadzoneMarkers: DeadzoneMarkers?,
+        engageTickColor: Int,
     ) : View(context) {
         private var span = ControllerLabLogic.axisBarSpan(0f)
-        private val radius = context.dpF(6)
+        private var peaks = AxisPeakState()
+        private val radius = context.dpF(7)
         private val rect = RectF()
         private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = trackColor }
         private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -537,12 +862,34 @@ class ControllerLabActivity : AppCompatActivity() {
             color = UiDimens.ALPHA_SUBTLE
             strokeWidth = context.strokePx(1).toFloat()
         }
+        private val releaseTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x55FFFFFF
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val engageTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(engageTickColor, 0xAA)
+            strokeWidth = context.dpF(1.5f)
+        }
+        private val peakTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = UiDimens.ALPHA_PRIMARY
+            strokeWidth = context.dpF(2)
+            strokeCap = Paint.Cap.ROUND
+        }
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fillColor }
 
         fun setAxisValue(raw: Float) {
             val next = ControllerLabLogic.axisBarSpan(raw)
-            if (next != span) {
+            val nextPeaks = ControllerLabLogic.updatePeaks(peaks, raw)
+            if (next != span || nextPeaks != peaks) {
                 span = next
+                peaks = nextPeaks
+                invalidate()
+            }
+        }
+
+        fun resetPeaks() {
+            if (peaks != AxisPeakState()) {
+                peaks = AxisPeakState()
                 invalidate()
             }
         }
@@ -559,8 +906,25 @@ class ControllerLabActivity : AppCompatActivity() {
                 rect.set(left, 0f, right, h)
                 canvas.drawRoundRect(rect, radius, radius, fillPaint)
             }
+            deadzoneMarkers?.let { dz ->
+                val insetY = h * 0.22f
+                canvas.drawLine(w * dz.releaseFracNeg, insetY, w * dz.releaseFracNeg, h - insetY, releaseTickPaint)
+                canvas.drawLine(w * dz.releaseFracPos, insetY, w * dz.releaseFracPos, h - insetY, releaseTickPaint)
+                val engInsetY = h * 0.14f
+                canvas.drawLine(w * dz.engageFracNeg, engInsetY, w * dz.engageFracNeg, h - engInsetY, engageTickPaint)
+                canvas.drawLine(w * dz.engageFracPos, engInsetY, w * dz.engageFracPos, h - engInsetY, engageTickPaint)
+            }
             val midX = w * 0.5f
             canvas.drawLine(midX, 0f, midX, h, centerPaint)
+            val peakPad = h * 0.16f
+            if (peaks.minNeg < -0.02f) {
+                val px = w * ControllerLabLogic.valueToBarFrac(peaks.minNeg)
+                canvas.drawLine(px, peakPad, px, h - peakPad, peakTickPaint)
+            }
+            if (peaks.maxPos > 0.02f) {
+                val px = w * ControllerLabLogic.valueToBarFrac(peaks.maxPos)
+                canvas.drawLine(px, peakPad, px, h - peakPad, peakTickPaint)
+            }
             val inset = borderPaint.strokeWidth * 0.5f
             rect.set(inset, inset, w - inset, h - inset)
             canvas.drawRoundRect(rect, radius, radius, borderPaint)
