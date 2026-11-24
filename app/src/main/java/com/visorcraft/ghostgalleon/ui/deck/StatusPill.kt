@@ -114,8 +114,16 @@ object StatusPill {
         )
     }
 
-    /** Semantic hairline border tint reflecting charging, net-drain, or low/critical battery. */
-    fun pillBorderColor(percent: Int, glyph: StatusBattery.Glyph): Int = when (glyph) {
+    /**
+     * Semantic hairline border tint reflecting charging, net-drain, or
+     * low/critical battery; falls back to the active theme's [restingHairline]
+     * when battery state is nominal.
+     */
+    fun pillBorderColor(
+        percent: Int,
+        glyph: StatusBattery.Glyph,
+        restingHairline: Int = DEFAULT_BORDER_COLOR,
+    ): Int = when (glyph) {
         StatusBattery.Glyph.CHARGING -> (0x58 shl 24) or (CHARGING_BOLT and 0x00FFFFFF)
         StatusBattery.Glyph.NET_DRAIN -> (0x66 shl 24) or (NET_DRAIN_BOLT and 0x00FFFFFF)
         StatusBattery.Glyph.BATTERY -> when {
@@ -123,7 +131,7 @@ object StatusPill {
                 (0x66 shl 24) or (LOW_BATTERY_CRITICAL and 0x00FFFFFF)
             percent in 0..LOW_BATTERY_PERCENT ->
                 (0x58 shl 24) or (LOW_BATTERY_WARN and 0x00FFFFFF)
-            else -> DEFAULT_BORDER_COLOR
+            else -> restingHairline
         }
     }
 
@@ -169,12 +177,18 @@ object StatusPill {
     fun isLowBattery(percent: Int, glyph: StatusBattery.Glyph): Boolean =
         glyph == StatusBattery.Glyph.BATTERY && percent in 0..LOW_BATTERY_PERCENT
 
-    /** Battery text color: amber at 11..15% unplugged, red at <= 10% unplugged, white otherwise. */
-    fun batteryTextColor(percent: Int, glyph: StatusBattery.Glyph): Int = when {
-        glyph != StatusBattery.Glyph.BATTERY -> NORMAL_COLOR
-        percent in 0..CRITICAL_BATTERY_PERCENT -> LOW_BATTERY_CRITICAL
-        percent in 0..LOW_BATTERY_PERCENT -> LOW_BATTERY_WARN
-        else -> NORMAL_COLOR
+    /**
+     * Battery percent text color: urgency red during [StatusBattery.Glyph.NET_DRAIN],
+     * amber at 11..15% unplugged, red at <= 10% unplugged, white otherwise.
+     */
+    fun batteryTextColor(percent: Int, glyph: StatusBattery.Glyph): Int = when (glyph) {
+        StatusBattery.Glyph.NET_DRAIN -> NET_DRAIN_BOLT
+        StatusBattery.Glyph.CHARGING -> NORMAL_COLOR
+        StatusBattery.Glyph.BATTERY -> when {
+            percent in 0..CRITICAL_BATTERY_PERCENT -> LOW_BATTERY_CRITICAL
+            percent in 0..LOW_BATTERY_PERCENT -> LOW_BATTERY_WARN
+            else -> NORMAL_COLOR
+        }
     }
 
     /** Vector icon tint matching battery / charging / net-drain state. */
@@ -222,7 +236,12 @@ object StatusPill {
             fontFeatureSettings = "tnum"
             includeFontPadding = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setPadding(0, 0, context.dp(m.glyphGapDp), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                marginEnd = context.dp(m.glyphGapDp)
+            }
         }
         val icon = ImageView(context).apply {
             tag = TAG_BATTERY_ICON
@@ -380,19 +399,24 @@ object StatusPill {
         val icon = pill.findViewWithTag<View>(TAG_BATTERY_ICON) as? ImageView
         val divider = pill.findViewWithTag<View>(TAG_DIVIDER)
         val ctx = pill.context
+        val restingHairline = TileBackgrounds.hairlineDivider(ctx)
         val label = formatBatteryLabel(snapshot.percent) ?: run {
             cancelTintTransition(pill)
             tv.visibility = View.GONE
             tv.contentDescription = null
             icon?.visibility = View.GONE
             divider?.visibility = View.GONE
-            applyPillBorder(pill, DEFAULT_BORDER_COLOR)
+            applyPillBorder(pill, restingHairline)
             pill.setTag(R.id.status_chrome, null)
             syncPillAccessibility(pill)
             return
         }
         val prev = pill.getTag(R.id.status_chrome) as? AppliedChrome
+        val nextTextColor = batteryTextColor(snapshot.percent, snapshot.glyph)
+        val nextIconTint = batteryIconTint(snapshot.percent, snapshot.glyph)
+        val nextBorderColor = pillBorderColor(snapshot.percent, snapshot.glyph, restingHairline)
         if (prev != null &&
+            prev.borderColor == nextBorderColor &&
             !StatusBattery.chromeNeedsWrite(
                 prev.percent,
                 prev.glyph,
@@ -405,9 +429,6 @@ object StatusPill {
             return
         }
         val resolved = ctx.resolveText(label)
-        val nextTextColor = batteryTextColor(snapshot.percent, snapshot.glyph)
-        val nextIconTint = batteryIconTint(snapshot.percent, snapshot.glyph)
-        val nextBorderColor = pillBorderColor(snapshot.percent, snapshot.glyph)
         tv.text = resolved
         tv.contentDescription = when (snapshot.glyph) {
             StatusBattery.Glyph.CHARGING ->

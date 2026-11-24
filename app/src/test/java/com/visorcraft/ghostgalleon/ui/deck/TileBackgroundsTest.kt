@@ -126,8 +126,11 @@ class TileBackgroundsTest {
 
         val status = TileBackgrounds.statusPillKey(ghost, density = 2f)
         assertEquals(TileBackgrounds.statusPillFill(ThemePack.cardFill(ghost)), status.fill)
+        assertEquals(ThemePack.hairlineDivider(ghost), status.strokeColor)
         assertEquals(48f, status.radiusPx, 0.001f)
-        assertNotEquals(status, TileBackgrounds.statusPillKey(oled, density = 2f))
+        val oledStatus = TileBackgrounds.statusPillKey(oled, density = 2f)
+        assertEquals(ThemePack.hairlineDivider(oled), oledStatus.strokeColor)
+        assertNotEquals(status, oledStatus)
 
         val artDp = TileBackgrounds.artBackingKey(ghost, density = 2f, cornerRadiusDp = 24)
         val artPx = TileBackgrounds.artBackingPxKey(ghost, density = 2f, cornerRadiusPx = 48f)

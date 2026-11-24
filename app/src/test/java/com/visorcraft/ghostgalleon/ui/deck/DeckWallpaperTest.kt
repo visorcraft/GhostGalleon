@@ -17,14 +17,45 @@ class DeckWallpaperTest {
     }
 
     @Test
-    fun `scrim stops darken top and bottom chrome edges while keeping center lighter`() {
-        val stops = DeckWallpaper.scrimColors()
-        assertEquals(3, stops.size)
-        val topA = (stops[0] ushr 24) and 0xFF
-        val midA = (stops[1] ushr 24) and 0xFF
-        val botA = (stops[2] ushr 24) and 0xFF
-        assertTrue("top scrim should darken more than center ($topA vs $midA)", topA > midA)
-        assertTrue("bottom scrim should darken more than center ($botA vs $midA)", botA > midA)
+    fun `4-stop scrim protects top and bottom chrome monotonically with denser compact-height profile`() {
+        val standard = DeckWallpaper.scrimColors()
+        val compact = DeckWallpaper.scrimColorsFor(compactHeight = true)
+        assertEquals(4, standard.size)
+        assertEquals(4, compact.size)
+
+        for ((name, stops) in listOf("standard" to standard, "compact" to compact)) {
+            val topA = (stops[0] ushr 24) and 0xFF
+            val upperMidA = (stops[1] ushr 24) and 0xFF
+            val lowerMidA = (stops[2] ushr 24) and 0xFF
+            val botA = (stops[3] ushr 24) and 0xFF
+            assertTrue("$name: top ($topA) > upperCenter ($upperMidA)", topA > upperMidA)
+            assertTrue("$name: lowerCenter ($lowerMidA) > upperCenter ($upperMidA)", lowerMidA > upperMidA)
+            assertTrue("$name: bottom ($botA) > lowerCenter ($lowerMidA)", botA > lowerMidA)
+            assertTrue("$name: bottom ($botA) > top ($topA) to anchor HintBar/dock", botA > topA)
+        }
+        // Compact panels (e.g. 540dp Sugar) apply stronger or equal protection at every stop.
+        for (i in 0 until 4) {
+            val stdA = (standard[i] ushr 24) and 0xFF
+            val cmpA = (compact[i] ushr 24) and 0xFF
+            assertTrue("compact stop[$i] ($cmpA) < standard ($stdA)", cmpA >= stdA)
+        }
+        assertTrue(DeckWallpaper.isCompactHeightDp(540f))
+        assertFalse(DeckWallpaper.isCompactHeightDp(720f))
+    }
+
+    @Test
+    fun `dual-display cache keys isolate Sugar top 16-9 and bottom 4-3 resolution buckets`() {
+        val uri = "content://wall/handheld.jpg"
+        val topKey = DeckWallpaper.cacheKeyFor(uri, widthPx = 1920, heightPx = 1080)
+        val bottomKey = DeckWallpaper.cacheKeyFor(uri, widthPx = 1080, heightPx = 1080)
+        assertEquals(2048, topKey.bucketedMaxDim)
+        assertEquals(1280, bottomKey.bucketedMaxDim)
+        org.junit.Assert.assertNotEquals(topKey, bottomKey)
+        assertTrue(DeckWallpaper.cacheKeySatisfies(topKey, topKey))
+        assertFalse(DeckWallpaper.cacheKeySatisfies(topKey, bottomKey))
+        assertFalse(DeckWallpaper.cacheKeySatisfies(topKey, DeckWallpaper.cacheKeyFor("content://wall/other.jpg", 1920, 1080)))
+        assertFalse(DeckWallpaper.cacheKeySatisfies(DeckWallpaper.CacheKey("", 1280), DeckWallpaper.CacheKey("", 1280)))
+        assertEquals(2, DeckWallpaper.MAX_CACHE_ENTRIES)
     }
 
     @Test

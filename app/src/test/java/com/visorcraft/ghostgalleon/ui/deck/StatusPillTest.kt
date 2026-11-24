@@ -266,4 +266,59 @@ class StatusPillTest {
             }
         }
     }
+
+    @Test
+    fun `NET_DRAIN tints battery percent red with WCAG AA contrast over statusPillFill across themes`() {
+        assertEquals(
+            StatusPill.NET_DRAIN_BOLT,
+            StatusPill.batteryTextColor(50, StatusBattery.Glyph.NET_DRAIN),
+        )
+        assertEquals(
+            StatusPill.NET_DRAIN_BOLT,
+            StatusPill.batteryTextColor(95, StatusBattery.Glyph.NET_DRAIN),
+        )
+        for (pack in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val pillFill = TileBackgrounds.statusPillFill(
+                com.visorcraft.ghostgalleon.settings.ThemePack.cardFill(pack),
+            )
+            // Composite translucent statusPillFill over black backdrop for exact on-screen surface.
+            val compositedBg = CompanionThemeAudit.compositeAlphaOver(pillFill, 0xFF000000.toInt())
+            val ratio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(
+                StatusPill.batteryTextColor(50, StatusBattery.Glyph.NET_DRAIN),
+                compositedBg,
+            )
+            assertTrue(
+                "${pack.id} NET_DRAIN percent contrast $ratio < 4.5 over statusPillFill",
+                ratio >= com.visorcraft.ghostgalleon.settings.ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
+
+    @Test
+    fun `pillBorderColor uses theme restingHairline at rest while preserving semantic overrides`() {
+        for (pack in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val hairline = com.visorcraft.ghostgalleon.settings.ThemePack.hairlineDivider(pack)
+            assertEquals(
+                hairline,
+                StatusPill.pillBorderColor(75, StatusBattery.Glyph.BATTERY, hairline),
+            )
+            // Semantic overrides take precedence over resting hairline across all themes.
+            assertEquals(
+                StatusPill.CHARGING_BOLT and 0x00FFFFFF,
+                StatusPill.pillBorderColor(75, StatusBattery.Glyph.CHARGING, hairline) and 0x00FFFFFF,
+            )
+            assertEquals(
+                StatusPill.NET_DRAIN_BOLT and 0x00FFFFFF,
+                StatusPill.pillBorderColor(75, StatusBattery.Glyph.NET_DRAIN, hairline) and 0x00FFFFFF,
+            )
+            assertEquals(
+                StatusPill.LOW_BATTERY_WARN and 0x00FFFFFF,
+                StatusPill.pillBorderColor(15, StatusBattery.Glyph.BATTERY, hairline) and 0x00FFFFFF,
+            )
+            assertEquals(
+                StatusPill.LOW_BATTERY_CRITICAL and 0x00FFFFFF,
+                StatusPill.pillBorderColor(8, StatusBattery.Glyph.BATTERY, hairline) and 0x00FFFFFF,
+            )
+        }
+    }
 }

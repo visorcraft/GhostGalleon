@@ -20,7 +20,6 @@ object TileBackgrounds {
     private const val CHROME_BUTTON_FILL_ALPHA = 0xCC
     private const val CHROME_RIPPLE_COLOR = 0x44FFFFFF
     private const val STATUS_PILL_ALPHA = 0xD9
-    private const val STATUS_PILL_STROKE = 0x28FFFFFF
 
     internal const val CARD_CACHE_MAX_ENTRIES: Int = 12
     internal const val SELECTED_CACHE_MAX_ENTRIES: Int = 16
@@ -207,7 +206,7 @@ object TileBackgrounds {
         density: Float,
     ): RoundedRectTemplateKey = RoundedRectTemplateKey(
         fill = statusPillFill(ThemePack.cardFill(tokens)),
-        strokeColor = STATUS_PILL_STROKE,
+        strokeColor = ThemePack.hairlineDivider(tokens),
         strokeWidthPx = strokePxForDensity(density, 1),
         radiusPx = normalizeRadiusPx(24 * density),
     )

@@ -61,4 +61,37 @@ class PlatformTileTest {
         // scheme deliberately (update the pins) or broke determinism.
         assertNotEquals(PlatformTile.colorFor("snes"), PlatformTile.colorFor("3ds"))
     }
+
+    @Test
+    fun `gradient sheen stops clear 5_5 to 1 white contrast across every platform and stay deterministic`() {
+        val white = 0xFFFFFFFF.toInt()
+        for (platform in Platforms.ALL) {
+            val stops = PlatformTile.gradientColorsFor(platform.id)
+            assertEquals(2, stops.size)
+            assertEquals(stops[0], PlatformTile.gradientColorsFor(platform.id)[0])
+            assertEquals(stops[1], PlatformTile.gradientColorsFor(platform.id)[1])
+            assertTrue(
+                "${platform.id} top stop should be brighter than bottom stop",
+                com.visorcraft.ghostgalleon.settings.ThemePack.relativeLuminance(stops[0]) >
+                    com.visorcraft.ghostgalleon.settings.ThemePack.relativeLuminance(stops[1]),
+            )
+            for ((idx, stop) in stops.withIndex()) {
+                val ratio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(white, stop)
+                assertTrue(
+                    "${platform.id} stop[$idx] white contrast $ratio < ${PlatformTile.MIN_WHITE_CONTRAST}",
+                    ratio >= PlatformTile.MIN_WHITE_CONTRAST,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `restyleNeeded detects both platform id and corner radius transitions`() {
+        val tag = PlatformTile.styleKey("snes", 24)
+        org.junit.Assert.assertFalse(PlatformTile.restyleNeeded(tag, "snes", 24))
+        assertTrue(PlatformTile.restyleNeeded(tag, "gba", 24))
+        assertTrue(PlatformTile.restyleNeeded(tag, "snes", 12))
+        assertTrue(PlatformTile.restyleNeeded(null, "snes", 24))
+        assertTrue(PlatformTile.restyleNeeded("snes", "snes", 24))
+    }
 }

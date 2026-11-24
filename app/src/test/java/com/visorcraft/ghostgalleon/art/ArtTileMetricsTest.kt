@@ -74,7 +74,7 @@ class ArtTileMetricsTest {
         assertFalse(ArtTileMetrics.isNearSquareAspect(1920, 620))
         assertFalse(ArtTileMetrics.isNearSquareAspect(0, 512))
 
-        // Near-square cover uses full-bleed CENTER_CROP with 0 inset padding.
+        // Near-square cover uses full-bleed CENTER_CROP inset 1px inside the backing hairline.
         val squareCover = ArtTileMetrics.framingFor(
             kind = ArtTileMetrics.ArtFrameKind.COVER_ART,
             bitmapWidth = 512,
@@ -83,10 +83,10 @@ class ArtTileMetricsTest {
             density = 2f,
         )
         assertTrue(squareCover.centerCrop)
-        assertEquals(0, squareCover.insetPaddingPx)
+        assertEquals(ArtTileMetrics.COVER_HAIRLINE_INSET_PX, squareCover.insetPaddingPx)
         assertFalse(squareCover.roundBitmapCorners)
 
-        // Portrait 2:3 cover preserves full artwork via FIT_CENTER + rounded bitmap corners.
+        // Portrait 2:3 cover preserves full artwork via FIT_CENTER inset 1px + refined inner corners.
         val portraitCover = ArtTileMetrics.framingFor(
             kind = ArtTileMetrics.ArtFrameKind.COVER_ART,
             bitmapWidth = 600,
@@ -95,7 +95,7 @@ class ArtTileMetricsTest {
             density = 2f,
         )
         assertFalse(portraitCover.centerCrop)
-        assertEquals(0, portraitCover.insetPaddingPx)
+        assertEquals(ArtTileMetrics.COVER_HAIRLINE_INSET_PX, portraitCover.insetPaddingPx)
         assertTrue(portraitCover.roundBitmapCorners)
 
         // Logo fallback uses FIT_CENTER + proportional clamped inset padding without clipping corners.
@@ -117,5 +117,39 @@ class ArtTileMetricsTest {
         assertFalse(carouselLogo.roundBitmapCorners)
         assertTrue(carouselLogo.insetPaddingPx > dockLogo.insetPaddingPx)
         assertTrue(dockLogo.insetPaddingPx >= 8)
+    }
+
+    @Test
+    fun `innerCoverCornerRadiusPx refines 2-to-3, 4-to-3, and wide covers while preserving 1-to-1 outer radius`() {
+        val density = 2f
+        val outerGhost = 48f // 24dp @ 2x
+        val outerMid = 32f   // 16dp @ 2x
+        val minPx = ArtTileMetrics.LETTERBOX_CORNER_MIN_DP * density // 8px
+        val maxPx = ArtTileMetrics.LETTERBOX_CORNER_MAX_DP * density // 20px
+
+        // 1:1 near-square keeps full outer radius.
+        assertEquals(
+            outerMid,
+            ArtTileMetrics.innerCoverCornerRadiusPx(outerMid, bmpW = 512, bmpH = 512, targetPx = 400, density = density),
+            0.001f,
+        )
+        // 2:3 portrait cover scales to 0.45 * outer, clamped cleanly inside 4..10dp (8..20px).
+        val portraitGhost = ArtTileMetrics.innerCoverCornerRadiusPx(outerGhost, bmpW = 600, bmpH = 900, targetPx = 400, density = density)
+        assertEquals(maxPx, portraitGhost, 0.001f)
+        val portraitMid = ArtTileMetrics.innerCoverCornerRadiusPx(outerMid, bmpW = 600, bmpH = 900, targetPx = 360, density = density)
+        assertEquals(outerMid * ArtTileMetrics.LETTERBOX_CORNER_FRAC, portraitMid, 0.001f)
+        assertTrue(portraitMid in minPx..maxPx)
+
+        // 4:3 (1.33) and wide (1920x620) covers also get refined physical box-art corners < outerRadiusPx.
+        val fourByThree = ArtTileMetrics.innerCoverCornerRadiusPx(outerMid, bmpW = 640, bmpH = 480, targetPx = 360, density = density)
+        val wideBanner = ArtTileMetrics.innerCoverCornerRadiusPx(outerMid, bmpW = 1920, bmpH = 620, targetPx = 360, density = density)
+        assertEquals(portraitMid, fourByThree, 0.001f)
+        assertEquals(portraitMid, wideBanner, 0.001f)
+        assertTrue(fourByThree < outerMid)
+
+        // Tiny dock tile clamps safely to <= outerRadiusPx and <= targetPx * 0.25f.
+        val tiny = ArtTileMetrics.innerCoverCornerRadiusPx(12f, bmpW = 600, bmpH = 900, targetPx = 64, density = density)
+        assertTrue(tiny in minPx..12f)
+        assertEquals(0f, ArtTileMetrics.innerCoverCornerRadiusPx(0f, 600, 900, 360), 0.001f)
     }
 }

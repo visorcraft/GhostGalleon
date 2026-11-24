@@ -120,6 +120,7 @@ object ArtTile {
         overlay.alpha = 1f
         overlay.scaleType = ImageView.ScaleType.FIT_CENTER
         overlay.setPadding(0, 0, 0, 0)
+        setOverlayMarginPx(overlay, 0)
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
         overlay.tag = rom.id
@@ -267,6 +268,18 @@ object ArtTile {
         }
     }
 
+    private fun setOverlayMarginPx(overlay: ImageView, marginPx: Int) {
+        val lp = overlay.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+        if (lp.leftMargin != marginPx ||
+            lp.topMargin != marginPx ||
+            lp.rightMargin != marginPx ||
+            lp.bottomMargin != marginPx
+        ) {
+            lp.setMargins(marginPx, marginPx, marginPx, marginPx)
+            overlay.layoutParams = lp
+        }
+    }
+
     private fun applyRounded(
         overlay: ImageView,
         context: Context,
@@ -292,15 +305,39 @@ object ArtTile {
         } else {
             ImageView.ScaleType.FIT_CENTER
         }
-        overlay.setPadding(
-            framing.insetPaddingPx,
-            framing.insetPaddingPx,
-            framing.insetPaddingPx,
-            framing.insetPaddingPx,
-        )
+        val coverInset = if (frameKind == ArtTileMetrics.ArtFrameKind.COVER_ART) {
+            framing.insetPaddingPx
+        } else {
+            0
+        }
+        if (coverInset > 0 && overlay.layoutParams is ViewGroup.MarginLayoutParams) {
+            setOverlayMarginPx(overlay, coverInset)
+            overlay.setPadding(0, 0, 0, 0)
+            applyRoundedOutline(overlay, (radiusPx - coverInset).coerceAtLeast(0f))
+        } else {
+            setOverlayMarginPx(overlay, 0)
+            overlay.setPadding(
+                framing.insetPaddingPx,
+                framing.insetPaddingPx,
+                framing.insetPaddingPx,
+                framing.insetPaddingPx,
+            )
+            applyRoundedOutline(overlay, radiusPx)
+        }
+        val bitmapCornerPx = if (framing.roundBitmapCorners) {
+            ArtTileMetrics.innerCoverCornerRadiusPx(
+                outerRadiusPx = radiusPx,
+                bmpW = bitmap.width,
+                bmpH = bitmap.height,
+                targetPx = targetPx,
+                density = density,
+            )
+        } else {
+            0f
+        }
         overlay.setImageDrawable(
             RoundedBitmapDrawableFactory.create(context.resources, bitmap).apply {
-                cornerRadius = if (framing.roundBitmapCorners) radiusPx else 0f
+                cornerRadius = bitmapCornerPx
             },
         )
         hidePlaceholderWithBacking(overlay, context, radiusPx)
