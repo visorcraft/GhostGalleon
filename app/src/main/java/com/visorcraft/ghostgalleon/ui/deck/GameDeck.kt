@@ -484,6 +484,9 @@ class GameDeck(
     private var cachedTintBg: Drawable? = null
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
     private var letterChipViews: List<Pair<Char, TextView>> = emptyList()
+    /** Horizontal scrollers for auto-centering active browse and letter chips. */
+    private var browseScrollView: android.widget.HorizontalScrollView? = null
+    private var letterScrollView: android.widget.HorizontalScrollView? = null
     /** Last filter-chrome structure; equal → restyle chip colors only. */
     private var chromeStructureKey: String = ""
     /** Browse chips + live selected predicates for in-place restyle. */
@@ -738,10 +741,50 @@ class GameDeck(
         )
     }
 
+    private fun scrollHorizontalToCenter(
+        scroller: android.widget.HorizontalScrollView?,
+        child: View?,
+        smooth: Boolean,
+    ) {
+        if (scroller == null || child == null) return
+        fun applyScroll() {
+            val contentWidth = scroller.getChildAt(0)?.width ?: return
+            if (scroller.width <= 0 || child.width <= 0) return
+            val targetX = GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = child.left,
+                childWidth = child.width,
+                viewportWidth = scroller.width,
+                contentWidth = contentWidth,
+            )
+            if (smooth) {
+                scroller.smoothScrollTo(targetX, 0)
+            } else {
+                scroller.scrollTo(targetX, 0)
+            }
+        }
+        if (scroller.width > 0 && child.width > 0) {
+            applyScroll()
+        } else {
+            scroller.post { applyScroll() }
+        }
+    }
+
+    private fun centerActiveBrowseChip(smooth: Boolean) {
+        val active = browseChipHandles.firstOrNull { (_, selected) -> selected() }?.first ?: return
+        scrollHorizontalToCenter(browseScrollView, active, smooth = smooth)
+    }
+
+    private fun centerActiveLetterChip(letter: Char?, smooth: Boolean) {
+        if (letter == null) return
+        val active = letterChipViews.firstOrNull { (ch, _) -> ch == letter }?.second ?: return
+        scrollHorizontalToCenter(letterScrollView, active, smooth = smooth)
+    }
+
     private fun restyleBrowseChips() {
         browseChipHandles.forEach { (tv, selected) ->
             paintChip(tv, selected())
         }
+        centerActiveBrowseChip(smooth = true)
         paintLetterJumpSelection()
     }
 
@@ -749,6 +792,14 @@ class GameDeck(
         tv.setTextColor(
             if (selected) ThemePack.onFillTextColor(settings.accentColor)
             else UiDimens.ALPHA_PRIMARY,
+        )
+        tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        tv.isSelected = selected
+        tv.contentDescription = tv.context.resolveText(
+            GameDeckChromeLogic.browseChipAccessibilityText(
+                chipLabel = tv.text?.toString().orEmpty(),
+                selected = selected,
+            ),
         )
         TileBackgrounds.applyChipState(
             view = tv,
@@ -803,7 +854,9 @@ class GameDeck(
                 }
                 setPadding(dp(10), dp(4), dp(8), dp(4))
                 isClickable = true
-                contentDescription = context.getString(R.string.action_clear)
+                contentDescription = context.resolveText(
+                    GameDeckChromeLogic.filterPillAccessibilityText(label),
+                )
                 setOnClickListener {
                     val next = GameDeckChromeLogic.clearFilter(state.libraryBrowse, filter)
                     state.setLibraryBrowse(next, force = true)
@@ -828,6 +881,40 @@ class GameDeck(
                 LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) },
             )
             row.addView(pill)
+        }
+        if (GameDeckChromeLogic.shouldShowStripClearAll(active.size)) {
+            row.addView(View(context), LinearLayout.LayoutParams(dp(8), 1))
+            val clearAllLabel = context.getString(R.string.browse_clear_filters)
+            row.addView(
+                TextView(context).apply {
+                    text = clearAllLabel
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    includeFontPadding = false
+                    background = TileBackgrounds.accentPill(
+                        context = context,
+                        accent = settings.accentColor,
+                        cornerRadiusDp = 14,
+                    )
+                    setPadding(dp(10), dp(4), dp(10), dp(4))
+                    isClickable = true
+                    contentDescription = clearAllLabel
+                    setOnClickListener {
+                        state.setLibraryBrowse(
+                            LibraryBrowse.clearMetaFilters(state.libraryBrowse),
+                            force = true,
+                        )
+                        Toast.makeText(
+                            activity,
+                            R.string.browse_filters_cleared,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            )
         }
         return android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
@@ -1119,6 +1206,8 @@ class GameDeck(
             if (selected) ThemePack.onFillTextColor(settings.accentColor)
             else UiDimens.ALPHA_PRIMARY,
         )
+        tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        tv.isSelected = selected
         TileBackgrounds.applyChipState(
             view = tv,
             selected = selected,
@@ -1138,6 +1227,7 @@ class GameDeck(
             paintLetterChip(tv, letter == selectedLetter)
         }
         paintedLetter = selectedLetter
+        centerActiveLetterChip(selectedLetter, smooth = true)
     }
 
     override fun handleAction(action: Action): Boolean {
@@ -1196,12 +1286,14 @@ class GameDeck(
         val mode = state.libraryBrowse.mode
         if (mode != LibraryBrowse.Mode.ALPHA && mode != LibraryBrowse.Mode.UNPLAYED) {
             letterChipViews = emptyList()
+            letterScrollView = null
             return null
         }
         val labels = entries.map { it.label }
         val letterCounts = LibraryBrowse.presentLetterCounts(labels)
         if (letterCounts.isEmpty()) {
             letterChipViews = emptyList()
+            letterScrollView = null
             return null
         }
         val selectedLetter = entries.getOrNull(selectedIndex())
@@ -1244,12 +1336,15 @@ class GameDeck(
         }
         letterChipViews = chips
         paintedLetter = selectedLetter
-        return android.widget.HorizontalScrollView(context).apply {
+        val scroller = android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             isHorizontalFadingEdgeEnabled = true
             setFadingEdgeLength(dp(24))
             addView(row)
         }
+        letterScrollView = scroller
+        scroller.post { centerActiveLetterChip(selectedLetter, smooth = false) }
+        return scroller
     }
 
     // Browse chip row: All / Recent / Favorites + platform filters + search.
@@ -1734,12 +1829,15 @@ class GameDeck(
             }
         })
         // Horizontal scroll with fading edge so many platforms never crush the bar.
-        return android.widget.HorizontalScrollView(context).apply {
+        val scroller = android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             isHorizontalFadingEdgeEnabled = true
             setFadingEdgeLength(dp(24))
             addView(row)
         }
+        browseScrollView = scroller
+        scroller.post { centerActiveBrowseChip(smooth = false) }
+        return scroller
     }
 
     private fun showBulkActions() {

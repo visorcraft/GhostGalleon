@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
+import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.library.BrowseFeedback
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
@@ -9,7 +10,8 @@ import com.visorcraft.ghostgalleon.rom.PlatformLook
 
 /**
  * Pure, host-tested UI helpers for [GameDeck]'s filter pill row, StatusPill
- * clearance, empty-state copy/action gating, and carousel card geometry.
+ * clearance, empty-state copy/action gating, horizontal chip centering, and
+ * carousel card geometry.
  */
 object GameDeckChromeLogic {
 
@@ -24,6 +26,9 @@ object GameDeckChromeLogic {
 
     /** Subtle de-emphasis opacity for unfocused neighbor cards. */
     const val CARD_ALPHA_UNFOCUSED: Float = 0.78f
+
+    /** Minimum simultaneous active filters before showing the inline Clear-All pill. */
+    const val MIN_FILTERS_FOR_STRIP_CLEAR_ALL: Int = 2
 
     sealed class ActiveFilter {
         data class Platform(val platformId: String) : ActiveFilter()
@@ -77,4 +82,37 @@ object GameDeckChromeLogic {
     /** Target card opacity separating focused/multi-selected cards from neighbors. */
     fun cardVisualAlpha(focused: Boolean, multiSelected: Boolean): Float =
         if (focused || multiSelected) CARD_ALPHA_FOCUSED else CARD_ALPHA_UNFOCUSED
+
+    /**
+     * Clamped HorizontalScrollView scroll-X that centers a chip at
+     * `[childLeft, childLeft + childWidth]` within [viewportWidth].
+     * Returns 0 when the strip fits within the viewport or is unmeasured.
+     */
+    fun horizontalCenterScrollX(
+        childLeft: Int,
+        childWidth: Int,
+        viewportWidth: Int,
+        contentWidth: Int,
+    ): Int {
+        if (viewportWidth <= 0 || contentWidth <= viewportWidth) return 0
+        val maxScroll = (contentWidth - viewportWidth).coerceAtLeast(0)
+        val desired = childLeft + childWidth / 2 - viewportWidth / 2
+        return desired.coerceIn(0, maxScroll)
+    }
+
+    /** True when the active filter pill strip should append a quick Clear-All pill. */
+    fun shouldShowStripClearAll(activeFilterCount: Int): Boolean =
+        activeFilterCount >= MIN_FILTERS_FOR_STRIP_CLEAR_ALL
+
+    /** Descriptive TalkBack label for removing an individual active filter pill. */
+    fun filterPillAccessibilityText(filterLabel: String): UiText =
+        text(R.string.format_colon_pair, text(R.string.action_clear), dynamicText(filterLabel))
+
+    /** Descriptive TalkBack label for a browse chip including active state cue. */
+    fun browseChipAccessibilityText(chipLabel: String, selected: Boolean): UiText =
+        if (selected) {
+            text(R.string.format_selected_check, dynamicText(chipLabel))
+        } else {
+            dynamicText(chipLabel)
+        }
 }

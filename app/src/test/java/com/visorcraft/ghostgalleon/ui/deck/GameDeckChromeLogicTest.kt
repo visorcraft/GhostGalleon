@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import org.junit.Assert.assertEquals
@@ -84,5 +85,80 @@ class GameDeckChromeLogicTest {
         assertEquals(1.0f, GameDeckChromeLogic.cardVisualAlpha(focused = true, multiSelected = false), 0.001f)
         assertEquals(1.0f, GameDeckChromeLogic.cardVisualAlpha(focused = false, multiSelected = true), 0.001f)
         assertTrue(GameDeckChromeLogic.cardVisualAlpha(focused = false, multiSelected = false) < 1.0f)
+    }
+
+    @Test
+    fun `horizontalCenterScrollX centers active chips and clamps cleanly at both edges`() {
+        // Middle chip (left=600, width=100, center=650) in 400px viewport -> 650 - 200 = 450.
+        assertEquals(
+            450,
+            GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = 600,
+                childWidth = 100,
+                viewportWidth = 400,
+                contentWidth = 1200,
+            ),
+        )
+        // First chip clamps to 0.
+        assertEquals(
+            0,
+            GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = 12,
+                childWidth = 80,
+                viewportWidth = 400,
+                contentWidth = 1200,
+            ),
+        )
+        // Last chip clamps to maxScroll = 1200 - 400 = 800.
+        assertEquals(
+            800,
+            GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = 1100,
+                childWidth = 90,
+                viewportWidth = 400,
+                contentWidth = 1200,
+            ),
+        )
+        // Content fits within viewport -> 0.
+        assertEquals(
+            0,
+            GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = 120,
+                childWidth = 80,
+                viewportWidth = 500,
+                contentWidth = 350,
+            ),
+        )
+        // Unmeasured viewport -> 0.
+        assertEquals(
+            0,
+            GameDeckChromeLogic.horizontalCenterScrollX(
+                childLeft = 200,
+                childWidth = 80,
+                viewportWidth = 0,
+                contentWidth = 1000,
+            ),
+        )
+    }
+
+    @Test
+    fun `strip clear-all pill and chip accessibility text helpers behave deterministically`() {
+        assertFalse(GameDeckChromeLogic.shouldShowStripClearAll(0))
+        assertFalse(GameDeckChromeLogic.shouldShowStripClearAll(1))
+        assertTrue(GameDeckChromeLogic.shouldShowStripClearAll(2))
+        assertTrue(GameDeckChromeLogic.shouldShowStripClearAll(4))
+
+        assertEquals(
+            text(R.string.format_colon_pair, text(R.string.action_clear), dynamicText("Platform · SNES")),
+            GameDeckChromeLogic.filterPillAccessibilityText("Platform · SNES"),
+        )
+        assertEquals(
+            text(R.string.format_selected_check, dynamicText("Fav · 4")),
+            GameDeckChromeLogic.browseChipAccessibilityText("Fav · 4", selected = true),
+        )
+        assertEquals(
+            dynamicText("Fav · 4"),
+            GameDeckChromeLogic.browseChipAccessibilityText("Fav · 4", selected = false),
+        )
     }
 }
