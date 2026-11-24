@@ -1793,6 +1793,17 @@ class GridDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = context.dp(4) }
 
+        private fun innerArtRadiusDp(): Int {
+            val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
+            val padDp = (cellPadding / density).toInt()
+            val iconDp = (iconSize / density).toInt()
+            return DeckCornerMetrics.gridTileInnerRadiusDp(
+                tokens = ThemePack.resolve(settings),
+                cellPaddingDp = padDp,
+                iconSizeDp = iconDp,
+            )
+        }
+
         private fun buildFolderCell(key: String): View {
             val folderId = SlotKey.folderId(key)
             val spec = folderId?.let { settings.folders[it] }
@@ -1809,11 +1820,12 @@ class GridDeck(
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
                 contentDescription = listOf(name, countLabel).joinToString(", ")
             }
+            val innerRadiusDp = innerArtRadiusDp()
             val sunkenFill = TileBackgrounds.surfaceSunken(context)
             val iconBox = FrameLayout(context).apply {
                 background = GradientDrawable().apply {
                     setColor(sunkenFill)
-                    cornerRadius = context.dpF(12)
+                    cornerRadius = context.dpF(innerRadiusDp)
                     setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
                 }
             }
@@ -1880,6 +1892,7 @@ class GridDeck(
                     (activity.application as GhostGalleonApp).artCache,
                     entry,
                     targetPx = iconSize,
+                    cornerRadiusDp = innerArtRadiusDp(),
                     artOverrides = settings.artOverrides,
                 ),
                 LinearLayout.LayoutParams(iconSize, iconSize))
@@ -1902,7 +1915,10 @@ class GridDeck(
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
             }
             val tile = PlatformTile.view(
-                context, SlotKey.platformIdOf(key) ?: "rom")
+                context,
+                SlotKey.platformIdOf(key) ?: "rom",
+                cornerRadiusDp = innerArtRadiusDp(),
+            )
             tile.alpha = 0.4f
             cell.addView(tile, LinearLayout.LayoutParams(iconSize, iconSize))
             cell.addView(

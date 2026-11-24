@@ -58,6 +58,8 @@ class DockBar(
     private var contentView: LinearLayout? = null
     private var pulseAnimator: ObjectAnimator? = null
     private var slotSize: Int = 0
+    private var slotRadiusDp: Int = 14
+    private var innerContentRadiusDp: Int = 10
     private var paintedFocus: Int? = null
     private var paintedMoving: Int? = null
     private var focusPainted = false
@@ -111,7 +113,23 @@ class DockBar(
             hasChromeIcons = reserveChromeInset,
         )
         slotSize = spec.slotSizePx
-        val padV = context.dp(8)
+        val padVDp = 8
+        val padV = context.dp(padVDp)
+        val density = metrics.density.coerceAtLeast(0.1f)
+        val slotSizeDp = (slotSize / density).toInt()
+        val iconSizeDp = ((slotSize * 40 / 48) / density).toInt()
+        val themeTokens = ThemePack.resolve(settings)
+        slotRadiusDp = DeckCornerMetrics.dockSlotRadiusDp(
+            tokens = themeTokens,
+            barPadVDp = padVDp,
+            slotSizeDp = slotSizeDp,
+        )
+        innerContentRadiusDp = DeckCornerMetrics.dockInnerContentRadiusDp(
+            tokens = themeTokens,
+            barPadVDp = padVDp,
+            slotSizeDp = slotSizeDp,
+            iconSizeDp = iconSizeDp,
+        )
 
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -199,7 +217,7 @@ class DockBar(
                 cache = (activity.application as GhostGalleonApp).artCache,
                 rom = romEntry,
                 targetPx = iconSize,
-                cornerRadiusDp = 12,
+                cornerRadiusDp = innerContentRadiusDp,
                 artOverrides = settings.artOverrides,
             )
             appEntry != null -> ImageView(context).apply {
@@ -210,13 +228,16 @@ class DockBar(
             }
             SlotKey.isRom(key) -> PlatformTile.view(
                 context, SlotKey.platformIdOf(key) ?: "rom",
-                cornerRadiusDp = 12).apply { alpha = 0.4f }
+                cornerRadiusDp = innerContentRadiusDp).apply { alpha = 0.4f }
             else -> TextView(context).apply {
                 setText(R.string.glyph_add)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
                 setTextColor(UiDimens.ALPHA_SUBTLE)
                 gravity = Gravity.CENTER
-                background = TileBackgrounds.blankSlot(context, cornerRadiusDp = 12)
+                background = TileBackgrounds.blankSlot(
+                    context,
+                    cornerRadiusDp = innerContentRadiusDp,
+                )
             }
         }
         frame.addView(content, FrameLayout.LayoutParams(
@@ -247,7 +268,13 @@ class DockBar(
             frame.animate().cancel()
             frame.alpha = 1f
             frame.background = if (isFocused) {
-                TileBackgrounds.selected(frame.context, settings.accentColor)
+                TileBackgrounds.focusStroke(
+                    context = frame.context,
+                    accent = settings.accentColor,
+                    fill = TileBackgrounds.surfaceColor(frame.context),
+                    cornerRadiusDp = slotRadiusDp,
+                    strokeDp = 3,
+                )
             } else {
                 null
             }

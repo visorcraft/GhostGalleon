@@ -320,7 +320,13 @@ class FolderPanel(
 
         val cols = FolderPanelNav.COLUMNS
         val thumbSize = thumbSizePx.coerceAtLeast(context.dp(64))
-        val thumbRadiusPx = context.dpF(12)
+        val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
+        val thumbRadiusDp = DeckCornerMetrics.folderThumbRadiusDp(
+            tokens = themeTokens,
+            cellPaddingDp = UiDimens.SPACE_XS,
+            thumbSizeDp = (thumbSize / density).toInt(),
+        )
+        val thumbRadiusPx = context.dpF(thumbRadiusDp)
         memberKeys.chunked(cols).forEachIndexed { rowIndex, rowMembers ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -353,7 +359,7 @@ class FolderPanel(
                 }
                 val thumb = ImageView(context).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 12)
+                    background = TileBackgrounds.sunkenField(context, cornerRadiusDp = thumbRadiusDp)
                     outlineProvider = object : ViewOutlineProvider() {
                         override fun getOutline(view: View, outline: Outline) {
                             outline.setRoundRect(0, 0, view.width, view.height, thumbRadiusPx)
@@ -414,10 +420,17 @@ class FolderPanel(
         } else {
             GridWrapNav.clampIndex(nav.selectedCell, cells.size)
         }
+        val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
         cells.forEachIndexed { index, cell ->
             val selected = index == activeCell
             cell.background = if (selected) {
-                TileBackgrounds.selected(context, accentColor)
+                TileBackgrounds.focusStroke(
+                    context = context,
+                    accent = accentColor,
+                    fill = TileBackgrounds.surfaceColor(context),
+                    cornerRadiusDp = cellRadiusDp,
+                    strokeDp = 3,
+                )
             } else {
                 null
             }
