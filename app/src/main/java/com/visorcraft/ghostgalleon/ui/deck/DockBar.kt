@@ -1,12 +1,16 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -26,6 +30,7 @@ import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 // The dock bar pinned at the bottom edge of BOTH launcher decks: a
 // wrap-content card bar (just wide enough for its visible slots, centered)
@@ -54,9 +59,11 @@ class DockBar(
     private val onLongPress: (Int) -> Unit,
 ) {
     private val slotFrames = mutableListOf<FrameLayout>()
-    private var moveHintView: TextView? = null
+    private var moveHintBanner: LinearLayout? = null
+    private var moveDotView: View? = null
+    private var moveDotAnimator: ObjectAnimator? = null
     private var contentView: LinearLayout? = null
-    private var pulseAnimator: ObjectAnimator? = null
+    private var pulseAnimator: AnimatorSet? = null
     private var slotSize: Int = 0
     private var slotRadiusDp: Int = 14
     private var innerContentRadiusDp: Int = 10
@@ -139,25 +146,53 @@ class DockBar(
             minimumHeight = slotSize + padV * 2
             clipChildren = false
             clipToPadding = false
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) {
+                    cancelAllAnimations()
+                }
+            })
         }
-        // Transient move-mode hint (child 0, hidden by default); shown in
+        // Transient move-mode banner (child 0, hidden by default); shown in
         // place of the slots while a grid tile is lifted without collapsing
         // the bar's height.
+        val surfaceFill = TileBackgrounds.surfaceColor(context)
+        val moveAccent = MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill)
+        val moveDot = View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(moveAccent)
+            }
+        }
+        moveDotView = moveDot
         val moveHint = TextView(context).apply {
             setText(R.string.deck_hint_move)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(
-                ThemePack.accentTextColor(
-                    settings.accentColor,
-                    TileBackgrounds.surfaceColor(context),
-                ),
-            )
+            setTextColor(moveAccent)
+            gravity = Gravity.CENTER
+        }
+        val moveBanner = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(context.dp(12), 0, context.dp(12), 0)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             visibility = View.GONE
+            addView(
+                moveDot,
+                LinearLayout.LayoutParams(context.dp(8), context.dp(8)).apply {
+                    marginEnd = context.dp(8)
+                },
+            )
+            addView(
+                moveHint,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
         }
-        moveHintView = moveHint
-        bar.addView(moveHint, LinearLayout.LayoutParams(
+        moveHintBanner = moveBanner
+        bar.addView(moveBanner, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             slotSize,
         ))
@@ -252,73 +287,170 @@ class DockBar(
     }
 
     // Moves the accent ring, subtle scale lift, and elevation to [focused]
-    // (null = no dock focus, ring returns to deck content) and pulses the
-    // [moving] slot's alpha while a dock move has it lifted.
+    // (null = no dock focus, ring returns to deck content) and applies
+    // lifted / drop-target choreography while a dock move is in flight.
     fun updateFocus(focused: Int?, moving: Int? = null) {
         if (focusPainted && paintedFocus == focused && paintedMoving == moving) {
             return
         }
-        pulseAnimator?.cancel()
-        pulseAnimator = null
+        cancelPulseAnimator()
         paintedFocus = focused
         paintedMoving = moving
         focusPainted = true
         slotFrames.forEachIndexed { index, frame ->
-            val isFocused = index == focused
+            val ctx = frame.context
+            val role = MoveChoreography.resolveRole(
+                position = index,
+                selectedIndex = focused,
+                movingIndex = moving,
+                surfaceFocused = focused != null,
+            )
+            val spec = MoveChoreography.dockVisualSpec(role, isBlank(index))
+            val surfaceFill = TileBackgrounds.surfaceColor(ctx)
             frame.animate().cancel()
-            frame.alpha = 1f
-            frame.background = if (isFocused) {
-                TileBackgrounds.focusStroke(
-                    context = frame.context,
+            frame.background = when (role) {
+                MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
+                    setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
+                    cornerRadius = ctx.dpF(slotRadiusDp)
+                    setStroke(
+                        ctx.strokePx(3),
+                        MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
+                    )
+                }
+                MoveChoreography.SlotRole.DROP_TARGET -> GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = ctx.dpF(slotRadiusDp)
+                    setStroke(
+                        ctx.strokePx(2),
+                        MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill),
+                        ctx.dpF(5),
+                        ctx.dpF(3),
+                    )
+                }
+                MoveChoreography.SlotRole.FOCUSED -> TileBackgrounds.focusStroke(
+                    context = ctx,
                     accent = settings.accentColor,
-                    fill = TileBackgrounds.surfaceColor(frame.context),
+                    fill = surfaceFill,
                     cornerRadiusDp = slotRadiusDp,
                     strokeDp = 3,
                 )
-            } else {
-                null
+                MoveChoreography.SlotRole.NORMAL -> null
             }
-            val targetScale = if (isFocused) FOCUS_SCALE else 1f
-            frame.translationZ = if (isFocused) frame.dpF(6) else 0f
-            if (frame.isLaidOut) {
+            frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
+            if (role == MoveChoreography.SlotRole.LIFTED) {
+                frame.scaleX = spec.scale
+                frame.scaleY = spec.scale
+                frame.translationY = 0f
+                frame.alpha = spec.alpha
+                startPulse(frame)
+            } else if (frame.isLaidOut) {
                 frame.animate()
-                    .scaleX(targetScale)
-                    .scaleY(targetScale)
-                    .setDuration(FOCUS_ANIM_MS)
+                    .scaleX(spec.scale)
+                    .scaleY(spec.scale)
+                    .translationY(0f)
+                    .alpha(spec.alpha)
+                    .setDuration(
+                        if (role == MoveChoreography.SlotRole.DROP_TARGET) {
+                            MoveChoreography.SETTLE_DURATION_MS
+                        } else {
+                            FOCUS_ANIM_MS
+                        },
+                    )
                     .setInterpolator(FOCUS_INTERPOLATOR)
                     .start()
             } else {
-                frame.scaleX = targetScale
-                frame.scaleY = targetScale
+                frame.scaleX = spec.scale
+                frame.scaleY = spec.scale
+                frame.translationY = 0f
+                frame.alpha = spec.alpha
             }
-            if (index == moving) startPulse(frame)
         }
     }
 
     private companion object {
-        const val FOCUS_SCALE = 1.08f
         const val FOCUS_ANIM_MS = 90L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
+        val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
+    }
+
+    private fun cancelPulseAnimator() {
+        pulseAnimator?.cancel()
+        pulseAnimator = null
+    }
+
+    private fun cancelMoveDotAnimator() {
+        moveDotAnimator?.cancel()
+        moveDotAnimator = null
+        moveDotView?.alpha = 1f
+    }
+
+    private fun cancelAllAnimations() {
+        cancelPulseAnimator()
+        cancelMoveDotAnimator()
+        slotFrames.forEach { frame ->
+            frame.animate().cancel()
+            frame.translationY = 0f
+            frame.alpha = 1f
+        }
     }
 
     private fun startPulse(frame: FrameLayout) {
-        pulseAnimator = ObjectAnimator.ofFloat(frame, View.ALPHA, 1f, 0.55f).apply {
-            duration = 500
+        cancelPulseAnimator()
+        val floatPx = frame.dpF(MoveChoreography.DOCK_FLOAT_DP)
+        val scaleX = ObjectAnimator.ofFloat(
+            frame, View.SCALE_X,
+            MoveChoreography.DOCK_PULSE_SCALE_MIN, MoveChoreography.DOCK_PULSE_SCALE_MAX,
+        ).apply {
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
+        }
+        val scaleY = ObjectAnimator.ofFloat(
+            frame, View.SCALE_Y,
+            MoveChoreography.DOCK_PULSE_SCALE_MIN, MoveChoreography.DOCK_PULSE_SCALE_MAX,
+        ).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        val hoverY = ObjectAnimator.ofFloat(frame, View.TRANSLATION_Y, 0f, floatPx).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        val alpha = ObjectAnimator.ofFloat(
+            frame, View.ALPHA, 1f, MoveChoreography.PULSE_ALPHA_MIN,
+        ).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        pulseAnimator = AnimatorSet().apply {
+            playTogether(scaleX, scaleY, hoverY, alpha)
+            duration = MoveChoreography.PULSE_DURATION_MS
+            interpolator = PULSE_INTERPOLATOR
             start()
         }
     }
 
-    // Swaps the move hint in for the slots/dots while a tile is lifted,
+    // Swaps the move hint banner in for the slots/dots while a tile is lifted,
     // and back when the move ends.
     fun showMoveHint(show: Boolean) {
         val bar = contentView ?: return
-        val hint = moveHintView ?: return
-        hint.visibility = if (show) View.VISIBLE else View.GONE
+        val banner = moveHintBanner ?: return
+        banner.visibility = if (show) View.VISIBLE else View.GONE
         for (i in 0 until bar.childCount) {
             val child = bar.getChildAt(i)
-            if (child !== hint) child.visibility = if (show) View.GONE else View.VISIBLE
+            if (child !== banner) child.visibility = if (show) View.GONE else View.VISIBLE
+        }
+        if (show) {
+            cancelMoveDotAnimator()
+            moveDotView?.let { dot ->
+                moveDotAnimator = ObjectAnimator.ofFloat(dot, View.ALPHA, 1f, 0.35f).apply {
+                    duration = MoveChoreography.PULSE_DURATION_MS
+                    repeatMode = ValueAnimator.REVERSE
+                    repeatCount = ValueAnimator.INFINITE
+                    start()
+                }
+            }
+        } else {
+            cancelMoveDotAnimator()
         }
     }
 }

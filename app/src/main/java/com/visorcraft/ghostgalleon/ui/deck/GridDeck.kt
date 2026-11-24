@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -14,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
 import android.widget.AdapterView
@@ -103,7 +105,7 @@ class GridDeck(
     // (saved to settings) or cancelled (working copy discarded).
     private var moveIndex: Int? = null
     private var moveWorking: MutableList<String?>? = null
-    private var pulseAnimator: ObjectAnimator? = null
+    private var pulseAnimator: AnimatorSet? = null
 
     // Modals (at most one at a time).
     private var slotMenu: SlotMenu? = null
@@ -177,17 +179,29 @@ class GridDeck(
     // this pass. In move mode the cell CONTENTS may also have swapped, so
     // visible cells are fully re-populated.
     private fun rebindVisibleCells(repopulate: Boolean = moveIndex != null) {
-        pulseAnimator?.cancel()
-        pulseAnimator = null
+        cancelPulseAnimator()
         val selected = selectedIndex()
         forEachAttachedCell { frame, position, adapter ->
-            frame.alpha = 1f
             if (repopulate) {
                 adapter.populateFrame(frame, position)
             } else {
-                applySelectionVisuals(frame, position == selected)
+                applySelectionVisuals(frame, position, position == selected)
             }
             if (position == moveIndex) startPulse(frame)
+        }
+    }
+
+    private fun cancelPulseAnimator() {
+        pulseAnimator?.cancel()
+        pulseAnimator = null
+    }
+
+    private fun cancelAllAnimations() {
+        cancelPulseAnimator()
+        forEachAttachedCell { frame, _, _ ->
+            frame.animate().cancel()
+            frame.translationY = 0f
+            frame.alpha = 1f
         }
     }
 
@@ -220,48 +234,133 @@ class GridDeck(
         }
     }
 
-    // Accent ring + 1.08 scale + Z-lift for the selected cell; recessed blank
-    // surface for empty "+" slots; standard card for unfocused filled tiles.
-    // Shared by adapter bind (snap) and in-place rebind (cancelable 80ms scale).
-    // While the dock holds focus the grid shows NO ring.
+    // Accent ring + 1.08 scale + Z-lift for the selected cell; lifted luminous
+    // halo + elevation for the tile in hand during move mode; dashed drop-target
+    // affordance on sibling slots while moving; recessed blank surface for empty
+    // "+" slots; standard card for unfocused filled tiles. Shared by adapter
+    // bind (snap) and in-place rebind (cancelable settle). While the dock holds
+    // focus the grid shows NO ring.
     private fun applySelectionVisuals(
         frame: FrameLayout,
+        position: Int,
         selected: Boolean,
         animate: Boolean = frame.isLaidOut,
     ) {
         val cell = frame.getChildAt(0) ?: return
-        val isFocused = selected && state.dockSlot == null
+        val ctx = frame.context
         val isBlank = cell is TextView
-        cell.background = when {
-            isFocused -> TileBackgrounds.selected(frame.context, settings.accentColor)
-            isBlank -> TileBackgrounds.blankSlot(frame.context)
-            else -> TileBackgrounds.card(frame.context)
+        val role = MoveChoreography.resolveRole(
+            position = position,
+            selectedIndex = if (selected) position else null,
+            movingIndex = moveIndex,
+            surfaceFocused = state.dockSlot == null,
+        )
+        val spec = MoveChoreography.gridVisualSpec(role, isBlank)
+        val tokens = ThemePack.resolve(settings)
+        val radiusPx = ctx.dpF(tokens.cardRadiusDp)
+        val surfaceFill = TileBackgrounds.surfaceColor(ctx)
+
+        cell.background = when (role) {
+            MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
+                setColor(MoveChoreography.liftedWashFill(settings.accentColor, surfaceFill))
+                cornerRadius = radiusPx
+                setStroke(
+                    ctx.strokePx(4),
+                    MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill),
+                )
+            }
+            MoveChoreography.SlotRole.DROP_TARGET -> GradientDrawable().apply {
+                setColor(if (isBlank) TileBackgrounds.surfaceSunken(ctx) else surfaceFill)
+                cornerRadius = radiusPx
+                setStroke(
+                    ctx.strokePx(if (isBlank) 2 else 1),
+                    MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill),
+                    ctx.dpF(6),
+                    ctx.dpF(4),
+                )
+            }
+            MoveChoreography.SlotRole.FOCUSED ->
+                TileBackgrounds.selected(ctx, settings.accentColor)
+            MoveChoreography.SlotRole.NORMAL ->
+                if (isBlank) TileBackgrounds.blankSlot(ctx) else TileBackgrounds.card(ctx)
         }
         if (cell is TextView) {
-            cell.setTextColor(if (isFocused) UiDimens.ALPHA_SECONDARY else BLANK_PLUS_IDLE_COLOR)
+            cell.setTextColor(
+                when (role) {
+                    MoveChoreography.SlotRole.LIFTED ->
+                        MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill)
+                    MoveChoreography.SlotRole.DROP_TARGET ->
+                        MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill)
+                    MoveChoreography.SlotRole.FOCUSED -> UiDimens.ALPHA_SECONDARY
+                    MoveChoreography.SlotRole.NORMAL -> BLANK_PLUS_IDLE_COLOR
+                },
+            )
         }
-        val scale = if (isFocused) FOCUS_SCALE else 1f
+
         frame.animate().cancel()
-        frame.translationZ = if (isFocused) frame.dpF(8) else 0f
-        if (animate) {
+        frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
+        if (role == MoveChoreography.SlotRole.LIFTED) {
+            // Breathing pulse drives scale/float/alpha for the lifted tile.
+            frame.scaleX = spec.scale
+            frame.scaleY = spec.scale
+            frame.translationY = 0f
+            frame.alpha = spec.alpha
+        } else if (animate) {
             frame.animate()
-                .scaleX(scale)
-                .scaleY(scale)
-                .setDuration(FOCUS_ANIM_MS)
+                .scaleX(spec.scale)
+                .scaleY(spec.scale)
+                .translationY(0f)
+                .alpha(spec.alpha)
+                .setDuration(
+                    if (role == MoveChoreography.SlotRole.DROP_TARGET) {
+                        MoveChoreography.SETTLE_DURATION_MS
+                    } else {
+                        FOCUS_ANIM_MS
+                    },
+                )
                 .setInterpolator(FOCUS_INTERPOLATOR)
                 .start()
         } else {
-            frame.scaleX = scale
-            frame.scaleY = scale
+            frame.scaleX = spec.scale
+            frame.scaleY = spec.scale
+            frame.translationY = 0f
+            frame.alpha = spec.alpha
         }
     }
 
-    // The lifted tile pulses its alpha so it reads as "in hand".
+    // The lifted tile breathes gently in scale, hover elevation, and luminance
+    // so it reads unmistakably as "in hand" without harsh opacity washout.
     private fun startPulse(frame: FrameLayout) {
-        pulseAnimator = ObjectAnimator.ofFloat(frame, View.ALPHA, 1f, 0.55f).apply {
-            duration = 500
+        cancelPulseAnimator()
+        val floatPx = frame.dpF(MoveChoreography.GRID_FLOAT_DP)
+        val scaleX = ObjectAnimator.ofFloat(
+            frame, View.SCALE_X,
+            MoveChoreography.GRID_PULSE_SCALE_MIN, MoveChoreography.GRID_PULSE_SCALE_MAX,
+        ).apply {
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
+        }
+        val scaleY = ObjectAnimator.ofFloat(
+            frame, View.SCALE_Y,
+            MoveChoreography.GRID_PULSE_SCALE_MIN, MoveChoreography.GRID_PULSE_SCALE_MAX,
+        ).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        val hoverY = ObjectAnimator.ofFloat(frame, View.TRANSLATION_Y, 0f, floatPx).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        val alpha = ObjectAnimator.ofFloat(
+            frame, View.ALPHA, 1f, MoveChoreography.PULSE_ALPHA_MIN,
+        ).apply {
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+        }
+        pulseAnimator = AnimatorSet().apply {
+            playTogether(scaleX, scaleY, hoverY, alpha)
+            duration = MoveChoreography.PULSE_DURATION_MS
+            interpolator = PULSE_INTERPOLATOR
             start()
         }
     }
@@ -496,6 +595,12 @@ class GridDeck(
             setBackgroundColor(Color.BLACK)
             clipChildren = false
             clipToPadding = false
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) {
+                    cancelAllAnimations()
+                }
+            })
         }
         rootView = root
         DeckWallpaper.attachIfConfigured(root, context, settings.wallpaperUri)
@@ -1497,8 +1602,7 @@ class GridDeck(
     }
 
     private fun endMoveVisuals() {
-        pulseAnimator?.cancel()
-        pulseAnimator = null
+        cancelPulseAnimator()
         moveIndex = null
         moveWorking = null
         dockBar?.showMoveHint(false)
@@ -1658,7 +1762,7 @@ class GridDeck(
                 moveIndex == null &&
                 frame.childCount > 0
             ) {
-                applySelectionVisuals(frame, absPos == selectedIndex(), animate = false)
+                applySelectionVisuals(frame, absPos, absPos == selectedIndex(), animate = false)
             } else {
                 populateFrame(frame, absPos)
                 frame.setTag(R.id.grid_cell_key, key)
@@ -1768,7 +1872,7 @@ class GridDeck(
                     marginEnd = badgeInset
                 })
             }
-            applySelectionVisuals(frame, position == selectedIndex(), animate = false)
+            applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
         }
 
         private fun cornerBadgeScrim(ctx: Context): GradientDrawable =
@@ -2097,6 +2201,7 @@ class GridDeck(
         const val FOCUS_SCALE = 1.08f
         const val FOCUS_ANIM_MS = 80L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
+        val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
         const val BLANK_PLUS_IDLE_COLOR = 0x3DFFFFFF
         const val BADGE_SCRIM_FILL = 0xB3000000.toInt()
         const val BADGE_SCRIM_STROKE = 0x26FFFFFF
