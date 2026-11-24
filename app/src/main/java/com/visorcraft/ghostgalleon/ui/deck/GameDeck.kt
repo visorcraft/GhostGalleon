@@ -1344,6 +1344,7 @@ class GameDeck(
         context: Context,
         dp: (Int) -> Int,
     ) {
+        letterChipViews.forEach { it.view.animate().cancel() }
         browseChipHandles.clear()
         multiSelectCountView = null
         multiSelectAllButton = null
@@ -4461,6 +4462,8 @@ class GameDeck(
         /** Last selection key/dock-focus we painted (for partial updates). */
         var paintedSelectionKey: String? = null
         var paintedDockFocused: Boolean = false
+        private var multiSelectFgKey: Pair<Int, Int>? = null
+        private var multiSelectFgTemplate: GradientDrawable? = null
 
         init {
             setHasStableIds(true)
@@ -4476,6 +4479,20 @@ class GameDeck(
             var platformBadge: LinearLayout? = null
             var titleView: TextView? = null
             var metaView: TextView? = null
+            var paintedFocused: Boolean? = null
+            var paintedAccent: Int = 0
+        }
+
+        override fun onViewDetachedFromWindow(holder: CardHolder) {
+            super.onViewDetachedFromWindow(holder)
+            holder.cardFrame?.animate()?.cancel()
+            holder.cardFrame?.translationX = 0f
+        }
+
+        override fun onViewRecycled(holder: CardHolder) {
+            super.onViewRecycled(holder)
+            holder.cardFrame?.animate()?.cancel()
+            holder.cardFrame?.translationX = 0f
         }
 
         private val cardWidthPx: Int = GameDeckChromeLogic.carouselCardWidthPx(cardSize, cellPadding)
@@ -4544,11 +4561,19 @@ class GameDeck(
         private fun multiSelectForeground(): GradientDrawable {
             val radiusDp = ThemePack.resolve(settings).cardRadiusDp
             val accent = settings.accentColor
-            return GradientDrawable().apply {
-                setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
-                cornerRadius = context.dpF(radiusDp)
-                setStroke(context.strokePx(2), accent)
+            val key = radiusDp to accent
+            val template = multiSelectFgTemplate?.takeIf { multiSelectFgKey == key } ?: run {
+                GradientDrawable().apply {
+                    setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
+                    cornerRadius = context.dpF(radiusDp)
+                    setStroke(context.strokePx(2), accent)
+                }.also {
+                    multiSelectFgKey = key
+                    multiSelectFgTemplate = it
+                }
             }
+            return template.constantState?.newDrawable(context.resources)?.mutate() as? GradientDrawable
+                ?: template
         }
 
         /** Mutate ring/depth-scale/alpha/Y-lift/Z-elevation/multi-select only; false → full rebind needed. */
@@ -4571,10 +4596,15 @@ class GameDeck(
                 dockFocused = dockFocused,
                 multiSelected = multiSelected,
             )
-            cardFrame.background = if (focused) {
-                TileBackgrounds.selected(context, settings.accentColor)
-            } else {
-                TileBackgrounds.card(context)
+            val accent = settings.accentColor
+            if (holder.paintedFocused != focused || holder.paintedAccent != accent) {
+                cardFrame.background = if (focused) {
+                    TileBackgrounds.selected(context, accent)
+                } else {
+                    TileBackgrounds.card(context)
+                }
+                holder.paintedFocused = focused
+                holder.paintedAccent = accent
             }
             holder.titleView?.setTextColor(
                 if (focused || multiSelected) UiDimens.ALPHA_PRIMARY else UiDimens.ALPHA_SECONDARY,
@@ -4669,6 +4699,8 @@ class GameDeck(
             holder.platformBadge = null
             holder.titleView = null
             holder.metaView = null
+            holder.paintedFocused = null
+            holder.paintedAccent = 0
             holder.root.removeAllViews()
             holder.root.setTag(R.id.carousel_entry_key, entry.key)
             val cardFrame = FrameLayout(context).apply {

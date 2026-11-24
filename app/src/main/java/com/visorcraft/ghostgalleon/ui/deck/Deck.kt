@@ -73,21 +73,17 @@ internal fun launchOnOtherDisplay(
 ) {
     val app = activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp
     val topo = app?.displayConfig
-    val launchId = launchDisplayId
-        ?: topo?.launchDisplayId
-        ?: run {
-            // Soft fallback without topology: any display that is not primary.
-            val dm = activity.getSystemService(DisplayManager::class.java)
-            dm.displays.map { it.displayId }
-                .firstOrNull { it != state.primaryDisplayId }
-        }
     val dm = activity.getSystemService(DisplayManager::class.java)
-    val current = activity.currentDisplayId()
-    if (launchId != null &&
-        launchId != current &&
-        dm.displays.any { it.displayId == launchId }
-    ) {
-        val options = ActivityOptions.makeBasic().setLaunchDisplayId(launchId)
+    val availableIds = dm.displays.map { it.displayId }
+    val resolvedId = LaunchGuardLogic.resolveLaunchDisplayId(
+        overrideDisplayId = launchDisplayId,
+        topologyLaunchDisplayId = topo?.launchDisplayId,
+        primaryDisplayId = state.primaryDisplayId,
+        currentDisplayId = activity.currentDisplayId(),
+        availableDisplayIds = availableIds,
+    )
+    if (resolvedId != null) {
+        val options = ActivityOptions.makeBasic().setLaunchDisplayId(resolvedId)
         activity.startActivity(intent, options.toBundle())
     } else {
         activity.startActivity(intent)
@@ -109,9 +105,10 @@ internal fun launchSlotKey(
     reason: LaunchReason = LaunchReason.OTHER,
 ) {
     // Folder tiles are opened by GridDeck (member list), never launched.
-    if (SlotKey.isFolder(key)) return
+    val targetKind = LaunchGuardLogic.classifySlotKey(key)
+    if (targetKind == LaunchGuardLogic.LaunchTargetKind.FOLDER_NOOP) return
     val app = activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp
-    if (SlotKey.isRom(key)) {
+    if (targetKind == LaunchGuardLogic.LaunchTargetKind.ROM) {
         val id = SlotKey.romId(key)
         val entry = id?.let { app?.romById?.get(it) }
             ?: roms.firstOrNull { it.id == id }
@@ -155,19 +152,21 @@ internal fun launchSlotKey(
         }
         return
     }
-    activity.packageManager.getLaunchIntentForPackage(key)
-        ?.let {
-            val pkgYield = app?.settings?.packageYield?.get(key) == true
-            val launchId = app?.displayConfig?.launchDisplayId
-            launchOnOtherDisplay(activity, state, it, launchId)
-            if (app != null) {
-                app.noteLaunchReason(reason, key)
-                app.noteLaunch(key)
-                app.beginSession(
-                    LaunchSession.forApp(key, launchId, packageYield = pkgYield),
-                )
-            }
-        }
+    val launchIntent = activity.packageManager.getLaunchIntentForPackage(key)
+    if (launchIntent == null) {
+        Toast.makeText(activity, R.string.deck_unavailable, Toast.LENGTH_SHORT).show()
+        return
+    }
+    val pkgYield = app?.settings?.packageYield?.get(key) == true
+    val launchId = app?.displayConfig?.launchDisplayId
+    launchOnOtherDisplay(activity, state, launchIntent, launchId)
+    if (app != null) {
+        app.noteLaunchReason(reason, key)
+        app.noteLaunch(key)
+        app.beginSession(
+            LaunchSession.forApp(key, launchId, packageYield = pkgYield),
+        )
+    }
 }
 
 /**
