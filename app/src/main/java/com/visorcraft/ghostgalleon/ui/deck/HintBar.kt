@@ -2,7 +2,6 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -23,6 +22,7 @@ import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import kotlin.math.roundToInt
 
 object HintBar {
@@ -51,6 +51,7 @@ object HintBar {
         val span = SpannableString(raw)
         val density = context.resources.displayMetrics.density
         val strokeWidthPx = density.coerceAtLeast(1f)
+        val bevelHeightPx = (density * HintBarFormat.KEYCAP_BEVEL_DP).coerceAtLeast(1f)
         val app = context.applicationContext as? GhostGalleonApp
         val themeTokens = app?.let { ThemePack.resolve(it.settings) } ?: ThemePack.GHOST
         val keycapTheme = CompanionThemeAudit.hintKeycapTheme(themeTokens.id)
@@ -67,6 +68,7 @@ object HintBar {
                             strokeColor = keycapTheme.strokeColor,
                             textColor = keycapTheme.textColor,
                             strokeWidthPx = strokeWidthPx,
+                            bevelHeightPx = bevelHeightPx,
                         ),
                         token.start,
                         token.end,
@@ -105,9 +107,10 @@ object HintBar {
 
     fun build(context: Context): View {
         val padH = context.dp(UiDimens.SPACE_LG)
+        val padV = context.dp(HintBarFormat.BAR_PAD_VERTICAL_DP)
         return KeycapHintTextView(context).apply {
             text = textFor(context, dockFocused = false)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, HintBarFormat.MAX_TEXT_SP.toFloat())
             setTextColor(UiDimens.ALPHA_SECONDARY)
             letterSpacing = 0.02f
             gravity = Gravity.CENTER
@@ -115,11 +118,17 @@ object HintBar {
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
             minimumHeight = context.dp(24)
-            setPadding(padH, context.dp(5), padH, context.dp(7))
+            setPadding(padH, padV, padH, padV)
+            setShadowLayer(
+                context.dpF(HintBarFormat.TEXT_SHADOW_RADIUS_DP),
+                0f,
+                context.dpF(HintBarFormat.TEXT_SHADOW_DY_DP),
+                HintBarFormat.TEXT_SHADOW_COLOR,
+            )
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
                 this,
-                10,
-                13,
+                HintBarFormat.MIN_TEXT_SP,
+                HintBarFormat.MAX_TEXT_SP,
                 1,
                 TypedValue.COMPLEX_UNIT_SP,
             )
@@ -161,18 +170,21 @@ object HintBar {
     }
 
     /**
-     * Proportional rounded keycap pill span that scales cleanly with
-     * [TextViewCompat] uniform auto-sizing and preserves vertical room for borders.
+     * Proportional rounded keycap pill span with a physical darker bottom bevel,
+     * scaling cleanly with [TextViewCompat] uniform auto-sizing and zero
+     * per-frame allocations inside [draw].
      */
     private class KeycapBadgeSpan(
         private val fillColor: Int,
         private val strokeColor: Int,
         private val textColor: Int,
         private val strokeWidthPx: Float,
+        private val bevelHeightPx: Float,
     ) : ReplacementSpan() {
 
         private val rect = RectF()
         private val cachedFm = Paint.FontMetrics()
+        private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         override fun getSize(
             paint: Paint,
@@ -182,7 +194,7 @@ object HintBar {
             fm: Paint.FontMetricsInt?,
         ): Int {
             val baseSize = paint.textSize
-            val padV = (baseSize * 0.14f).roundToInt().coerceAtLeast(1)
+            val padV = HintBarFormat.keycapPadVPx(baseSize)
             if (fm != null) {
                 paint.getFontMetricsInt(fm)
                 fm.ascent -= padV
@@ -192,16 +204,14 @@ object HintBar {
             }
             val savedSize = paint.textSize
             val savedFakeBold = paint.isFakeBoldText
-            paint.textSize = baseSize * 0.90f
+            paint.textSize = baseSize * HintBarFormat.KEYCAP_TEXT_SCALE
             paint.isFakeBoldText = true
             val textWidth = paint.measureText(text, start, end)
             paint.textSize = savedSize
             paint.isFakeBoldText = savedFakeBold
 
-            val padH = baseSize * 0.36f
-            val minPill = baseSize * 1.42f
-            val pillWidth = maxOf(minPill, textWidth + padH * 2f)
-            val margin = baseSize * 0.12f
+            val pillWidth = HintBarFormat.keycapPillWidthPx(baseSize, textWidth)
+            val margin = HintBarFormat.keycapMarginHPx(baseSize)
             return (pillWidth + margin * 2f).roundToInt()
         }
 
@@ -217,60 +227,57 @@ object HintBar {
             paint: Paint,
         ) {
             val baseSize = paint.textSize
-            val savedColor = paint.color
-            val savedStyle = paint.style
-            val savedStroke = paint.strokeWidth
-            val savedFakeBold = paint.isFakeBoldText
-            val savedAntiAlias = paint.isAntiAlias
             paint.getFontMetrics(cachedFm)
             val baseAscent = cachedFm.ascent
             val baseDescent = cachedFm.descent
 
-            paint.isAntiAlias = true
-            paint.textSize = baseSize * 0.90f
-            paint.isFakeBoldText = true
-            paint.getFontMetrics(cachedFm)
+            badgePaint.typeface = paint.typeface
+            badgePaint.textSize = baseSize * HintBarFormat.KEYCAP_TEXT_SCALE
+            badgePaint.isFakeBoldText = true
+            badgePaint.getFontMetrics(cachedFm)
             val badgeAscent = cachedFm.ascent
             val badgeDescent = cachedFm.descent
-            val textWidth = paint.measureText(text, start, end)
+            val textWidth = badgePaint.measureText(text, start, end)
 
-            val padH = baseSize * 0.36f
-            val minPill = baseSize * 1.42f
-            val pillWidth = maxOf(minPill, textWidth + padH * 2f)
-            val margin = baseSize * 0.12f
+            val pillWidth = HintBarFormat.keycapPillWidthPx(baseSize, textWidth)
+            val margin = HintBarFormat.keycapMarginHPx(baseSize)
 
             val centerY = y + (baseAscent + baseDescent) * 0.5f
             val halfH = ((baseDescent - baseAscent) * 0.62f).coerceAtLeast(1f)
             val pillTop = maxOf(top.toFloat() + 0.5f, centerY - halfH)
             val pillBottom = minOf(bottom.toFloat() - 0.5f, centerY + halfH)
+            val pillHeight = (pillBottom - pillTop).coerceAtLeast(1f)
             val left = x + margin
             val right = left + pillWidth
-            val radius = ((pillBottom - pillTop) * 0.30f).coerceAtLeast(2f)
+            val radius = (pillHeight * 0.30f).coerceAtLeast(2f)
+            val bevelPx = minOf(bevelHeightPx, pillHeight * 0.25f)
+            val faceBottom = (pillBottom - bevelPx).coerceAtLeast(pillTop + 1f)
 
+            // 1. Darker bottom bevel base (adds tactile rim depth & wallpaper separation).
             rect.set(left, pillTop, right, pillBottom)
-            paint.style = Paint.Style.FILL
-            paint.color = fillColor
-            canvas.drawRoundRect(rect, radius, radius, paint)
+            badgePaint.style = Paint.Style.FILL
+            badgePaint.color = HintBarFormat.KEYCAP_BEVEL_COLOR
+            canvas.drawRoundRect(rect, radius, radius, badgePaint)
 
+            // 2. Elevated upper keycap face sitting cleanly above the 1.5dp bottom rim.
+            rect.set(left, pillTop, right, faceBottom)
+            badgePaint.color = fillColor
+            canvas.drawRoundRect(rect, radius, radius, badgePaint)
+
+            // 3. Crisp 1dp outer keycap rim stroke.
             val inset = strokeWidthPx * 0.5f
-            rect.inset(inset, inset)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = strokeWidthPx
-            paint.color = strokeColor
-            canvas.drawRoundRect(rect, radius, radius, paint)
+            rect.set(left + inset, pillTop + inset, right - inset, pillBottom - inset)
+            badgePaint.style = Paint.Style.STROKE
+            badgePaint.strokeWidth = strokeWidthPx
+            badgePaint.color = strokeColor
+            canvas.drawRoundRect(rect, radius, radius, badgePaint)
 
-            paint.style = Paint.Style.FILL
-            paint.color = textColor
+            // 4. Centered keycap glyph on the upper face.
+            badgePaint.style = Paint.Style.FILL
+            badgePaint.color = textColor
             val textX = left + (pillWidth - textWidth) * 0.5f
-            val textY = (pillTop + pillBottom) * 0.5f - (badgeAscent + badgeDescent) * 0.5f
-            canvas.drawText(text, start, end, textX, textY, paint)
-
-            paint.textSize = baseSize
-            paint.color = savedColor
-            paint.style = savedStyle
-            paint.strokeWidth = savedStroke
-            paint.isFakeBoldText = savedFakeBold
-            paint.isAntiAlias = savedAntiAlias
+            val textY = (pillTop + faceBottom) * 0.5f - (badgeAscent + badgeDescent) * 0.5f
+            canvas.drawText(text, start, end, textX, textY, badgePaint)
         }
     }
 }

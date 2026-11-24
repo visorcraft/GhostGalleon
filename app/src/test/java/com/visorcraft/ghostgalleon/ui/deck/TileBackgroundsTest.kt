@@ -194,4 +194,80 @@ class TileBackgroundsTest {
         }
         assertEquals(8, bounded.size())
     }
+
+    @Test
+    fun `chromeButtonStyle syncs scrim, hairline, and WCAG focus stroke across all 4 built-in themes`() {
+        val styles = ThemePack.BUILTINS.map { tokens ->
+            tokens to TileBackgrounds.chromeButtonStyle(tokens)
+        }
+        // Every built-in theme gets a distinct scrim RGB derived from its sunken surface at 0xCC alpha.
+        val distinctFills = styles.map { (_, style) -> style.fill }.toSet()
+        assertEquals(ThemePack.BUILTINS.size, distinctFills.size)
+
+        for ((tokens, style) in styles) {
+            val sunken = ThemePack.surfaceSunken(tokens)
+            assertEquals(ThemePack.withAlpha(sunken, 0xCC), style.fill)
+            assertEquals(ThemePack.hairlineDivider(tokens), style.idleStroke)
+            val focusContrast = ThemePack.contrastRatio(style.focusStroke, sunken)
+            assertTrue(
+                "${tokens.id} chrome focus stroke contrast $focusContrast < 3.0",
+                focusContrast >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+            )
+            // Adversarial very dark custom accent still lifts to >= 3.0:1 over the sunken scrim.
+            val darkStyle = TileBackgrounds.chromeButtonStyle(tokens, accent = 0xFF0A0A12.toInt())
+            assertTrue(
+                "${tokens.id} dark custom chrome focus contrast < 3.0",
+                ThemePack.contrastRatio(darkStyle.focusStroke, sunken) >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+            )
+        }
+    }
+
+    @Test
+    fun `pillKey supports bounded LRU reuse across all 4 built-in packs and dual densities`() {
+        val pillCache = TileBackgrounds.BoundedTemplateCache<TileBackgrounds.RoundedRectTemplateKey, String>(
+            TileBackgrounds.PILL_CACHE_MAX_ENTRIES,
+        )
+        val keys = ThemePack.BUILTINS.map { tokens ->
+            val key = TileBackgrounds.pillKey(tokens, density = 2f)
+            assertEquals(ThemePack.cardFill(tokens), key.fill)
+            assertEquals(ThemePack.hairlineDivider(tokens), key.strokeColor)
+            assertEquals(ThemePack.pillRadiusDp(tokens) * 2f, key.radiusPx, 0.001f)
+            key
+        }
+        assertEquals(ThemePack.BUILTINS.size, keys.toSet().size)
+        // Density change produces a distinct cache key (no Sugar top/bottom thrash).
+        assertNotEquals(keys[0], TileBackgrounds.pillKey(ThemePack.GHOST, density = 2.625f))
+
+        val stored = keys.map { key -> key to pillCache.getOrPut(key) { "pill-${key.fill}" } }
+        repeat(100) {
+            for ((key, expected) in stored) {
+                assertSame(expected, pillCache.getOrPut(key) { error("pillKey must hit LRU cache") })
+            }
+        }
+        assertEquals(ThemePack.BUILTINS.size.toLong(), pillCache.missCount())
+        assertEquals((ThemePack.BUILTINS.size * 100).toLong(), pillCache.hitCount())
+    }
+
+    @Test
+    fun `selectedFillColor lifts luminance above cardFill while preserving high white-label and focus contrast`() {
+        val white = 0xFFFFFFFF.toInt()
+        for (tokens in ThemePack.BUILTINS) {
+            val card = ThemePack.cardFill(tokens)
+            val lifted = TileBackgrounds.selectedFillColor(tokens)
+            assertTrue(
+                "${tokens.id} selectedFill should be brighter than cardFill",
+                ThemePack.relativeLuminance(lifted) > ThemePack.relativeLuminance(card),
+            )
+            val whiteContrast = ThemePack.contrastRatio(white, lifted)
+            assertTrue(
+                "${tokens.id} white label contrast on selectedFill ($whiteContrast) < 7.0",
+                whiteContrast >= 7.0,
+            )
+            val focusStroke = DeckThemeContrast.accessibleFocusStroke(tokens.accentColor, lifted)
+            assertTrue(
+                "${tokens.id} focus stroke contrast on selectedFill < 3.0",
+                ThemePack.contrastRatio(focusStroke, lifted) >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+            )
+        }
+    }
 }

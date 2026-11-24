@@ -103,4 +103,61 @@ class HintBarFormatTest {
         assertEquals(emptyList<HintBarFormat.Token>(), HintBarFormat.tokenize(""))
         assertEquals(emptyList<HintBarFormat.Token>(), HintBarFormat.tokenize("   "))
     }
+
+    @Test
+    fun `keycapGeometry stays proportional and strictly monotonic across 9 to 13sp`() {
+        assertEquals(9, HintBarFormat.MIN_TEXT_SP)
+        assertEquals(13, HintBarFormat.MAX_TEXT_SP)
+        assertEquals(6, HintBarFormat.BAR_PAD_VERTICAL_DP)
+        assertEquals(0.30f, HintBarFormat.KEYCAP_PAD_H_FACTOR, 0.0001f)
+        assertEquals(1.32f, HintBarFormat.KEYCAP_MIN_PILL_FACTOR, 0.0001f)
+
+        var prevPill = 0f
+        var prevTotal = 0f
+        for (sp in HintBarFormat.MIN_TEXT_SP..HintBarFormat.MAX_TEXT_SP) {
+            val px = sp * 2f // 2.0x density
+            val geom = HintBarFormat.keycapGeometry(px)
+            assertTrue("badge text smaller than host at ${sp}sp", geom.badgeTextSizePx in (px * 0.8f)..px)
+            assertEquals(px * 0.30f, geom.padHPx, 0.001f)
+            assertEquals(px * 1.32f, geom.minPillWidthPx, 0.001f)
+            assertTrue("padVPx >= 1", geom.padVPx >= 1)
+
+            val narrowGlyph = px * 0.5f
+            val wideGlyph = px * 2.2f
+            // Single-letter keycaps clamp to minPillWidthPx; wider tokens expand with symmetric padHPx.
+            assertEquals(geom.minPillWidthPx, geom.pillWidthPx(narrowGlyph), 0.001f)
+            assertEquals(wideGlyph + geom.padHPx * 2f, geom.pillWidthPx(wideGlyph), 0.001f)
+            assertEquals(geom.pillWidthPx(wideGlyph), HintBarFormat.keycapPillWidthPx(px, wideGlyph), 0.001f)
+            assertEquals(geom.marginHPx, HintBarFormat.keycapMarginHPx(px), 0.001f)
+            assertEquals(geom.padVPx, HintBarFormat.keycapPadVPx(px))
+
+            val total = geom.totalWidthPx(narrowGlyph)
+            assertTrue("monotonic pill width at ${sp}sp", geom.minPillWidthPx > prevPill)
+            assertTrue("monotonic total width at ${sp}sp", total > prevTotal)
+            prevPill = geom.minPillWidthPx
+            prevTotal = total
+        }
+    }
+
+    @Test
+    fun `worst-case localized hint lines fit inside compact 540dp Sugar panel at auto-size floor`() {
+        val usableSugarWidthDp = 540f - 32f // 540dp minus 16dp horizontal padding on each side
+        val worstCaseHints = listOf(
+            "A Starten · B Zurück · X Tauschen · Y Modus · Start Einstellungen",
+            "A Starten / Hinzufügen · B Zurück · Halten Verschieben / Entfernen",
+            "A Lancer · B Retour · X Échanger · Y Mode · Start Paramètres",
+            "A Lancer/Ajouter · B Retour · Maintenir Déplacer/Retirer",
+            "A Lanzar · B Volver · X Intercambiar · Y Modo · Start Ajustes",
+            "A Lanzar / Añadir · B Volver · Mantener Mover / Eliminar",
+            "A เปิด · B กลับ · X สลับ · Y โหมด · Start การตั้งค่า",
+            "A Launch · B Back · X Swap · Y Mode · Start Settings",
+        )
+        for (hint in worstCaseHints) {
+            val estDp = HintBarFormat.estimateLineWidthDp(hint, HintBarFormat.MIN_TEXT_SP.toFloat())
+            assertTrue(
+                "hint '$hint' estimated ${estDp}dp exceeds usable Sugar width ${usableSugarWidthDp}dp at 9sp",
+                estDp <= usableSugarWidthDp,
+            )
+        }
+    }
 }

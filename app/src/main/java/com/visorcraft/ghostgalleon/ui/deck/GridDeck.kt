@@ -205,6 +205,7 @@ class GridDeck(
     // settings snapshot so hot selection / scroll paths never re-resolve JSON.
     private val themeTokens by lazy { ThemePack.resolve(settings) }
     private val surfaceFillColor by lazy { ThemePack.cardFill(themeTokens) }
+    private val selectedSurfaceFillColor by lazy { TileBackgrounds.selectedFillColor(themeTokens) }
 
     // Cached move-mode drawable templates cloned via constantState so rapid
     // move-mode swaps avoid repeated GradientDrawable allocations.
@@ -566,7 +567,10 @@ class GridDeck(
             MoveChoreography.SlotRole.FOCUSED ->
                 TileBackgrounds.selected(
                     ctx,
-                    DeckThemeContrast.accessibleFocusStroke(settings.accentColor, surfaceFill),
+                    DeckThemeContrast.accessibleFocusStroke(
+                        settings.accentColor,
+                        selectedSurfaceFillColor,
+                    ),
                 )
             MoveChoreography.SlotRole.NORMAL ->
                 if (isBlank) TileBackgrounds.blankSlot(ctx) else TileBackgrounds.card(ctx)

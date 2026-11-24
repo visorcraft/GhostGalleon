@@ -94,4 +94,48 @@ class SystemChromeMetricsTest {
             )
         }
     }
+
+    @Test
+    fun `unified buttonScale prioritizes press over focus and settles back cleanly`() {
+        assertEquals(1f, SystemChromeMetrics.buttonScale(pressed = false, focused = false), 0.0001f)
+        assertEquals(
+            SystemChromeMetrics.FOCUS_SCALE,
+            SystemChromeMetrics.buttonScale(pressed = false, focused = true),
+            0.0001f,
+        )
+        assertEquals(
+            SystemChromeMetrics.PRESS_SCALE,
+            SystemChromeMetrics.buttonScale(pressed = true, focused = false),
+            0.0001f,
+        )
+        // Press takes precedence while focused so tapping a focused chrome button still depresses.
+        assertEquals(
+            SystemChromeMetrics.PRESS_SCALE,
+            SystemChromeMetrics.buttonScale(pressed = true, focused = true),
+            0.0001f,
+        )
+        assertEquals(
+            0.90f,
+            SystemChromeMetrics.buttonScale(pressed = true, focused = true, pressScale = 0.90f),
+            0.0001f,
+        )
+    }
+
+    @Test
+    fun `swap and settings tints clear WCAG AA over every built-in theme chrome scrim`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val scrimRgb = SystemChromeMetrics.chromeScrimRgb(tokens)
+            val settingsContrast = ThemePack.contrastRatio(SystemChromeMetrics.settingsIconTint(), scrimRgb)
+            assertTrue(
+                "${tokens.id} settings tint contrast $settingsContrast < 4.5",
+                settingsContrast >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            val swapTint = SystemChromeMetrics.swapIconTint(tokens.accentColor, scrimRgb)
+            val swapContrast = ThemePack.contrastRatio(swapTint, scrimRgb)
+            assertTrue(
+                "${tokens.id} swap tint contrast $swapContrast < 4.5",
+                swapContrast >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

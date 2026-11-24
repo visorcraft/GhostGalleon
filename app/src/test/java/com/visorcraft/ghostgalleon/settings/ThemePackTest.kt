@@ -76,14 +76,43 @@ class ThemePackTest {
     }
 
     @Test
-    fun `onFillTextColor is white on dark accents and black on OLED`() {
+    fun `onFillTextColor uses exact sRGB LUT to guarantee WCAG contrast across builtins and bright accents`() {
         val white = 0xFFFFFFFF.toInt()
         val black = 0xFF000000.toInt()
+        // Ghost & Neon keep crisp white (>= 3.0 WCAG AA UI/bold); Teal, OLED, and bright cyans/limes/ambers flip to black.
         assertEquals(white, ThemePack.onFillTextColor(ThemePack.GHOST.accentColor))
-        assertEquals(white, ThemePack.onFillTextColor(ThemePack.THREEDS.accentColor))
         assertEquals(white, ThemePack.onFillTextColor(ThemePack.NEON.accentColor))
+        assertEquals(black, ThemePack.onFillTextColor(ThemePack.THREEDS.accentColor))
         assertEquals(black, ThemePack.onFillTextColor(ThemePack.OLED.accentColor))
+        assertEquals(black, ThemePack.onFillTextColor(0xFF00BFA5.toInt()))
         assertEquals(white, ThemePack.onFillTextColor(0xFF1C1C22.toInt()))
+
+        val samples = ThemePack.BUILTINS.map { it.accentColor } + listOf(
+            0xFF00BFA5.toInt(), // saturated teal/cyan (2.33:1 white -> 9.0:1 black)
+            0xFF00E5FF.toInt(), // bright cyan
+            0xFF76FF03.toInt(), // saturated lime
+            0xFF4CAF50.toInt(), // material green (2.78:1 white -> 7.56:1 black)
+            0xFFFFB300.toInt(), // amber
+            0xFFFFC107.toInt(), // bright amber
+            0xFFFFEB3B.toInt(), // yellow
+            0xFF6200EA.toInt(), // deep purple
+            0xFF1A237E.toInt(), // dark indigo
+            0xFFD32F2F.toInt(), // red
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+        )
+        for (color in samples) {
+            val fg = ThemePack.onFillTextColor(color)
+            val ratio = ThemePack.contrastRatio(fg, color)
+            assertTrue(
+                "color=0x${Integer.toHexString(color)} fg=0x${Integer.toHexString(fg)} ratio=$ratio < 3.0",
+                ratio >= ThemePack.ON_FILL_WHITE_MIN_CONTRAST,
+            )
+            // Every black-selected color clears full >= 7.0:1 AAA (since white was < 3.0 -> lum > 0.30).
+            if (fg == black) {
+                assertTrue("black text on 0x${Integer.toHexString(color)} ratio=$ratio < 4.5", ratio >= 4.5)
+            }
+        }
     }
 
     @Test

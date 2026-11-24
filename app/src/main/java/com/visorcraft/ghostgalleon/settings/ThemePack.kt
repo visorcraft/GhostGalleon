@@ -69,6 +69,15 @@ object ThemePack {
     /** WCAG AA minimum contrast ratio for normal-size text. */
     const val MIN_TEXT_CONTRAST: Double = 4.5
 
+    /**
+     * WCAG 2.1 AA minimum contrast ratio for bold/UI foreground text on filled
+     * accent chips (`onFillTextColor`). Keeps white on Ghost (`6.87:1`) and Neon
+     * magenta (`3.46:1`) while switching sub-3.0:1 teals/cyans/limes/ambers/OLED
+     * (e.g. Teal `#00A8A0` 2.95:1 → 7.11:1 black, `#00BFA5` 2.33:1 → 9.0:1 black)
+     * to crisp black text.
+     */
+    const val ON_FILL_WHITE_MIN_CONTRAST: Double = 3.0
+
     /** Relative luminance cutoff above which accent glows/tints dampen alpha (e.g. OLED `#E0E0E0`). */
     const val HIGH_LUMINANCE_THRESHOLD: Double = 0.55
 
@@ -104,15 +113,19 @@ object ThemePack {
         BUILTINS.firstOrNull { it.id.equals(id?.trim(), ignoreCase = true) } ?: GHOST
 
     /**
-     * Text on a filled chip. Light fills (OLED accent) keep black;
-     * mid/dark accents (Ghost, Teal, Neon) get white.
+     * High-contrast text color on a filled accent/chip surface using the exact
+     * WCAG 2.1 sRGB luminance LUT (O(1), zero allocations).
+     *
+     * Returns white when white achieves at least [ON_FILL_WHITE_MIN_CONTRAST]
+     * (`3.0:1`, WCAG 2.1 AA large-text/UI threshold — preserving white on Ghost
+     * `#3F51B5` and Neon `#FF2D95`), and black otherwise (fixing sub-3.0:1
+     * teals/cyans/limes/ambers/OLED such as Teal `#00A8A0` and `#00BFA5` to
+     * `>= 7.0:1` black).
      */
     fun onFillTextColor(fill: Int): Int {
-        val r = (fill shr 16) and 0xFF
-        val g = (fill shr 8) and 0xFF
-        val b = fill and 0xFF
-        val luma = (r + r + b + g + g + g) / 6
-        return if (luma >= 150) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+        val white = 0xFFFFFFFF.toInt()
+        val black = 0xFF000000.toInt()
+        return if (contrastRatio(white, fill) >= ON_FILL_WHITE_MIN_CONTRAST) white else black
     }
 
     /** WCAG 2.1 relative luminance in `[0.0, 1.0]` for the opaque RGB channels. */

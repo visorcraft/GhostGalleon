@@ -21,18 +21,43 @@ object SystemChromeMetrics {
     const val MIN_BOTTOM_MARGIN_DP: Int = 4
     const val CHROME_ELEVATION_DP: Float = 4f
     const val PRESS_SCALE: Float = 0.92f
+    const val FOCUS_SCALE: Float = 1.08f
     const val PRESS_ANIM_MS: Long = 80L
 
-    /** Matches TileBackgrounds.chromeButton dark circular scrim base RGB. */
+    /** Default circular chrome scrim base RGB (Ghost fallback). */
     const val CHROME_SCRIM_RGB: Int = 0xFF16161C.toInt()
     const val SWAP_ACCENT_BLEND: Float = 0.45f
+
+    /**
+     * Unified press + gamepad-focus scale state machine for circular chrome
+     * buttons (`IconButton` / `SystemChromeIcons`). Press takes precedence over
+     * focus so taps always depress crisply, then settle back to [focusScale]
+     * if focus remains.
+     */
+    fun buttonScale(
+        pressed: Boolean,
+        focused: Boolean,
+        pressScale: Float = PRESS_SCALE,
+        focusScale: Float = FOCUS_SCALE,
+    ): Float = when {
+        pressed -> pressScale
+        focused -> focusScale
+        else -> 1f
+    }
+
+    /** Theme-synced opaque base RGB matching [TileBackgrounds.chromeButton]'s sunken scrim. */
+    fun chromeScrimRgb(tokens: com.visorcraft.ghostgalleon.settings.ThemeTokens): Int =
+        ThemePack.surfaceSunken(tokens)
 
     /**
      * Luminous accent-kissed glyph tint for the dual-screen Swap button,
      * keeping high WCAG contrast (> 4.5:1) over the chrome scrim across all themes.
      */
-    fun swapIconTint(accent: Int): Int {
-        val lifted = ThemePack.accentTextColor(accent, CHROME_SCRIM_RGB)
+    fun swapIconTint(
+        accent: Int,
+        scrimRgb: Int = CHROME_SCRIM_RGB,
+    ): Int {
+        val lifted = ThemePack.accentTextColor(accent, scrimRgb)
         return MoveChoreography.blendRgb(UiDimens.ALPHA_PRIMARY, lifted, SWAP_ACCENT_BLEND)
     }
 

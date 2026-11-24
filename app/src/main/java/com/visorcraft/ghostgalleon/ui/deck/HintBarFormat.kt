@@ -31,6 +31,112 @@ object HintBarFormat {
     private const val PREFIX_DELIM = " - "
     private const val MAX_LEADING_TRIGGER_LEN = 12
 
+    /** Auto-size bounds (sp) for [HintBar] so verbose locales fit 540dp Sugar panels. */
+    const val MIN_TEXT_SP: Int = 9
+    const val MAX_TEXT_SP: Int = 13
+
+    /** Symmetric top/bottom padding (dp) for [HintBar]. */
+    const val BAR_PAD_VERTICAL_DP: Int = 6
+
+    /** Subtle wallpaper-legibility drop shadow tokens for [HintBar] prose. */
+    const val TEXT_SHADOW_COLOR: Int = 0xB3000000.toInt()
+    const val TEXT_SHADOW_RADIUS_DP: Float = 1.5f
+    const val TEXT_SHADOW_DY_DP: Float = 0.75f
+
+    /** Darker bottom bevel skirt tokens for tactile 3D keycap rim depth. */
+    const val KEYCAP_BEVEL_DP: Float = 1.5f
+    const val KEYCAP_BEVEL_COLOR: Int = 0x59000000
+
+    /** Compact keycap proportions relative to the host text size. */
+    const val KEYCAP_TEXT_SCALE: Float = 0.90f
+    const val KEYCAP_PAD_H_FACTOR: Float = 0.30f
+    const val KEYCAP_MIN_PILL_FACTOR: Float = 1.32f
+    const val KEYCAP_MARGIN_H_FACTOR: Float = 0.10f
+    const val KEYCAP_PAD_V_FACTOR: Float = 0.14f
+
+    data class KeycapGeometry(
+        val badgeTextSizePx: Float,
+        val padHPx: Float,
+        val minPillWidthPx: Float,
+        val marginHPx: Float,
+        val padVPx: Int,
+    ) {
+        /** Pill background width (px) excluding outer margins. */
+        fun pillWidthPx(measuredTextWidthPx: Float): Float =
+            maxOf(minPillWidthPx, measuredTextWidthPx.coerceAtLeast(0f) + padHPx * 2f)
+
+        /** Total horizontal advance (px) including symmetric side margins. */
+        fun totalWidthPx(measuredTextWidthPx: Float): Float =
+            pillWidthPx(measuredTextWidthPx) + marginHPx * 2f
+    }
+
+    /** Zero-allocation primitive keycap pill width (px) for `KeycapBadgeSpan.draw()`. */
+    fun keycapPillWidthPx(baseTextSizePx: Float, measuredTextWidthPx: Float): Float {
+        val size = baseTextSizePx.coerceAtLeast(1f)
+        return maxOf(
+            size * KEYCAP_MIN_PILL_FACTOR,
+            measuredTextWidthPx.coerceAtLeast(0f) + size * KEYCAP_PAD_H_FACTOR * 2f,
+        )
+    }
+
+    /** Zero-allocation primitive keycap horizontal margin (px). */
+    fun keycapMarginHPx(baseTextSizePx: Float): Float =
+        baseTextSizePx.coerceAtLeast(1f) * KEYCAP_MARGIN_H_FACTOR
+
+    /** Zero-allocation primitive keycap vertical font-metric padding (px). */
+    fun keycapPadVPx(baseTextSizePx: Float): Int =
+        kotlin.math.round(baseTextSizePx.coerceAtLeast(1f) * KEYCAP_PAD_V_FACTOR)
+            .toInt()
+            .coerceAtLeast(1)
+
+    /**
+     * Pure keycap geometry spec for a host text size in px (or sp when working
+     * in dp-equivalent units). Host-tested across `9..13sp`.
+     */
+    fun keycapGeometry(baseTextSizePx: Float): KeycapGeometry {
+        val size = baseTextSizePx.coerceAtLeast(1f)
+        return KeycapGeometry(
+            badgeTextSizePx = size * KEYCAP_TEXT_SCALE,
+            padHPx = size * KEYCAP_PAD_H_FACTOR,
+            minPillWidthPx = size * KEYCAP_MIN_PILL_FACTOR,
+            marginHPx = keycapMarginHPx(size),
+            padVPx = keycapPadVPx(size),
+        )
+    }
+
+    /**
+     * Conservative single-line width estimate (dp) for [raw] at [textSizeSp],
+     * using [keycapGeometry] and ~0.58em average sans-serif glyph advance.
+     */
+    fun estimateLineWidthDp(raw: String, textSizeSp: Float): Float {
+        if (raw.isEmpty()) return 0f
+        val size = textSizeSp.coerceAtLeast(1f)
+        val tokens = tokenize(raw)
+        val geom = keycapGeometry(size)
+        val avgCharDp = size * 0.58f
+        val badgeCharDp = geom.badgeTextSizePx * 0.62f
+        val spaceDp = size * 0.28f
+        var width = 0f
+        var cursor = 0
+        for (token in tokens) {
+            if (token.start > cursor) {
+                width += (token.start - cursor) * spaceDp
+            }
+            val len = token.end - token.start
+            width += when (token.kind) {
+                TokenKind.KEYCAP -> geom.totalWidthPx(len * badgeCharDp)
+                TokenKind.SEPARATOR -> size * 0.45f
+                TokenKind.PREFIX -> len * avgCharDp * 1.04f
+                TokenKind.ACTION -> len * avgCharDp
+            }
+            cursor = token.end
+        }
+        if (cursor < raw.length) {
+            width += (raw.length - cursor) * spaceDp
+        }
+        return width
+    }
+
     /** Universal gamepad button symbols (locale-independent). */
     private val KNOWN_BUTTONS = setOf(
         "A", "B", "X", "Y",

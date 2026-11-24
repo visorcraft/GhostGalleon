@@ -17,8 +17,7 @@ import com.visorcraft.ghostgalleon.ui.UiDimens
 
 object TileBackgrounds {
 
-    private const val CHROME_BUTTON_FILL = 0xB316161C.toInt()
-    private const val CHROME_BUTTON_STROKE = 0x33FFFFFF
+    private const val CHROME_BUTTON_FILL_ALPHA = 0xCC
     private const val CHROME_RIPPLE_COLOR = 0x44FFFFFF
     private const val STATUS_PILL_ALPHA = 0xD9
     private const val STATUS_PILL_STROKE = 0x28FFFFFF
@@ -28,6 +27,7 @@ object TileBackgrounds {
     internal const val BLANK_SLOT_CACHE_MAX_ENTRIES: Int = 12
     internal const val CHIP_IDLE_CACHE_MAX_ENTRIES: Int = 12
     internal const val SUNKEN_FIELD_CACHE_MAX_ENTRIES: Int = 12
+    internal const val PILL_CACHE_MAX_ENTRIES: Int = 8
     internal const val STATUS_PILL_CACHE_MAX_ENTRIES: Int = 8
     internal const val ART_BACKING_CACHE_MAX_ENTRIES: Int = 16
 
@@ -137,6 +137,38 @@ object TileBackgrounds {
         accent = accent,
     )
 
+    /** Slightly lifted surface fill for focused/selected tile cards ([selected]). */
+    internal fun selectedFillColor(tokens: ThemeTokens): Int = ThemePack.surfaceElevated(tokens)
+
+    /** Pure theme-synced visual tokens for [chromeButton]. Host-tested. */
+    internal data class ChromeButtonStyle(
+        val fill: Int,
+        val idleStroke: Int,
+        val focusStroke: Int,
+    )
+
+    internal fun chromeButtonStyle(
+        tokens: ThemeTokens,
+        accent: Int = tokens.accentColor,
+    ): ChromeButtonStyle {
+        val sunken = ThemePack.surfaceSunken(tokens)
+        return ChromeButtonStyle(
+            fill = ThemePack.withAlpha(sunken, CHROME_BUTTON_FILL_ALPHA),
+            idleStroke = ThemePack.hairlineDivider(tokens),
+            focusStroke = DeckThemeContrast.accessibleFocusStroke(accent, sunken),
+        )
+    }
+
+    internal fun pillKey(
+        tokens: ThemeTokens,
+        density: Float,
+    ): RoundedRectTemplateKey = RoundedRectTemplateKey(
+        fill = ThemePack.cardFill(tokens),
+        strokeColor = ThemePack.hairlineDivider(tokens),
+        strokeWidthPx = strokePxForDensity(density, 1),
+        radiusPx = normalizeRadiusPx(ThemePack.pillRadiusDp(tokens) * density),
+    )
+
     internal fun blankSlotKey(
         tokens: ThemeTokens,
         density: Float,
@@ -218,6 +250,8 @@ object TileBackgrounds {
         BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(CHIP_IDLE_CACHE_MAX_ENTRIES)
     private val sunkenFieldTemplateCache =
         BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(SUNKEN_FIELD_CACHE_MAX_ENTRIES)
+    private val pillTemplateCache =
+        BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(PILL_CACHE_MAX_ENTRIES)
     private val statusPillTemplateCache =
         BoundedTemplateCache<RoundedRectTemplateKey, GradientDrawable>(STATUS_PILL_CACHE_MAX_ENTRIES)
     private val artBackingTemplateCache =
@@ -257,9 +291,10 @@ object TileBackgrounds {
     private fun ensureSelectedTemplate(context: Context, accent: Int): GradientDrawable {
         val t = tokens(context)
         val key = selectedSurfaceKey(t, accent, context.resources.displayMetrics.density)
+        val liftedFill = selectedFillColor(t)
         return selectedTemplateCache.getOrPut(key) {
             GradientDrawable().apply {
-                setColor(key.surface.fill)
+                setColor(liftedFill)
                 cornerRadius = key.surface.radiusPx
                 setStroke(strokePxForDensity(key.surface.density, 4), key.accent)
             }
@@ -377,14 +412,10 @@ object TileBackgrounds {
             cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
         }
 
-    /** Rounded strip for dock / status containers with subtle 1dp hairline. */
+    /** Rounded strip for dock / status containers with subtle 1dp hairline (LRU-cached). */
     fun pill(context: Context): GradientDrawable {
-        val t = tokens(context)
-        return GradientDrawable().apply {
-            setColor(ThemePack.cardFill(t))
-            cornerRadius = UiDimens.dpF(context, ThemePack.pillRadiusDp(t))
-            setStroke(UiDimens.strokePx(context, 1), ThemePack.hairlineDivider(t))
-        }
+        val key = pillKey(tokens(context), context.resources.displayMetrics.density)
+        return cloneTemplate(pillTemplateCache.getOrPut(key) { buildRoundedRectTemplate(key) })
     }
 
     /** Translucent floating pill for clock/battery status overlays. */
@@ -490,30 +521,32 @@ object TileBackgrounds {
     }
 
     /**
-     * Circular translucent scrim + 1dp hairline + focus accent ring + touch
-     * ripple for floating chrome icon buttons (Swap, Settings, header icons).
+     * Circular theme-synced translucent scrim + 1dp hairline + WCAG-accessible
+     * focus accent ring + touch ripple for floating chrome icon buttons.
      */
     fun chromeButton(
         context: Context,
         accent: Int? = null,
     ): Drawable {
+        val t = tokens(context)
         val resolvedAccent = accent ?: run {
             val app = context.applicationContext
             if (app is com.visorcraft.ghostgalleon.GhostGalleonApp) {
                 app.settings.accentColor
             } else {
-                ThemePack.GHOST.accentColor
+                t.accentColor
             }
         }
+        val style = chromeButtonStyle(t, resolvedAccent)
         val idle = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(CHROME_BUTTON_FILL)
-            setStroke(UiDimens.strokePx(context, 1), CHROME_BUTTON_STROKE)
+            setColor(style.fill)
+            setStroke(UiDimens.strokePx(context, 1), style.idleStroke)
         }
         val focused = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(CHROME_BUTTON_FILL)
-            setStroke(UiDimens.strokePx(context, 2), resolvedAccent)
+            setColor(style.fill)
+            setStroke(UiDimens.strokePx(context, 2), style.focusStroke)
         }
         val content = StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), focused)
