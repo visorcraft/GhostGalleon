@@ -3447,6 +3447,8 @@ class GameDeck(
         inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
             var cardFrame: FrameLayout? = null
             var multiBadge: ImageView? = null
+            var favBadge: TextView? = null
+            var platformBadge: LinearLayout? = null
             var titleView: TextView? = null
             var metaView: TextView? = null
         }
@@ -3570,13 +3572,32 @@ class GameDeck(
                 cardFrame.alpha = depthStyle.alpha
                 cardFrame.translationY = targetLiftY
             }
-            if (multiSelected) {
+            val overlay = CarouselCardBadges.overlaySpec(
+                platformId = entry.rom?.platformId,
+                activePlatformFilter = state.libraryBrowse.platformId,
+                favorite = entry.key in settings.favorites,
+                multiSelectEnabled = state.multiSelectEnabled,
+                multiSelected = multiSelected,
+            )
+            if (overlay.showMultiCheck) {
                 cardFrame.foreground = multiSelectForeground()
                 holder.multiBadge?.visibility = View.VISIBLE
             } else {
                 cardFrame.foreground = null
                 holder.multiBadge?.visibility = View.GONE
             }
+            holder.favBadge?.visibility =
+                if (overlay.showFavoriteBadge) View.VISIBLE else View.GONE
+            holder.platformBadge?.visibility =
+                if (overlay.platformBadgeText != null) View.VISIBLE else View.GONE
+            holder.root.contentDescription = context.resolveText(
+                CarouselCardBadges.cardAccessibilityText(
+                    title = entry.label,
+                    platformBadge = entry.rom?.platformId?.let { PlatformLook.filterBadge(it) },
+                    favorite = entry.key in settings.favorites,
+                    multiSelected = multiSelected,
+                ),
+            )
             return true
         }
 
@@ -3594,6 +3615,8 @@ class GameDeck(
             holder.cardFrame?.animate()?.cancel()
             holder.cardFrame = null
             holder.multiBadge = null
+            holder.favBadge = null
+            holder.platformBadge = null
             holder.titleView = null
             holder.metaView = null
             holder.root.removeAllViews()
@@ -3614,6 +3637,14 @@ class GameDeck(
                 cellPaddingDp = CELL_PADDING_DP,
             )
             val innerArtRadiusPx = context.dpF(innerArtRadiusDp)
+            val artContainer = FrameLayout(context).apply {
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, innerArtRadiusPx)
+                    }
+                }
+            }
             // ROM cards show cached artwork over the platform placeholder
             // (async fill, no decode on the UI thread); without art the
             // placeholder shows through — a cheap draw even deep in the ROM
@@ -3628,18 +3659,122 @@ class GameDeck(
                     artOverrides = settings.artOverrides,
                 )
             } ?: ImageView(context).apply {
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setRoundRect(0, 0, view.width, view.height, innerArtRadiusPx)
-                    }
-                }
                 CustomIcon.bind(
                     this, iconLoader,
                     (activity.application as GhostGalleonApp).artCache,
                     settings, entry.appPackage!!, cardSize)
             }
-            body.addView(art, LinearLayout.LayoutParams(cardSize, cardSize))
+            artContainer.addView(
+                art,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            // Subtle bottom gradient scrim grounds corner pills and cover-to-title transition.
+            val scrimHeight = (cardSize * CarouselCardBadges.ART_SCRIM_HEIGHT_FRAC).toInt()
+                .coerceAtLeast(context.dp(24))
+            artContainer.addView(
+                View(context).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        CarouselCardBadges.artBottomScrimColors(),
+                    )
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    scrimHeight,
+                    Gravity.BOTTOM,
+                ),
+            )
+            val initialOverlay = CarouselCardBadges.overlaySpec(
+                platformId = entry.rom?.platformId,
+                activePlatformFilter = state.libraryBrowse.platformId,
+                favorite = entry.key in settings.favorites,
+                multiSelectEnabled = state.multiSelectEnabled,
+                multiSelected = state.multiSelectEnabled && entry.key in state.multiSelectKeys,
+            )
+            entry.rom?.let { rom ->
+                val badgeText = PlatformLook.filterBadge(rom.platformId)
+                val dotColor = ThemePack.accentTextColor(
+                    PlatformLook.accentColor(rom.platformId),
+                    CarouselCardBadges.PILL_BACKDROP_COLOR,
+                )
+                val pill = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = GradientDrawable().apply {
+                        setColor(CarouselCardBadges.PILL_BACKDROP_COLOR)
+                        cornerRadius = context.dpF(8)
+                        setStroke(context.strokePx(1), CarouselCardBadges.PILL_STROKE_COLOR)
+                    }
+                    setPadding(context.dp(6), context.dp(2), context.dp(6), context.dp(2))
+                    visibility = if (initialOverlay.platformBadgeText != null) View.VISIBLE else View.GONE
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                }
+                pill.addView(
+                    View(context).apply {
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(dotColor)
+                        }
+                    },
+                    LinearLayout.LayoutParams(context.dp(6), context.dp(6)).apply {
+                        marginEnd = context.dp(4)
+                    },
+                )
+                pill.addView(
+                    TextView(context).apply {
+                        text = badgeText
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                        setTextColor(UiDimens.ALPHA_PRIMARY)
+                        setTypeface(typeface, Typeface.BOLD)
+                        maxLines = 1
+                        includeFontPadding = false
+                    },
+                )
+                holder.platformBadge = pill
+                artContainer.addView(
+                    pill,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM or Gravity.START,
+                    ).apply {
+                        marginStart = context.dp(6)
+                        bottomMargin = context.dp(6)
+                    },
+                )
+            }
+            val favPill = TextView(context).apply {
+                setText(R.string.glyph_favorite)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(CarouselCardBadges.PILL_BACKDROP_COLOR)
+                    setStroke(context.strokePx(1), CarouselCardBadges.FAVORITE_STROKE_COLOR)
+                }
+                visibility = if (initialOverlay.showFavoriteBadge) View.VISIBLE else View.GONE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            holder.favBadge = favPill
+            artContainer.addView(
+                favPill,
+                FrameLayout.LayoutParams(
+                    context.dp(22),
+                    context.dp(22),
+                    Gravity.TOP or Gravity.END,
+                ).apply {
+                    topMargin = context.dp(6)
+                    marginEnd = context.dp(6)
+                },
+            )
+            body.addView(artContainer, LinearLayout.LayoutParams(cardSize, cardSize))
             val titleTv = TextView(context).apply {
                 text = entry.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -3727,15 +3862,37 @@ class GameDeck(
             val metaView = holder.metaView
                 ?: holder.cardFrame?.findViewWithTag<TextView>("card_meta")
                     ?.also { holder.metaView = it }
-                ?: return
-            val meta = SessionMath.cardMetaLine(
-                settings.lastLaunchedMs[entry.key],
-                settings.playtimeMs[entry.key] ?: 0L,
-                System.currentTimeMillis(),
-                favorite = entry.key in settings.favorites,
-                inDock = DockSlots.containsKey(settings.dockSlots, entry.key),
+            val favorite = entry.key in settings.favorites
+            if (metaView != null) {
+                val meta = SessionMath.cardMetaLine(
+                    settings.lastLaunchedMs[entry.key],
+                    settings.playtimeMs[entry.key] ?: 0L,
+                    System.currentTimeMillis(),
+                    favorite = favorite,
+                    inDock = DockSlots.containsKey(settings.dockSlots, entry.key),
+                )
+                metaView.text = context.resolveText(meta)
+            }
+            val multiSelected = state.multiSelectEnabled && entry.key in state.multiSelectKeys
+            val overlay = CarouselCardBadges.overlaySpec(
+                platformId = entry.rom?.platformId,
+                activePlatformFilter = state.libraryBrowse.platformId,
+                favorite = favorite,
+                multiSelectEnabled = state.multiSelectEnabled,
+                multiSelected = multiSelected,
             )
-            metaView.text = context.resolveText(meta)
+            holder.favBadge?.visibility =
+                if (overlay.showFavoriteBadge) View.VISIBLE else View.GONE
+            holder.platformBadge?.visibility =
+                if (overlay.platformBadgeText != null) View.VISIBLE else View.GONE
+            holder.root.contentDescription = context.resolveText(
+                CarouselCardBadges.cardAccessibilityText(
+                    title = entry.label,
+                    platformBadge = entry.rom?.platformId?.let { PlatformLook.filterBadge(it) },
+                    favorite = favorite,
+                    multiSelected = multiSelected,
+                ),
+            )
         }
 
         private fun wireCardClicks(holder: CardHolder, entry: CarouselEntry) {
