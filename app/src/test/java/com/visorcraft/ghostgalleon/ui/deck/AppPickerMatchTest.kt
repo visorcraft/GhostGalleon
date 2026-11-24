@@ -1,5 +1,9 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
+import com.visorcraft.ghostgalleon.library.AppEntry
+import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,5 +78,46 @@ class AppPickerMatchTest {
                 badgeRatio >= ThemePack.MIN_TEXT_CONTRAST,
             )
         }
+    }
+
+    @Test
+    fun `sectionCounts tallies apps and roms independently and excludes headers`() {
+        val items = listOf(
+            PickerItem.Header(PickerItem.Header.Section.APPS),
+            PickerItem.App(AppEntry("a1", "App 1", isGame = false)),
+            PickerItem.App(AppEntry("a2", "App 2", isGame = false)),
+            PickerItem.Header(PickerItem.Header.Section.ROMS),
+            PickerItem.Rom(RomEntry("r1", "Rom 1", "snes", "content://r1", null)),
+            PickerItem.Rom(RomEntry("r2", "Rom 2", "snes", "content://r2", null)),
+            PickerItem.Rom(RomEntry("r3", "Rom 3", "gb", "content://r3", null)),
+        )
+        val counts = AppPickerMatch.sectionCounts(items)
+        assertEquals(2, counts.apps)
+        assertEquals(3, counts.roms)
+        assertEquals(2, counts.countFor(PickerItem.Header.Section.APPS))
+        assertEquals(3, counts.countFor(PickerItem.Header.Section.ROMS))
+        assertEquals(PickerSectionCounts(0, 0), AppPickerMatch.sectionCounts(emptyList()))
+    }
+
+    @Test
+    fun `isSearchLaunchAction triggers on IME Go, Search, Done, and Enter key down only`() {
+        assertTrue(AppPickerMatch.isSearchLaunchAction(EditorInfo.IME_ACTION_GO))
+        assertTrue(AppPickerMatch.isSearchLaunchAction(EditorInfo.IME_ACTION_SEARCH))
+        assertTrue(AppPickerMatch.isSearchLaunchAction(EditorInfo.IME_ACTION_DONE))
+        assertTrue(
+            AppPickerMatch.isSearchLaunchAction(
+                EditorInfo.IME_NULL,
+                keyCode = KeyEvent.KEYCODE_ENTER,
+                keyAction = KeyEvent.ACTION_DOWN,
+            ),
+        )
+        assertFalse(
+            AppPickerMatch.isSearchLaunchAction(
+                EditorInfo.IME_NULL,
+                keyCode = KeyEvent.KEYCODE_ENTER,
+                keyAction = KeyEvent.ACTION_UP,
+            ),
+        )
+        assertFalse(AppPickerMatch.isSearchLaunchAction(EditorInfo.IME_ACTION_NEXT))
     }
 }

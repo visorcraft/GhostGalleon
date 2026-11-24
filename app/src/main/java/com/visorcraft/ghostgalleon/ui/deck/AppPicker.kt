@@ -19,6 +19,7 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -334,8 +335,21 @@ class AppPicker(
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
             setSingleLine()
+            imeOptions = EditorInfo.IME_ACTION_GO
             background = null
             setPadding(0, context.dp(6), 0, context.dp(6))
+            setOnEditorActionListener { _, actionId, event ->
+                if (AppPickerMatch.isSearchLaunchAction(actionId, event?.keyCode, event?.action)) {
+                    if (pendingSearch != null) {
+                        cancelPendingSearch()
+                        applySearch(text?.toString().orEmpty())
+                    }
+                    confirmHighlighted()
+                    true
+                } else {
+                    false
+                }
+            }
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -526,25 +540,7 @@ class AppPicker(
             Action.NAV_DOWN -> moveHighlight(1)
             Action.PAGE_PREV -> moveHighlight(-5)
             Action.PAGE_NEXT -> moveHighlight(5)
-            Action.CONFIRM -> when (val item = items.getOrNull(highlight)) {
-                is PickerItem.App -> {
-                    cancelPendingSearch()
-                    onPick(item.entry.packageName)
-                }
-                is PickerItem.Rom -> {
-                    cancelPendingSearch()
-                    onPick(SlotKey.rom(item.entry.id))
-                }
-                else -> {
-                    if (AppPickerMatch.canClearFromEmptyState(
-                            AppPickerHighlight.selectableCount(items),
-                            query,
-                        )
-                    ) {
-                        clearSearch()
-                    }
-                }
-            }
+            Action.CONFIRM -> confirmHighlighted()
             Action.BACK -> {
                 cancelPendingSearch()
                 onClose()
@@ -552,6 +548,28 @@ class AppPicker(
             else -> {}
         }
         return true // the modal swallows every action while open
+    }
+
+    private fun confirmHighlighted() {
+        when (val item = items.getOrNull(highlight)) {
+            is PickerItem.App -> {
+                cancelPendingSearch()
+                onPick(item.entry.packageName)
+            }
+            is PickerItem.Rom -> {
+                cancelPendingSearch()
+                onPick(SlotKey.rom(item.entry.id))
+            }
+            else -> {
+                if (AppPickerMatch.canClearFromEmptyState(
+                        AppPickerHighlight.selectableCount(items),
+                        query,
+                    )
+                ) {
+                    clearSearch()
+                }
+            }
+        }
     }
 
     // The highlight only ever rests on data rows: section headers are skipped
@@ -700,6 +718,7 @@ class AppPicker(
         private val rowCornerRadiusDp: Int,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var rows: List<PickerItem> = emptyList()
+        private var sectionCounts: PickerSectionCounts = PickerSectionCounts(0, 0)
         private var activeQuery: String = ""
         private val locale = context.resources.configuration.locales[0]
 
@@ -713,7 +732,14 @@ class AppPicker(
 
         fun submit(next: List<PickerItem>, queryChanged: Boolean = false) {
             val old = rows
-            val diff = DiffUtil.calculateDiff(PickerDiff(old, next, queryChanged), false)
+            val prevCounts = sectionCounts
+            val nextCounts = AppPickerMatch.sectionCounts(next)
+            val countsChanged = prevCounts != nextCounts
+            sectionCounts = nextCounts
+            val diff = DiffUtil.calculateDiff(
+                PickerDiff(old, next, queryChanged || countsChanged),
+                false,
+            )
             rows = next
             diff.dispatchUpdatesTo(this)
         }
@@ -796,6 +822,13 @@ class AppPicker(
             payloads: MutableList<Any>,
         ) {
             if (payloads.isNotEmpty() && payloads.all { it == PAYLOAD_HIGHLIGHT || it == PAYLOAD_QUERY }) {
+                if (holder is HeaderVH) {
+                    val item = rows.getOrNull(position) as? PickerItem.Header
+                    if (item != null && payloads.contains(PAYLOAD_QUERY)) {
+                        bindHeader(holder, item)
+                    }
+                    return
+                }
                 if (holder is RowVH) {
                     if (payloads.contains(PAYLOAD_QUERY)) {
                         bindRowText(holder, rows[position])
@@ -807,6 +840,22 @@ class AppPicker(
                 return
             }
             onBindViewHolder(holder, position)
+        }
+
+        private fun bindHeader(holder: HeaderVH, item: PickerItem.Header) {
+            val res = if (item.section == PickerItem.Header.Section.APPS) {
+                R.string.label_apps
+            } else {
+                R.string.label_roms
+            }
+            val titleUpper = context.getString(res).uppercase(locale)
+            val count = sectionCounts.countFor(item.section)
+            holder.text.text = context.getString(
+                R.string.format_dot_pair,
+                titleUpper,
+                count.toString(),
+            )
+            holder.text.background = null
         }
 
         private fun bindRowText(holder: RowVH, item: PickerItem) {
@@ -837,13 +886,7 @@ class AppPicker(
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val item = rows[position]
             if (holder is HeaderVH && item is PickerItem.Header) {
-                val res = if (item.section == PickerItem.Header.Section.APPS) {
-                    R.string.label_apps
-                } else {
-                    R.string.label_roms
-                }
-                holder.text.text = context.getString(res).uppercase(locale)
-                holder.text.background = null
+                bindHeader(holder, item)
                 return
             }
             if (holder !is RowVH) return
