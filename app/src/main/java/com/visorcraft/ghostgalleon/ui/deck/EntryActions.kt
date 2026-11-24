@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -16,6 +17,7 @@ import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlayerResolver
+import com.visorcraft.ghostgalleon.rom.PlayerTemplate
 import com.visorcraft.ghostgalleon.rom.PlotConfirm
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomProfiles
@@ -25,6 +27,112 @@ import com.visorcraft.ghostgalleon.rom.StagePlots
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.toast
+
+/** Pure, host-tested choice and state helpers for [EntryActions] dialogs. */
+internal object EntryActionChoices {
+
+    data class PlayerProfileRow(
+        val playerId: String?,
+        val displayName: String,
+        val installed: Boolean,
+        val selected: Boolean,
+        val isPlatformDefault: Boolean,
+    )
+
+    data class StagePlotRow(
+        val policy: SessionPolicy?,
+        val face: LaunchFace,
+        val clear: Boolean,
+        val selected: Boolean,
+    )
+
+    /**
+     * Build per-ROM player profile rows flagging installed vs missing emulators
+     * and the currently active selection, ending with the platform-default row.
+     */
+    fun playerProfileRows(
+        players: List<PlayerTemplate>,
+        currentProfileId: String?,
+        isInstalled: (packageName: String) -> Boolean,
+    ): List<PlayerProfileRow> = buildList(players.size + 1) {
+        players.forEach { player ->
+            add(
+                PlayerProfileRow(
+                    playerId = player.id,
+                    displayName = player.displayName,
+                    installed = isInstalled(PlayerResolver.packageName(player)),
+                    selected = player.id == currentProfileId,
+                    isPlatformDefault = false,
+                ),
+            )
+        }
+        add(
+            PlayerProfileRow(
+                playerId = null,
+                displayName = "",
+                installed = true,
+                selected = currentProfileId == null,
+                isPlatformDefault = true,
+            ),
+        )
+    }
+
+    /** Preferred player id currently governing [romId] (per-ROM profile else platform default). */
+    fun preferredPlayerId(
+        romId: String,
+        platformId: String,
+        romProfiles: Map<String, String>,
+        defaultPlayers: Map<String, String>,
+    ): String? = RomProfiles.preferredPlayerId(romId, romProfiles, defaultPlayers[platformId])
+
+    /** Build stage-plot options for single or dual display with exact selection flags. */
+    fun stagePlotRows(dual: Boolean, current: StagePlot?): List<StagePlotRow> {
+        fun isSelected(policy: SessionPolicy?, face: LaunchFace, clear: Boolean): Boolean = when {
+            clear -> current == null
+            current == null -> false
+            else -> current.policy == policy && current.launchFace == face
+        }
+        return buildList {
+            add(StagePlotRow(null, LaunchFace.AUTO, clear = true, selected = isSelected(null, LaunchFace.AUTO, true)))
+            if (dual) {
+                listOf(LaunchFace.AUTO, LaunchFace.INTERACTIVE, LaunchFace.OTHER).forEach { face ->
+                    add(
+                        StagePlotRow(
+                            policy = SessionPolicy.KEEP_COMPANION,
+                            face = face,
+                            clear = false,
+                            selected = isSelected(SessionPolicy.KEEP_COMPANION, face, false),
+                        ),
+                    )
+                }
+            } else {
+                add(
+                    StagePlotRow(
+                        policy = SessionPolicy.KEEP_COMPANION,
+                        face = LaunchFace.AUTO,
+                        clear = false,
+                        selected = isSelected(SessionPolicy.KEEP_COMPANION, LaunchFace.AUTO, false),
+                    ),
+                )
+            }
+            add(
+                StagePlotRow(
+                    policy = SessionPolicy.YIELD_BOTH,
+                    face = LaunchFace.AUTO,
+                    clear = false,
+                    selected = isSelected(SessionPolicy.YIELD_BOTH, LaunchFace.AUTO, false),
+                ),
+            )
+        }
+    }
+
+    /** Resource label describing a player's built-in session policy. */
+    @StringRes
+    fun builtInPolicyLabelRes(builtIn: SessionPolicy): Int = when (builtIn) {
+        SessionPolicy.YIELD_BOTH -> R.string.settings_stage_yield
+        SessionPolicy.KEEP_COMPANION -> R.string.settings_stage_keep
+    }
+}
 
 /** Shared, locale-safe library entry actions. */
 object EntryActions {
@@ -100,13 +208,26 @@ object EntryActions {
             activity.toast(R.string.deck_no_players_installed)
             return
         }
+        val app = activity.application as GhostGalleonApp
+        val preferred = EntryActionChoices.preferredPlayerId(
+            romId = rom.id,
+            platformId = rom.platformId,
+            romProfiles = app.settings.romProfiles,
+            defaultPlayers = app.settings.defaultPlayers,
+        )
+        val labels = installed.map { player ->
+            if (player.id == preferred) {
+                activity.getString(R.string.format_selected_check, player.displayName)
+            } else {
+                player.displayName
+            }
+        }.toTypedArray()
         DeckDialogs.chooseItem(
             context = activity,
             titleRes = R.string.action_open_with,
-            items = installed.map { it.displayName }.toTypedArray(),
+            items = labels,
         ) { which ->
             val player = installed.getOrNull(which) ?: return@chooseItem
-            val app = activity.application as GhostGalleonApp
             app.updateSettings(
                 app.settings.copy(
                     defaultPlayers = app.settings.defaultPlayers +
@@ -126,27 +247,49 @@ object EntryActions {
             return
         }
         val app = activity.application as GhostGalleonApp
-        val current = app.settings.romProfiles[rom.id]
-        val labels = players.map { player ->
-            if (player.id == current) {
-                activity.getString(R.string.format_selected_check, player.displayName)
-            } else {
-                player.displayName
+        val pm = activity.packageManager
+        val rows = EntryActionChoices.playerProfileRows(
+            players = players,
+            currentProfileId = app.settings.romProfiles[rom.id],
+            isInstalled = { pm.isInstalled(it) },
+        )
+        val missingLabel = activity.getString(R.string.label_missing)
+        val labels = rows.map { row ->
+            when {
+                row.isPlatformDefault -> activity.getString(
+                    if (row.selected) R.string.deck_platform_default_selected
+                    else R.string.deck_platform_default,
+                )
+                else -> {
+                    val base = if (row.installed) {
+                        row.displayName
+                    } else {
+                        activity.getString(R.string.format_dot_pair, row.displayName, missingLabel)
+                    }
+                    if (row.selected) {
+                        activity.getString(R.string.format_selected_check, base)
+                    } else {
+                        base
+                    }
+                }
             }
-        } + activity.getString(
-            if (current == null) R.string.deck_platform_default_selected
-            else R.string.deck_platform_default,
+        }.toTypedArray()
+        val dialogTitle = activity.getString(
+            R.string.format_dot_pair,
+            activity.getString(R.string.deck_player_profile),
+            rom.name,
         )
         DeckDialogs.chooseItem(
             context = activity,
-            titleRes = R.string.deck_player_profile,
-            items = labels.toTypedArray(),
+            title = dialogTitle,
+            items = labels,
         ) { which ->
+            val chosen = rows.getOrNull(which) ?: return@chooseItem
             val live = app.settings
-            val nextProfiles = if (which >= players.size) {
+            val nextProfiles = if (chosen.playerId == null) {
                 RomProfiles.clearProfile(live.romProfiles, rom.id)
             } else {
-                RomProfiles.setProfile(live.romProfiles, rom.id, players[which].id)
+                RomProfiles.setProfile(live.romProfiles, rom.id, chosen.playerId)
             }
             app.updateSettings(live.copy(romProfiles = nextProfiles))
             activity.toast(R.string.deck_player_saved)
@@ -169,103 +312,68 @@ object EntryActions {
     fun screensPlot(activity: AppCompatActivity, rom: RomEntry) {
         val app = activity.application as GhostGalleonApp
         val live = app.settings
-        val preferred = RomProfiles.preferredPlayerId(
-            rom.id,
-            live.romProfiles,
-            live.defaultPlayers[rom.platformId],
+        val preferred = EntryActionChoices.preferredPlayerId(
+            romId = rom.id,
+            platformId = rom.platformId,
+            romProfiles = live.romProfiles,
+            defaultPlayers = live.defaultPlayers,
         )
         val builtIn = SessionPolicy.forPlayerId(preferred)
         val current = live.stagePlots[rom.id]
         val dual = app.displayConfig.mode == SurfaceMode.DUAL
+        val rows = EntryActionChoices.stagePlotRows(dual = dual, current = current)
 
-        data class Option(
-            val label: String,
-            val policy: SessionPolicy?,
-            val face: LaunchFace,
-            val clear: Boolean,
-        )
-
-        val options = buildList {
-            add(
-                Option(
-                    label = activity.getString(R.string.label_default),
-                    policy = null,
-                    face = LaunchFace.AUTO,
-                    clear = true,
-                ),
+        fun labelFor(row: EntryActionChoices.StagePlotRow): String = when {
+            row.clear -> activity.getString(
+                R.string.format_dot_pair,
+                activity.getString(R.string.label_default),
+                activity.getString(EntryActionChoices.builtInPolicyLabelRes(builtIn)),
             )
-            if (dual) {
-                fun keep(face: LaunchFace, faceLabel: String) = Option(
-                    label = activity.getString(R.string.settings_stage_keep) + " · " + faceLabel,
-                    policy = SessionPolicy.KEEP_COMPANION,
-                    face = face,
-                    clear = false,
-                )
-                add(keep(LaunchFace.AUTO, activity.getString(R.string.label_auto)))
-                add(
-                    keep(
-                        LaunchFace.INTERACTIVE,
-                        activity.getString(R.string.settings_stage_face_interactive),
-                    ),
-                )
-                add(
-                    keep(
-                        LaunchFace.OTHER,
-                        activity.getString(R.string.settings_stage_face_other),
-                    ),
-                )
-            } else {
-                add(
-                    Option(
-                        label = activity.getString(R.string.settings_stage_keep),
-                        policy = SessionPolicy.KEEP_COMPANION,
-                        face = LaunchFace.AUTO,
-                        clear = false,
-                    ),
+            row.policy == SessionPolicy.YIELD_BOTH ->
+                activity.getString(R.string.settings_stage_yield)
+            dual -> {
+                val faceLabel = when (row.face) {
+                    LaunchFace.AUTO -> activity.getString(R.string.label_auto)
+                    LaunchFace.INTERACTIVE -> activity.getString(R.string.settings_stage_face_interactive)
+                    LaunchFace.OTHER, LaunchFace.COMPANION -> activity.getString(R.string.settings_stage_face_other)
+                }
+                activity.getString(
+                    R.string.format_dot_pair,
+                    activity.getString(R.string.settings_stage_keep),
+                    faceLabel,
                 )
             }
-            add(
-                Option(
-                    label = activity.getString(R.string.settings_stage_yield),
-                    policy = SessionPolicy.YIELD_BOTH,
-                    face = LaunchFace.AUTO,
-                    clear = false,
-                ),
-            )
+            else -> activity.getString(R.string.settings_stage_keep)
         }
 
-        fun isSelected(opt: Option): Boolean = when {
-            opt.clear -> current == null
-            current == null -> false
-            else -> current.policy == opt.policy && current.launchFace == opt.face
-        }
-
-        val labels = options.map { opt ->
-            if (isSelected(opt)) {
-                activity.getString(R.string.format_selected_check, opt.label)
-            } else {
-                opt.label
-            }
+        val labels = rows.map { row ->
+            val base = labelFor(row)
+            if (row.selected) activity.getString(R.string.format_selected_check, base) else base
         }.toTypedArray()
 
-        fun writePlot(opt: Option) {
+        fun writePlot(row: EntryActionChoices.StagePlotRow) {
             val now = app.settings
-            val nextPlots = if (opt.clear) {
+            val nextPlots = if (row.clear) {
                 now.stagePlots - rom.id
             } else {
-                now.stagePlots + (rom.id to StagePlot(opt.policy, opt.face))
+                now.stagePlots + (rom.id to StagePlot(row.policy, row.face))
             }
             app.updateSettings(now.copy(stagePlots = nextPlots))
+            activity.toast(
+                R.string.format_colon_pair,
+                activity.getString(R.string.settings_stage_plot),
+                labelFor(row),
+            )
         }
 
-        fun applyOption(opt: Option) {
-            if (opt.clear) {
-                writePlot(opt)
+        fun applyOption(row: EntryActionChoices.StagePlotRow) {
+            if (row.clear) {
+                writePlot(row)
                 return
             }
-            val confirm = StagePlots.confirmFor(builtIn, opt.policy)
+            val confirm = StagePlots.confirmFor(builtIn, row.policy)
             if (confirm == PlotConfirm.NONE) {
-                writePlot(opt)
+                writePlot(row)
                 return
             }
             val message = when (confirm) {
@@ -278,15 +386,20 @@ object EntryActions {
                 titleRes = R.string.settings_stage_plot,
                 messageRes = message,
                 positiveRes = R.string.action_ok,
-            ) { writePlot(opt) }
+            ) { writePlot(row) }
         }
 
+        val dialogTitle = activity.getString(
+            R.string.format_dot_pair,
+            activity.getString(R.string.settings_stage_plot),
+            rom.name,
+        )
         DeckDialogs.chooseItem(
             context = activity,
-            titleRes = R.string.settings_stage_plot,
+            title = dialogTitle,
             items = labels,
         ) { which ->
-            options.getOrNull(which)?.let(::applyOption)
+            rows.getOrNull(which)?.let(::applyOption)
         }
     }
 
