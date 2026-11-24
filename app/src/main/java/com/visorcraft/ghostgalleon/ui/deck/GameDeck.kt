@@ -13,17 +13,21 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.graphics.drawable.TransitionDrawable
+import android.text.Editable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -3134,6 +3138,53 @@ class GameDeck(
             hintRes = R.string.browse_search_hint,
         )
         val hasHistory = app().settings.searchHistory.isNotEmpty()
+        val initialPlan = SearchDialogLogic.plan(state.libraryBrowse.text, hasHistory)
+        input.imeOptions = EditorInfo.IME_ACTION_SEARCH
+        input.setPaddingRelative(
+            input.paddingStart,
+            input.paddingTop,
+            activity.dp(SearchDialogLogic.INPUT_END_PADDING_DP),
+            input.paddingBottom,
+        )
+        val clearBtn = ImageView(activity).apply {
+            setImageResource(R.drawable.ic_close)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
+            setPadding(activity.dp(8), activity.dp(8), activity.dp(8), activity.dp(8))
+            isClickable = true
+            isFocusable = true
+            contentDescription = activity.getString(R.string.action_clear)
+            background = TileBackgrounds.focusableRow(
+                context = activity,
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+                strokeDp = 2,
+            )
+            visibility = if (initialPlan.showInlineClear) View.VISIBLE else View.GONE
+            setOnClickListener {
+                input.setText("")
+                input.requestFocus()
+            }
+        }
+        val clearSizePx = activity.dp(SearchDialogLogic.INLINE_CLEAR_SIZE_DP)
+        container.addView(
+            clearBtn,
+            FrameLayout.LayoutParams(
+                clearSizePx,
+                clearSizePx,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply {
+                marginEnd = activity.dp(SearchDialogLogic.INLINE_CLEAR_END_MARGIN_DP)
+            },
+        )
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                val p = SearchDialogLogic.plan(s?.toString().orEmpty(), hasHistory)
+                clearBtn.visibility = if (p.showInlineClear) View.VISIBLE else View.GONE
+            }
+        })
         val builder = DeckDialogs.builder(activity)
             .setTitle(R.string.browse_search_library)
             .setView(container)
@@ -3141,21 +3192,36 @@ class GameDeck(
                 applySearch(input.text?.toString().orEmpty())
             }
             .setNegativeButton(R.string.action_cancel, null)
-        if (hasHistory) {
-            builder.setNeutralButton(R.string.action_history) { _, _ ->
-                showSearchHistory()
+        when (initialPlan.neutralButton) {
+            SearchDialogLogic.NeutralButtonKind.HISTORY -> {
+                builder.setNeutralButton(R.string.action_history) { _, _ ->
+                    showSearchHistory()
+                }
             }
-        } else {
-            builder.setNeutralButton(R.string.action_clear) { _, _ ->
-                applySearch("")
+            SearchDialogLogic.NeutralButtonKind.CLEAR -> {
+                builder.setNeutralButton(R.string.action_clear) { _, _ ->
+                    applySearch("")
+                }
             }
         }
-        DeckDialogs.show(builder, activity)
+        val dialog = DeckDialogs.show(builder, activity)
+        input.setOnEditorActionListener { _, actionId, event ->
+            val submit = SearchDialogLogic.shouldSubmitFromEditor(
+                actionId = actionId,
+                keyCode = event?.keyCode,
+                isKeyDown = event?.action == KeyEvent.ACTION_DOWN,
+            )
+            if (submit) {
+                applySearch(input.text?.toString().orEmpty())
+                dialog.dismiss()
+            }
+            submit
+        }
     }
 
     /** Apply a library text filter and remember non-blank queries. */
     private fun applySearch(raw: String) {
-        val text = raw.trim()
+        val text = SearchDialogLogic.normalizeQuery(raw)
         val next = state.libraryBrowse.copy(text = text)
         state.setLibraryBrowse(next)
         if (text.isNotEmpty()) {
