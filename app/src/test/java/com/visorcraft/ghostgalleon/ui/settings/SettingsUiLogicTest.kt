@@ -242,4 +242,21 @@ class SettingsUiLogicTest {
         assertTrue(SettingsUiLogic.isCustomDeadzone(35))
         assertTrue(SettingsUiLogic.isCustomDeadzone(75))
     }
+
+    @Test
+    fun `header breadcrumb accent meets WCAG AA on black and shoulder cue gates on wide screens`() {
+        assertTrue(SettingsUiLogic.shouldShowShoulderCue(isWide = true))
+        assertFalse(SettingsUiLogic.shouldShowShoulderCue(isWide = false))
+        assertTrue(SettingsUiLogic.SHOULDER_PAGE_HINT.contains("L1"))
+        assertTrue(SettingsUiLogic.SHOULDER_PAGE_HINT.contains("R1"))
+
+        for (tokens in ThemePack.BUILTINS) {
+            val fg = SettingsUiLogic.accentOnBlack(tokens.accentColor)
+            val ratio = ThemePack.contrastRatio(fg, 0xFF000000.toInt())
+            assertTrue(
+                "Header breadcrumb contrast=$ratio too low on ${tokens.id}",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

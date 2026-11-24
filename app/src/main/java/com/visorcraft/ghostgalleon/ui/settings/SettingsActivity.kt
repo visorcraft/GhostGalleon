@@ -293,6 +293,15 @@ internal object SettingsUiLogic {
     fun isCustomDeadzone(deadzonePercent: Int): Boolean =
         com.visorcraft.ghostgalleon.input.StickThresholds.clamp(deadzonePercent) !=
             com.visorcraft.ghostgalleon.input.StickThresholds.DEFAULT_PERCENT
+
+    /** Locale-neutral hardware notation for quick shoulder page switching. */
+    const val SHOULDER_PAGE_HINT: String = "L1 \u00B7 R1"
+
+    /** WCAG AA accent text color drawn directly over pure black OLED header. */
+    fun accentOnBlack(accent: Int): Int = ThemePack.accentTextColor(accent, 0xFF000000.toInt())
+
+    /** Show the compact L1·R1 shoulder cue pill on wide displays without crowding narrow panels. */
+    fun shouldShowShoulderCue(isWide: Boolean): Boolean = isWide
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -328,6 +337,7 @@ class SettingsActivity : AppCompatActivity() {
     private var pageDropdownLabel: TextView? = null
     private var headerBackBtn: View? = null
     private var headerSearchBtn: View? = null
+    private var headerBreadcrumbLabel: TextView? = null
 
     private val remappable = listOf(
         Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
@@ -2178,6 +2188,7 @@ class SettingsActivity : AppCompatActivity() {
         ))
         contentScroll?.scrollTo(0, 0)
         paintNav()
+        headerBreadcrumbLabel?.setText(page.titleRes)
         pageDropdownLabel?.setText(page.titleRes)
         pageDropdownIcon?.setImageResource(page.iconRes)
         wirePageFocusTraversal(body)
@@ -2413,6 +2424,7 @@ class SettingsActivity : AppCompatActivity() {
         pageDropdownLabel = null
         headerBackBtn = null
         headerSearchBtn = null
+        headerBreadcrumbLabel = null
         artHeaderStatusPill = null
 
         SettingsPage.entries.forEach { page ->
@@ -2488,7 +2500,9 @@ class SettingsActivity : AppCompatActivity() {
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
             background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
-            contentDescription = getString(R.string.action_back)
+            val backLabel = getString(R.string.action_back)
+            contentDescription = backLabel
+            tooltipText = backLabel
             isFocusable = true
             setOnClickListener { finish() }
         }
@@ -2497,18 +2511,62 @@ class SettingsActivity : AppCompatActivity() {
             backBtn,
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
-        header.addView(
-            TextView(this).apply {
-                setText(R.string.settings_title)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                setTextColor(UiDimens.ALPHA_PRIMARY)
+        val headerTitles = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, dp(12), 0)
+            addView(
+                TextView(this@SettingsActivity).apply {
+                    setText(R.string.settings_title)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 21f)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    setTypeface(typeface, Typeface.BOLD)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+            )
+            val breadcrumb = TextView(this@SettingsActivity).apply {
+                setText(currentPage.titleRes)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextColor(SettingsUiLogic.accentOnBlack(accent))
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(12), 0, dp(12), 0)
-            },
+            }
+            headerBreadcrumbLabel = breadcrumb
+            addView(
+                breadcrumb,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(1) },
+            )
+        }
+        header.addView(
+            headerTitles,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
+        if (SettingsUiLogic.shouldShowShoulderCue(wide)) {
+            header.addView(
+                TextView(this).apply {
+                    text = SettingsUiLogic.SHOULDER_PAGE_HINT
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
+                    gravity = Gravity.CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    background = TileBackgrounds.sunkenField(
+                        this@SettingsActivity,
+                        cornerRadiusDp = UiDimens.RADIUS_SM,
+                    )
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = dp(10) },
+            )
+        }
         val searchBtn = ImageView(this).apply {
             id = View.generateViewId()
             setImageResource(R.drawable.ic_search)
@@ -2517,7 +2575,9 @@ class SettingsActivity : AppCompatActivity() {
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
             background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
-            contentDescription = getString(R.string.settings_search_hint)
+            val searchLabel = getString(R.string.settings_search_hint)
+            contentDescription = searchLabel
+            tooltipText = searchLabel
             isFocusable = true
             setOnClickListener { showSettingsSearch() }
         }
@@ -2532,13 +2592,37 @@ class SettingsActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        shell.addView(View(this).apply {
-            setBackgroundColor(accent)
-        }, LinearLayout.LayoutParams(dp(40), dp(2)).apply {
-            marginStart = dp(56)
-            topMargin = dp(6)
-            bottomMargin = dp(12)
-        })
+        val headerRule = FrameLayout(this).apply {
+            addView(
+                View(this@SettingsActivity).apply {
+                    setBackgroundColor(TileBackgrounds.hairlineDivider(this@SettingsActivity))
+                },
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    strokePx(1),
+                    Gravity.CENTER_VERTICAL,
+                ),
+            )
+            addView(
+                View(this@SettingsActivity).apply {
+                    background = TileBackgrounds.activeAccentBar(
+                        this@SettingsActivity,
+                        accent,
+                        cornerRadiusDp = 1,
+                    )
+                },
+                FrameLayout.LayoutParams(dp(44), dp(2), Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                    marginStart = dp(56)
+                },
+            )
+        }
+        shell.addView(
+            headerRule,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(12)
+            },
+        )
 
         if (!wide) {
             shell.addView(buildPageDropdown(), LinearLayout.LayoutParams(
