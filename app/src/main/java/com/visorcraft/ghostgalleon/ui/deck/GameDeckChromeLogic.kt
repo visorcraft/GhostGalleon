@@ -7,6 +7,7 @@ import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.library.BrowseFeedback
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.rom.PlatformLook
+import com.visorcraft.ghostgalleon.settings.ThemePack
 
 /**
  * Pure, host-tested UI helpers for [GameDeck]'s filter pill row, StatusPill
@@ -36,6 +37,12 @@ object GameDeckChromeLogic {
 
     /** Minimum entries required before showing the carousel position indicator. */
     const val MIN_RAIL_COUNT_FOR_INDICATOR: Int = 2
+
+    /** Translucent alpha for the theme-tinted rail progress pill backdrop. */
+    const val RAIL_PILL_BG_ALPHA: Int = 0xCC
+
+    /** Duration (ms) for smooth cancelable rail progress fill scaleX lerp. */
+    const val RAIL_PROGRESS_ANIM_MS: Long = 90L
 
     /**
      * Upper bound on combined old + new carousel item counts for synchronous Myers
@@ -219,6 +226,27 @@ object GameDeckChromeLogic {
     /** Responsive rail progress track width (dp) for compact and widescreen panels. */
     fun railTrackWidthDp(screenWidthDp: Int): Int =
         (screenWidthDp.coerceAtLeast(1) * 0.20f).toInt().coerceIn(72, 148)
+
+    /** Theme-synced translucent pill backdrop color derived from [surfaceSunken]. */
+    fun railPillBackgroundColor(surfaceSunken: Int): Int =
+        ThemePack.withAlpha(surfaceSunken, RAIL_PILL_BG_ALPHA)
+
+    /**
+     * Clamp a positive rail progress [fraction] so even huge libraries (e.g.
+     * `1/5000`) always paint at least a visible circular dot
+     * (`>= trackHeight / trackWidth`) while remaining monotonic in `min..1f`.
+     */
+    fun effectiveRailFillFraction(
+        fraction: Float,
+        trackWidthPx: Int,
+        trackHeightPx: Int,
+    ): Float {
+        if (fraction <= 0f) return 0f
+        val clamped = fraction.coerceIn(0f, 1f)
+        if (trackWidthPx <= 0 || trackHeightPx <= 0) return clamped
+        val minVisible = (trackHeightPx.toFloat() / trackWidthPx.toFloat()).coerceIn(0f, 1f)
+        return clamped.coerceIn(minVisible, 1f)
+    }
 
     /** True when [oldSize] + [newSize] is small enough for synchronous Myers DiffUtil. */
     fun shouldUseDiffUtil(oldSize: Int, newSize: Int): Boolean {

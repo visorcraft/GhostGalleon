@@ -549,6 +549,9 @@ class GameDeck(
     private var railIndicatorRow: LinearLayout? = null
     private var railCountView: TextView? = null
     private var railProgressFill: View? = null
+    private var railTrackWidthPx: Int = 0
+    private var railTrackHeightPx: Int = 0
+    private var railPaintedFraction: Float = -1f
     private var dockBar: DockBar? = null
     private var hintView: TextView? = null
     private var rootView: FrameLayout? = null
@@ -568,6 +571,7 @@ class GameDeck(
         val count: Int,
         val rawLabel: String,
         val view: TextView,
+        val pillBg: MutablePillBackground,
     )
 
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
@@ -742,19 +746,49 @@ class GameDeck(
         val row = railIndicatorRow ?: return
         val progress = GameDeckChromeLogic.railProgressState(selectedIndex(), entries.size)
         if (!progress.visible) {
+            railProgressFill?.animate()?.cancel()
+            railPaintedFraction = -1f
             row.visibility = View.GONE
             return
         }
+        val wasVisible = row.visibility == View.VISIBLE
         row.visibility = View.VISIBLE
+        (row.background as? GradientDrawable)?.apply {
+            setColor(GameDeckChromeLogic.railPillBackgroundColor(TileBackgrounds.surfaceSunken(context)))
+            setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+        }
         railCountView?.text = context.resolveText(
             GameDeckChromeLogic.railPositionText(progress.currentOneBased, progress.total),
         )
         railProgressFill?.let { fill ->
             fill.pivotX = 0f
-            fill.scaleX = progress.fraction
+            val targetScale = GameDeckChromeLogic.effectiveRailFillFraction(
+                fraction = progress.fraction,
+                trackWidthPx = railTrackWidthPx,
+                trackHeightPx = railTrackHeightPx,
+            )
             (fill.background as? GradientDrawable)?.setColor(
                 ThemePack.accentTextColor(settings.accentColor, Color.BLACK),
             )
+            if (wasVisible &&
+                railPaintedFraction >= 0f &&
+                railPaintedFraction != targetScale &&
+                DeckMotionPolicy.shouldAnimate(
+                    animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                    isLaidOut = fill.isLaidOut,
+                )
+            ) {
+                fill.animate().cancel()
+                fill.animate()
+                    .scaleX(targetScale)
+                    .setDuration(GameDeckChromeLogic.RAIL_PROGRESS_ANIM_MS)
+                    .setInterpolator(FOCUS_INTERPOLATOR)
+                    .start()
+            } else {
+                fill.animate().cancel()
+                fill.scaleX = targetScale
+            }
+            railPaintedFraction = targetScale
         }
     }
 
@@ -1479,6 +1513,7 @@ class GameDeck(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             typeface = Typeface.DEFAULT_BOLD
+            fontFeatureSettings = "tnum"
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
@@ -1490,6 +1525,9 @@ class GameDeck(
                 marginEnd = dp(8)
             },
         )
+        val bannerBtnMinH = dp(CarouselMultiSelectLogic.BANNER_BUTTON_MIN_HEIGHT_DP)
+        val chipIdle = TileBackgrounds.chipIdleColor(context)
+        val restingHairline = TileBackgrounds.hairlineDivider(context)
         val allBtn = TextView(context).apply {
             setText(R.string.label_all)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -1498,8 +1536,15 @@ class GameDeck(
             gravity = Gravity.CENTER
             maxLines = 1
             includeFontPadding = false
-            background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 12)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
+            minimumHeight = bannerBtnMinH
+            background = interactivePillBackground(
+                context = context,
+                fillColor = chipIdle,
+                idleStrokeColor = restingHairline,
+                selected = false,
+                cornerRadiusDp = 12,
+            )
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             isClickable = true
             visibility = if (CarouselMultiSelectLogic.showSelectAllPill(
                     state.multiSelectKeys.size,
@@ -1542,8 +1587,15 @@ class GameDeck(
             gravity = Gravity.CENTER
             maxLines = 1
             includeFontPadding = false
-            background = TileBackgrounds.accentPill(context, accent, cornerRadiusDp = 12)
-            setPadding(dp(12), dp(5), dp(12), dp(5))
+            minimumHeight = bannerBtnMinH
+            background = interactivePillBackground(
+                context = context,
+                fillColor = accent,
+                idleStrokeColor = null,
+                selected = true,
+                cornerRadiusDp = 12,
+            )
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             isClickable = true
             setOnClickListener { showBulkActions() }
         }
@@ -1562,8 +1614,15 @@ class GameDeck(
             gravity = Gravity.CENTER
             maxLines = 1
             includeFontPadding = false
-            background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 12)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
+            minimumHeight = bannerBtnMinH
+            background = interactivePillBackground(
+                context = context,
+                fillColor = chipIdle,
+                idleStrokeColor = restingHairline,
+                selected = false,
+                cornerRadiusDp = 12,
+            )
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             isClickable = true
             setOnClickListener {
                 playCue(SoundCue.BACK)
@@ -1737,6 +1796,9 @@ class GameDeck(
         val screenWidthDp = (dm.widthPixels / dm.density.coerceAtLeast(0.5f)).toInt()
         val trackWidthPx = dp(GameDeckChromeLogic.railTrackWidthDp(screenWidthDp))
         val trackHeightPx = dp(3).coerceAtLeast(2)
+        railTrackWidthPx = trackWidthPx
+        railTrackHeightPx = trackHeightPx
+        railPaintedFraction = -1f
         val fillView = View(context).apply {
             background = GradientDrawable().apply {
                 setColor(ThemePack.accentTextColor(settings.accentColor, Color.BLACK))
@@ -1744,6 +1806,7 @@ class GameDeck(
             }
             pivotX = 0f
             scaleX = 0f
+            addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
         }
         railProgressFill = fillView
         val track = FrameLayout(context).apply {
@@ -1763,6 +1826,7 @@ class GameDeck(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
             typeface = Typeface.DEFAULT_BOLD
+            fontFeatureSettings = "tnum"
             maxLines = 1
             includeFontPadding = false
         }
@@ -1771,7 +1835,11 @@ class GameDeck(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = GradientDrawable().apply {
-                setColor(0x99101016.toInt())
+                setColor(
+                    GameDeckChromeLogic.railPillBackgroundColor(
+                        TileBackgrounds.surfaceSunken(context),
+                    ),
+                )
                 cornerRadius = context.dpF(12)
                 setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
             }
@@ -2020,21 +2088,24 @@ class GameDeck(
         animate: Boolean = false,
     ) {
         val tv = handle.view
+        val context = tv.context
+        val accent = settings.accentColor
+        val chipIdle = TileBackgrounds.chipIdleColor(context)
         tv.text = styledLetterLabel(handle.rawLabel, handle.letter, selected)
         tv.setTextColor(
-            if (selected) ThemePack.onFillTextColor(settings.accentColor)
+            if (selected) ThemePack.onFillTextColor(accent)
             else UiDimens.ALPHA_PRIMARY,
         )
         tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         tv.isSelected = selected
-        tv.contentDescription = tv.context.resolveText(
+        tv.contentDescription = context.resolveText(
             LetterJumpMetrics.letterChipAccessibilityText(handle.letter, handle.count, selected),
         )
-        TileBackgrounds.applyChipState(
-            view = tv,
-            selected = selected,
-            accent = settings.accentColor,
-            cornerRadiusDp = LetterJumpMetrics.CHIP_CORNER_RADIUS_DP,
+        handle.pillBg.update(
+            fillColor = if (selected) accent else chipIdle,
+            idleStrokeColor = if (selected) null else TileBackgrounds.hairlineDivider(context),
+            focusedStrokeColor = LetterJumpMetrics.focusStrokeColor(selected, accent, chipIdle),
+            rippleColor = LetterJumpMetrics.rippleColor(selected, accent),
         )
         tv.animate().cancel()
         if (selected && animate && tv.isLaidOut && ValueAnimator.areAnimatorsEnabled()) {
@@ -2211,9 +2282,14 @@ class GameDeck(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(0), dp(12), dp(6))
         }
+        val dm = context.resources.displayMetrics
+        val viewportWidthDp = (dm.widthPixels / dm.density.coerceAtLeast(0.5f)).toInt()
         val chips = mutableListOf<LetterChipHandle>()
         val minW = dp(LetterJumpMetrics.CHIP_MIN_WIDTH_DP)
         val minH = dp(LetterJumpMetrics.CHIP_MIN_HEIGHT_DP)
+        val padH = dp(LetterJumpMetrics.chipHorizontalPaddingDp(viewportWidthDp))
+        val chipIdle = TileBackgrounds.chipIdleColor(context)
+        val restingHairline = TileBackgrounds.hairlineDivider(context)
         buckets.forEachIndexed { i, bucket ->
             if (i > 0) {
                 row.addView(View(context), LinearLayout.LayoutParams(dp(4), 1))
@@ -2224,13 +2300,22 @@ class GameDeck(
             val chipLabel = context.resolveText(
                 LibraryBrowse.labeledChip(dynamicText(letter.toString()), count),
             )
+            val pillBg = buildMutablePillBackground(
+                context = context,
+                fillColor = if (on) settings.accentColor else chipIdle,
+                idleStrokeColor = if (on) null else restingHairline,
+                selected = on,
+                cornerRadiusDp = LetterJumpMetrics.CHIP_CORNER_RADIUS_DP,
+            )
             val chip = TextView(context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                fontFeatureSettings = "tnum"
                 gravity = Gravity.CENTER
                 minWidth = minW
                 minHeight = minH
                 includeFontPadding = false
-                setPadding(dp(10), dp(5), dp(10), dp(5))
+                setPadding(padH, dp(5), padH, dp(5))
+                background = pillBg.ripple
                 setOnClickListener {
                     val idx = GameDeckChromeLogic.firstIndexForLetter(entries, letter) { it.label }
                     val key = entries.getOrNull(idx)?.key ?: return@setOnClickListener
@@ -2239,7 +2324,7 @@ class GameDeck(
                     Toast.makeText(activity, chipLabel, Toast.LENGTH_SHORT).show()
                 }
             }
-            val handle = LetterChipHandle(letter, count, chipLabel, chip)
+            val handle = LetterChipHandle(letter, count, chipLabel, chip, pillBg)
             paintLetterChip(handle, selected = on, animate = false)
             chips.add(handle)
             row.addView(chip)
@@ -5025,6 +5110,9 @@ class GameDeck(
             super.onViewDetachedFromWindow(holder)
             holder.cancelEdgeBump()
             holder.cardFrame.animate().cancel()
+            holder.multiBadge.animate().cancel()
+            holder.multiBadge.scaleX = 1f
+            holder.multiBadge.scaleY = 1f
             holder.rippleForeground.jumpToCurrentState()
             holder.romOverlay.animate().cancel()
         }
@@ -5033,6 +5121,9 @@ class GameDeck(
             super.onViewRecycled(holder)
             holder.cancelEdgeBump()
             holder.cardFrame.animate().cancel()
+            holder.multiBadge.animate().cancel()
+            holder.multiBadge.scaleX = 1f
+            holder.multiBadge.scaleY = 1f
             holder.rippleForeground.jumpToCurrentState()
             holder.romOverlay.animate().cancel()
         }
@@ -5258,6 +5349,7 @@ class GameDeck(
                 background = checkBadgeBg
                 visibility = View.GONE
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
             }
             cardFrame.addView(
                 checkBadge,
@@ -5478,18 +5570,24 @@ class GameDeck(
                 multiSelectEnabled = multiEnabled,
                 multiSelected = multiSelected,
             )
-            if (holder.paintedCheckStyle != checkStyle ||
+            val prevCheckStyle = holder.paintedCheckStyle
+            if (prevCheckStyle != checkStyle ||
                 (checkStyle == CarouselMultiSelectLogic.CardCheckStyle.CHECKED &&
                     holder.paintedCheckAccent != focusStroke)
             ) {
                 val fgPolicy = CarouselCardBadges.cardForegroundPolicy(checkStyle)
                 if (fgPolicy.showMultiSelectOverlay) {
-                    holder.multiSelectOverlay.setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
-                    holder.multiSelectOverlay.setStroke(multiSelectStrokePx, focusStroke)
+                    val overlayColors = CarouselMultiSelectLogic.cardSelectedOverlayColors(
+                        accent = accent,
+                        surfaceFill = selectedSurfaceFill,
+                    )
+                    holder.multiSelectOverlay.setColor(overlayColors.fillColor)
+                    holder.multiSelectOverlay.setStroke(multiSelectStrokePx, overlayColors.strokeColor)
                 } else {
                     holder.multiSelectOverlay.setColor(Color.TRANSPARENT)
                     holder.multiSelectOverlay.setStroke(0, Color.TRANSPARENT)
                 }
+                holder.multiBadge.animate().cancel()
                 when (checkStyle) {
                     CarouselMultiSelectLogic.CardCheckStyle.CHECKED -> {
                         holder.multiBadge.apply {
@@ -5498,16 +5596,39 @@ class GameDeck(
                             visibility = View.VISIBLE
                         }
                         holder.checkBadgeBg.setColor(0xCC000000.toInt())
+                        if (CarouselMultiSelectLogic.shouldPopCheckmark(
+                                previousStyle = prevCheckStyle,
+                                nextStyle = checkStyle,
+                                animate = animate && holder.multiBadge.isLaidOut,
+                                animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                            )
+                        ) {
+                            holder.multiBadge.scaleX = CarouselMultiSelectLogic.CHECK_POP_START_SCALE
+                            holder.multiBadge.scaleY = CarouselMultiSelectLogic.CHECK_POP_START_SCALE
+                            holder.multiBadge.animate()
+                                .scaleX(1f)
+                                .scaleY(1f)
+                                .setDuration(CarouselMultiSelectLogic.CHECK_POP_DURATION_MS)
+                                .setInterpolator(FOCUS_INTERPOLATOR)
+                                .start()
+                        } else {
+                            holder.multiBadge.scaleX = 1f
+                            holder.multiBadge.scaleY = 1f
+                        }
                     }
                     CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED -> {
                         holder.multiBadge.apply {
                             setImageResource(R.drawable.ic_radio_unchecked)
                             setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
+                            scaleX = 1f
+                            scaleY = 1f
                             visibility = View.VISIBLE
                         }
                         holder.checkBadgeBg.setColor(0x99000000.toInt())
                     }
                     CarouselMultiSelectLogic.CardCheckStyle.HIDDEN -> {
+                        holder.multiBadge.scaleX = 1f
+                        holder.multiBadge.scaleY = 1f
                         holder.multiBadge.visibility = View.GONE
                     }
                 }

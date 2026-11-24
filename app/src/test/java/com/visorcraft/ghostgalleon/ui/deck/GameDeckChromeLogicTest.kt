@@ -4,6 +4,7 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -390,5 +391,35 @@ class GameDeckChromeLogicTest {
         assertEquals(220, GameDeckChromeLogic.maxFilterPillLabelWidthDp(960))
         assertTrue(GameDeckChromeLogic.maxFilterPillLabelWidthDp(240) in 120..240)
         assertTrue(GameDeckChromeLogic.maxFilterPillLabelWidthDp(1920) in 120..240)
+    }
+
+    @Test
+    fun `effectiveRailFillFraction guarantees visible minimum on 5000-ROM rails and stays monotonic`() {
+        val trackW = 200
+        val trackH = 6
+        val minExpected = trackH.toFloat() / trackW.toFloat()
+
+        // 1 / 5000 stays clearly visible instead of collapsing to sub-pixel width.
+        val tiny = GameDeckChromeLogic.effectiveRailFillFraction(1f / 5000f, trackW, trackH)
+        assertEquals(minExpected, tiny, 0.0001f)
+        assertTrue(tiny >= minExpected)
+
+        // Monotonic clamping across [min..1f] and zero stays 0f.
+        assertEquals(0f, GameDeckChromeLogic.effectiveRailFillFraction(0f, trackW, trackH), 0.0001f)
+        val mid = GameDeckChromeLogic.effectiveRailFillFraction(0.5f, trackW, trackH)
+        val full = GameDeckChromeLogic.effectiveRailFillFraction(1.0f, trackW, trackH)
+        val overflow = GameDeckChromeLogic.effectiveRailFillFraction(1.5f, trackW, trackH)
+        assertEquals(0.5f, mid, 0.0001f)
+        assertEquals(1.0f, full, 0.0001f)
+        assertEquals(1.0f, overflow, 0.0001f)
+        assertTrue(tiny <= mid && mid <= full)
+
+        // Theme-synced rail pill background preserves sunken RGB with 0xCC alpha across themes.
+        for (pack in ThemePack.BUILTINS) {
+            val sunken = ThemePack.surfaceSunken(pack)
+            val pillBg = GameDeckChromeLogic.railPillBackgroundColor(sunken)
+            assertEquals(sunken and 0x00FFFFFF, pillBg and 0x00FFFFFF)
+            assertEquals(GameDeckChromeLogic.RAIL_PILL_BG_ALPHA, (pillBg ushr 24) and 0xFF)
+        }
     }
 }

@@ -21,6 +21,11 @@ object LetterJumpMetrics {
     /** Rounded pill corner radius (dp) for letter-jump pills. */
     const val CHIP_CORNER_RADIUS_DP: Int = 14
 
+    /** Responsive horizontal chip padding (dp): tighter on Sugar, roomier on Odin. */
+    const val CHIP_PAD_H_COMPACT_DP: Int = 7
+    const val CHIP_PAD_H_WIDE_DP: Int = 10
+    const val COMPACT_VIEWPORT_MAX_DP: Int = 600
+
     /** Relative font scale for the `· N` count suffix next to the bucket letter. */
     const val COUNT_RELATIVE_SIZE: Float = 0.84f
 
@@ -76,5 +81,32 @@ object LetterJumpMetrics {
         if (idx < 0) return if (step >= 0) presentLetters.first() else presentLetters.last()
         val next = (idx + step).coerceIn(0, presentLetters.lastIndex)
         return presentLetters[next]
+    }
+
+    /**
+     * Responsive horizontal padding (dp) for letter-jump pills: `7dp` on compact
+     * Sugar panels (`<= 600dp`) so more letters remain visible at once, and `10dp`
+     * on widescreen handhelds (Odin 2 Portal).
+     */
+    fun chipHorizontalPaddingDp(viewportWidthDp: Int): Int =
+        if (viewportWidthDp <= COMPACT_VIEWPORT_MAX_DP) CHIP_PAD_H_COMPACT_DP else CHIP_PAD_H_WIDE_DP
+
+    /** Touch ripple tint matching browse/filter chips across dark and light accents. */
+    fun rippleColor(selected: Boolean, accentColor: Int): Int =
+        BrowseChipStyleLogic.rippleColor(selected = selected, accentColor = accentColor)
+
+    /**
+     * WCAG-accessible focus ring stroke color for letter-jump pills: lifted to
+     * `>= 3.0:1` over [chipIdle] when unfocused, or high-contrast white/black
+     * (`>= 4.58:1`) over filled [accentColor] when selected.
+     */
+    fun focusStrokeColor(
+        selected: Boolean,
+        accentColor: Int,
+        chipIdle: Int,
+    ): Int = if (selected) {
+        BrowseChipStyleLogic.focusStrokeColor(selected = true, accentColor = accentColor)
+    } else {
+        DeckThemeContrast.accessibleFocusStroke(accentColor, chipIdle)
     }
 }

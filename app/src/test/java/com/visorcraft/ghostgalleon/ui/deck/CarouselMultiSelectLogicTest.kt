@@ -1,10 +1,13 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.i18n.dynamicText
+import com.visorcraft.ghostgalleon.i18n.joinText
 import com.visorcraft.ghostgalleon.i18n.quantityText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.deck.HintBarFormat.TokenKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,14 +61,84 @@ class CarouselMultiSelectLogicTest {
     }
 
     @Test
-    fun `banner tint helpers preserve RGB channels with expected translucent alphas`() {
-        val accent = ThemePack.GHOST.accentColor
-        val fill = CarouselMultiSelectLogic.bannerTintFill(accent)
-        val stroke = CarouselMultiSelectLogic.bannerTintStroke(accent)
-        assertEquals(accent and 0x00FFFFFF, fill and 0x00FFFFFF)
-        assertEquals(accent and 0x00FFFFFF, stroke and 0x00FFFFFF)
-        assertEquals(CarouselMultiSelectLogic.BANNER_FILL_ALPHA, (fill ushr 24) and 0xFF)
-        assertEquals(CarouselMultiSelectLogic.BANNER_STROKE_ALPHA, (stroke ushr 24) and 0xFF)
+    fun `banner tint helpers preserve RGB channels and damp alpha on bright OLED accents`() {
+        val ghost = ThemePack.GHOST.accentColor
+        val ghostFill = CarouselMultiSelectLogic.bannerTintFill(ghost)
+        val ghostStroke = CarouselMultiSelectLogic.bannerTintStroke(ghost)
+        assertEquals(ghost and 0x00FFFFFF, ghostFill and 0x00FFFFFF)
+        assertEquals(ghost and 0x00FFFFFF, ghostStroke and 0x00FFFFFF)
+        assertEquals(CarouselMultiSelectLogic.BANNER_FILL_ALPHA, (ghostFill ushr 24) and 0xFF)
+        assertEquals(CarouselMultiSelectLogic.BANNER_STROKE_ALPHA, (ghostStroke ushr 24) and 0xFF)
+
+        val oled = ThemePack.OLED.accentColor
+        val oledFill = CarouselMultiSelectLogic.bannerTintFill(oled)
+        val oledStroke = CarouselMultiSelectLogic.bannerTintStroke(oled)
+        assertEquals(oled and 0x00FFFFFF, oledFill and 0x00FFFFFF)
+        assertEquals(oled and 0x00FFFFFF, oledStroke and 0x00FFFFFF)
+        assertTrue(((oledFill ushr 24) and 0xFF) < ((ghostFill ushr 24) and 0xFF))
+        assertTrue(((oledStroke ushr 24) and 0xFF) < ((ghostStroke ushr 24) and 0xFF))
+        assertEquals(34, CarouselMultiSelectLogic.BANNER_BUTTON_MIN_HEIGHT_DP)
+    }
+
+    @Test
+    fun `cardSelectedOverlayColors ensures 3 to 1 stroke contrast and damps bright OLED wash`() {
+        for (pack in ThemePack.BUILTINS) {
+            val surface = ThemePack.surfaceElevated(pack)
+            val colors = CarouselMultiSelectLogic.cardSelectedOverlayColors(pack.accentColor, surface)
+            val ratio = ThemePack.contrastRatio(colors.strokeColor, surface)
+            assertTrue(
+                "Multi-select overlay stroke contrast too low ($ratio) on ${pack.id}",
+                ratio >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+            )
+            val fillAlpha = (colors.fillColor ushr 24) and 0xFF
+            assertTrue("Unexpected overlay alpha $fillAlpha on ${pack.id}", fillAlpha in 0x18..0x38)
+        }
+        val ghostOverlay = CarouselMultiSelectLogic.cardSelectedOverlayColors(
+            ThemePack.GHOST.accentColor,
+            ThemePack.surfaceElevated(ThemePack.GHOST),
+        )
+        val oledOverlay = CarouselMultiSelectLogic.cardSelectedOverlayColors(
+            ThemePack.OLED.accentColor,
+            ThemePack.surfaceElevated(ThemePack.OLED),
+        )
+        assertTrue(
+            "OLED overlay fill alpha should be damped below Ghost",
+            ((oledOverlay.fillColor ushr 24) and 0xFF) < ((ghostOverlay.fillColor ushr 24) and 0xFF),
+        )
+
+        // Checkmark pop fires strictly on animated UNCHECKED -> CHECKED transitions.
+        assertTrue(
+            CarouselMultiSelectLogic.shouldPopCheckmark(
+                previousStyle = CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED,
+                nextStyle = CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+                animate = true,
+                animatorsEnabled = true,
+            ),
+        )
+        assertFalse(
+            CarouselMultiSelectLogic.shouldPopCheckmark(
+                previousStyle = CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+                nextStyle = CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+                animate = true,
+                animatorsEnabled = true,
+            ),
+        )
+        assertFalse(
+            CarouselMultiSelectLogic.shouldPopCheckmark(
+                previousStyle = null,
+                nextStyle = CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+                animate = true,
+                animatorsEnabled = true,
+            ),
+        )
+        assertFalse(
+            CarouselMultiSelectLogic.shouldPopCheckmark(
+                previousStyle = CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED,
+                nextStyle = CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+                animate = true,
+                animatorsEnabled = false,
+            ),
+        )
     }
 
     @Test
@@ -108,19 +181,45 @@ class CarouselMultiSelectLogicTest {
     }
 
     @Test
-    fun `multiSelectHintText builds localized summary with clamped non-negative count`() {
+    fun `multiSelectHintText builds keycap-aware prefix and A-B tokens cleanly across locales`() {
         val expected = text(
             R.string.format_dot_pair,
-            text(R.string.format_select_count, 4),
-            text(R.string.format_dot_pair, text(R.string.bulk_actions), text(R.string.action_cancel)),
+            joinText(listOf(text(R.string.format_select_count, 4), dynamicText("A")), " - "),
+            text(
+                R.string.format_dot_pair,
+                text(R.string.bulk_actions),
+                joinText(listOf(dynamicText("B"), text(R.string.action_cancel)), " "),
+            ),
         )
         assertEquals(expected, CarouselMultiSelectLogic.multiSelectHintText(4))
 
         val expectedZero = text(
             R.string.format_dot_pair,
-            text(R.string.format_select_count, 0),
-            text(R.string.format_dot_pair, text(R.string.bulk_actions), text(R.string.action_cancel)),
+            joinText(listOf(text(R.string.format_select_count, 0), dynamicText("A")), " - "),
+            text(
+                R.string.format_dot_pair,
+                text(R.string.bulk_actions),
+                joinText(listOf(dynamicText("B"), text(R.string.action_cancel)), " "),
+            ),
         )
         assertEquals(expectedZero, CarouselMultiSelectLogic.multiSelectHintText(-2))
+
+        // Verify HintBarFormat tokenizes resolved multi-select hints into PREFIX + KEYCAP(A, B) with zero fake keycaps.
+        val resolvedSamples = listOf(
+            "Select (3) - A · Bulk actions · B Cancel" to "Select (3)",
+            "Auswählen (3) - A · Massenaktionen · B Abbrechen" to "Auswählen (3)",
+            "Seleccionar (3) - A · Acciones en lote · B Cancelar" to "Seleccionar (3)",
+            "Sélectionner (3) - A · Actions groupées · B Annuler" to "Sélectionner (3)",
+            "เลือก (3) - A · ดำเนินการหลายรายการ · B ยกเลิก" to "เลือก (3)",
+        )
+        for ((raw, expectedPrefix) in resolvedSamples) {
+            val tokens = HintBarFormat.tokenize(raw)
+            val prefixes = tokens.filter { it.kind == TokenKind.PREFIX }.map { raw.substring(it.start, it.end) }
+            val keycaps = tokens.filter { it.kind == TokenKind.KEYCAP }.map { raw.substring(it.start, it.end) }
+            val actions = tokens.filter { it.kind == TokenKind.ACTION }.map { raw.substring(it.start, it.end) }
+            assertEquals("prefix mismatch for: $raw", listOf(expectedPrefix), prefixes)
+            assertEquals("keycaps mismatch for: $raw", listOf("A", "B"), keycaps)
+            assertEquals("actions count mismatch for: $raw", 2, actions.size)
+        }
     }
 }

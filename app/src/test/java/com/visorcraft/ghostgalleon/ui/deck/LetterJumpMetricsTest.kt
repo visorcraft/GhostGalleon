@@ -6,6 +6,7 @@ import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LetterJumpMetricsTest {
@@ -59,5 +60,44 @@ class LetterJumpMetricsTest {
         assertEquals('#', LetterJumpMetrics.adjacentLetter(letters, null, 1))
         assertEquals('Z', LetterJumpMetrics.adjacentLetter(letters, null, -1))
         assertNull(LetterJumpMetrics.adjacentLetter(emptyList(), 'A', 1))
+    }
+
+    @Test
+    fun `responsive horizontal padding, ripple, and WCAG focus strokes adapt across all themes`() {
+        assertEquals(7, LetterJumpMetrics.chipHorizontalPaddingDp(viewportWidthDp = 540))
+        assertEquals(7, LetterJumpMetrics.chipHorizontalPaddingDp(viewportWidthDp = 600))
+        assertEquals(10, LetterJumpMetrics.chipHorizontalPaddingDp(viewportWidthDp = 860))
+        assertEquals(10, LetterJumpMetrics.chipHorizontalPaddingDp(viewportWidthDp = 960))
+
+        for (pack in ThemePack.BUILTINS) {
+            val idleStroke = LetterJumpMetrics.focusStrokeColor(
+                selected = false,
+                accentColor = pack.accentColor,
+                chipIdle = pack.chipIdle,
+            )
+            val idleRatio = ThemePack.contrastRatio(idleStroke, pack.chipIdle)
+            assertTrue(
+                "Idle letter focus stroke contrast too low ($idleRatio) on ${pack.id}",
+                idleRatio >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+            )
+            val selectedStroke = LetterJumpMetrics.focusStrokeColor(
+                selected = true,
+                accentColor = pack.accentColor,
+                chipIdle = pack.chipIdle,
+            )
+            val selectedRatio = ThemePack.contrastRatio(selectedStroke, pack.accentColor)
+            assertTrue(
+                "Selected letter focus stroke contrast too low ($selectedRatio) on ${pack.id}",
+                selectedRatio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertEquals(
+                BrowseChipStyleLogic.rippleColor(selected = false, accentColor = pack.accentColor),
+                LetterJumpMetrics.rippleColor(selected = false, accentColor = pack.accentColor),
+            )
+            assertEquals(
+                BrowseChipStyleLogic.rippleColor(selected = true, accentColor = pack.accentColor),
+                LetterJumpMetrics.rippleColor(selected = true, accentColor = pack.accentColor),
+            )
+        }
     }
 }
