@@ -3,11 +3,11 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -15,13 +15,17 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.art.ArtTile
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 
 // The dock bar pinned at the bottom edge of BOTH launcher decks: a
 // wrap-content card bar (just wide enough for its visible slots, centered)
@@ -78,11 +82,16 @@ class DockBar(
         return !appByPkg.containsKey(key)
     }
 
-    // [pageDots] is the grid deck's dot strip (null in game mode).
-    fun build(context: Context, pageDots: LinearLayout?): View {
-
-        // Slot frames sized from window metrics (LayoutMetrics clamps) so
-        // a full dock always fits; not a fixed 2160×1080 table.
+    // [pageDots] is kept optional for compatibility (GridDeck now renders page
+    // indicators in a centered strip above the dock so the dock never shifts
+    // sideways between Grid and Game modes).
+    fun build(
+        context: Context,
+        pageDots: LinearLayout? = null,
+        reserveChromeInset: Boolean = false,
+    ): View {
+        // Slot frames sized from window metrics (DockBarMetrics + LayoutMetrics)
+        // so the floating bar fits cleanly and never overlaps Swap/Settings.
         val metrics = context.resources.displayMetrics
         val layout = com.visorcraft.ghostgalleon.display.LayoutMetricsResolver.fromWindow(
             windowWidthPx = metrics.widthPixels,
@@ -93,34 +102,53 @@ class DockBar(
                 ?: com.visorcraft.ghostgalleon.display.SurfaceMode.SINGLE,
             isCompanionRole = false,
         )
-        val screenW = metrics.widthPixels
-        slotSize = minOf(
-            context.dp(layout.suggestedDockSlotDp),
-            (screenW - context.dp(8) * 2) / DockSlots.CAPACITY - context.dp(12),
-        ).coerceAtLeast(context.dp(40))
+        val visibleSlots = DockSlots.visibleCount(slots())
+        val spec = DockBarMetrics.compute(
+            windowWidthPx = metrics.widthPixels,
+            density = metrics.density,
+            suggestedSlotDp = layout.suggestedDockSlotDp,
+            visibleSlots = visibleSlots,
+            hasChromeIcons = reserveChromeInset,
+        )
+        slotSize = spec.slotSizePx
+        val padV = context.dp(8)
 
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = TileBackgrounds.card(context)
-            setPadding(context.dp(8), context.dp(8), context.dp(8), context.dp(8))
+            background = TileBackgrounds.pill(context)
+            setPadding(spec.barPadHPx, padV, spec.barPadHPx, padV)
+            minimumHeight = slotSize + padV * 2
+            clipChildren = false
+            clipToPadding = false
         }
         // Transient move-mode hint (child 0, hidden by default); shown in
-        // place of the slots/page dots while a tile is lifted.
+        // place of the slots while a grid tile is lifted without collapsing
+        // the bar's height.
         val moveHint = TextView(context).apply {
             setText(R.string.deck_hint_move)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(settings.accentColor)
+            setTextColor(
+                ThemePack.accentTextColor(
+                    settings.accentColor,
+                    TileBackgrounds.surfaceColor(context),
+                ),
+            )
             gravity = Gravity.CENTER
+            setPadding(context.dp(12), 0, context.dp(12), 0)
             visibility = View.GONE
         }
         moveHintView = moveHint
         bar.addView(moveHint, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT))
+            slotSize,
+        ))
         slotFrames.clear()
-        repeat(DockSlots.visibleCount(slots())) { index ->
-            val frame = FrameLayout(context)
+        repeat(visibleSlots) { index ->
+            val frame = FrameLayout(context).apply {
+                clipChildren = false
+                clipToPadding = false
+            }
             frame.setOnClickListener { onTap(index) }
             frame.setOnLongClickListener {
                 onLongPress(index)
@@ -129,7 +157,8 @@ class DockBar(
             populate(frame, index)
             slotFrames.add(frame)
             bar.addView(frame, LinearLayout.LayoutParams(slotSize, slotSize).apply {
-                marginStart = context.dp(6); marginEnd = context.dp(6)
+                marginStart = spec.slotMarginHPx
+                marginEnd = spec.slotMarginHPx
             })
         }
         if (pageDots != null) {
@@ -139,22 +168,25 @@ class DockBar(
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         contentView = bar
-        // Wrap-content width (the slots + dots exactly), centered in the
-        // vertical content stack.
+        // Floating wrap-content pill centered horizontally with bottom bezel
+        // breathing room and side insets clear of Swap/Settings chrome icons.
         return bar.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { gravity = Gravity.CENTER_HORIZONTAL }
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                marginStart = spec.sideInsetPx
+                marginEnd = spec.sideInsetPx
+                bottomMargin = spec.bottomMarginPx
+            }
         }
     }
 
-    // One slot's content: app icon / ROM platform tile / dimmed missing
-    // tile / "+" placeholder, centered in the frame. The icon keeps the
-    // old 40/48 ratio of the (screen-derived) slot size.
+    // One slot's content: app icon / ROM cover art (async via ArtTile over
+    // platform placeholder) / dimmed missing tile / recessed "+" placeholder.
     private fun populate(frame: FrameLayout, index: Int) {
         val context = frame.context
-        val density = context.resources.displayMetrics.density
         val iconSize = slotSize * 40 / 48
 
         frame.removeAllViews()
@@ -162,8 +194,14 @@ class DockBar(
         val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
         val content: View = when {
-            romEntry != null -> PlatformTile.view(
-                context, romEntry.platformId, cornerRadiusDp = 12)
+            romEntry != null -> ArtTile.view(
+                context = context,
+                cache = (activity.application as GhostGalleonApp).artCache,
+                rom = romEntry,
+                targetPx = iconSize,
+                cornerRadiusDp = 12,
+                artOverrides = settings.artOverrides,
+            )
             appEntry != null -> ImageView(context).apply {
                 CustomIcon.bind(
                     this, iconLoader,
@@ -175,15 +213,10 @@ class DockBar(
                 cornerRadiusDp = 12).apply { alpha = 0.4f }
             else -> TextView(context).apply {
                 setText(R.string.glyph_add)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                setTextColor(0x44FFFFFF)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                setTextColor(UiDimens.ALPHA_SUBTLE)
                 gravity = Gravity.CENTER
-                // Darker inset tile so the placeholder reads against the
-                // bar's own card fill (same shade as the picker field).
-                background = GradientDrawable().apply {
-                    setColor(0xFF101014.toInt())
-                    cornerRadius = 12 * density
-                }
+                background = TileBackgrounds.blankSlot(context, cornerRadiusDp = 12)
             }
         }
         frame.addView(content, FrameLayout.LayoutParams(
@@ -197,9 +230,9 @@ class DockBar(
         focusPainted = false
     }
 
-    // Moves the accent ring to [focused] (null = no dock focus, ring
-    // returns to the deck content) and pulses the [moving] slot's alpha
-    // while a dock move has it lifted.
+    // Moves the accent ring, subtle scale lift, and elevation to [focused]
+    // (null = no dock focus, ring returns to deck content) and pulses the
+    // [moving] slot's alpha while a dock move has it lifted.
     fun updateFocus(focused: Int?, moving: Int? = null) {
         if (focusPainted && paintedFocus == focused && paintedMoving == moving) {
             return
@@ -210,14 +243,35 @@ class DockBar(
         paintedMoving = moving
         focusPainted = true
         slotFrames.forEachIndexed { index, frame ->
+            val isFocused = index == focused
+            frame.animate().cancel()
             frame.alpha = 1f
-            frame.background = if (index == focused) {
+            frame.background = if (isFocused) {
                 TileBackgrounds.selected(frame.context, settings.accentColor)
             } else {
                 null
             }
+            val targetScale = if (isFocused) FOCUS_SCALE else 1f
+            frame.translationZ = if (isFocused) frame.dpF(6) else 0f
+            if (frame.isLaidOut) {
+                frame.animate()
+                    .scaleX(targetScale)
+                    .scaleY(targetScale)
+                    .setDuration(FOCUS_ANIM_MS)
+                    .setInterpolator(FOCUS_INTERPOLATOR)
+                    .start()
+            } else {
+                frame.scaleX = targetScale
+                frame.scaleY = targetScale
+            }
             if (index == moving) startPulse(frame)
         }
+    }
+
+    private companion object {
+        const val FOCUS_SCALE = 1.08f
+        const val FOCUS_ANIM_MS = 90L
+        val FOCUS_INTERPOLATOR = DecelerateInterpolator()
     }
 
     private fun startPulse(frame: FrameLayout) {

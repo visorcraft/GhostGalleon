@@ -35,8 +35,9 @@ internal fun attachSystemChromeOverlay(
     state: DeckState,
 ) {
     val size = context.dp(40)
-    val edge = context.dp(8)
-    val bottom = context.dp(12)
+    val edge = context.dp(DockBarMetrics.EDGE_MARGIN_DP)
+    // Vertically aligned with the floating dock pill's centerline.
+    val bottom = context.dp(14)
 
     // Swap is a dual-display action; on SINGLE it can only ever toast
     // "only one display" — hide it there instead of teasing a dead button.

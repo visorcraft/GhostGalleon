@@ -791,8 +791,9 @@ class GameDeck(
             content.addView(hints, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // Same dock bar as the grid deck (no page dots in game mode):
-        // NAV DOWN from the carousel focuses it, UP returns.
+        // Same centered floating dock bar as GridDeck (reserving side insets
+        // when Swap/Settings chrome icons share this panel).
+        val hostChromeIcons = shouldHostSystemChromeIcons(activity)
         val bar = DockBar(
             activity, settings, library, iconLoader, roms,
             slots = { dockMove.working ?: settings.dockSlots },
@@ -800,7 +801,7 @@ class GameDeck(
             onLongPress = ::onDockLongPress,
         )
         dockBar = bar
-        content.addView(bar.build(context, pageDots = null))
+        content.addView(bar.build(context, pageDots = null, reserveChromeInset = hostChromeIcons))
         root.addView(content, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // Compact clock/battery overlay (system status bar is hidden).
@@ -817,7 +818,7 @@ class GameDeck(
             root.post { openSearchDialog() }
         }
         // Larger panel only (or single): Swap bottom-left, Settings bottom-right.
-        if (shouldHostSystemChromeIcons(activity)) {
+        if (hostChromeIcons) {
             attachSystemChromeOverlay(root, context, activity, state)
         }
         // A rebuild while the dock holds focus must repaint the ring

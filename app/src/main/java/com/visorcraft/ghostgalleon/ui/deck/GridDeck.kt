@@ -265,51 +265,72 @@ class GridDeck(
         if (delta != 0) grid.scrollListBy(delta)
     }
 
-    // Repaints the existing dot views: current page accent, the rest dimmed.
-    // Page count cannot change on a selection-only update.
+    // Repaints the existing indicator views in place: expanded accent pill for
+    // the current page, compact dim dot for inactive pages.
     private fun updatePageDots() {
         val dots = pageDotsView ?: return
         val geometry = pageGeometry ?: return
+        val density = dots.resources.displayMetrics.density
+        val activeW = (18 * density).toInt()
+        val inactiveW = (6 * density).toInt()
+        val pillH = (6 * density).toInt()
+        val radius = 3 * density
         val currentPage = (selectedIndex() / geometry.cellsPerPage) + 1
         for (i in 0 until dots.childCount) {
             val page = i + 1
-            val color = if (page == currentPage) settings.accentColor else 0x4DFFFFFF
-            val existing = dots.getChildAt(i).background as? GradientDrawable
+            val isCurrent = page == currentPage
+            val color = if (isCurrent) settings.accentColor else 0x4DFFFFFF
+            val dot = dots.getChildAt(i)
+            val existing = dot.background as? GradientDrawable
             if (existing != null) {
+                existing.mutate()
+                existing.cornerRadius = radius
                 existing.setColor(color)
             } else {
-                dots.getChildAt(i).background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
+                dot.background = GradientDrawable().apply {
+                    cornerRadius = radius
                     setColor(color)
                 }
+            }
+            val wantW = if (isCurrent) activeW else inactiveW
+            val lp = dot.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null && (lp.width != wantW || lp.height != pillH)) {
+                lp.width = wantW
+                lp.height = pillH
+                dot.layoutParams = lp
             }
         }
     }
 
-    // One 8dp dot per page: current page in the accent color, the rest
-    // dimmed. A single-page grid needs no dots.
+    // Centered page indicator strip: expanded 18×6dp accent pill for the
+    // current page, 6dp dim dots for the rest. Hidden on a single-page grid.
     private fun buildPageDots(context: Context, dots: LinearLayout, totalPages: Int) {
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
         val cellsPerPage = pageGeometry?.cellsPerPage ?: 1
         val currentPage = (selectedIndex() / cellsPerPage) + 1
+        val radius = 3 * density
         dots.removeAllViews()
         if (totalPages > 1) {
+            dots.visibility = View.VISIBLE
             for (page in 1..totalPages) {
+                val isCurrent = page == currentPage
                 val dot = View(context).apply {
                     background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(
-                            if (page == currentPage) settings.accentColor
-                            else 0x4DFFFFFF
-                        )
+                        cornerRadius = radius
+                        setColor(if (isCurrent) settings.accentColor else 0x4DFFFFFF)
                     }
                 }
                 dots.addView(dot, LinearLayout.LayoutParams(
-                    dp(8), dp(8)).apply {
-                    marginStart = dp(4); marginEnd = dp(4)
+                    dp(if (isCurrent) 18 else 6),
+                    dp(6),
+                ).apply {
+                    marginStart = dp(3)
+                    marginEnd = dp(3)
                 })
             }
+        } else {
+            dots.visibility = View.GONE
         }
     }
 
@@ -450,11 +471,14 @@ class GridDeck(
             clipChildren = false
             clipToPadding = false
         }
-        // Page dots live in the dock bar center; the layout listener below
-        // repopulates them once the page geometry is known.
+        // Slim centered page indicator strip above the dock (hidden when 1 page),
+        // keeping the dock itself identically centered across Grid & Game modes.
+        val dotPadV = (4 * context.resources.displayMetrics.density).toInt()
         val pageDots = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, dotPadV, 0, dotPadV)
+            visibility = View.GONE
         }
         // The frame clips the grid's partial over-drawn bottom row while
         // the grid itself stays unclipped so selected cells can scale over
@@ -469,9 +493,9 @@ class GridDeck(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         content.addView(gridFrame, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        // Bottom stack: HintBar above the dock bar, so the dock sits at the
-        // very bottom edge. The hint text follows focus —
-        // grid actions normally, dock actions while the dock is focused.
+        // Bottom stack: centered page dots -> HintBar -> floating centered dock.
+        content.addView(pageDots, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         if (settings.showHints) {
             val hints = HintBar.build(context) as TextView
             hints.text = HintBar.textFor(activity, state.dockSlot != null)
@@ -479,8 +503,7 @@ class GridDeck(
             content.addView(hints, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // Apps-only dock bar (90% width, centered): fixed slots, "+" for
-        // empties, page dots at the end.
+        val hostChromeIcons = shouldHostSystemChromeIcons(activity)
         val bar = DockBar(
             activity, settings, library, iconLoader, roms,
             slots = { dockMove.working ?: settings.dockSlots },
@@ -488,7 +511,7 @@ class GridDeck(
             onLongPress = ::onDockLongPress,
         )
         dockBar = bar
-        content.addView(bar.build(context, pageDots))
+        content.addView(bar.build(context, pageDots = null, reserveChromeInset = hostChromeIcons))
         root.addView(content, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // Optional clock/battery overlay (Settings → Display & Grid → chrome).
@@ -500,7 +523,7 @@ class GridDeck(
         }
         // Dual: Swap/Settings only on the larger panel, pinned bottom-left /
         // bottom-right so dock+hints never push them mid-screen. Single: same.
-        if (shouldHostSystemChromeIcons(activity)) {
+        if (hostChromeIcons) {
             attachSystemChromeOverlay(root, context, activity, state)
         }
         // A rebuild while the dock holds focus (settings save, mode

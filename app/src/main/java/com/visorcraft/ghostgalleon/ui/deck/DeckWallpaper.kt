@@ -3,7 +3,9 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -12,9 +14,16 @@ import java.util.concurrent.Executors
 
 /**
  * Shared SAF wallpaper load for Grid and Game Mode. Decode off the UI thread;
- * apply only when still attached and [wallpaperUri] unchanged.
+ * apply only when still attached and [wallpaperUri] unchanged. Includes a
+ * lightweight vertical vignette scrim so top chips/status pill and bottom
+ * dock/hint chrome remain crisp over busy user wallpapers.
  */
 object DeckWallpaper {
+
+    /** Vertical vignette stops: dark top/bottom chrome edges, open center. */
+    internal const val SCRIM_TOP: Int = 0xB3000000.toInt()
+    internal const val SCRIM_CENTER: Int = 0x1A000000
+    internal const val SCRIM_BOTTOM: Int = 0xCC000000.toInt()
 
     private val EXECUTOR = Executors.newSingleThreadExecutor()
 
@@ -34,9 +43,19 @@ object DeckWallpaper {
     internal fun cacheSatisfies(cachedUri: String?, wantUri: String): Boolean =
         !wantUri.isBlank() && cachedUri == wantUri
 
+    /** Pure gradient color stops for the wallpaper top/bottom vignette scrim. */
+    internal fun scrimColors(): IntArray = intArrayOf(SCRIM_TOP, SCRIM_CENTER, SCRIM_BOTTOM)
+
+    /** Reusable vertical vignette scrim drawable anchoring top & bottom deck chrome. */
+    fun scrimDrawable(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        scrimColors(),
+    )
+
     /**
-     * Insert a dimmed wallpaper ImageView behind deck content when [uriString]
-     * is non-null. No-op when null/blank (caller keeps solid black / tint).
+     * Insert a dimmed wallpaper ImageView + top/bottom vignette scrim behind
+     * deck content when [uriString] is non-null. No-op when null/blank
+     * (caller keeps solid black / tint).
      */
     fun attachIfConfigured(
         root: FrameLayout,
@@ -50,8 +69,28 @@ object DeckWallpaper {
             this.alpha = alpha
             setBackgroundColor(Color.BLACK)
         }
+        val scrimView = View(context).apply {
+            background = scrimDrawable()
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val layer = FrameLayout(context).apply {
+            addView(
+                wallpaperView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                scrimView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
         root.addView(
-            wallpaperView,
+            layer,
             0,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,

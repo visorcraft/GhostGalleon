@@ -369,9 +369,27 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         val displayId = currentDisplayId()
         if (shouldRenderOnCreate() && displayId != null) {
             if (DualPaintPolicy.holdFirstPaintUntilReady(app.romIndexReady)) {
-                setContentView(FrameLayout(this).apply {
+                val holdRoot = FrameLayout(this).apply {
                     setBackgroundColor(0xFF000000.toInt())
-                })
+                }
+                val crestSize = dp(96)
+                val crest = android.widget.ImageView(this).apply {
+                    setImageResource(R.drawable.ic_brand_ship)
+                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    alpha = 0.28f
+                    val mono = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+                    colorFilter = android.graphics.ColorMatrixColorFilter(mono)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                holdRoot.addView(
+                    crest,
+                    FrameLayout.LayoutParams(
+                        crestSize,
+                        crestSize,
+                        android.view.Gravity.CENTER,
+                    ),
+                )
+                setContentView(holdRoot)
                 app.whenRomIndexReady {
                     if (!isFinishing && !isDestroyed) {
                         renderFromState("library-ready")
