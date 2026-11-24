@@ -3,6 +3,7 @@ package com.visorcraft.ghostgalleon.audio
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.log10
 import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.math.sqrt
@@ -29,6 +30,15 @@ object AudioMastering {
     const val DEFAULT_TARGET_RMS: Double = 0.16
     const val MIN_FADE_IN_MS: Double = 1.5
     const val MIN_FADE_OUT_MS: Double = 4.0
+
+    /** Floor returned by [computePerceivedLoudnessDb] for empty or completely silent buffers. */
+    const val SILENCE_LOUDNESS_DB: Double = -120.0
+
+    /** Perceptual K-weighting / compact-speaker loudness weighting filter anchors. */
+    private const val PERCEPTUAL_HPF_HZ: Double = 140.0
+    private const val PERCEPTUAL_PRESENCE_HZ: Double = 1_800.0
+    private const val PERCEPTUAL_PRESENCE_Q: Double = 0.65
+    private const val PERCEPTUAL_PRESENCE_GAIN_DB: Double = 3.5
 
     data class MasteringConfig(
         val highPassHz: Double = DEFAULT_HIGH_PASS_HZ,
@@ -163,6 +173,108 @@ object AudioMastering {
             if (s.isFinite()) sum += s
         }
         return sum / samples.size
+    }
+
+    /**
+     * Computes K-weighted / handheld-speaker perceived loudness in dB (`dBFS`-referenced)
+     * using a 2-stage perceptual biquad cascade:
+     * 1. `140 Hz` Butterworth high-pass rolling off sub-bass where human equal-loudness
+     *    contours and compact handheld speakers lose sensitivity.
+     * 2. `+3.5 dB` presence peaking filter centered at `1,800 Hz` (`Q = 0.65`) matching
+     *    ITU-R BS.1770 / ear-canal sensitivity across `400 Hz – 4 kHz`.
+     *
+     * Returns [SILENCE_LOUDNESS_DB] (`-120.0`) for empty or silent buffers.
+     */
+    fun computePerceivedLoudnessDb(
+        samples: DoubleArray,
+        sampleRate: Int = AudioDsp.SAMPLE_RATE,
+    ): Double {
+        require(sampleRate >= 8000) { "sampleRate must be >= 8000 Hz, got $sampleRate" }
+        if (samples.isEmpty()) return SILENCE_LOUDNESS_DB
+
+        val hpf = AudioDsp.BiquadFilter.highPass(
+            cutoffHz = PERCEPTUAL_HPF_HZ,
+            q = AudioDsp.BiquadFilter.BUTTERWORTH_Q,
+            sampleRate = sampleRate,
+        )
+        val presence = AudioDsp.BiquadFilter.peakingEq(
+            centerHz = PERCEPTUAL_PRESENCE_HZ,
+            q = PERCEPTUAL_PRESENCE_Q,
+            gainDb = PERCEPTUAL_PRESENCE_GAIN_DB,
+            sampleRate = sampleRate,
+        )
+
+        var sumSq = 0.0
+        for (s in samples) {
+            val safe = if (s.isFinite()) s else 0.0
+            val w = presence.processSample(hpf.processSample(safe))
+            sumSq += w * w
+        }
+        val weightedRms = sqrt(sumSq / samples.size)
+        if (!weightedRms.isFinite() || weightedRms <= 1e-6) return SILENCE_LOUDNESS_DB
+        return (20.0 * log10(weightedRms)).coerceAtLeast(SILENCE_LOUDNESS_DB)
+    }
+
+    /** Convenience overload computing perceived loudness in dB for signed 16-bit PCM [samples]. */
+    fun computePerceivedLoudnessDb(
+        samples: ShortArray,
+        sampleRate: Int = AudioDsp.SAMPLE_RATE,
+    ): Double {
+        if (samples.isEmpty()) return SILENCE_LOUDNESS_DB
+        val normalized = DoubleArray(samples.size) { i -> samples[i].toDouble() / 32767.0 }
+        return computePerceivedLoudnessDb(normalized, sampleRate)
+    }
+
+    /**
+     * Measures fraction (`0.0..1.0`) of signal energy residing below [cutoffHz] (default `110 Hz`).
+     * Used to verify handheld micro-speaker sub-bass rattle rejection.
+     */
+    fun computeSubBassEnergyRatio(
+        samples: DoubleArray,
+        cutoffHz: Double = DEFAULT_HIGH_PASS_HZ,
+        sampleRate: Int = AudioDsp.SAMPLE_RATE,
+    ): Double {
+        if (samples.isEmpty()) return 0.0
+        val lp = AudioDsp.BiquadFilter.lowPass(
+            cutoffHz = cutoffHz,
+            q = AudioDsp.BiquadFilter.BUTTERWORTH_Q,
+            sampleRate = sampleRate,
+        )
+        var total = 0.0
+        var low = 0.0
+        for (s in samples) {
+            val safe = if (s.isFinite()) s else 0.0
+            val f = lp.processSample(safe)
+            total += safe * safe
+            low += f * f
+        }
+        return if (total > 1e-12) (low / total).coerceIn(0.0, 1.0) else 0.0
+    }
+
+    /**
+     * Measures fraction (`0.0..1.0`) of signal energy residing above [cutoffHz] (default `10 kHz`).
+     * Used to verify control of harsh ultrasonic sibilance on compact drivers.
+     */
+    fun computeHighBandEnergyRatio(
+        samples: DoubleArray,
+        cutoffHz: Double = 10_000.0,
+        sampleRate: Int = AudioDsp.SAMPLE_RATE,
+    ): Double {
+        if (samples.isEmpty()) return 0.0
+        val hp = AudioDsp.BiquadFilter.highPass(
+            cutoffHz = cutoffHz,
+            q = AudioDsp.BiquadFilter.BUTTERWORTH_Q,
+            sampleRate = sampleRate,
+        )
+        var total = 0.0
+        var high = 0.0
+        for (s in samples) {
+            val safe = if (s.isFinite()) s else 0.0
+            val f = hp.processSample(safe)
+            total += safe * safe
+            high += f * f
+        }
+        return if (total > 1e-12) (high / total).coerceIn(0.0, 1.0) else 0.0
     }
 
     private fun removeDcInPlace(buf: DoubleArray) {

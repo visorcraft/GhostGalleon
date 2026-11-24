@@ -104,19 +104,19 @@ object AmbientSynthesizer {
         val (targetRms, highPassHz, lowPassHz) = when (resolved) {
             SoundPackId.GHOST, SoundPackId.AUTO, SoundPackId.OFF -> {
                 renderGhostHarbor(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.068, 85.0, 4_800.0)
+                Triple(0.068, 105.0, 4_800.0)
             }
             SoundPackId.THREEDS -> {
                 renderThreeDsHorizon(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.064, 100.0, 5_600.0)
+                Triple(0.064, 110.0, 5_600.0)
             }
             SoundPackId.OLED -> {
                 renderOledMidnightHush(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.048, 85.0, 2_200.0)
+                Triple(0.048, 150.0, 2_200.0)
             }
             SoundPackId.NEON -> {
                 renderNeonSynthDrone(left, right, exactDur, sampleRate, noiseL, noiseR)
-                Triple(0.074, 90.0, 6_800.0)
+                Triple(0.074, 105.0, 6_800.0)
             }
         }
 
@@ -278,7 +278,7 @@ object AmbientSynthesizer {
         noiseR: AudioDsp.SeededNoise,
     ) {
         val n = left.size
-        // 1. Ultra-gentle dark brownian/low-pass midnight room air
+        // 1. Ultra-gentle dark brownian/low-pass midnight room air (cleanly above micro-speaker rattle band)
         addSeamlessOceanNoise(
             left = left,
             right = right,
@@ -286,13 +286,13 @@ object AmbientSynthesizer {
             sr = sr,
             noiseL = noiseL,
             noiseR = noiseR,
-            baseHz = 210.0,
+            baseHz = 250.0,
             sweepHz = 55.0,
-            q = 0.75,
+            q = 0.85,
             swellCycles = 1,
             panCycles = 1,
             panDepth = 0.14,
-            amp = 0.56,
+            amp = 0.52,
             brownian = true,
         )
 

@@ -134,10 +134,10 @@ object SoundPackRecipes {
     val OLED_PROFILE = PackAcousticProfile(
         pack = SoundPackId.OLED,
         lowPassHz = 6_200.0,
-        highPassHz = 120.0,
+        highPassHz = 125.0,
         defaultRoomStyle = RoomStyle.WHISPER_DRY,
         baseRoomMix = 0.03,
-        rmsScale = 0.62,
+        rmsScale = 0.70,
         fadeInMs = 1.5,
         fadeOutMs = 4.2,
     )
@@ -148,7 +148,7 @@ object SoundPackRecipes {
         highPassHz = AudioMastering.DEFAULT_HIGH_PASS_HZ,
         defaultRoomStyle = RoomStyle.ARCADE_PLATE,
         baseRoomMix = 0.10,
-        rmsScale = 1.08,
+        rmsScale = 0.96,
         fadeInMs = 1.5,
         fadeOutMs = 5.0,
     )
@@ -193,11 +193,11 @@ object SoundPackRecipes {
             }
 
             SoundCue.NAV_EDGE_BUMP -> {
-                // Deep oak hull thud with warm resonant timber rib
+                // Deep oak hull thud with warm resonant timber rib (above handheld micro-speaker rattle band)
                 val buf = alloc(0.098, sr)
-                addOakKnock(buf, sr, noise, 0.0, 0.086, bodyStartHz = 212.0, bodyEndHz = 136.0, woodCenterHz = 390.0, bodyTauSec = 0.028, amp = 0.96)
-                addPureGlide(buf, sr, 0.015, 0.056, 315.0, 212.0, 0.002, 0.018, secondHarmonic = 0.14, amp = 0.36)
-                cue(buf, 0.145, RoomStyle.NAUTICAL_CHAMBER, 0.12, p)
+                addOakKnock(buf, sr, noise, 0.0, 0.086, bodyStartHz = 224.0, bodyEndHz = 152.0, woodCenterHz = 410.0, bodyTauSec = 0.026, amp = 0.96)
+                addPureGlide(buf, sr, 0.015, 0.056, 325.0, 224.0, 0.002, 0.018, secondHarmonic = 0.14, amp = 0.36)
+                cue(buf, 0.140, RoomStyle.NAUTICAL_CHAMBER, 0.12, p)
             }
 
             SoundCue.NAV_PAGE_TURN -> {
@@ -688,14 +688,14 @@ object SoundPackRecipes {
                 val buf = alloc(0.024, sr)
                 addPureGlide(buf, sr, 0.0, 0.022, 920.0, 740.0, attackSec = 0.0012, decayTauSec = 0.0046, secondHarmonic = 0.04, amp = 0.92)
                 addNoiseBurst(buf, sr, noise, 0.0, 0.004, 1850.0, q = 2.6, amp = 0.09, pink = true)
-                cue(buf, 0.072, RoomStyle.NONE, 0.0, p, fadeInMs = 1.5, fadeOutMs = 4.0)
+                cue(buf, 0.082, RoomStyle.NONE, 0.0, p, fadeInMs = 1.5, fadeOutMs = 4.0)
             }
 
             SoundCue.NAV_EDGE_BUMP -> {
-                // Whisper-gentle edge thump (velvet pure-sine cushion, zero harsh click)
+                // Whisper-gentle edge thump (velvet pure-sine cushion tuned cleanly above micro-speaker rattle band)
                 val buf = alloc(0.052, sr)
-                addPureGlide(buf, sr, 0.0, 0.048, 178.0, 134.0, attackSec = 0.003, decayTauSec = 0.013, secondHarmonic = 0.03, amp = 0.94)
-                cue(buf, 0.080, RoomStyle.NONE, 0.0, p, fadeInMs = 1.6, fadeOutMs = 4.5)
+                addPureGlide(buf, sr, 0.0, 0.048, 220.0, 162.0, attackSec = 0.003, decayTauSec = 0.013, secondHarmonic = 0.04, amp = 0.94)
+                cue(buf, 0.094, RoomStyle.NONE, 0.0, p, fadeInMs = 1.6, fadeOutMs = 4.5)
             }
 
             SoundCue.NAV_PAGE_TURN -> {
@@ -703,7 +703,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.078, sr)
                 addNoiseSweep(buf, sr, noise, 0.0, 0.068, 520.0, 1320.0, q = 1.2, amp = 0.16, pink = true)
                 addPureGlide(buf, sr, 0.006, 0.068, F4, C5, attackSec = 0.008, decayTauSec = 0.022, secondHarmonic = 0.03, amp = 0.74)
-                cue(buf, 0.078, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.090, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.DOCK_ENTER -> {
@@ -711,7 +711,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.066, sr)
                 addPureGlide(buf, sr, 0.0, 0.034, C5, C5, 0.002, 0.012, secondHarmonic = 0.03, amp = 0.68)
                 addPureGlide(buf, sr, 0.020, 0.044, F4, F4, 0.002, 0.016, secondHarmonic = 0.03, amp = 0.84)
-                cue(buf, 0.080, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.092, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.DOCK_EXIT -> {
@@ -719,7 +719,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.066, sr)
                 addPureGlide(buf, sr, 0.0, 0.034, F4, F4, 0.002, 0.012, secondHarmonic = 0.03, amp = 0.68)
                 addPureGlide(buf, sr, 0.020, 0.044, C5, C5, 0.002, 0.016, secondHarmonic = 0.03, amp = 0.84)
-                cue(buf, 0.080, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.092, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.CONFIRM -> {
@@ -728,7 +728,7 @@ object SoundPackRecipes {
                 addPureGlide(buf, sr, 0.0, 0.078, F4, F4, 0.002, 0.026, secondHarmonic = 0.04, amp = 0.82)
                 addPureGlide(buf, sr, 0.012, 0.070, C5, C5, 0.002, 0.024, secondHarmonic = 0.04, amp = 0.68)
                 addNoiseBurst(buf, sr, noise, 0.0, 0.003, 1900.0, q = 2.5, amp = 0.05, pink = true)
-                cue(buf, 0.090, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.106, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.LAUNCH_GAME -> {
@@ -741,7 +741,7 @@ object SoundPackRecipes {
                     val s = starts[i]
                     addPureGlide(buf, sr, s, (0.270 - s).coerceAtLeast(0.09), notes[i], notes[i], 0.008, 0.072, secondHarmonic = 0.04, amp = amps[i])
                 }
-                cue(buf, 0.105, RoomStyle.WHISPER_DRY, 0.03, p)
+                cue(buf, 0.124, RoomStyle.WHISPER_DRY, 0.03, p)
             }
 
             SoundCue.LAUNCH_APP -> {
@@ -750,14 +750,14 @@ object SoundPackRecipes {
                 addPureGlide(buf, sr, 0.0, 0.120, F4, F4, 0.005, 0.042, secondHarmonic = 0.03, amp = 0.74)
                 addPureGlide(buf, sr, 0.036, 0.130, C5, C5, 0.005, 0.048, secondHarmonic = 0.03, amp = 0.80)
                 addPureGlide(buf, sr, 0.074, 0.105, F5, F5, 0.005, 0.042, secondHarmonic = 0.04, amp = 0.64)
-                cue(buf, 0.098, RoomStyle.WHISPER_DRY, 0.02, p)
+                cue(buf, 0.118, RoomStyle.WHISPER_DRY, 0.02, p)
             }
 
             SoundCue.BACK -> {
                 // Minimalist downward pure-sine sigh (A4 -> F4)
                 val buf = alloc(0.068, sr)
                 addPureGlide(buf, sr, 0.0, 0.062, A4, F4, 0.0025, 0.019, secondHarmonic = 0.03, amp = 0.84)
-                cue(buf, 0.082, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.098, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.SWAP_DISPLAY -> {
@@ -766,7 +766,7 @@ object SoundPackRecipes {
                 addPureGlide(buf, sr, 0.0, 0.128, F4, C5, 0.008, 0.046, secondHarmonic = 0.03, amp = 0.70)
                 addPureGlide(buf, sr, 0.024, 0.118, C5, G4, 0.008, 0.044, secondHarmonic = 0.03, amp = 0.66)
                 addNoiseSweep(buf, sr, noise, 0.0, 0.110, 680.0, 1480.0, q = 1.4, amp = 0.09, pink = true)
-                cue(buf, 0.092, RoomStyle.WHISPER_DRY, 0.02, p)
+                cue(buf, 0.108, RoomStyle.WHISPER_DRY, 0.02, p)
             }
 
             SoundCue.MODE_TOGGLE -> {
@@ -775,7 +775,7 @@ object SoundPackRecipes {
                 addNoiseBurst(buf, sr, noise, 0.0, 0.005, 1800.0, q = 2.4, amp = 0.08, pink = true)
                 addPureGlide(buf, sr, 0.006, 0.072, F4, F4, 0.003, 0.026, secondHarmonic = 0.03, amp = 0.72)
                 addPureGlide(buf, sr, 0.044, 0.082, C5, C5, 0.003, 0.030, secondHarmonic = 0.04, amp = 0.78)
-                cue(buf, 0.092, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.108, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.MODAL_OPEN -> {
@@ -784,7 +784,7 @@ object SoundPackRecipes {
                 addPureGlide(buf, sr, 0.0, 0.090, F4, F4, 0.014, 0.032, secondHarmonic = 0.02, amp = 0.72)
                 addPureGlide(buf, sr, 0.020, 0.074, C5, C5, 0.012, 0.028, secondHarmonic = 0.02, amp = 0.58)
                 addNoiseSweep(buf, sr, noise, 0.0, 0.070, 560.0, 1100.0, q = 1.2, amp = 0.07, pink = true)
-                cue(buf, 0.084, RoomStyle.WHISPER_DRY, 0.03, p)
+                cue(buf, 0.100, RoomStyle.WHISPER_DRY, 0.03, p)
             }
 
             SoundCue.MODAL_CLOSE -> {
@@ -792,7 +792,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.086, sr)
                 addPureGlide(buf, sr, 0.0, 0.058, C5, C5, 0.005, 0.020, secondHarmonic = 0.02, amp = 0.60)
                 addPureGlide(buf, sr, 0.018, 0.064, F4, F4, 0.006, 0.024, secondHarmonic = 0.02, amp = 0.72)
-                cue(buf, 0.080, RoomStyle.WHISPER_DRY, 0.02, p)
+                cue(buf, 0.096, RoomStyle.WHISPER_DRY, 0.02, p)
             }
 
             SoundCue.FAVORITE_ON -> {
@@ -801,7 +801,7 @@ object SoundPackRecipes {
                 addPureGlide(buf, sr, 0.0, 0.105, C5, C5, 0.003, 0.036, secondHarmonic = 0.04, amp = 0.74)
                 addPureGlide(buf, sr, 0.042, 0.114, F5, F5, 0.003, 0.042, secondHarmonic = 0.05, amp = 0.84)
                 addPureGlide(buf, sr, 0.072, 0.084, A5, A5, 0.004, 0.032, secondHarmonic = 0.03, amp = 0.36)
-                cue(buf, 0.096, RoomStyle.WHISPER_DRY, 0.03, p)
+                cue(buf, 0.112, RoomStyle.WHISPER_DRY, 0.03, p)
             }
 
             SoundCue.FAVORITE_OFF -> {
@@ -809,29 +809,29 @@ object SoundPackRecipes {
                 val buf = alloc(0.105, sr)
                 addPureGlide(buf, sr, 0.0, 0.062, C5, C5, 0.003, 0.022, secondHarmonic = 0.02, amp = 0.64)
                 addPureGlide(buf, sr, 0.032, 0.068, G4, G4, 0.004, 0.024, secondHarmonic = 0.02, amp = 0.72)
-                cue(buf, 0.080, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.096, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.MOVE_PICKUP -> {
                 // Minimal precision lift (F4 -> C5 pure-sine glide)
                 val buf = alloc(0.082, sr)
                 addPureGlide(buf, sr, 0.0, 0.076, F4, C5, 0.0025, 0.024, secondHarmonic = 0.03, amp = 0.84)
-                cue(buf, 0.086, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.102, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.MOVE_SWAP -> {
                 // Tight sub-40ms micro-shift click (580 -> 670 Hz pure sine)
                 val buf = alloc(0.036, sr)
                 addPureGlide(buf, sr, 0.0, 0.032, 580.0, 670.0, 0.0016, 0.009, secondHarmonic = 0.03, amp = 0.86)
-                cue(buf, 0.076, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
+                cue(buf, 0.088, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
             }
 
             SoundCue.MOVE_DROP -> {
-                // Soft damped pure-sine settle (C5 -> F4 + gentle 185 Hz cushion)
+                // Soft damped pure-sine settle (C5 -> F4 + gentle 205 Hz cushion)
                 val buf = alloc(0.090, sr)
                 addPureGlide(buf, sr, 0.0, 0.078, C5, F4, 0.002, 0.024, secondHarmonic = 0.03, amp = 0.78)
-                addPureGlide(buf, sr, 0.010, 0.072, 185.0, 148.0, 0.003, 0.024, secondHarmonic = 0.02, amp = 0.46)
-                cue(buf, 0.090, RoomStyle.NONE, 0.0, p)
+                addPureGlide(buf, sr, 0.010, 0.072, 210.0, 165.0, 0.003, 0.024, secondHarmonic = 0.02, amp = 0.46)
+                cue(buf, 0.104, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.DESTRUCTIVE -> {
@@ -839,7 +839,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.148, sr)
                 addPureGlide(buf, sr, 0.0, 0.068, G4, F4, 0.003, 0.024, secondHarmonic = 0.03, amp = 0.78)
                 addPureGlide(buf, sr, 0.056, 0.086, D4, C4, 0.003, 0.030, secondHarmonic = 0.03, amp = 0.84)
-                cue(buf, 0.092, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.108, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.FILTER_SELECT -> {
@@ -847,7 +847,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.048, sr)
                 addPureGlide(buf, sr, 0.0, 0.042, C5, C5, 0.0015, 0.013, secondHarmonic = 0.04, amp = 0.80)
                 addPureGlide(buf, sr, 0.005, 0.036, G5, G5, 0.0018, 0.011, secondHarmonic = 0.02, amp = 0.34)
-                cue(buf, 0.078, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
+                cue(buf, 0.094, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
             }
 
             SoundCue.ERROR_DENY -> {
@@ -855,7 +855,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.128, sr)
                 addPureGlide(buf, sr, 0.0, 0.052, E4, E4, 0.003, 0.017, secondHarmonic = 0.05, amp = 0.78)
                 addPureGlide(buf, sr, 0.056, 0.066, D4, D4, 0.003, 0.022, secondHarmonic = 0.05, amp = 0.84)
-                cue(buf, 0.090, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.106, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.BOOT_CHIME -> {
@@ -872,7 +872,7 @@ object SoundPackRecipes {
                     val rem = (dur - s).coerceAtLeast(0.12)
                     addPureGlide(buf, sr, s, rem, notes[i], notes[i], 0.010, rem * 0.34, secondHarmonic = 0.04, amp = amps[i])
                 }
-                cue(buf, 0.106, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.5)
+                cue(buf, 0.126, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.5)
             }
 
             SoundCue.RA_ACHIEVEMENT -> {
@@ -889,7 +889,7 @@ object SoundPackRecipes {
                     addPureGlide(buf, sr, s, rem, notes[i], notes[i], 0.004, taus[i], secondHarmonic = 0.05, amp = amps[i])
                 }
                 addPureGlide(buf, sr, 0.250, dur - 0.250, A5, A5, 0.006, 0.135, secondHarmonic = 0.03, amp = 0.38)
-                cue(buf, 0.112, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.0)
+                cue(buf, 0.132, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.0)
             }
 
             SoundCue.SETUP_COMPLETE -> {
@@ -904,7 +904,7 @@ object SoundPackRecipes {
                     val rem = (dur - s).coerceAtLeast(0.11)
                     addPureGlide(buf, sr, s, rem, notes[i], notes[i], 0.006, 0.110, secondHarmonic = 0.04, amp = amps[i])
                 }
-                cue(buf, 0.104, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.0)
+                cue(buf, 0.122, RoomStyle.WHISPER_DRY, 0.04, p, fadeOutMs = 6.0)
             }
         }
     }
@@ -917,19 +917,19 @@ object SoundPackRecipes {
         val p = NEON_PROFILE
         return when (cue) {
             SoundCue.NAV_TICK -> {
-                // Punchy band-limited 25% pulse + crisp 2-op FM blip
+                // Punchy band-limited 25% pulse + crisp 2-op FM blip (K-weighted calibrated for fatigue-free browsing)
                 val buf = alloc(0.030, sr)
                 addRetroPulse(buf, sr, 0.0, 0.026, 1175.0, 1340.0, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.0075, amp = 0.66)
                 addRetroFm(buf, sr, 0.0, 0.024, 1318.5, modRatio = 3.0, startModIndex = 2.0, endModIndex = 0.35, attackSec = 0.0010, decayTauSec = 0.0065, amp = 0.60)
-                cue(buf, 0.145, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
+                cue(buf, 0.106, RoomStyle.NONE, 0.0, p, fadeOutMs = 4.2)
             }
 
             SoundCue.NAV_EDGE_BUMP -> {
                 // Retro square-pulse + FM arcade wall bump
                 val buf = alloc(0.078, sr)
-                addRetroPulse(buf, sr, 0.0, 0.070, 270.0, 148.0, duty = 0.50, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.022, amp = 0.68)
+                addRetroPulse(buf, sr, 0.0, 0.070, 270.0, 152.0, duty = 0.50, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.022, amp = 0.68)
                 addRetroFm(buf, sr, 0.0, 0.062, 240.0, modRatio = 1.5, startModIndex = 1.8, endModIndex = 0.4, attackSec = 0.0015, decayTauSec = 0.018, amp = 0.54)
-                cue(buf, 0.158, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.130, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.NAV_PAGE_TURN -> {
@@ -939,7 +939,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.044, E5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.016, amp = 0.58)
                 addRetroPulse(buf, sr, 0.026, 0.048, GS5, GS5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.018, amp = 0.62)
                 addRetroFm(buf, sr, 0.052, 0.060, B5, modRatio = 2.0, startModIndex = 1.7, endModIndex = 0.3, attackSec = 0.0012, decayTauSec = 0.024, amp = 0.68)
-                cue(buf, 0.155, RoomStyle.ARCADE_PLATE, 0.10, p)
+                cue(buf, 0.120, RoomStyle.ARCADE_PLATE, 0.10, p)
             }
 
             SoundCue.DOCK_ENTER -> {
@@ -947,7 +947,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.088, sr)
                 addRetroPulse(buf, sr, 0.0, 0.042, B5, B5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.015, amp = 0.62)
                 addRetroFm(buf, sr, 0.026, 0.058, E5, modRatio = 2.0, startModIndex = 1.8, endModIndex = 0.35, attackSec = 0.0012, decayTauSec = 0.020, amp = 0.78)
-                cue(buf, 0.152, RoomStyle.ARCADE_PLATE, 0.08, p)
+                cue(buf, 0.120, RoomStyle.ARCADE_PLATE, 0.08, p)
             }
 
             SoundCue.DOCK_EXIT -> {
@@ -955,7 +955,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.088, sr)
                 addRetroPulse(buf, sr, 0.0, 0.042, E5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.015, amp = 0.62)
                 addRetroFm(buf, sr, 0.026, 0.058, B5, modRatio = 2.0, startModIndex = 1.8, endModIndex = 0.35, attackSec = 0.0012, decayTauSec = 0.020, amp = 0.78)
-                cue(buf, 0.152, RoomStyle.ARCADE_PLATE, 0.08, p)
+                cue(buf, 0.120, RoomStyle.ARCADE_PLATE, 0.08, p)
             }
 
             SoundCue.CONFIRM -> {
@@ -965,7 +965,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.022, 0.058, GS5, GS5, duty = 0.25, maxHarmonics = 10, attackSec = 0.0012, decayTauSec = 0.022, amp = 0.70)
                 addRetroPulse(buf, sr, 0.044, 0.076, B5, B5, duty = 0.125, maxHarmonics = 10, attackSec = 0.0012, decayTauSec = 0.030, amp = 0.62)
                 addRetroFm(buf, sr, 0.044, 0.076, B5, modRatio = 2.0, startModIndex = 2.1, endModIndex = 0.4, attackSec = 0.0012, decayTauSec = 0.032, amp = 0.72)
-                cue(buf, 0.175, RoomStyle.ARCADE_PLATE, 0.10, p)
+                cue(buf, 0.150, RoomStyle.ARCADE_PLATE, 0.10, p)
             }
 
             SoundCue.LAUNCH_GAME -> {
@@ -982,7 +982,7 @@ object SoundPackRecipes {
                     addRetroFm(buf, sr, s, rem, arp[i], modRatio = 2.0, startModIndex = 2.0, endModIndex = 0.35, attackSec = 0.0015, decayTauSec = 0.088, amp = amps[i] * 0.66)
                 }
                 addLaserSweep(buf, sr, 0.02, 0.18, 620.0, 2900.0, amp = 0.24)
-                cue(buf, 0.200, RoomStyle.ARCADE_PLATE, 0.12, p)
+                cue(buf, 0.182, RoomStyle.ARCADE_PLATE, 0.12, p)
             }
 
             SoundCue.LAUNCH_APP -> {
@@ -996,7 +996,7 @@ object SoundPackRecipes {
                     addRetroPulse(buf, sr, s, rem * 0.8, notes[i], notes[i], duty = 0.25, maxHarmonics = 9, attackSec = 0.0014, decayTauSec = 0.046, amp = 0.56)
                     addRetroFm(buf, sr, s, rem, notes[i], modRatio = 2.0, startModIndex = 1.8, endModIndex = 0.3, attackSec = 0.0015, decayTauSec = 0.056, amp = 0.62)
                 }
-                cue(buf, 0.185, RoomStyle.ARCADE_PLATE, 0.10, p)
+                cue(buf, 0.168, RoomStyle.ARCADE_PLATE, 0.10, p)
             }
 
             SoundCue.BACK -> {
@@ -1005,7 +1005,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.042, GS5, GS5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.015, amp = 0.64)
                 addRetroPulse(buf, sr, 0.024, 0.062, E5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.022, amp = 0.72)
                 addRetroFm(buf, sr, 0.024, 0.062, E5, modRatio = 2.0, startModIndex = 1.5, endModIndex = 0.3, attackSec = 0.0012, decayTauSec = 0.022, amp = 0.50)
-                cue(buf, 0.155, RoomStyle.ARCADE_PLATE, 0.08, p)
+                cue(buf, 0.136, RoomStyle.ARCADE_PLATE, 0.08, p)
             }
 
             SoundCue.SWAP_DISPLAY -> {
@@ -1014,7 +1014,7 @@ object SoundPackRecipes {
                 addLaserSweep(buf, sr, 0.0, 0.185, 1950.0, 480.0, amp = 0.62)
                 addLaserSweep(buf, sr, 0.028, 0.182, 520.0, 2650.0, amp = 0.62)
                 addNoiseSweep(buf, sr, noise, 0.0, 0.170, 1400.0, 4600.0, q = 2.0, amp = 0.20, pink = false)
-                cue(buf, 0.175, RoomStyle.ARCADE_PLATE, 0.11, p)
+                cue(buf, 0.156, RoomStyle.ARCADE_PLATE, 0.11, p)
             }
 
             SoundCue.MODE_TOGGLE -> {
@@ -1023,7 +1023,7 @@ object SoundPackRecipes {
                 addLaserSweep(buf, sr, 0.0, 0.095, 680.0, 2750.0, amp = 0.56)
                 addRetroPulse(buf, sr, 0.062, 0.128, E5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0014, decayTauSec = 0.044, amp = 0.62)
                 addRetroFm(buf, sr, 0.088, 0.105, B5, modRatio = 2.0, startModIndex = 2.0, endModIndex = 0.35, attackSec = 0.0014, decayTauSec = 0.042, amp = 0.72)
-                cue(buf, 0.175, RoomStyle.ARCADE_PLATE, 0.10, p)
+                cue(buf, 0.156, RoomStyle.ARCADE_PLATE, 0.10, p)
             }
 
             SoundCue.MODAL_OPEN -> {
@@ -1032,7 +1032,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.064, E5, E5, duty = 0.125, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.024, amp = 0.56)
                 addRetroPulse(buf, sr, 0.026, 0.074, B5, B5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.028, amp = 0.62)
                 addRetroFm(buf, sr, 0.052, 0.078, E6, modRatio = 2.0, startModIndex = 1.6, endModIndex = 0.3, attackSec = 0.0015, decayTauSec = 0.030, amp = 0.64)
-                cue(buf, 0.158, RoomStyle.ARCADE_PLATE, 0.10, p)
+                cue(buf, 0.140, RoomStyle.ARCADE_PLATE, 0.10, p)
             }
 
             SoundCue.MODAL_CLOSE -> {
@@ -1041,7 +1041,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.048, E6, E6, duty = 0.125, maxHarmonics = 8, attackSec = 0.0015, decayTauSec = 0.018, amp = 0.52)
                 addRetroPulse(buf, sr, 0.024, 0.054, B5, B5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.020, amp = 0.58)
                 addRetroFm(buf, sr, 0.046, 0.064, E5, modRatio = 2.0, startModIndex = 1.4, endModIndex = 0.25, attackSec = 0.0015, decayTauSec = 0.024, amp = 0.64)
-                cue(buf, 0.148, RoomStyle.ARCADE_PLATE, 0.09, p)
+                cue(buf, 0.132, RoomStyle.ARCADE_PLATE, 0.09, p)
             }
 
             SoundCue.FAVORITE_ON -> {
@@ -1054,7 +1054,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.062, 0.188, E6, E6, duty = 0.25, maxHarmonics = 10, attackSec = 0.0012, decayTauSec = 0.072, amp = 0.64)
                 addRetroFm(buf, sr, 0.062, 0.188, E6, modRatio = 2.0, startModIndex = 2.2, endModIndex = 0.35, attackSec = 0.0012, decayTauSec = 0.078, amp = 0.78)
                 addRetroFm(buf, sr, 0.095, 0.130, B6, modRatio = 2.0, startModIndex = 1.2, endModIndex = 0.2, attackSec = 0.002, decayTauSec = 0.044, amp = 0.30)
-                cue(buf, 0.185, RoomStyle.ARCADE_PLATE, 0.12, p)
+                cue(buf, 0.160, RoomStyle.ARCADE_PLATE, 0.12, p)
             }
 
             SoundCue.FAVORITE_OFF -> {
@@ -1063,7 +1063,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.054, E6, E6, duty = 0.25, maxHarmonics = 8, attackSec = 0.0015, decayTauSec = 0.020, amp = 0.58)
                 addRetroPulse(buf, sr, 0.038, 0.056, B5, B5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.022, amp = 0.62)
                 addRetroFm(buf, sr, 0.074, 0.068, GS5, modRatio = 2.0, startModIndex = 1.4, endModIndex = 0.25, attackSec = 0.0015, decayTauSec = 0.026, amp = 0.64)
-                cue(buf, 0.150, RoomStyle.ARCADE_PLATE, 0.09, p)
+                cue(buf, 0.134, RoomStyle.ARCADE_PLATE, 0.09, p)
             }
 
             SoundCue.MOVE_PICKUP -> {
@@ -1072,7 +1072,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.042, E5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.015, amp = 0.62)
                 addRetroPulse(buf, sr, 0.024, 0.046, GS5, GS5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.018, amp = 0.64)
                 addRetroFm(buf, sr, 0.048, 0.064, B5, modRatio = 2.0, startModIndex = 1.9, endModIndex = 0.35, attackSec = 0.0012, decayTauSec = 0.024, amp = 0.72)
-                cue(buf, 0.165, RoomStyle.ARCADE_PLATE, 0.09, p)
+                cue(buf, 0.144, RoomStyle.ARCADE_PLATE, 0.09, p)
             }
 
             SoundCue.MOVE_SWAP -> {
@@ -1080,7 +1080,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.052, sr)
                 addRetroPulse(buf, sr, 0.0, 0.048, B5, E6, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.016, amp = 0.64)
                 addRetroFm(buf, sr, 0.0, 0.044, B5, modRatio = 2.0, startModIndex = 1.7, endModIndex = 0.3, attackSec = 0.0012, decayTauSec = 0.014, amp = 0.56)
-                cue(buf, 0.148, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.118, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.MOVE_DROP -> {
@@ -1088,7 +1088,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.128, sr)
                 addRetroPulse(buf, sr, 0.0, 0.056, B5, E5, duty = 0.25, maxHarmonics = 9, attackSec = 0.0012, decayTauSec = 0.022, amp = 0.60)
                 addRetroFm(buf, sr, 0.014, 0.108, E4, modRatio = 1.0, startModIndex = 2.4, endModIndex = 0.35, attackSec = 0.0015, decayTauSec = 0.036, amp = 0.76)
-                cue(buf, 0.172, RoomStyle.ARCADE_PLATE, 0.09, p)
+                cue(buf, 0.152, RoomStyle.ARCADE_PLATE, 0.09, p)
             }
 
             SoundCue.DESTRUCTIVE -> {
@@ -1098,7 +1098,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, 0.0, 0.090, G4, F4, duty = 0.50, maxHarmonics = 8, attackSec = 0.0015, decayTauSec = 0.034, amp = 0.48)
                 addLaserSweep(buf, sr, 0.078, 0.132, E4, CS4, amp = 0.68)
                 addRetroFm(buf, sr, 0.078, 0.132, CS4, modRatio = 1.5, startModIndex = 1.9, endModIndex = 0.4, attackSec = 0.002, decayTauSec = 0.048, amp = 0.56)
-                cue(buf, 0.172, RoomStyle.ARCADE_PLATE, 0.08, p)
+                cue(buf, 0.154, RoomStyle.ARCADE_PLATE, 0.08, p)
             }
 
             SoundCue.FILTER_SELECT -> {
@@ -1106,7 +1106,7 @@ object SoundPackRecipes {
                 val buf = alloc(0.068, sr)
                 addRetroPulse(buf, sr, 0.0, 0.034, B5, B5, duty = 0.125, maxHarmonics = 10, attackSec = 0.001, decayTauSec = 0.012, amp = 0.64)
                 addRetroFm(buf, sr, 0.014, 0.050, E6, modRatio = 2.0, startModIndex = 1.8, endModIndex = 0.3, attackSec = 0.001, decayTauSec = 0.018, amp = 0.70)
-                cue(buf, 0.152, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.132, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.ERROR_DENY -> {
@@ -1116,7 +1116,7 @@ object SoundPackRecipes {
                 addRetroFm(buf, sr, 0.0, 0.070, DS4, modRatio = 1.414, startModIndex = 2.0, endModIndex = 0.6, attackSec = 0.0015, decayTauSec = 0.026, amp = 0.56)
                 addRetroPulse(buf, sr, 0.080, 0.102, C4, C4, duty = 0.50, maxHarmonics = 9, attackSec = 0.0015, decayTauSec = 0.038, amp = 0.60)
                 addRetroFm(buf, sr, 0.080, 0.102, C4, modRatio = 1.414, startModIndex = 2.1, endModIndex = 0.65, attackSec = 0.0015, decayTauSec = 0.036, amp = 0.60)
-                cue(buf, 0.170, RoomStyle.NONE, 0.0, p)
+                cue(buf, 0.150, RoomStyle.NONE, 0.0, p)
             }
 
             SoundCue.BOOT_CHIME -> {
@@ -1134,7 +1134,7 @@ object SoundPackRecipes {
                     addRetroPulse(buf, sr, s, rem * 0.75, arp[i], arp[i], duty = 0.25, maxHarmonics = 9, attackSec = 0.002, decayTauSec = rem * 0.32, amp = amps[i] * 0.50)
                     addRetroFm(buf, sr, s, rem, arp[i], modRatio = 2.0, startModIndex = 2.1, endModIndex = 0.35, attackSec = 0.002, decayTauSec = rem * 0.36, amp = amps[i] * 0.66)
                 }
-                cue(buf, 0.194, RoomStyle.ARCADE_PLATE, 0.13, p, fadeOutMs = 8.0)
+                cue(buf, 0.175, RoomStyle.ARCADE_PLATE, 0.13, p, fadeOutMs = 8.0)
             }
 
             SoundCue.RA_ACHIEVEMENT -> {
@@ -1162,7 +1162,7 @@ object SoundPackRecipes {
                 addRetroPulse(buf, sr, finalStart, finalRem, E6, E6, duty = 0.25, maxHarmonics = 10, attackSec = 0.002, decayTauSec = 0.240, amp = 0.66)
                 addRetroFm(buf, sr, finalStart, finalRem, E6, modRatio = 2.0, startModIndex = 2.2, endModIndex = 0.35, attackSec = 0.002, decayTauSec = 0.260, amp = 0.76)
                 addRetroFm(buf, sr, finalStart + 0.030, finalRem - 0.030, GS6, modRatio = 2.0, startModIndex = 1.6, endModIndex = 0.25, attackSec = 0.003, decayTauSec = 0.190, amp = 0.46)
-                cue(buf, 0.205, RoomStyle.ARCADE_PLATE, 0.14, p, fadeOutMs = 8.0)
+                cue(buf, 0.184, RoomStyle.ARCADE_PLATE, 0.14, p, fadeOutMs = 8.0)
             }
 
             SoundCue.SETUP_COMPLETE -> {
@@ -1181,7 +1181,7 @@ object SoundPackRecipes {
                 }
                 addRetroPulse(buf, sr, 0.330, dur - 0.330, B4, B4, duty = 0.50, maxHarmonics = 8, attackSec = 0.003, decayTauSec = 0.200, amp = 0.42)
                 addRetroFm(buf, sr, 0.360, dur - 0.360, GS6, modRatio = 2.0, startModIndex = 1.5, endModIndex = 0.25, attackSec = 0.003, decayTauSec = 0.165, amp = 0.42)
-                cue(buf, 0.195, RoomStyle.ARCADE_PLATE, 0.13, p, fadeOutMs = 8.0)
+                cue(buf, 0.176, RoomStyle.ARCADE_PLATE, 0.13, p, fadeOutMs = 8.0)
             }
         }
     }
