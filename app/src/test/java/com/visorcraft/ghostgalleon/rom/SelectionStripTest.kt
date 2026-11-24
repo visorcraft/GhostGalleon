@@ -36,6 +36,19 @@ class SelectionStripTest {
         val m = SelectionStrip.forApp("Firefox")
         assertEquals(dynamicText("Firefox"), m.title)
         assertEquals(text(R.string.label_app), m.subtitle)
+        assertNull(m.detail)
+        assertNull(m.raLine)
+        assertFalse(m.isRom)
+        assertFalse(m.isEmpty)
+    }
+
+    @Test
+    fun `forApp surfaces optional play metadata for TOP_STRIP parity`() {
+        val meta = dynamicText("Today · Played 24m")
+        val m = SelectionStrip.forApp("Firefox", playMeta = meta)
+        assertEquals(dynamicText("Firefox"), m.title)
+        assertEquals(text(R.string.label_app), m.subtitle)
+        assertEquals(meta, m.detail)
         assertNull(m.raLine)
         assertFalse(m.isRom)
         assertFalse(m.isEmpty)

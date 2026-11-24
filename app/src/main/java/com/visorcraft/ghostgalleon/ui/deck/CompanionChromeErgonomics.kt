@@ -31,6 +31,23 @@ object CompanionChromeErgonomics {
     /** Duration (ms) for tactile press/focus micro-scale animations. */
     const val SCALE_ANIM_MS: Long = 90L
 
+    /** Width threshold (dp) below which role chips tighten horizontal padding to avoid clipping. */
+    const val ROLE_CHIP_NARROW_PANEL_DP: Float = 560f
+
+    /** Horizontal fading edge width (dp) signalling scrollable role chips. */
+    const val ROLE_CHIP_FADE_EDGE_DP: Int = 24
+
+    /** Elevation (dp) lifting the currently selected role chip above idle siblings. */
+    const val ROLE_CHIP_ACTIVE_ELEVATION_DP: Float = 2f
+
+    /**
+     * Horizontal pill padding (dp) for companion role chips: tightened to `10dp`
+     * on narrow `< 560dp` panels (e.g. ~540dp Sugar with StatusPill clearance)
+     * so all 4 chips fit cleanly when possible, keeping `12dp` on wider panels.
+     */
+    fun roleChipPadHDp(panelWidthDp: Float): Int =
+        if (panelWidthDp < ROLE_CHIP_NARROW_PANEL_DP) 10 else 12
+
     /**
      * Compute the target `scrollX` to bring `[chipLeft, chipRight]` comfortably
      * into view inside a [android.widget.HorizontalScrollView] whose usable width
@@ -101,10 +118,15 @@ object CompanionChromeErgonomics {
     /** Duration (ms) for Resume pill slide-out dismiss or snap-back settle. */
     const val RESUME_SWIPE_ANIM_MS: Long = 120L
 
+    /** Tactile scale pull signaling the finger crossed the swipe-to-dismiss commit threshold. */
+    const val RESUME_SWIPE_COMMIT_SCALE: Float = 0.94f
+
     data class SwipeFeedback(
         val translationX: Float,
         val alpha: Float,
         val shouldDismiss: Boolean,
+        val crossedThreshold: Boolean = shouldDismiss,
+        val scale: Float = 1f,
     )
 
     /**
@@ -118,24 +140,36 @@ object CompanionChromeErgonomics {
         dismissSlopPx: Float,
         touchSlopPx: Float = 8f,
     ): SwipeFeedback {
-        if (dismissSlopPx <= 0f) return SwipeFeedback(0f, 1f, shouldDismiss = false)
+        if (dismissSlopPx <= 0f) {
+            return SwipeFeedback(0f, 1f, shouldDismiss = false, crossedThreshold = false, scale = 1f)
+        }
         val absX = kotlin.math.abs(dx)
         val absY = kotlin.math.abs(dy)
         if (absX < touchSlopPx || absY > absX) {
-            return SwipeFeedback(0f, 1f, shouldDismiss = false)
+            return SwipeFeedback(0f, 1f, shouldDismiss = false, crossedThreshold = false, scale = 1f)
         }
         val maxTravel = dismissSlopPx * 2.2f
         val tx = (dx * RESUME_SWIPE_DAMPING).coerceIn(-maxTravel, maxTravel)
         val progress = (absX / (dismissSlopPx * 1.35f)).coerceIn(0f, 1f)
         val alpha = (1f - progress * (1f - RESUME_SWIPE_MIN_ALPHA))
             .coerceIn(RESUME_SWIPE_MIN_ALPHA, 1f)
-        val shouldDismiss = absX >= dismissSlopPx && absX > absY
+        val crossed = absX >= dismissSlopPx && absX > absY
+        val scale = if (crossed) RESUME_SWIPE_COMMIT_SCALE else 1f
         return SwipeFeedback(
             translationX = tx,
             alpha = alpha,
-            shouldDismiss = shouldDismiss,
+            shouldDismiss = crossed,
+            crossedThreshold = crossed,
+            scale = scale,
         )
     }
+
+    /** Edge trigger emitting a single commit tick when crossing `false -> true` with haptics enabled. */
+    fun shouldTriggerSwipeHaptic(
+        wasCrossed: Boolean,
+        nowCrossed: Boolean,
+        hapticsEnabled: Boolean,
+    ): Boolean = hapticsEnabled && !wasCrossed && nowCrossed
 
     /** Cold-start hold crest breathing alpha range (when system animators enabled). */
     const val COLD_START_ALPHA_MIN: Float = 0.24f

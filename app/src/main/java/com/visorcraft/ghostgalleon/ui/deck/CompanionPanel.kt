@@ -1246,6 +1246,9 @@ object CompanionPanel {
             val raView: TextView,
             val raBar: MeterBarView,
             val dividerView: View,
+            val platformDot: GradientDrawable,
+            var hasPlatformDot: Boolean = false,
+            var lastPlatformDotColor: Int = 0,
             var lastStripAccent: Int,
             var hasStripAccent: Boolean = true,
             var lastIsRom: Boolean,
@@ -1628,6 +1631,7 @@ object CompanionPanel {
         var downRawX = 0f
         var downRawY = 0f
         var tracking = false
+        var wasCrossed = false
         var dismissing = false
         var dismissCommitted = false
         fun commitDismissOnce() {
@@ -1637,6 +1641,24 @@ object CompanionPanel {
             app.dismissResumeChip()
         }
         val touchSlopPx = (8 * view.resources.displayMetrics.density).coerceAtLeast(4f)
+        fun applyDragScale(targetScale: Float) {
+            if (MotionPolicy.shouldAnimate(
+                    CompanionChromeErgonomics.SCALE_ANIM_MS,
+                    ValueAnimator.areAnimatorsEnabled(),
+                    view.isAttachedToWindow,
+                )
+            ) {
+                view.animate()
+                    .scaleX(targetScale)
+                    .scaleY(targetScale)
+                    .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
+                    .setInterpolator(heroSettleInterpolator)
+                    .start()
+            } else {
+                view.scaleX = targetScale
+                view.scaleY = targetScale
+            }
+        }
         fun settleRest(scale: Float) {
             view.animate().cancel()
             if (!MotionPolicy.shouldAnimate(
@@ -1685,6 +1707,10 @@ object CompanionPanel {
             override fun onViewAttachedToWindow(v: View) {}
             override fun onViewDetachedFromWindow(v: View) {
                 v.animate().cancel()
+                v.translationX = 0f
+                v.alpha = 1f
+                v.scaleX = 1f
+                v.scaleY = 1f
                 if (dismissing) commitDismissOnce()
             }
         })
@@ -1706,14 +1732,9 @@ object CompanionPanel {
                     downRawX = event.rawX
                     downRawY = event.rawY
                     tracking = true
+                    wasCrossed = false
                     view.animate().cancel()
-                    if (ValueAnimator.areAnimatorsEnabled()) {
-                        view.animate()
-                            .scaleX(CompanionChromeErgonomics.CHIP_PRESS_SCALE)
-                            .scaleY(CompanionChromeErgonomics.CHIP_PRESS_SCALE)
-                            .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
-                            .start()
-                    }
+                    applyDragScale(CompanionChromeErgonomics.CHIP_PRESS_SCALE)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -1728,11 +1749,29 @@ object CompanionPanel {
                     )
                     view.translationX = fb.translationX
                     view.alpha = fb.alpha
+                    if (fb.crossedThreshold != wasCrossed) {
+                        if (CompanionChromeErgonomics.shouldTriggerSwipeHaptic(
+                                wasCrossed = wasCrossed,
+                                nowCrossed = fb.crossedThreshold,
+                                hapticsEnabled = app.settings.haptics,
+                            )
+                        ) {
+                            view.performHapticFeedback(
+                                android.view.HapticFeedbackConstants.CLOCK_TICK,
+                            )
+                        }
+                        wasCrossed = fb.crossedThreshold
+                        applyDragScale(
+                            if (fb.crossedThreshold) fb.scale
+                            else CompanionChromeErgonomics.CHIP_PRESS_SCALE,
+                        )
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (!tracking) return@setOnTouchListener false
                     tracking = false
+                    wasCrossed = false
                     val dx = event.rawX - downRawX
                     val dy = event.rawY - downRawY
                     val fb = CompanionChromeErgonomics.resumeSwipeFeedback(
@@ -2370,7 +2409,15 @@ object CompanionPanel {
         fun dp(value: Int) = (value * density).toInt()
         val app = activity.application as GhostGalleonApp
         val model = resolveStripModel(state, library, roms, settings, app)
-        val stripSpec = TopStripMetrics.forWidth(dm.widthPixels / density)
+        val themeTokens = ThemePack.resolve(settings)
+        val effectiveFontScale = maxOf(
+            themeTokens.fontScale,
+            context.resources.configuration.fontScale,
+        )
+        val stripSpec = TopStripMetrics.forWidth(
+            windowWidthDp = dm.widthPixels / density,
+            fontScale = effectiveFontScale,
+        )
         val stripAccent = model.platformId?.let { PlatformLook.accentColor(it) }
             ?: settings.accentColor
         val resolvedTitle = context.resolveText(model.title)
@@ -2416,14 +2463,32 @@ object CompanionPanel {
             outlineProvider = OutlineCache.roundedRect(context.dpF(stripArtCornerDp))
         }
         val artAppImage = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            scaleType = ImageView.ScaleType.FIT_CENTER
             visibility = View.GONE
         }
         val artHost = FrameLayout(context).apply {
             tag = TAG_STRIP_ART_HOST
-            addView(artRomTile, FrameLayout.LayoutParams(artSize, artSize))
-            addView(artRomImage, FrameLayout.LayoutParams(artSize, artSize))
-            addView(artAppImage, FrameLayout.LayoutParams(artSize, artSize))
+            addView(
+                artRomTile,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                artRomImage,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                artAppImage,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
         applyStripArtFrame(artHost, isRom = model.isRom, accentColor = stripAccent, spec = stripSpec)
         row.addView(artHost, LinearLayout.LayoutParams(artSize, artSize).apply {
@@ -2486,6 +2551,7 @@ object CompanionPanel {
             text = resolvedSub
             setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.subtitleSp)
             setTextColor(0xCCFFFFFF.toInt())
+            compoundDrawablePadding = dp(6)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
@@ -2592,6 +2658,11 @@ object CompanionPanel {
             ),
         )
 
+        val dotPx = dp(TopStripMetrics.PLATFORM_DOT_SIZE_DP).coerceAtLeast(1)
+        val platformDot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setBounds(0, 0, dotPx, dotPx)
+        }
         val holder = PanelSurfaceHolder.TopStrip(
             stripRoot = root,
             panelRoot = row,
@@ -2607,12 +2678,14 @@ object CompanionPanel {
             raView = stripRaTv,
             raBar = stripRaBar,
             dividerView = dividerView,
+            platformDot = platformDot,
             lastStripAccent = stripAccent,
             hasStripAccent = true,
             lastIsRom = model.isRom,
         )
+        applyStripPlatformDot(holder, context, model.platformId)
         root.surfaceHolder = holder
-        bindStripArt(holder, context, state, library, roms, settings, app, artSize)
+        bindStripArt(holder, context, state, library, roms, settings, app, artSize, stripSpec)
 
         // Kick live RA for ROM selection (same as full hero).
         if (stripRom != null) {
@@ -2621,23 +2694,64 @@ object CompanionPanel {
         return root
     }
 
+    private fun applyStripPlatformDot(
+        holder: PanelSurfaceHolder.TopStrip,
+        context: Context,
+        platformId: String?,
+    ) {
+        if (platformId != null) {
+            val dotColor = TopStripMetrics.platformDotColor(
+                platformAccent = PlatformLook.accentColor(platformId),
+                surfaceColor = TileBackgrounds.surfaceColor(context),
+            )
+            if (!holder.hasPlatformDot || holder.lastPlatformDotColor != dotColor) {
+                holder.platformDot.setColor(dotColor)
+                holder.lastPlatformDotColor = dotColor
+                if (!holder.hasPlatformDot) {
+                    holder.subView.setCompoundDrawablesRelative(holder.platformDot, null, null, null)
+                    holder.hasPlatformDot = true
+                }
+            }
+        } else if (holder.hasPlatformDot) {
+            holder.subView.setCompoundDrawablesRelative(null, null, null, null)
+            holder.hasPlatformDot = false
+            holder.lastPlatformDotColor = 0
+        }
+    }
+
     private fun applyStripArtFrame(
         artHost: FrameLayout,
         isRom: Boolean,
         accentColor: Int,
         spec: TopStripMetrics.Spec,
     ) {
+        val context = artHost.context
         if (isRom) {
+            if (artHost.background != null) artHost.background = null
+            if (artHost.paddingLeft != 0 || artHost.paddingTop != 0) {
+                artHost.setPadding(0, 0, 0, 0)
+            }
             applyHeroArtFrame(
                 target = artHost,
                 accentColor = accentColor,
-                elevationDp = spec.artElevationDp,
+                elevationDp = TopStripMetrics.artFrameElevationDp(isRom = true, spec = spec),
                 cornerRadiusDp = spec.artCornerRadiusDp,
             )
         } else {
-            artHost.foreground = null
-            artHost.elevation = 0f
-            artHost.outlineProvider = ViewOutlineProvider.BACKGROUND
+            val insetPx = UiDimens.dp(context, TopStripMetrics.appArtInsetDp(spec.artSizeDp))
+            if (artHost.paddingLeft != insetPx || artHost.paddingTop != insetPx) {
+                artHost.setPadding(insetPx, insetPx, insetPx, insetPx)
+            }
+            val bg = (artHost.background as? GradientDrawable)?.mutate() as? GradientDrawable
+                ?: GradientDrawable().also { artHost.background = it }
+            bg.setColor(TopStripMetrics.APP_PEDESTAL_FILL)
+            bg.cornerRadius = context.dpF(spec.artCornerRadiusDp)
+            applyHeroArtFrame(
+                target = artHost,
+                accentColor = accentColor,
+                elevationDp = TopStripMetrics.artFrameElevationDp(isRom = false, spec = spec),
+                cornerRadiusDp = spec.artCornerRadiusDp,
+            )
         }
     }
 
@@ -2668,7 +2782,12 @@ object CompanionPanel {
             )
         }
         val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
-        if (entry != null) return SelectionStrip.forApp(entry.label)
+        if (entry != null) {
+            return SelectionStrip.forApp(
+                label = entry.label,
+                playMeta = romMetaLine(settings, entry.packageName),
+            )
+        }
         return SelectionStrip.empty()
     }
 
@@ -2681,6 +2800,7 @@ object CompanionPanel {
         settings: Settings,
         app: GhostGalleonApp,
         artSize: Int,
+        stripSpec: TopStripMetrics.Spec,
     ) {
         val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
@@ -2695,6 +2815,8 @@ object CompanionPanel {
                 cornerRadiusDp = TopStripMetrics.ART_CORNER_RADIUS_DP,
             )
             holder.artRomTile.visibility = View.VISIBLE
+            holder.artRomImage.animate().cancel()
+            holder.artRomImage.alpha = 1f
             ArtCache.dropDisplayed(holder.artRomImage)
             holder.artRomImage.setImageDrawable(null)
             holder.artRomImage.visibility = View.GONE
@@ -2716,11 +2838,30 @@ object CompanionPanel {
                     ArtCache.showDisplayed(holder.artRomImage, bitmap)
                     holder.artRomImage.visibility = View.VISIBLE
                     holder.artRomTile.visibility = View.GONE
+                    val fadeMs = TopStripMetrics.asyncArtFadeMs(
+                        syncHit = syncHit,
+                        attached = holder.artRomImage.isAttachedToWindow,
+                        animEnabled = ValueAnimator.areAnimatorsEnabled(),
+                    )
+                    ensureHeroDetachReset(holder.artRomImage)
+                    holder.artRomImage.animate().cancel()
+                    if (fadeMs > 0L) {
+                        holder.artRomImage.alpha = 0f
+                        holder.artRomImage.animate()
+                            .alpha(1f)
+                            .setDuration(fadeMs)
+                            .setInterpolator(heroSettleInterpolator)
+                            .start()
+                    } else {
+                        holder.artRomImage.alpha = 1f
+                    }
                 }
             }
             syncHit = false
             return
         }
+        holder.artRomImage.animate().cancel()
+        holder.artRomImage.alpha = 1f
         ArtCache.dropDisplayed(holder.artRomImage)
         holder.artRomImage.setImageDrawable(null)
         holder.artRomImage.tag = null
@@ -2736,10 +2877,16 @@ object CompanionPanel {
                 settings,
                 entry.packageName,
                 artSize,
+                cornerRadiusPx = context.dpF(stripSpec.artCornerRadiusDp),
             )
         } else {
             ArtCache.dropDisplayed(holder.artAppImage)
             holder.artAppImage.setTag(R.id.custom_icon_key, null)
+            holder.artAppImage.scaleType = ImageView.ScaleType.FIT_CENTER
+            if (holder.artAppImage.clipToOutline) {
+                holder.artAppImage.clipToOutline = false
+                holder.artAppImage.outlineProvider = ViewOutlineProvider.BACKGROUND
+            }
             holder.artAppImage.setImageResource(R.drawable.ic_brand_ship)
         }
     }
@@ -2760,7 +2907,15 @@ object CompanionPanel {
         val app = context.applicationContext as GhostGalleonApp
         val dm = context.resources.displayMetrics
         val density = dm.density
-        val stripSpec = TopStripMetrics.forWidth(dm.widthPixels / density)
+        val themeTokens = ThemePack.resolve(settings)
+        val effectiveFontScale = maxOf(
+            themeTokens.fontScale,
+            context.resources.configuration.fontScale,
+        )
+        val stripSpec = TopStripMetrics.forWidth(
+            windowWidthDp = dm.widthPixels / density,
+            fontScale = effectiveFontScale,
+        )
         val model = resolveStripModel(state, library, roms, settings, app)
         val stripAccent = model.platformId?.let { PlatformLook.accentColor(it) }
             ?: settings.accentColor
@@ -2784,6 +2939,7 @@ object CompanionPanel {
         )
         name.text = nextTitle
         sub.text = nextSubtitle
+        applyStripPlatformDot(holder, context, model.platformId)
         detail.text = model.detail?.let(context::resolveText).orEmpty()
         val detailVis = if (model.detail != null) View.VISIBLE else View.GONE
         if (detail.visibility != detailVis) detail.visibility = detailVis
@@ -2817,7 +2973,7 @@ object CompanionPanel {
             stripAccent,
         )
         if (accentChanged) {
-            holder.panelRoot.background = panelBackground(context, stripAccent)
+            applyPanelBackground(holder.panelRoot, context, stripAccent)
             holder.dividerView.setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
             holder.lastStripAccent = stripAccent
             holder.hasStripAccent = true
@@ -2833,7 +2989,7 @@ object CompanionPanel {
                 )
                 holder.lastIsRom = model.isRom
             }
-            bindStripArt(holder, context, state, library, roms, settings, app, artSize)
+            bindStripArt(holder, context, state, library, roms, settings, app, artSize, stripSpec)
             animateHeroArtSettle(artHost)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
@@ -4021,7 +4177,7 @@ object CompanionPanel {
             isFillViewport = true
             isHorizontalScrollBarEnabled = false
             isHorizontalFadingEdgeEnabled = true
-            setFadingEdgeLength(dp(18))
+            setFadingEdgeLength(dp(CompanionChromeErgonomics.ROLE_CHIP_FADE_EDGE_DP))
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             clipChildren = false
             clipToPadding = false
@@ -4046,10 +4202,16 @@ object CompanionPanel {
         )
         var selectedChip: View? = null
         val chipTouchHeight = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
+        val chipPadH = dp(CompanionChromeErgonomics.roleChipPadHDp(panelWidthDp))
+        val chipPadV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val onFill = ThemePack.onFillTextColor(settings.accentColor)
+        val selectedRim = ThemePack.withAlpha(onFill, 0x33)
         roles.forEachIndexed { index, (role, labelRes) ->
             val selected = current == role
             val basePill = if (selected) {
-                TileBackgrounds.chipSelected(context, settings.accentColor, cornerRadiusDp = 17)
+                TileBackgrounds.chipSelected(context, settings.accentColor, cornerRadiusDp = 17).apply {
+                    setStroke(context.strokePx(1), selectedRim)
+                }
             } else {
                 TileBackgrounds.chipIdle(context, cornerRadiusDp = 17)
             }
@@ -4058,7 +4220,7 @@ object CompanionPanel {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTypeface(typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(
-                    if (selected) ThemePack.onFillTextColor(settings.accentColor)
+                    if (selected) onFill
                     else UiDimens.ALPHA_PRIMARY,
                 )
                 background = buildInteractivePillBackground(
@@ -4068,8 +4230,11 @@ object CompanionPanel {
                     cornerRadiusDp = 17,
                     filled = selected,
                 )
+                if (selected) {
+                    elevation = context.dpF(CompanionChromeErgonomics.ROLE_CHIP_ACTIVE_ELEVATION_DP)
+                }
                 gravity = Gravity.CENTER
-                setPadding(dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP), dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP))
+                setPadding(chipPadH, chipPadV, chipPadH, chipPadV)
                 setSingleLine()
                 isSelected = selected
                 isClickable = true

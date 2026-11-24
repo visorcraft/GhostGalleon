@@ -207,4 +207,66 @@ class CompanionChromeErgonomicsTest {
         assertEquals(0x24, (glow ushr 24) and 0xFF)
         assertEquals(0x00A8A0, glow and 0x00FFFFFF)
     }
+
+    @Test
+    fun `roleChipPadHDp tightens on narrow panels and expands cleanly on wide panels`() {
+        assertEquals(10, CompanionChromeErgonomics.roleChipPadHDp(540f))
+        assertEquals(10, CompanionChromeErgonomics.roleChipPadHDp(559f))
+        assertEquals(12, CompanionChromeErgonomics.roleChipPadHDp(560f))
+        assertEquals(12, CompanionChromeErgonomics.roleChipPadHDp(800f))
+        assertTrue(CompanionChromeErgonomics.ROLE_CHIP_FADE_EDGE_DP >= 24)
+        assertTrue(CompanionChromeErgonomics.ROLE_CHIP_ACTIVE_ELEVATION_DP >= 2f)
+    }
+
+    @Test
+    fun `resumeSwipeFeedback exposes threshold crossing scale commitment and single haptic edge`() {
+        val below = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 60f,
+            dy = 2f,
+            dismissSlopPx = 80f,
+        )
+        assertEquals(false, below.crossedThreshold)
+        assertEquals(1f, below.scale, 0.001f)
+
+        val atThreshold = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 80f,
+            dy = 2f,
+            dismissSlopPx = 80f,
+        )
+        assertEquals(true, atThreshold.crossedThreshold)
+        assertEquals(CompanionChromeErgonomics.RESUME_SWIPE_COMMIT_SCALE, atThreshold.scale, 0.001f)
+
+        val vertical = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 90f,
+            dy = 120f,
+            dismissSlopPx = 80f,
+        )
+        assertEquals(false, vertical.crossedThreshold)
+        assertEquals(1f, vertical.scale, 0.001f)
+
+        assertEquals(
+            true,
+            CompanionChromeErgonomics.shouldTriggerSwipeHaptic(
+                wasCrossed = false,
+                nowCrossed = true,
+                hapticsEnabled = true,
+            ),
+        )
+        assertEquals(
+            false,
+            CompanionChromeErgonomics.shouldTriggerSwipeHaptic(
+                wasCrossed = true,
+                nowCrossed = true,
+                hapticsEnabled = true,
+            ),
+        )
+        assertEquals(
+            false,
+            CompanionChromeErgonomics.shouldTriggerSwipeHaptic(
+                wasCrossed = false,
+                nowCrossed = true,
+                hapticsEnabled = false,
+            ),
+        )
+    }
 }

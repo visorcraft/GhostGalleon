@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.rom.PlatformLook
+import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.SelectionStrip
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
@@ -62,5 +64,68 @@ class TopStripMetricsTest {
             "Ghost Galleon",
             TopStripMetrics.accessibilitySummary("Ghost Galleon", "   "),
         )
+    }
+
+    @Test
+    fun `appArtInsetDp and unified frame elevation and rim tokens stay non-zero for ROM and App`() {
+        val standard = TopStripMetrics.forWidth(760f)
+        assertEquals(8, TopStripMetrics.appArtInsetDp(standard.artSizeDp))
+        assertTrue(TopStripMetrics.appArtInsetDp(64) in 6..10)
+        assertTrue(TopStripMetrics.appArtInsetDp(100) in 6..10)
+
+        val romElev = TopStripMetrics.artFrameElevationDp(isRom = true, spec = standard)
+        val appElev = TopStripMetrics.artFrameElevationDp(isRom = false, spec = standard)
+        assertTrue(romElev > 0f)
+        assertTrue(appElev > 0f)
+        assertEquals(TopStripMetrics.APP_ART_ELEVATION_DP, appElev, 0.01f)
+
+        for (pack in ThemePack.BUILTINS) {
+            val rim = TopStripMetrics.artFrameRimColor(pack.accentColor)
+            assertTrue(((rim ushr 24) and 0xFF) > 0)
+        }
+    }
+
+    @Test
+    fun `platformDotColor clears WCAG AA contrast across every platform and asyncArtFadeMs gates sync hits`() {
+        for (platform in Platforms.ALL) {
+            val accent = PlatformLook.accentColor(platform.id)
+            for (pack in ThemePack.BUILTINS) {
+                val surface = ThemePack.cardFill(pack)
+                val dot = TopStripMetrics.platformDotColor(accent, surface)
+                val ratio = ThemePack.contrastRatio(dot, surface)
+                assertTrue(
+                    "Platform dot for ${platform.id} on ${pack.id} must be >= 4.5, was $ratio",
+                    ratio >= ThemePack.MIN_TEXT_CONTRAST,
+                )
+            }
+        }
+        assertEquals(0L, TopStripMetrics.asyncArtFadeMs(syncHit = true, attached = true, animEnabled = true))
+        assertEquals(0L, TopStripMetrics.asyncArtFadeMs(syncHit = false, attached = false, animEnabled = true))
+        assertEquals(0L, TopStripMetrics.asyncArtFadeMs(syncHit = false, attached = true, animEnabled = false))
+        assertEquals(
+            TopStripMetrics.ASYNC_ART_FADE_MS,
+            TopStripMetrics.asyncArtFadeMs(syncHit = false, attached = true, animEnabled = true),
+        )
+    }
+
+    @Test
+    fun `fontScale adapts vertical padding so four-line strip fits inside 120dp up to 1_25x`() {
+        val normal = TopStripMetrics.forWidth(760f, fontScale = 1f)
+        val neon = TopStripMetrics.forWidth(760f, fontScale = ThemePack.NEON.fontScale)
+        val large = TopStripMetrics.forWidth(760f, fontScale = 1.25f)
+        assertEquals(10, normal.padVerticalDp)
+        assertEquals(8, neon.padVerticalDp)
+        assertEquals(8, large.padVerticalDp)
+
+        for (widthDp in listOf(480f, 640f, 760f, 960f, 1280f)) {
+            for (scale in listOf(1.0f, 1.05f, 1.15f, 1.25f)) {
+                val spec = TopStripMetrics.forWidth(widthDp, fontScale = scale)
+                val est = TopStripMetrics.estimatedTextColumnHeightDp(spec, fontScale = scale)
+                assertTrue(
+                    "TOP_STRIP text ($est dp) at width=$widthDp scale=$scale must fit <= ${SelectionStrip.STRIP_HEIGHT_DP}dp",
+                    est <= SelectionStrip.STRIP_HEIGHT_DP,
+                )
+            }
+        }
     }
 }

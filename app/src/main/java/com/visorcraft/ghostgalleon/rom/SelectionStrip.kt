@@ -31,10 +31,10 @@ object SelectionStrip {
         isEmpty = true,
     )
 
-    fun forApp(label: String): Model = Model(
+    fun forApp(label: String, playMeta: UiText? = null): Model = Model(
         title = if (label.isBlank()) text(R.string.label_app) else dynamicText(label),
         subtitle = text(R.string.label_app),
-        detail = null,
+        detail = playMeta,
         raLine = null,
         platformId = null,
         isRom = false,

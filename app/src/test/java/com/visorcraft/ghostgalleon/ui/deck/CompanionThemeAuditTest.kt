@@ -86,16 +86,20 @@ class CompanionThemeAuditTest {
     }
 
     @Test
-    fun `hintKeycapTheme renders WCAG AA keycap labels across every theme pack`() {
+    fun `hintKeycapTheme renders WCAG AAA 7-to-1 harmonized keycap labels across every theme pack`() {
+        val fills = mutableSetOf<Int>()
         for (pack in ThemePack.BUILTINS) {
             val kt = CompanionThemeAudit.hintKeycapTheme(pack.id)
+            fills += kt.fillColor
             val pillSurface = CompanionThemeAudit.compositeAlphaOver(kt.fillColor, pack.panelLift)
             val ratio = ThemePack.contrastRatio(kt.textColor, pillSurface)
             assertTrue(
-                "HintBar keycap contrast on ${pack.id} must be >= 4.5, was $ratio",
-                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+                "HintBar keycap contrast on ${pack.id} must be >= 7.0, was $ratio",
+                ratio >= 7.0,
             )
         }
+        // Every built-in theme pack receives its own harmonized keycap tint.
+        assertEquals(ThemePack.BUILTINS.size, fills.size)
         val oled = CompanionThemeAudit.hintKeycapTheme(ThemePack.OLED.id)
         val ghost = CompanionThemeAudit.hintKeycapTheme(ThemePack.GHOST.id)
         assertTrue(

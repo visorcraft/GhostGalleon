@@ -54,21 +54,36 @@ object CompanionThemeAudit {
         val separatorColor: Int,
     )
 
-    /** Harmonized inline keycap pill colors tuned for OLED pure black vs lifted themes. */
+    /**
+     * Harmonized inline keycap pill colors tuned per built-in theme (`ghost`,
+     * `threeds`, `oled`, `neon`) while maintaining `>= 7:1` AAA white-text
+     * legibility over every theme's dark chrome surfaces.
+     */
     fun hintKeycapTheme(themeId: String?): KeycapTheme =
-        if (themeId.equals(ThemePack.OLED.id, ignoreCase = true)) {
-            KeycapTheme(
+        when (themeId?.trim()?.lowercase()) {
+            ThemePack.OLED.id -> KeycapTheme(
                 fillColor = 0x24FFFFFF,
                 strokeColor = 0x58FFFFFF,
                 textColor = 0xFFFFFFFF.toInt(),
                 separatorColor = 0x60FFFFFF,
             )
-        } else {
-            KeycapTheme(
-                fillColor = 0x26FFFFFF,
-                strokeColor = 0x48FFFFFF,
+            ThemePack.THREEDS.id -> KeycapTheme(
+                fillColor = 0x2866DCD6,
+                strokeColor = 0x524DE0D8,
                 textColor = 0xFFFFFFFF.toInt(),
-                separatorColor = 0x55FFFFFF,
+                separatorColor = 0x6280E8E2,
+            )
+            ThemePack.NEON.id -> KeycapTheme(
+                fillColor = 0x28FF78BD,
+                strokeColor = 0x54FF80C0,
+                textColor = 0xFFFFFFFF.toInt(),
+                separatorColor = 0x62FF99CC,
+            )
+            else -> KeycapTheme(
+                fillColor = 0x288C9EFF,
+                strokeColor = 0x48A6B4FF,
+                textColor = 0xFFFFFFFF.toInt(),
+                separatorColor = 0x58B8C4FF,
             )
         }
 
