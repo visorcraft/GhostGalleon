@@ -74,5 +74,38 @@ class DetailsCardFormatterTest {
             ),
             DetailsCardFormatter.helperRowAccessibilityText("Discord"),
         )
+        assertEquals(44, DetailsCardFormatter.HELPER_ROW_MIN_HEIGHT_DP)
+    }
+
+    @Test
+    fun `stripRedundantHeaderLines removes duplicate leading title while preserving descriptions and single-line bodies`() {
+        val withDesc = "Chrono Trigger\n\nA time-traveling RPG.\n\nType: ROM\nPlatform: snes"
+        assertEquals(
+            "A time-traveling RPG.\n\nType: ROM\nPlatform: snes",
+            DetailsCardFormatter.stripRedundantHeaderLines(withDesc, "Chrono Trigger"),
+        )
+
+        val metaOnly = "Spotify\n\nType: App\nKey: com.spotify.music"
+        assertEquals(
+            "Type: App\nKey: com.spotify.music",
+            DetailsCardFormatter.stripRedundantHeaderLines(metaOnly, "spotify"),
+        )
+
+        // Single-line bodies or title-only bodies are never emptied.
+        assertEquals(
+            "Chrono Trigger",
+            DetailsCardFormatter.stripRedundantHeaderLines("Chrono Trigger", "Chrono Trigger"),
+        )
+        assertEquals(
+            "Chrono Trigger\n\n",
+            DetailsCardFormatter.stripRedundantHeaderLines("Chrono Trigger\n\n", "Chrono Trigger"),
+        )
+
+        // Non-matching first line stays untouched.
+        val distinct = "Type: ROM\nPlatform: gba"
+        assertEquals(
+            distinct,
+            DetailsCardFormatter.stripRedundantHeaderLines(distinct, "Metroid Fusion"),
+        )
     }
 }

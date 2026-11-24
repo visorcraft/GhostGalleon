@@ -49,11 +49,21 @@ class SearchDialogLogicTest {
 
     @Test
     fun `inline clear button fits strictly inside input end padding without text overlap`() {
+        assertEquals(40, SearchDialogLogic.INLINE_CLEAR_SIZE_DP)
+        assertEquals(48, SearchDialogLogic.INPUT_END_PADDING_DP)
         val occupiedEndDp =
             SearchDialogLogic.INLINE_CLEAR_END_MARGIN_DP + SearchDialogLogic.INLINE_CLEAR_SIZE_DP
         assertTrue(
             "clear button ($occupiedEndDp dp) exceeds input end padding (${SearchDialogLogic.INPUT_END_PADDING_DP} dp)",
             occupiedEndDp <= SearchDialogLogic.INPUT_END_PADDING_DP,
         )
+    }
+
+    @Test
+    fun `initialCursorPosition places caret at the end of prefilled search queries`() {
+        assertEquals(0, SearchDialogLogic.initialCursorPosition(null))
+        assertEquals(0, SearchDialogLogic.initialCursorPosition(""))
+        assertEquals(5, SearchDialogLogic.initialCursorPosition("zelda"))
+        assertEquals(14, SearchDialogLogic.initialCursorPosition("Chrono Trigger"))
     }
 }

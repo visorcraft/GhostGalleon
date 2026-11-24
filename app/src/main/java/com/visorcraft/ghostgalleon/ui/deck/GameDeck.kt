@@ -676,6 +676,7 @@ class GameDeck(
         val rv = recycler ?: return
         val emptyHost = emptyStateView ?: return
         if (entries.isEmpty()) {
+            val wasVisible = emptyHost.visibility == View.VISIBLE
             rv.visibility = View.GONE
             emptyHost.visibility = View.VISIBLE
             val q = state.libraryBrowse
@@ -727,7 +728,7 @@ class GameDeck(
             emptyResetButton?.let { btn ->
                 btn.visibility = if (showReset) View.VISIBLE else View.GONE
                 btn.setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                btn.background = TileBackgrounds.focusableRow(
+                btn.background = TileBackgrounds.pressableRow(
                     context = context,
                     accent = settings.accentColor,
                     idleBackground = TileBackgrounds.accentPill(context, settings.accentColor),
@@ -735,7 +736,26 @@ class GameDeck(
                     strokeDp = 2,
                 )
             }
+            if (!wasVisible) {
+                emptyHost.animate().cancel()
+                if (DeckMotionPolicy.shouldAnimate(
+                        animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                        isLaidOut = emptyHost.isAttachedToWindow,
+                    )
+                ) {
+                    emptyHost.alpha = GameDeckChromeLogic.EMPTY_REVEAL_START_ALPHA
+                    emptyHost.animate()
+                        .alpha(1f)
+                        .setDuration(GameDeckChromeLogic.EMPTY_REVEAL_DURATION_MS)
+                        .setInterpolator(FOCUS_INTERPOLATOR)
+                        .start()
+                } else {
+                    emptyHost.alpha = 1f
+                }
+            }
         } else {
+            emptyHost.animate().cancel()
+            emptyHost.alpha = 1f
             emptyHost.visibility = View.GONE
             rv.visibility = View.VISIBLE
         }
@@ -990,18 +1010,24 @@ class GameDeck(
 
     private fun platformBackdrop(context: Context, platformId: String): Drawable {
         val dm = context.resources.displayMetrics
-        val key = "$platformId|${dm.widthPixels}x${dm.heightPixels}"
+        val tokens = ThemePack.resolve(settings)
+        val isOled = tokens.id == ThemePack.OLED.id
+        val key = "$platformId|${tokens.id}|${tokens.panelLift}|${dm.widthPixels}x${dm.heightPixels}"
         val template = cachedTintBg?.takeIf { cachedTintKey == key } ?: run {
             val accent = PlatformLook.accentColor(platformId)
-            val liftBand = BackdropTransitionLogic.platformLiftBandColor(accent)
+            val palette = BackdropTransitionLogic.normalizedPlatformGlow(
+                platformAccent = accent,
+                themePanelLift = tokens.panelLift,
+                isOled = isOled,
+            )
             val vertical = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.BLACK, liftBand, Color.BLACK),
+                intArrayOf(palette.edgeColor, palette.liftBandColor, palette.edgeColor),
             )
             val radial = GradientDrawable().apply {
                 gradientType = GradientDrawable.RADIAL_GRADIENT
                 colors = intArrayOf(
-                    BackdropTransitionLogic.platformRadialGlowColor(accent),
+                    palette.radialGlowColor,
                     Color.TRANSPARENT,
                 )
                 setGradientCenter(0.5f, 0.48f)
@@ -1018,7 +1044,12 @@ class GameDeck(
     private fun applyRootWallpaper(root: FrameLayout) {
         val platformFilter = state.libraryBrowse.platformId
             ?.takeIf { PlatformLook.hasFilter(it) }
-        val nextKey = BackdropTransitionLogic.backdropKey(platformFilter)
+        val themeTokens = ThemePack.resolve(settings)
+        val nextKey = if (platformFilter != null) {
+            "${BackdropTransitionLogic.backdropKey(platformFilter)}|${themeTokens.id}|${themeTokens.panelLift}"
+        } else {
+            BackdropTransitionLogic.backdropKey(null)
+        }
         if (nextKey != appliedBackdropKey) {
             val nextDrawable: Drawable = if (platformFilter != null) {
                 platformBackdrop(root.context, platformFilter)
@@ -1686,13 +1717,17 @@ class GameDeck(
     }
 
     private fun buildEmptyState(context: Context, dp: (Int) -> Int): View {
+        val dm = context.resources.displayMetrics
+        val viewportHeightDp = (dm.heightPixels / dm.density.coerceAtLeast(0.5f)).toInt()
+        val m = GameDeckChromeLogic.emptyCardMetrics(viewportHeightDp)
         val host = FrameLayout(context).apply {
             visibility = View.GONE
+            addOnAttachStateChangeListener(DETACH_ANIM_CANCEL)
         }
         val card = OverlayPrimitives.modalCardContainer(
             context = context,
-            padHorizontalDp = 24,
-            padVerticalDp = 20,
+            padHorizontalDp = m.padHorizontalDp,
+            padVerticalDp = m.padVerticalDp,
         ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
         }
@@ -1705,7 +1740,7 @@ class GameDeck(
         emptyIconImage = iconImg
         val iconGlyph = TextView(context).apply {
             setText(R.string.glyph_favorite)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (m.medallionSizeDp <= 44) 18f else 22f)
             setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -1717,7 +1752,7 @@ class GameDeck(
         val medallion = FrameLayout(context).apply {
             addView(
                 iconImg,
-                FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER),
+                FrameLayout.LayoutParams(dp(m.iconSizeDp), dp(m.iconSizeDp), Gravity.CENTER),
             )
             addView(
                 iconGlyph,
@@ -1731,10 +1766,12 @@ class GameDeck(
         emptyIconMedallion = medallion
         card.addView(
             medallion,
-            LinearLayout.LayoutParams(dp(52), dp(52)).apply { bottomMargin = dp(12) },
+            LinearLayout.LayoutParams(dp(m.medallionSizeDp), dp(m.medallionSizeDp)).apply {
+                bottomMargin = dp(m.medallionBottomMarginDp)
+            },
         )
         val msg = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, m.messageSp)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -1754,7 +1791,7 @@ class GameDeck(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-            background = TileBackgrounds.focusableRow(
+            background = TileBackgrounds.pressableRow(
                 context = context,
                 accent = settings.accentColor,
                 idleBackground = TileBackgrounds.accentPill(context, settings.accentColor),
@@ -1762,6 +1799,7 @@ class GameDeck(
                 strokeDp = 2,
             )
             gravity = Gravity.CENTER
+            minimumHeight = dp(m.resetMinHeightDp)
             setPadding(dp(20), dp(10), dp(20), dp(10))
             isClickable = true
             isFocusable = true
@@ -1775,7 +1813,7 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(14)
+                topMargin = dp(m.resetTopMarginDp)
             },
         )
         val cardW = OverlayPrimitives.responsiveCardWidth(context, maxDp = 360, widthFrac = 0.84f)
@@ -3572,6 +3610,7 @@ class GameDeck(
         val hasHistory = app().settings.searchHistory.isNotEmpty()
         val initialPlan = SearchDialogLogic.plan(state.libraryBrowse.text, hasHistory)
         input.imeOptions = EditorInfo.IME_ACTION_SEARCH
+        input.setSelection(SearchDialogLogic.initialCursorPosition(input.text))
         input.setPaddingRelative(
             input.paddingStart,
             input.paddingTop,
@@ -3582,14 +3621,17 @@ class GameDeck(
             setImageResource(R.drawable.ic_close)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
-            setPadding(activity.dp(8), activity.dp(8), activity.dp(8), activity.dp(8))
+            setPadding(activity.dp(9), activity.dp(9), activity.dp(9), activity.dp(9))
             isClickable = true
             isFocusable = true
             contentDescription = activity.getString(R.string.action_clear)
-            background = TileBackgrounds.focusableRow(
+            background = TileBackgrounds.pressableRow(
                 context = activity,
-                accent = settings.accentColor,
-                cornerRadiusDp = 18,
+                accent = DeckThemeContrast.accessibleFocusStroke(
+                    settings.accentColor,
+                    TileBackgrounds.surfaceSunken(activity),
+                ),
+                cornerRadiusDp = 20,
                 strokeDp = 2,
             )
             visibility = if (initialPlan.showInlineClear) View.VISIBLE else View.GONE
@@ -4124,7 +4166,7 @@ class GameDeck(
             nowMs = System.currentTimeMillis(),
             identity = identity,
         )
-        val body = activity.resolveText(GameDetails.body(input))
+        val rawBody = activity.resolveText(GameDetails.body(input))
         val related = relatedOptionsFor(rom)
         val ferryPeers = if (rom != null) saveFerryPeers(rom) else emptyList()
         val builder = DeckDialogs.builder(activity)
@@ -4146,11 +4188,14 @@ class GameDeck(
             genre = rom?.genre,
             surfaceColor = pillSurface,
         )
+        val body = DetailsCardFormatter.stripRedundantHeaderLines(rawBody, headerSpec.title)
         val thumbPx = dp(DetailsCardFormatter.HEADER_THUMB_DP)
         val thumbRadiusPx = activity.dpF(DetailsCardFormatter.HEADER_THUMB_CORNER_DP)
         val thumbFrame = FrameLayout(activity).apply {
-            clipToOutline = true
-            outlineProvider = OutlineCache.roundedRect(thumbRadiusPx)
+            if (rom != null) {
+                clipToOutline = true
+                outlineProvider = OutlineCache.roundedRect(thumbRadiusPx)
+            }
         }
         val thumbView: View = rom?.let {
             ArtTile.view(
@@ -4163,7 +4208,15 @@ class GameDeck(
             )
         } ?: ImageView(activity).apply {
             entry.appPackage?.let { pkg ->
-                CustomIcon.bind(this, iconLoader, app().artCache, settings, pkg, thumbPx)
+                CustomIcon.bind(
+                    this,
+                    iconLoader,
+                    app().artCache,
+                    settings,
+                    pkg,
+                    thumbPx,
+                    cornerRadiusPx = thumbRadiusPx,
+                )
             }
         }
         thumbFrame.addView(
@@ -4324,12 +4377,13 @@ class GameDeck(
             val helperRow = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(DetailsCardFormatter.HELPER_ROW_MIN_HEIGHT_DP)
                 setPadding(pad, dp(10), pad, dp(10))
                 isFocusable = true
                 isClickable = true
-                background = TileBackgrounds.focusableRow(
+                background = TileBackgrounds.pressableRow(
                     context = activity,
-                    accent = settings.accentColor,
+                    accent = DeckThemeContrast.accessibleFocusStroke(settings.accentColor, surface),
                     cornerRadiusDp = 10,
                 )
                 setOnClickListener {
@@ -4962,6 +5016,11 @@ class GameDeck(
             density = context.resources.displayMetrics.density,
             targetPx = cardSize,
         )
+        private val badgeLayout: CarouselCardBadges.BadgeLayout = CarouselCardBadges.badgeLayout(
+            cardSizePx = cardSize,
+            innerArtRadiusDp = innerArtRadiusDp,
+            density = context.resources.displayMetrics.density,
+        )
         private val scrimHeightPx: Int = (cardSize * CarouselCardBadges.ART_SCRIM_HEIGHT_FRAC)
             .toInt()
             .coerceAtLeast(context.dp(24))
@@ -4996,6 +5055,7 @@ class GameDeck(
             val romPlaceholder: TextView,
             val romOverlay: ImageView,
             val appIcon: ImageView,
+            val artScrim: View,
             val platformBadge: LinearLayout,
             val platformDotDrawable: GradientDrawable,
             val platformLabel: TextView,
@@ -5221,12 +5281,14 @@ class GameDeck(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
-            // Subtle bottom gradient scrim grounds corner pills and cover-to-title transition.
+            // Subtle bottom gradient scrim grounds corner pills and cover-to-title transition
+            // on ROM box-art cards (hidden on transparent Android app icons).
+            val artScrim = View(context).apply {
+                background = cloneDrawable(scrimTemplate)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
             artContainer.addView(
-                View(context).apply {
-                    background = cloneDrawable(scrimTemplate)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                },
+                artScrim,
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     scrimHeightPx,
@@ -5237,7 +5299,7 @@ class GameDeck(
                 shape = GradientDrawable.OVAL
             }
             val platformLabel = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeLayout.platformTextSp)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
@@ -5247,14 +5309,22 @@ class GameDeck(
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 background = cloneDrawable(platformPillBgTemplate)
-                setPadding(context.dp(6), context.dp(2), context.dp(6), context.dp(2))
+                setPadding(
+                    badgeLayout.platformPadHPx,
+                    badgeLayout.platformPadVPx,
+                    badgeLayout.platformPadHPx,
+                    badgeLayout.platformPadVPx,
+                )
                 visibility = View.GONE
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 addView(
                     View(context).apply {
                         background = platformDotDrawable
                     },
-                    LinearLayout.LayoutParams(context.dp(6), context.dp(6)).apply {
+                    LinearLayout.LayoutParams(
+                        badgeLayout.platformDotSizePx,
+                        badgeLayout.platformDotSizePx,
+                    ).apply {
                         marginEnd = context.dp(4)
                     },
                 )
@@ -5267,13 +5337,13 @@ class GameDeck(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     Gravity.BOTTOM or Gravity.START,
                 ).apply {
-                    marginStart = context.dp(6)
-                    bottomMargin = context.dp(6)
+                    marginStart = badgeLayout.insetPx
+                    bottomMargin = badgeLayout.insetPx
                 },
             )
             val favPill = TextView(context).apply {
                 setText(R.string.glyph_favorite)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeLayout.favTextSp)
                 setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
@@ -5285,12 +5355,12 @@ class GameDeck(
             artContainer.addView(
                 favPill,
                 FrameLayout.LayoutParams(
-                    context.dp(22),
-                    context.dp(22),
+                    badgeLayout.favSizePx,
+                    badgeLayout.favSizePx,
                     Gravity.TOP or Gravity.END,
                 ).apply {
-                    topMargin = context.dp(6)
-                    marginEnd = context.dp(6)
+                    topMargin = badgeLayout.insetPx
+                    marginEnd = badgeLayout.insetPx
                 },
             )
             body.addView(artContainer, LinearLayout.LayoutParams(cardSize, cardSize))
@@ -5378,6 +5448,7 @@ class GameDeck(
                 romPlaceholder = romPlaceholder,
                 romOverlay = romOverlay,
                 appIcon = appIcon,
+                artScrim = artScrim,
                 platformBadge = platformBadge,
                 platformDotDrawable = platformDotDrawable,
                 platformLabel = platformLabel,
@@ -5699,6 +5770,11 @@ class GameDeck(
                     }
                     holder.appIcon.visibility = View.GONE
                     holder.romArtFrame.visibility = View.VISIBLE
+                    holder.artScrim.visibility = if (CarouselCardBadges.showArtScrim(isRom = true)) {
+                        View.VISIBLE
+                    } else {
+                        View.GONE
+                    }
                     holder.boundIsRom = true
                 }
                 PlatformTile.restyle(holder.romPlaceholder, context, rom.platformId, innerArtRadiusDp)
@@ -5722,6 +5798,11 @@ class GameDeck(
                     }
                     holder.romArtFrame.visibility = View.GONE
                     holder.appIcon.visibility = View.VISIBLE
+                    holder.artScrim.visibility = if (CarouselCardBadges.showArtScrim(isRom = false)) {
+                        View.VISIBLE
+                    } else {
+                        View.GONE
+                    }
                     holder.platformBadge.visibility = View.GONE
                     holder.boundIsRom = false
                 }

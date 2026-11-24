@@ -204,4 +204,43 @@ class CarouselCardBadgesTest {
         assertFalse(unchecked.showMultiSelectOverlay)
         assertTrue(checked.showMultiSelectOverlay)
     }
+
+    @Test
+    fun `showArtScrim hides bottom scrim on transparent app cards and badgeLayout scales across 96 to 260dp`() {
+        assertTrue(CarouselCardBadges.showArtScrim(isRom = true))
+        assertFalse(CarouselCardBadges.showArtScrim(isRom = false))
+
+        val density = 2f
+        val compact = CarouselCardBadges.badgeLayout(
+            cardSizePx = (96 * density).toInt(),
+            innerArtRadiusDp = 6,
+            density = density,
+        )
+        val medium = CarouselCardBadges.badgeLayout(
+            cardSizePx = (160 * density).toInt(),
+            innerArtRadiusDp = 16,
+            density = density,
+        )
+        val large = CarouselCardBadges.badgeLayout(
+            cardSizePx = (260 * density).toInt(),
+            innerArtRadiusDp = 16,
+            density = density,
+        )
+
+        for (layout in listOf(compact, medium, large)) {
+            assertTrue("favSizeDp out of [18, 24]: ${layout.favSizeDp}", layout.favSizeDp in 18..24)
+            assertTrue("insetDp out of [5, 9]: ${layout.insetDp}", layout.insetDp in 5..9)
+            assertTrue(layout.favSizePx > 0 && layout.insetPx > 0)
+        }
+        assertTrue(compact.favSizeDp <= medium.favSizeDp)
+        assertTrue(medium.favSizeDp <= large.favSizeDp)
+        assertTrue(compact.insetDp <= large.insetDp)
+        // Larger Ghost inner corner radius (16dp) receives larger bisector inset than sharp OLED (6dp).
+        val ghostSmall = CarouselCardBadges.badgeLayout(
+            cardSizePx = (96 * density).toInt(),
+            innerArtRadiusDp = 16,
+            density = density,
+        )
+        assertTrue(ghostSmall.insetDp > compact.insetDp)
+    }
 }

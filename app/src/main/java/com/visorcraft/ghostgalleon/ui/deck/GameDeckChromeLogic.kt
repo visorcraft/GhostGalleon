@@ -44,6 +44,28 @@ object GameDeckChromeLogic {
     /** Duration (ms) for smooth cancelable rail progress fill scaleX lerp. */
     const val RAIL_PROGRESS_ANIM_MS: Long = 90L
 
+    /** Soft-reveal animation parameters when transitioning into the empty carousel state. */
+    const val EMPTY_REVEAL_START_ALPHA: Float = 0.65f
+    const val EMPTY_REVEAL_DURATION_MS: Long = 140L
+
+    /** Ergonomic minimum touch height (dp) for the empty-state Reset CTA button. */
+    const val EMPTY_RESET_MIN_HEIGHT_DP: Int = 44
+
+    /** Viewport height cutoff (dp) below which empty-state framing tightens for Sugar panels. */
+    const val COMPACT_EMPTY_MAX_HEIGHT_DP: Int = 560
+
+    data class EmptyCardMetrics(
+        val padHorizontalDp: Int,
+        val padVerticalDp: Int,
+        val medallionSizeDp: Int,
+        val iconSizeDp: Int,
+        val medallionBottomMarginDp: Int,
+        val messageSp: Float,
+        val resetTopMarginDp: Int,
+        val resetMinHeightDp: Int,
+        val estimatedHeightDp: Int,
+    )
+
     /**
      * Upper bound on combined old + new carousel item counts for synchronous Myers
      * DiffUtil calculation on the UI thread. Above this cap, browse dataset
@@ -197,6 +219,36 @@ object GameDeckChromeLogic {
         entriesEmpty: Boolean,
         query: LibraryBrowse.BrowseQuery,
     ): Boolean = entriesEmpty && shouldShowResetAction(query)
+
+    /**
+     * Responsive padding, medallion, typography, and CTA sizing for the in-layout
+     * empty carousel card. Scales compactly on `<= 560dp` Sugar panels so the
+     * card fits comfortably between active filter strips, hints, and dock.
+     */
+    fun emptyCardMetrics(viewportHeightDp: Int): EmptyCardMetrics {
+        val compact = viewportHeightDp <= COMPACT_EMPTY_MAX_HEIGHT_DP
+        val padH = if (compact) 18 else 24
+        val padV = if (compact) 14 else 20
+        val medallion = if (compact) 40 else 52
+        val icon = if (compact) 20 else 26
+        val medallionGap = if (compact) 8 else 12
+        val messageSp = if (compact) 14.5f else 16f
+        val resetTop = if (compact) 10 else 14
+        val resetMinH = EMPTY_RESET_MIN_HEIGHT_DP
+        val msgHeight = (messageSp * 1.25f * 2f).toInt()
+        val estimated = padV * 2 + medallion + medallionGap + msgHeight + resetTop + resetMinH
+        return EmptyCardMetrics(
+            padHorizontalDp = padH,
+            padVerticalDp = padV,
+            medallionSizeDp = medallion,
+            iconSizeDp = icon,
+            medallionBottomMarginDp = medallionGap,
+            messageSp = messageSp,
+            resetTopMarginDp = resetTop,
+            resetMinHeightDp = resetMinH,
+            estimatedHeightDp = estimated,
+        )
+    }
 
     /** Pure position & progress fraction for the carousel rail indicator. */
     fun railProgressState(selectedIndex: Int, itemCount: Int): RailProgressState {

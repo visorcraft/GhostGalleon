@@ -1,5 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.rom.PlatformLook
+import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -69,5 +72,44 @@ class BackdropTransitionLogicTest {
 
         assertEquals(BackdropTransitionLogic.RADIAL_GLOW_ALPHA, (glow ushr 24) and 0xFF)
         assertEquals(accent and 0x00FFFFFF, glow and 0x00FFFFFF)
+    }
+
+    @Test
+    fun `normalizedPlatformGlow bounds luminance variance across all platforms and all 4 themes`() {
+        for (pack in ThemePack.BUILTINS) {
+            val isOled = pack.id == ThemePack.OLED.id
+            var minPeakLum = Double.MAX_VALUE
+            var maxPeakLum = Double.MIN_VALUE
+            for (platform in Platforms.ALL) {
+                val palette = BackdropTransitionLogic.normalizedPlatformGlow(
+                    platformAccent = PlatformLook.accentColor(platform.id),
+                    themePanelLift = pack.panelLift,
+                    isOled = isOled,
+                )
+                if (isOled) {
+                    assertEquals(
+                        "OLED backdrop edge must anchor to pure black for ${platform.id}",
+                        BackdropTransitionLogic.OLED_BLACK,
+                        palette.edgeColor,
+                    )
+                }
+                val peakLum = ThemePack.relativeLuminance(palette.peakCompositedColor)
+                assertTrue(
+                    "Peak luminance too bright ($peakLum) for ${platform.id} on ${pack.id}",
+                    peakLum <= BackdropTransitionLogic.MAX_PEAK_BACKDROP_LUMINANCE,
+                )
+                // White card text keeps AAA contrast over every normalized platform backdrop.
+                assertTrue(
+                    ThemePack.contrastRatio(0xFFFFFFFF.toInt(), palette.peakCompositedColor) >= 10.0,
+                )
+                if (peakLum < minPeakLum) minPeakLum = peakLum
+                if (peakLum > maxPeakLum) maxPeakLum = peakLum
+            }
+            val spread = maxPeakLum - minPeakLum
+            assertTrue(
+                "Backdrop luminance variance too wide ($spread) on theme ${pack.id}",
+                spread <= 0.025,
+            )
+        }
     }
 }

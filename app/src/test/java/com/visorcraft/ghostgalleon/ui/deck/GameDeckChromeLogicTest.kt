@@ -422,4 +422,29 @@ class GameDeckChromeLogicTest {
             assertEquals(GameDeckChromeLogic.RAIL_PILL_BG_ALPHA, (pillBg ushr 24) and 0xFF)
         }
     }
+
+    @Test
+    fun `emptyCardMetrics scales compactly for 540dp Sugar chrome stacks while keeping 44dp CTA`() {
+        val compact = GameDeckChromeLogic.emptyCardMetrics(viewportHeightDp = 540)
+        val roomy = GameDeckChromeLogic.emptyCardMetrics(viewportHeightDp = 720)
+
+        assertEquals(44, compact.resetMinHeightDp)
+        assertEquals(44, roomy.resetMinHeightDp)
+        assertTrue(compact.estimatedHeightDp < roomy.estimatedHeightDp)
+        assertTrue(compact.medallionSizeDp < roomy.medallionSizeDp)
+        assertTrue(compact.padVerticalDp < roomy.padVerticalDp)
+
+        // Worst-case active chrome stack on 540dp Sugar (browse + filter strip + letter jump + hints + dock).
+        val topAndBottomChromeDp = CarouselLayoutMetrics.verticalChromeReserveDp(
+            hasMultiSelect = false,
+            hasActiveFilters = true,
+            hasLetterJump = true,
+            showHints = true,
+        )
+        val remainingHeightDp = 540 - topAndBottomChromeDp
+        assertTrue(
+            "Compact empty card (${compact.estimatedHeightDp}dp) exceeds available Sugar space (${remainingHeightDp}dp)",
+            compact.estimatedHeightDp <= remainingHeightDp,
+        )
+    }
 }

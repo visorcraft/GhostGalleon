@@ -24,6 +24,9 @@ object DetailsCardFormatter {
     /** Readable body copy line spacing multiplier. */
     const val BODY_LINE_SPACING_MULT: Float = 1.24f
 
+    /** Ergonomic minimum touch height (dp) for the Play-host helper picker row. */
+    const val HELPER_ROW_MIN_HEIGHT_DP: Int = 44
+
     data class HeaderSpec(
         val title: String,
         val badgeText: UiText,
@@ -81,4 +84,25 @@ object DetailsCardFormatter {
             text(R.string.settings_play_host_helper),
             dynamicText(currentHelperLabel),
         )
+
+    /**
+     * Strip a redundant leading title line (and immediately following blank
+     * separator lines) from [body] when it duplicates [title] already displayed
+     * in the thumbnail header. Preserves descriptions and single-line bodies.
+     */
+    fun stripRedundantHeaderLines(body: String, title: String): String {
+        if (body.isBlank()) return body
+        val cleanTitle = title.trim()
+        if (cleanTitle.isEmpty()) return body
+        val lines = body.lines()
+        if (lines.size <= 1) return body
+        var idx = 0
+        while (idx < lines.size && lines[idx].isBlank()) idx++
+        if (idx >= lines.size) return body
+        if (!lines[idx].trim().equals(cleanTitle, ignoreCase = true)) return body
+        idx++
+        while (idx < lines.size && lines[idx].isBlank()) idx++
+        if (idx >= lines.size) return body
+        return lines.subList(idx, lines.size).joinToString("\n")
+    }
 }

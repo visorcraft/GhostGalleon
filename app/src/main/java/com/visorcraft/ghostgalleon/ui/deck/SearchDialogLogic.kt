@@ -17,9 +17,9 @@ object SearchDialogLogic {
     const val KEYCODE_NUMPAD_ENTER: Int = 160
 
     /** Inline clear button & input end-clearance geometry (dp) inside container padding. */
-    const val INLINE_CLEAR_SIZE_DP: Int = 36
+    const val INLINE_CLEAR_SIZE_DP: Int = 40
     const val INLINE_CLEAR_END_MARGIN_DP: Int = 4
-    const val INPUT_END_PADDING_DP: Int = 44
+    const val INPUT_END_PADDING_DP: Int = 48
 
     enum class NeutralButtonKind {
         CLEAR,
@@ -58,4 +58,7 @@ object SearchDialogLogic {
 
     /** Trim surrounding whitespace from user-entered search text. */
     fun normalizeQuery(raw: String): String = raw.trim()
+
+    /** Initial caret index when reopening Search with prefilled [text] (end of text). */
+    fun initialCursorPosition(text: CharSequence?): Int = text?.length ?: 0
 }

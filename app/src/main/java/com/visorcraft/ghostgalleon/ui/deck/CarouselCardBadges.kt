@@ -6,6 +6,7 @@ import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.rom.PlatformLook
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import kotlin.math.roundToInt
 
 /**
  * Pure, host-tested badge overlay, cover-art scrim, and TalkBack accessibility
@@ -64,6 +65,19 @@ object CarouselCardBadges {
         val multiSelectLayerIndex: Int get() = layers.indexOf(CardForegroundLayer.MULTI_SELECT_OVERLAY)
     }
 
+    /** Proportional badge size and optical corner-bisector inset metrics for carousel cards. */
+    data class BadgeLayout(
+        val favSizeDp: Int,
+        val favSizePx: Int,
+        val favTextSp: Float,
+        val insetDp: Int,
+        val insetPx: Int,
+        val platformTextSp: Float,
+        val platformDotSizePx: Int,
+        val platformPadHPx: Int,
+        val platformPadVPx: Int,
+    )
+
     data class CardOverlaySpec(
         val platformBadgeText: String?,
         val platformDotColor: Int?,
@@ -109,6 +123,55 @@ object CarouselCardBadges {
 
     /** Pure vertical gradient stops for the bottom cover-art vignette scrim. */
     fun artBottomScrimColors(): IntArray = intArrayOf(ART_SCRIM_TOP, ART_SCRIM_BOTTOM)
+
+    /**
+     * Show the bottom dark art scrim for ROM box-art cards only — never over
+     * transparent Android app icons whose silhouettes would otherwise muddy.
+     */
+    fun showArtScrim(isRom: Boolean): Boolean = isRom
+
+    /**
+     * Proportional corner-badge sizing (`18..24dp`) and optical corner-bisector
+     * insets (`5..9dp`) scaled cleanly across `96..260dp` carousel cards and
+     * rounded theme radii.
+     */
+    fun badgeLayout(
+        cardSizePx: Int,
+        innerArtRadiusDp: Int,
+        density: Float,
+    ): BadgeLayout {
+        val safeDensity = density.coerceAtLeast(0.5f)
+        val cardSizeDp = cardSizePx.coerceAtLeast(1) / safeDensity
+        val favSizeDp = (cardSizeDp * 0.125f).roundToInt().coerceIn(18, 24)
+        val radiusInset = (innerArtRadiusDp.coerceAtLeast(0) * 0.45f).roundToInt()
+        val sizeInset = (cardSizeDp * 0.035f).roundToInt()
+        val insetDp = maxOf(radiusInset, sizeInset).coerceIn(5, 9)
+        val favTextSp = when {
+            favSizeDp <= 18 -> 9.5f
+            favSizeDp <= 21 -> 10.5f
+            else -> 11.5f
+        }
+        val platformTextSp = when {
+            cardSizeDp < 120f -> 9f
+            cardSizeDp < 170f -> 10f
+            else -> 10.5f
+        }
+        val dotDp = if (cardSizeDp < 120f) 5 else 6
+        val padHDp = if (cardSizeDp < 120f) 5 else 6
+        val padVDp = 2
+        fun toPx(dp: Int): Int = (dp * safeDensity).roundToInt().coerceAtLeast(1)
+        return BadgeLayout(
+            favSizeDp = favSizeDp,
+            favSizePx = toPx(favSizeDp),
+            favTextSp = favTextSp,
+            insetDp = insetDp,
+            insetPx = toPx(insetDp),
+            platformTextSp = platformTextSp,
+            platformDotSizePx = toPx(dotDp),
+            platformPadHPx = toPx(padHDp),
+            platformPadVPx = toPx(padVDp),
+        )
+    }
 
     /**
      * Surface- and accent-adaptive touch ripple color for carousel cards.
