@@ -15,11 +15,13 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
 import android.widget.AdapterView
 import android.widget.BaseAdapter
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.GridView
 import android.widget.HorizontalScrollView
@@ -399,6 +401,9 @@ class GridDeck(
             }
         }
 
+        frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
+            role == MoveChoreography.SlotRole.LIFTED
+        frame.contentDescription = slotAccessibilityDescription(position, role)
         frame.animate().cancel()
         frame.translationZ = if (spec.elevationDp > 0f) frame.dpF(spec.elevationDp) else 0f
         if (role == MoveChoreography.SlotRole.LIFTED) {
@@ -428,6 +433,91 @@ class GridDeck(
             frame.translationY = 0f
             frame.alpha = spec.alpha
         }
+    }
+
+    private fun slotAccessibilityDescription(
+        position: Int,
+        role: MoveChoreography.SlotRole,
+    ): String {
+        val key = slotPackages().getOrNull(position)
+        val posLabel = activity.getString(R.string.format_progress, position + 1, slotCount)
+        val movingLabel = if (role == MoveChoreography.SlotRole.LIFTED) {
+            activity.getString(R.string.deck_hint_move)
+        } else {
+            null
+        }
+        if (key == null) {
+            return DeckAccessibility.gridSlotDescription(
+                primaryLabel = activity.getString(R.string.action_add_to_grid),
+                positionLabel = posLabel,
+                movingLabel = movingLabel,
+            )
+        }
+        val favLabel = if (key in settings.favorites) {
+            activity.getString(R.string.action_favorite)
+        } else {
+            null
+        }
+        val dockLabel = if (key in settings.dockSlots) {
+            activity.getString(R.string.label_dock)
+        } else {
+            null
+        }
+        val romEntry = key.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+        if (romEntry != null) {
+            return DeckAccessibility.gridSlotDescription(
+                primaryLabel = RomNames.display(romEntry, settings.romNames),
+                secondaryDetail = PlatformTile.shortText(romEntry.platformId),
+                favoriteLabel = favLabel,
+                dockLabel = dockLabel,
+                positionLabel = posLabel,
+                movingLabel = movingLabel,
+            )
+        }
+        if (SlotKey.isFolder(key)) {
+            val fid = SlotKey.folderId(key)
+            val spec = fid?.let { settings.folders[it] }
+            val name = spec?.name ?: fid ?: activity.getString(R.string.label_folder)
+            val count = spec?.members?.size ?: 0
+            val countLabel = activity.resources.getQuantityString(
+                R.plurals.count_items, count, count,
+            )
+            return DeckAccessibility.gridSlotDescription(
+                primaryLabel = name,
+                secondaryDetail = countLabel,
+                favoriteLabel = favLabel,
+                dockLabel = dockLabel,
+                positionLabel = posLabel,
+                movingLabel = movingLabel,
+            )
+        }
+        if (SlotKey.isRom(key)) {
+            val missingLabel = activity.getString(
+                R.string.format_colon_pair,
+                activity.getString(R.string.label_missing),
+                PlatformTile.shortText(SlotKey.platformIdOf(key) ?: "rom"),
+            )
+            return DeckAccessibility.gridSlotDescription(
+                primaryLabel = missingLabel,
+                positionLabel = posLabel,
+                movingLabel = movingLabel,
+            )
+        }
+        val appEntry = visibleByPkg[key]
+        if (appEntry != null) {
+            return DeckAccessibility.gridSlotDescription(
+                primaryLabel = settings.customNames[key] ?: appEntry.label,
+                favoriteLabel = favLabel,
+                dockLabel = dockLabel,
+                positionLabel = posLabel,
+                movingLabel = movingLabel,
+            )
+        }
+        return DeckAccessibility.gridSlotDescription(
+            primaryLabel = activity.getString(R.string.action_add_to_grid),
+            positionLabel = posLabel,
+            movingLabel = movingLabel,
+        )
     }
 
     // The lifted tile breathes gently in scale, hover elevation, and luminance
@@ -763,6 +853,9 @@ class GridDeck(
                 ensureSelectionVisible()
                 rebindVisibleCells()
                 updatePageDots()
+                dockBar?.announceMoveState(
+                    activity.getString(R.string.format_progress, target + 1, slotCount),
+                )
             }
             return
         }
@@ -1910,6 +2003,9 @@ class GridDeck(
                     ensureSelectionVisible()
                     rebindVisibleCells()
                     updatePageDots()
+                    dockBar?.announceMoveState(
+                        activity.getString(R.string.format_progress, to + 1, slotCount),
+                    )
                 }
             }
             Action.CONFIRM -> dropMove()
@@ -1935,11 +2031,13 @@ class GridDeck(
             from
         }
         val slots = working.toList()
+        dockBar?.announceMoveState(activity.getString(R.string.deck_reordered))
         endMoveVisuals()
         updateGridSlots(slots, finalSlot)
     }
 
     private fun cancelMove() {
+        dockBar?.announceMoveState(activity.getString(R.string.action_cancel))
         endMoveVisuals()
         // Visible cells still show the discarded working copy: repopulate.
         rebindVisibleCells(repopulate = true)
@@ -2113,6 +2211,7 @@ class GridDeck(
             val key = slotPackages().getOrNull(absPos)
             val frame = (convertView as? FrameLayout) ?: FrameLayout(context).apply {
                 foreground = buildTileRipple(context)
+                accessibilityDelegate = GRID_SLOT_ROLE_DELEGATE
             }
             val boundKey = frame.getTag(R.id.grid_cell_key) as? String
             // Reuse convertView when the slot key is unchanged and we are not
@@ -2638,5 +2737,14 @@ class GridDeck(
         const val FOLDER_GHOST_WELL_FILL = 0x12FFFFFF
         const val FOLDER_GHOST_WELL_STROKE = 0x10FFFFFF
         const val PAGE_STRIP_RIPPLE_COLOR = 0x33FFFFFF
+        val GRID_SLOT_ROLE_DELEGATE = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfo,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
     }
 }

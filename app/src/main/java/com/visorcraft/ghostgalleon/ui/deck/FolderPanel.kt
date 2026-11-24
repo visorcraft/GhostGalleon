@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.view.ViewCompat
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.rom.PlatformTile
@@ -198,12 +199,13 @@ class FolderPanel(
             context = context,
             padHorizontalDp = UiDimens.SPACE_LG,
             padVerticalDp = 14,
-        )
+        ).also { ViewCompat.setAccessibilityPaneTitle(it, title) }
         val header = OverlayPrimitives.modalHeader(
             context = context,
             title = title,
             subtitle = countSubtitle(memberKeys.size),
         )
+        header.getChildAt(0)?.let { ViewCompat.setAccessibilityHeading(it, true) }
         subtitleView = (header.getChildAt(1) as? TextView)?.apply {
             fontFeatureSettings = "tnum"
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE

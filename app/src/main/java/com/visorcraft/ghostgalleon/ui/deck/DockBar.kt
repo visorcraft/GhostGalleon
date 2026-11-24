@@ -12,8 +12,10 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -208,6 +210,7 @@ class DockBar(
                 clipChildren = false
                 clipToPadding = false
                 foreground = dockSlotRipple(context, slotRadiusDp)
+                accessibilityDelegate = DOCK_SLOT_ROLE_DELEGATE
             }
             frame.setOnClickListener { onTap(index) }
             frame.setOnLongClickListener {
@@ -254,7 +257,7 @@ class DockBar(
         val key = keyAt(index)
         val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
-        frame.contentDescription = when {
+        val primaryLabel = when {
             romEntry != null -> RomNames.display(romEntry, settings.romNames)
             appEntry != null -> settings.customNames[key] ?: appEntry.label
             SlotKey.isRom(key) -> context.getString(
@@ -264,6 +267,12 @@ class DockBar(
             )
             else -> context.getString(R.string.action_add_to_dock)
         }
+        val visibleTotal = slotFrames.size.coerceAtLeast(DockSlots.visibleCount(slots()))
+        frame.contentDescription = DeckAccessibility.dockSlotDescription(
+            primaryLabel = primaryLabel,
+            positionLabel = context.getString(R.string.format_progress, index + 1, visibleTotal),
+            movingLabel = if (index == paintedMoving) context.getString(R.string.deck_hint_move) else null,
+        )
         val content: View = when {
             romEntry != null -> ArtTile.view(
                 context = context,
@@ -342,6 +351,7 @@ class DockBar(
             val surfaceFill = TileBackgrounds.surfaceColor(ctx)
             frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
                 role == MoveChoreography.SlotRole.LIFTED
+            updateSlotDescription(frame, index, role == MoveChoreography.SlotRole.LIFTED)
             frame.animate().cancel()
             frame.background = when (role) {
                 MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
@@ -402,10 +412,47 @@ class DockBar(
         }
     }
 
+    private fun updateSlotDescription(frame: FrameLayout, index: Int, isMoving: Boolean) {
+        val ctx = frame.context
+        val key = keyAt(index)
+        val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+        val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
+        val primary = when {
+            romEntry != null -> RomNames.display(romEntry, settings.romNames)
+            appEntry != null -> settings.customNames[key] ?: appEntry.label
+            SlotKey.isRom(key) -> ctx.getString(
+                R.string.format_colon_pair,
+                ctx.getString(R.string.label_missing),
+                PlatformTile.shortText(SlotKey.platformIdOf(key) ?: "rom"),
+            )
+            else -> ctx.getString(R.string.action_add_to_dock)
+        }
+        val total = slotFrames.size.coerceAtLeast(1)
+        frame.contentDescription = DeckAccessibility.dockSlotDescription(
+            primaryLabel = primary,
+            positionLabel = ctx.getString(R.string.format_progress, index + 1, total),
+            movingLabel = if (isMoving) ctx.getString(R.string.deck_hint_move) else null,
+        )
+    }
+
+    /** Polite TalkBack live-region update for move-mode slot transitions. */
+    fun announceMoveState(message: String) {
+        moveHintBanner?.contentDescription = message
+    }
+
     private companion object {
         const val FOCUS_ANIM_MS = 90L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
+        val DOCK_SLOT_ROLE_DELEGATE = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfo,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
     }
 
     private fun cancelPulseAnimator() {
