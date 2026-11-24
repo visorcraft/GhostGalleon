@@ -14,7 +14,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -302,6 +304,11 @@ class FolderPanel(
         )
 
         if (onMirrorToCollection != null) {
+            val mirrorRadius = themeTokens.cardRadiusDp.coerceAtMost(16)
+            val mirrorRipple = GridTileFeedbackMetrics.rippleColorForSurface(
+                surfaceFill = TileBackgrounds.surfaceColor(context),
+                accent = accentColor,
+            )
             val mirror = TextView(context).apply {
                 setText(R.string.action_mirror_to_collection)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -309,6 +316,9 @@ class FolderPanel(
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
+                minHeight = context.dp(FolderPanelMetrics.MIRROR_MIN_HEIGHT_DP)
+                foreground = roundedRipple(mirrorRadius, mirrorRipple)
+                accessibilityDelegate = BUTTON_ROLE_DELEGATE
                 setPadding(
                     context.dp(UiDimens.SPACE_MD),
                     context.dp(10),
@@ -414,6 +424,12 @@ class FolderPanel(
                     clipChildren = false
                     clipToPadding = false
                     foreground = roundedRipple(cellRadiusDp, rippleColor)
+                    accessibilityDelegate = BUTTON_ROLE_DELEGATE
+                    contentDescription = context.getString(
+                        R.string.format_dot_pair,
+                        label,
+                        context.getString(R.string.format_progress, index + 1, memberKeys.size),
+                    )
                     setPadding(
                         context.dp(UiDimens.SPACE_XS),
                         context.dp(UiDimens.SPACE_XS),
@@ -608,6 +624,7 @@ class FolderPanel(
         val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
         cells.forEachIndexed { index, cell ->
             val selected = index == activeCell
+            cell.isSelected = selected
             cell.background = if (selected) {
                 TileBackgrounds.focusStroke(
                     context = context,
@@ -646,21 +663,36 @@ class FolderPanel(
         }
 
         mirrorButton?.let { btn ->
+            val focused = nav.mirrorFocused && hasMirror
             val mirrorRadius = themeTokens.cardRadiusDp.coerceAtMost(16)
-            if (nav.mirrorFocused && hasMirror) {
-                btn.background = TileBackgrounds.focusStroke(
-                    context = context,
-                    accent = accentColor,
-                    fill = TileBackgrounds.surfaceColor(context),
-                    cornerRadiusDp = mirrorRadius,
-                    strokeDp = 3,
-                )
-                btn.setTypeface(null, Typeface.BOLD)
-            } else {
-                btn.background = TileBackgrounds.chipIdle(context, cornerRadiusDp = mirrorRadius)
-                btn.setTypeface(null, Typeface.NORMAL)
+            val style = FolderPanelMetrics.mirrorButtonStyle(
+                focused = focused,
+                accent = accentColor,
+                surfaceFill = TileBackgrounds.surfaceColor(context),
+                chipIdleFill = TileBackgrounds.chipIdleColor(context),
+                hairlineColor = TileBackgrounds.hairlineDivider(context),
+            )
+            btn.isSelected = focused
+            btn.background = GradientDrawable().apply {
+                setColor(style.fillColor)
+                cornerRadius = context.dpF(mirrorRadius)
+                setStroke(context.strokePx(style.strokeDp), style.strokeColor)
             }
-            btn.setTextColor(UiDimens.ALPHA_PRIMARY)
+            btn.setTextColor(style.textColor)
+            btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+            btn.translationZ = if (style.elevationDp > 0f) context.dpF(style.elevationDp) else 0f
+            btn.animate().cancel()
+            if (btn.isLaidOut) {
+                btn.animate()
+                    .scaleX(style.scale)
+                    .scaleY(style.scale)
+                    .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
+                    .setInterpolator(FOCUS_INTERPOLATOR)
+                    .start()
+            } else {
+                btn.scaleX = style.scale
+                btn.scaleY = style.scale
+            }
         }
 
         if (activeCell >= 0) {
@@ -683,6 +715,26 @@ class FolderPanel(
         memberKeys.removeAt(idx)
         nav = FolderPanelNav.afterRemoval(nav, memberKeys.size)
         rebuildGrid()
+        gridHost?.let { grid ->
+            grid.animate().cancel()
+            grid.alpha = 0.82f
+            grid.animate()
+                .alpha(1f)
+                .setDuration(110L)
+                .setInterpolator(FOCUS_INTERPOLATOR)
+                .start()
+        }
+        subtitleView?.let { sub ->
+            sub.animate().cancel()
+            sub.scaleX = 1.08f
+            sub.scaleY = 1.08f
+            sub.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(140L)
+                .setInterpolator(FOCUS_INTERPOLATOR)
+                .start()
+        }
     }
 
     fun handleAction(action: Action): Boolean {
@@ -722,5 +774,14 @@ class FolderPanel(
 
     private companion object {
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
+        val BUTTON_ROLE_DELEGATE = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfo,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
     }
 }

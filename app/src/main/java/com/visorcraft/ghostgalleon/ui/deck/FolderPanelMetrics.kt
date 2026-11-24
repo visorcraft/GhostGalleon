@@ -25,9 +25,52 @@ object FolderPanelMetrics {
 
     const val CELL_FOCUS_SCALE: Float = 1.045f
     const val CELL_FOCUS_ELEVATION_DP: Float = 6f
+    const val MIRROR_FOCUS_SCALE: Float = 1.02f
+    const val MIRROR_FOCUS_ELEVATION_DP: Float = 4f
+    const val MIRROR_MIN_HEIGHT_DP: Int = 44
     const val FOCUS_ANIM_MS: Long = 100L
     const val EMPTY_MEDALLION_SIZE_DP: Int = 56
     const val EMPTY_MEDALLION_ICON_DP: Int = 26
+
+    data class MirrorStyle(
+        val fillColor: Int,
+        val strokeColor: Int,
+        val strokeDp: Int,
+        val textColor: Int,
+        val bold: Boolean,
+        val scale: Float,
+        val elevationDp: Float,
+    )
+
+    /** Visual tokens for the Mirror-to-collection footer CTA in focused vs idle state. */
+    fun mirrorButtonStyle(
+        focused: Boolean,
+        accent: Int,
+        surfaceFill: Int,
+        chipIdleFill: Int,
+        hairlineColor: Int,
+    ): MirrorStyle = if (focused) {
+        val fill = MoveChoreography.liftedWashFill(accent, surfaceFill)
+        MirrorStyle(
+            fillColor = fill,
+            strokeColor = MoveChoreography.liftedBorderColor(accent, surfaceFill),
+            strokeDp = 3,
+            textColor = ThemePack.onFillTextColor(fill),
+            bold = true,
+            scale = MIRROR_FOCUS_SCALE,
+            elevationDp = MIRROR_FOCUS_ELEVATION_DP,
+        )
+    } else {
+        MirrorStyle(
+            fillColor = chipIdleFill,
+            strokeColor = hairlineColor,
+            strokeDp = 1,
+            textColor = UiDimens.ALPHA_PRIMARY,
+            bold = false,
+            scale = 1f,
+            elevationDp = 0f,
+        )
+    }
 
     data class LayoutSpec(
         val columns: Int,

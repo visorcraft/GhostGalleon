@@ -100,4 +100,41 @@ class FolderPanelMetricsTest {
             assertTrue("theme=${tokens.id} medallion contrast $ratio < 4.5", ratio >= ThemePack.MIN_TEXT_CONTRAST)
         }
     }
+
+    @Test
+    fun `mirrorButtonStyle keeps focused text and border WCAG AA across all built-in themes`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val fill = ThemePack.cardFill(tokens)
+            val hairline = ThemePack.hairlineDivider(tokens)
+            val focused = FolderPanelMetrics.mirrorButtonStyle(
+                focused = true,
+                accent = tokens.accentColor,
+                surfaceFill = fill,
+                chipIdleFill = tokens.chipIdle,
+                hairlineColor = hairline,
+            )
+            val idle = FolderPanelMetrics.mirrorButtonStyle(
+                focused = false,
+                accent = tokens.accentColor,
+                surfaceFill = fill,
+                chipIdleFill = tokens.chipIdle,
+                hairlineColor = hairline,
+            )
+            assertTrue(focused.bold)
+            assertTrue(focused.scale > idle.scale)
+            assertTrue(focused.elevationDp > idle.elevationDp)
+            assertTrue(
+                "theme=${tokens.id} focused text contrast < 4.5",
+                ThemePack.contrastRatio(focused.textColor, focused.fillColor) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "theme=${tokens.id} focused border contrast < 4.5",
+                ThemePack.contrastRatio(focused.strokeColor, fill) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "theme=${tokens.id} idle text contrast < 4.5",
+                ThemePack.contrastRatio(idle.textColor, idle.fillColor) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }
