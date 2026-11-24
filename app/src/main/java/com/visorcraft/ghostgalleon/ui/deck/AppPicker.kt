@@ -27,6 +27,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -501,18 +503,42 @@ class AppPicker(
         refreshEmpty()
         overlayView = overlay
         val metrics = context.resources.displayMetrics
+        val topMarginPx = context.dp(UiDimens.SPACE_LG)
+        val minCardHeightPx = context.dp(220)
         // Top-anchored. Slot pickers stay short so the IME does not cover
-        // results; the swipe-up drawer uses a taller card and no auto-IME.
-        overlay.addView(
-            card,
-            FrameLayout.LayoutParams(
-                cardWidth,
-                (metrics.heightPixels * heightFraction).toInt(),
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL,
-            ).apply {
-                topMargin = context.dp(UiDimens.SPACE_LG)
-            },
-        )
+        // results; the swipe-up drawer uses a taller card and shrinks smoothly
+        // above the soft keyboard if the user taps search.
+        val cardParams = FrameLayout.LayoutParams(
+            cardWidth,
+            OverlayPrimitives.imeAwareCardHeightPx(
+                screenHeightPx = metrics.heightPixels,
+                heightFrac = heightFraction,
+                bottomInsetPx = 0,
+                topMarginPx = topMarginPx,
+                minHeightPx = minCardHeightPx,
+            ),
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL,
+        ).apply {
+            topMargin = topMarginPx
+        }
+        overlay.addView(card, cardParams)
+        ViewCompat.setOnApplyWindowInsetsListener(overlay) { _, insets ->
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            val safeBottom = OverlayPrimitives.safeBottomInsetPx(imeBottom, navBottom)
+            val nextHeight = OverlayPrimitives.imeAwareCardHeightPx(
+                screenHeightPx = context.resources.displayMetrics.heightPixels,
+                heightFrac = heightFraction,
+                bottomInsetPx = safeBottom,
+                topMarginPx = topMarginPx,
+                minHeightPx = minCardHeightPx,
+            )
+            if (cardParams.height != nextHeight) {
+                cardParams.height = nextHeight
+                card.layoutParams = cardParams
+            }
+            insets
+        }
         // Only auto-focus search when requested (slot "Add to …" pickers).
         // The all-apps drawer leaves focus on the list so the keyboard does
         // not flash open/closed on every swipe-up.

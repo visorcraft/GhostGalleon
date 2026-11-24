@@ -619,6 +619,7 @@ class SetupCard(
                 Gravity.CENTER,
             ),
         )
+        OverlayPrimitives.applyImeSafeInsets(overlay)
         OverlayPrimitives.bindModalEnter(overlay, card)
         return overlay
     }

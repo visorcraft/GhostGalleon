@@ -20,6 +20,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.StringRes
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.TextViewCompat
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -133,12 +135,69 @@ object OverlayPrimitives {
         }
     }
 
-    /**
-     * Pure pixel length for vertical scroll fading edges. Host-tested.
-     */
+    /** Pure pixel length for vertical scroll fading edges. Host-tested. */
     fun fadingEdgeLengthPx(density: Float, edgeDp: Int = FADING_EDGE_DP): Int {
         val safeDensity = density.coerceAtLeast(0.1f)
         return (edgeDp.coerceAtLeast(0) * safeDensity).toInt()
+    }
+
+    /**
+     * Pure bottom inset padding keeping centered modals clear of an active IME
+     * or gesture/navigation bar without shifting modals in immersive fullscreen
+     * (`0` when both insets are `0`). Host-tested.
+     */
+    fun safeBottomInsetPx(
+        imeBottomPx: Int,
+        navBarBottomPx: Int,
+        extraMarginPx: Int = 0,
+    ): Int {
+        val base = maxOf(imeBottomPx.coerceAtLeast(0), navBarBottomPx.coerceAtLeast(0))
+        return if (base > 0) base + extraMarginPx.coerceAtLeast(0) else 0
+    }
+
+    /**
+     * Pure IME-safe vertical height for top-anchored tall modal sheets (such
+     * as [AppPicker]'s 0.88f drawer): shrinks cleanly above the soft keyboard
+     * while respecting [minHeightPx] whenever screen space allows. Host-tested.
+     */
+    fun imeAwareCardHeightPx(
+        screenHeightPx: Int,
+        heightFrac: Float,
+        bottomInsetPx: Int,
+        topMarginPx: Int,
+        minHeightPx: Int,
+    ): Int {
+        val safeH = screenHeightPx.coerceAtLeast(1)
+        val desired = (safeH * heightFrac.coerceIn(0.1f, 1f)).toInt().coerceAtLeast(1)
+        val available = (safeH - bottomInsetPx.coerceAtLeast(0) - topMarginPx.coerceAtLeast(0) * 2)
+            .coerceAtLeast(1)
+        val minBound = minOf(minHeightPx.coerceAtLeast(1), available)
+        return minOf(desired, available).coerceAtLeast(minBound)
+    }
+
+    /**
+     * Keep [backdrop]'s children clear of the soft keyboard and bottom
+     * navigation insets without triggering redundant layout passes.
+     */
+    fun applyImeSafeInsets(
+        backdrop: View,
+        extraBottomDp: Int = UiDimens.SPACE_SM,
+    ) {
+        val extraPx = backdrop.context.dp(extraBottomDp)
+        ViewCompat.setOnApplyWindowInsetsListener(backdrop) { view, insets ->
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val navBottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            val nextBottom = safeBottomInsetPx(imeBottom, navBottom, extraPx)
+            if (view.paddingBottom != nextBottom) {
+                view.setPadding(
+                    view.paddingLeft,
+                    view.paddingTop,
+                    view.paddingRight,
+                    nextBottom,
+                )
+            }
+            insets
+        }
     }
 
     /**
@@ -441,6 +500,7 @@ object OverlayPrimitives {
                 cancelAnimations(v)
             }
         })
+        applyImeSafeInsets(this)
     }
 
     /**

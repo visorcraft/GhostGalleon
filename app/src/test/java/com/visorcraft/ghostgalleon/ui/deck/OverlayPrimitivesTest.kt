@@ -173,4 +173,49 @@ class OverlayPrimitivesTest {
             )
         }
     }
+
+    @Test
+    fun `safeBottomInsetPx returns zero in immersive fullscreen and pads cleanly when IME opens`() {
+        assertEquals(0, OverlayPrimitives.safeBottomInsetPx(imeBottomPx = 0, navBarBottomPx = 0, extraMarginPx = 16))
+        assertEquals(416, OverlayPrimitives.safeBottomInsetPx(imeBottomPx = 400, navBarBottomPx = 48, extraMarginPx = 16))
+        assertEquals(64, OverlayPrimitives.safeBottomInsetPx(imeBottomPx = 0, navBarBottomPx = 48, extraMarginPx = 16))
+        assertEquals(0, OverlayPrimitives.safeBottomInsetPx(imeBottomPx = -10, navBarBottomPx = -5, extraMarginPx = 16))
+    }
+
+    @Test
+    fun `imeAwareCardHeightPx shrinks tall drawers cleanly above soft keyboard and restores when closed`() {
+        // 1080px screen, 0.88f drawer -> 950px with keyboard closed.
+        assertEquals(
+            950,
+            OverlayPrimitives.imeAwareCardHeightPx(
+                screenHeightPx = 1080,
+                heightFrac = 0.88f,
+                bottomInsetPx = 0,
+                topMarginPx = 32,
+                minHeightPx = 440,
+            ),
+        )
+        // With 480px IME open: available = 1080 - 480 - 64 = 536px (< 950px desired).
+        assertEquals(
+            536,
+            OverlayPrimitives.imeAwareCardHeightPx(
+                screenHeightPx = 1080,
+                heightFrac = 0.88f,
+                bottomInsetPx = 480,
+                topMarginPx = 32,
+                minHeightPx = 440,
+            ),
+        )
+        // Very tight Sugar panel with large IME clamps safely to available space (>= 1).
+        assertEquals(
+            180,
+            OverlayPrimitives.imeAwareCardHeightPx(
+                screenHeightPx = 540,
+                heightFrac = 0.88f,
+                bottomInsetPx = 300,
+                topMarginPx = 30,
+                minHeightPx = 360,
+            ),
+        )
+    }
 }

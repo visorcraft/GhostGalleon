@@ -542,6 +542,7 @@ object SessionSwitcherView {
                 Gravity.CENTER,
             ),
         )
+        OverlayPrimitives.applyImeSafeInsets(overlay)
         OverlayPrimitives.bindModalEnter(
             backdrop = overlay,
             card = sheet,
