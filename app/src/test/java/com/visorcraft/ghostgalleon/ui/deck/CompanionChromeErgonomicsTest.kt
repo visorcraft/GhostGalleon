@@ -89,4 +89,42 @@ class CompanionChromeErgonomicsTest {
             0.001f,
         )
     }
+
+    @Test
+    fun `favoriteChipText prepends star glyph only when active`() {
+        assertEquals(
+            "★ Unfavorite",
+            CompanionChromeErgonomics.favoriteChipText("★", "Unfavorite", isFavorite = true),
+        )
+        assertEquals(
+            "Favorite",
+            CompanionChromeErgonomics.favoriteChipText("★", "Favorite", isFavorite = false),
+        )
+        assertEquals(
+            "Unfavorite",
+            CompanionChromeErgonomics.favoriteChipText(" ", "Unfavorite", isFavorite = true),
+        )
+    }
+
+    @Test
+    fun `activeChipFill keeps WCAG AA contrast for accent text and gold star across all themes`() {
+        val goldStar = 0xFFFFD54F.toInt()
+        for (pack in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val fill = CompanionChromeErgonomics.activeChipFill(pack.chipIdle, pack.accentColor)
+            val textAccent = com.visorcraft.ghostgalleon.settings.ThemePack.accentTextColor(
+                pack.accentColor,
+                fill,
+            )
+            val accentRatio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(textAccent, fill)
+            val starRatio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(goldStar, fill)
+            assertTrue(
+                "Active chip accent text on ${pack.id} must be >= 4.5, was $accentRatio",
+                accentRatio >= com.visorcraft.ghostgalleon.settings.ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Active chip gold star on ${pack.id} must be >= 4.5, was $starRatio",
+                starRatio >= com.visorcraft.ghostgalleon.settings.ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

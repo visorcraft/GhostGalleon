@@ -23,6 +23,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -708,22 +711,56 @@ object CompanionPanel {
         val label = context.getString(
             if (isFavorite) R.string.action_unfavorite else R.string.action_favorite,
         )
-        if (chip.text?.toString() != label) {
-            chip.text = label
-            chip.contentDescription = label
+        val star = context.getString(R.string.glyph_favorite)
+        val display = CompanionChromeErgonomics.favoriteChipText(star, label, isFavorite)
+        if (chip.text?.toString() == display &&
+            chip.isSelected == isFavorite &&
+            chip.background != null
+        ) {
+            return
         }
-        val surface = TileBackgrounds.chipIdleColor(context)
-        val textAccent = ThemePack.accentTextColor(accentColor, surface)
-        chip.setTextColor(if (isFavorite) textAccent else Color.WHITE)
-        val bg = (chip.background as? GradientDrawable)?.mutate() as? GradientDrawable
-            ?: TileBackgrounds.chipIdle(context, cornerRadiusDp = 17).also { chip.background = it }
-        bg.setColor(surface)
-        bg.cornerRadius = context.dpF(17)
-        if (isFavorite) {
-            bg.setStroke(context.strokePx(1), (textAccent and 0x00FFFFFF) or (0x88 shl 24))
+        chip.isSelected = isFavorite
+        chip.contentDescription = label
+        val idleSurface = TileBackgrounds.chipIdleColor(context)
+        val fillSurface = if (isFavorite) {
+            CompanionChromeErgonomics.activeChipFill(idleSurface, accentColor)
         } else {
-            bg.setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+            idleSurface
         }
+        val textAccent = ThemePack.accentTextColor(accentColor, fillSurface)
+        chip.setTextColor(if (isFavorite) textAccent else Color.WHITE)
+        chip.setTypeface(chip.typeface, if (isFavorite) Typeface.BOLD else Typeface.NORMAL)
+        if (isFavorite && star.isNotBlank() && display.startsWith(star)) {
+            val styled = SpannableString(display).apply {
+                setSpan(
+                    ForegroundColorSpan(FAVORITE_STAR_COLOR),
+                    0,
+                    star.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            chip.text = styled
+        } else {
+            chip.text = display
+        }
+        val base = GradientDrawable().apply {
+            setColor(fillSurface)
+            cornerRadius = context.dpF(17)
+            if (isFavorite) {
+                setStroke(context.strokePx(1), (textAccent and 0x00FFFFFF) or (0x88 shl 24))
+            } else {
+                setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+            }
+        }
+        chip.background = buildInteractivePillBackground(
+            context = context,
+            base = base,
+            accent = accentColor,
+            cornerRadiusDp = 17,
+        )
+        val insetV = (CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP * context.resources.displayMetrics.density).toInt()
+        val padH = (12 * context.resources.displayMetrics.density).toInt()
+        chip.setPadding(padH, insetV, padH, insetV)
     }
 
     // Layered depth background: a vertical gradient lifting to #FF202028 in
@@ -2470,12 +2507,25 @@ object CompanionPanel {
             // live state.selectedKey / app.settings so in-place updateSelection
             // never leaves stale build-time closures behind.
             if (heroSpec.showQuickChips) {
-                val chipH = dp(34)
+                val chipH = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
+                val insetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
                 val quick = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER
                     isBaselineAligned = false
-                    setPadding(dp(4), dp(8), dp(4), dp(2))
+                    clipChildren = false
+                    clipToPadding = false
+                    setPadding(dp(4), dp(3), dp(4), 0)
+                }
+                val quickScroll = HorizontalScrollView(context).apply {
+                    tag = TAG_HERO_QUICK_BAR
+                    isFillViewport = true
+                    isHorizontalScrollBarEnabled = false
+                    isHorizontalFadingEdgeEnabled = true
+                    setFadingEdgeLength(dp(18))
+                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    clipChildren = false
+                    clipToPadding = false
                 }
                 fun liveRom(): RomEntry? = selectedRom(state.selectedKey, app.romEntries, app)
                 fun quickChip(
@@ -2488,14 +2538,31 @@ object CompanionPanel {
                     contentDescription = label
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setTextColor(Color.WHITE)
-                    background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 17)
+                    background = buildInteractivePillBackground(
+                        context = context,
+                        base = TileBackgrounds.chipIdle(context, cornerRadiusDp = 17),
+                        accent = settings.accentColor,
+                        cornerRadiusDp = 17,
+                    )
                     gravity = Gravity.CENTER
-                    setPadding(dp(12), 0, dp(12), 0)
+                    setPadding(dp(12), insetV, dp(12), insetV)
                     includeFontPadding = true
                     setSingleLine()
                     isClickable = true
                     isFocusable = true
                     setOnClickListener { onClick() }
+                }.also { tv ->
+                    attachChipTactileFeedback(tv) {
+                        val target = CompanionChromeErgonomics.horizontalScrollTarget(
+                            chipLeft = tv.left,
+                            chipRight = tv.right,
+                            viewportWidth = quickScroll.width,
+                            endClearancePx = 0,
+                            contentWidth = quick.width,
+                            currentScrollX = quickScroll.scrollX,
+                        )
+                        if (target != null) quickScroll.smoothScrollTo(target, 0)
+                    }
                 }
                 fun addChip(
                     label: String,
@@ -2585,22 +2652,14 @@ object CompanionPanel {
                         }
                     }
                 }
-                val quickScroll = HorizontalScrollView(context).apply {
-                    tag = TAG_HERO_QUICK_BAR
-                    isFillViewport = true
-                    isHorizontalScrollBarEnabled = false
-                    isHorizontalFadingEdgeEnabled = true
-                    setFadingEdgeLength(dp(16))
-                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                    addView(
-                        quick,
-                        FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            Gravity.CENTER_HORIZONTAL,
-                        ),
-                    )
-                }
+                quickScroll.addView(
+                    quick,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER_HORIZONTAL,
+                    ),
+                )
                 hero.addView(
                     quickScroll,
                     LinearLayout.LayoutParams(

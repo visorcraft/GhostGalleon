@@ -69,4 +69,26 @@ object CompanionChromeErgonomics {
         focused -> focusScale
         else -> 1f
     }
+
+    /**
+     * Visible text for the Favorite quick chip: prepends the non-translatable
+     * star glyph when active while keeping TalkBack's `contentDescription` plain.
+     */
+    fun favoriteChipText(starGlyph: String, label: String, isFavorite: Boolean): String =
+        if (isFavorite && starGlyph.isNotBlank()) "$starGlyph $label" else label
+
+    /**
+     * Subtle active wash for toggled quick-action chips (82% idle chip surface +
+     * 18% theme accent) so active pills stand out cleanly while preserving WCAG AA
+     * contrast for accent and gold star foregrounds.
+     */
+    fun activeChipFill(idleSurface: Int, accentColor: Int): Int {
+        val r = (((idleSurface shr 16) and 0xFF) * 82 + ((accentColor shr 16) and 0xFF) * 18) / 100
+        val g = (((idleSurface shr 8) and 0xFF) * 82 + ((accentColor shr 8) and 0xFF) * 18) / 100
+        val b = ((idleSurface and 0xFF) * 82 + (accentColor and 0xFF) * 18) / 100
+        return (0xFF shl 24) or
+            (r.coerceIn(0, 255) shl 16) or
+            (g.coerceIn(0, 255) shl 8) or
+            b.coerceIn(0, 255)
+    }
 }
