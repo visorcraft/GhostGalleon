@@ -3,11 +3,17 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.UserHandle
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import com.visorcraft.ghostgalleon.ui.dpF
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 /**
  * Best-effort embed of another app into a companion panel via hidden
@@ -17,6 +23,45 @@ import android.widget.FrameLayout
  */
 object ActivityEmbed {
 
+    /** Rounded viewport corner radius (dp) framing embedded companion surfaces. */
+    const val VIEWPORT_CORNER_RADIUS_DP: Int = 16
+
+    /** Pure pre-check rejecting blank or malformed package names before reflection. */
+    fun canAttemptAttach(packageName: String?): Boolean {
+        val trimmed = packageName?.trim().orEmpty()
+        return trimmed.isNotEmpty() && '.' in trimmed && trimmed.none { it.isWhitespace() }
+    }
+
+    /**
+     * Frame an embed viewport host with rounded clip outline, sunken surface fill,
+     * and a crisp 1dp hairline border so embedded apps harmonize with OLED cards.
+     */
+    fun applyViewportFrame(
+        host: ViewGroup,
+        accentColor: Int? = null,
+        cornerRadiusDp: Int = VIEWPORT_CORNER_RADIUS_DP,
+    ) {
+        val context = host.context
+        val radiusPx = context.dpF(cornerRadiusDp)
+        host.background = GradientDrawable().apply {
+            setColor(TileBackgrounds.surfaceSunken(context))
+            cornerRadius = radiusPx
+        }
+        host.clipToOutline = true
+        host.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+            }
+        }
+        val rim = accentColor?.let { CompanionHeroStyle.artRimColor(it) }
+            ?: TileBackgrounds.hairlineDivider(context)
+        host.foreground = GradientDrawable().apply {
+            setColor(Color.TRANSPARENT)
+            cornerRadius = radiusPx
+            setStroke(context.strokePx(1), rim)
+        }
+    }
+
     fun available(): Boolean = resolveClass() != null
 
     fun attach(
@@ -24,6 +69,7 @@ object ActivityEmbed {
         context: Context,
         packageName: String,
     ): Boolean {
+        if (!canAttemptAttach(packageName)) return false
         val cls = resolveClass() ?: return false
         val view = runCatching {
             cls.getConstructor(Context::class.java).newInstance(context) as View

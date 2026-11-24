@@ -131,4 +131,14 @@ class CompanionHeroStyleTest {
             )
         }
     }
+
+    @Test
+    fun `ActivityEmbed pre-check validates package names before reflection`() {
+        assertTrue(ActivityEmbed.canAttemptAttach("org.mozilla.firefox"))
+        assertFalse(ActivityEmbed.canAttemptAttach(null))
+        assertFalse(ActivityEmbed.canAttemptAttach(""))
+        assertFalse(ActivityEmbed.canAttemptAttach("invalidpkg"))
+        assertFalse(ActivityEmbed.canAttemptAttach("com.bad pkg"))
+        assertTrue(ActivityEmbed.VIEWPORT_CORNER_RADIUS_DP >= 12)
+    }
 }

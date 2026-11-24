@@ -560,10 +560,12 @@ object CompanionPanel {
                 dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP),
             ).apply { topMargin = dp(4) },
         )
+        val helperHost = FrameLayout(activity).apply {
+            tag = TAG_PLAY_HUD_HELPER
+        }
+        ActivityEmbed.applyViewportFrame(helperHost, accentColor = settings.accentColor)
         body.addView(
-            FrameLayout(activity).apply {
-                tag = TAG_PLAY_HUD_HELPER
-            },
+            helperHost,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -3563,24 +3565,11 @@ object CompanionPanel {
         val surface = TileBackgrounds.surfaceColor(activity)
         val col = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(24), dp(16), dp(16))
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(4), dp(8), dp(4), dp(12))
         }
-        col.addView(TextView(activity).apply {
-            setText(R.string.label_pinned_app)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER
-        })
-        col.addView(TextView(activity).apply {
-            setText(R.string.deck_pin_cta_subtitle)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x88FFFFFF.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(8))
-        })
         val app = activity.application as GhostGalleonApp
         val honesty = CompanionRoleResolve.pinHonesty(
             CompanionRoleResolve.Context(
@@ -3592,98 +3581,270 @@ object CompanionPanel {
                 sessionGreedy = app.sessionSurface?.greedy == true,
             ),
         )
+        fun framedCard(): LinearLayout = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = TileBackgrounds.card(activity)
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+        }
+        fun addEyebrow(target: LinearLayout) {
+            target.addView(TextView(activity).apply {
+                setText(R.string.label_pinned_app)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
+                letterSpacing = 0.12f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+            })
+            target.addView(TextView(activity).apply {
+                setText(R.string.deck_pin_cta_subtitle)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(UiDimens.ALPHA_MUTED)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(4), 0, dp(8))
+            })
+        }
         when (honesty) {
             CompanionRoleResolve.PinHonesty.EMPTY -> {
-                col.addView(TextView(activity).apply {
+                val card = framedCard()
+                addEyebrow(card)
+                card.addView(TextView(activity).apply {
                     setText(R.string.deck_set_pin_help)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                    setTextColor(0x99FFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTextColor(UiDimens.ALPHA_SECONDARY)
                     gravity = Gravity.CENTER
-                    setPadding(0, dp(12), 0, dp(12))
+                    setPadding(0, dp(6), 0, dp(10))
                 })
-                col.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin) {
+                card.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin, filled = true) {
                     showCompanionPinPicker(activity)
                 })
+                col.gravity = Gravity.CENTER
+                col.addView(
+                    card,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
             CompanionRoleResolve.PinHonesty.MISSING -> {
-                col.addView(TextView(activity).apply {
+                val card = framedCard()
+                addEyebrow(card)
+                card.addView(TextView(activity).apply {
                     setText(R.string.deck_pinned_app_missing)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                    setTextColor(0x99FFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
                     gravity = Gravity.CENTER
-                    setPadding(0, dp(12), 0, dp(8))
+                    setPadding(0, dp(6), 0, dp(4))
                 })
-                col.addView(TextView(activity).apply {
+                card.addView(TextView(activity).apply {
                     text = pinPkg.orEmpty()
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(0x66FFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
                     gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    setPadding(0, 0, 0, dp(10))
                 })
-                col.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin) {
+                card.addView(pinActionChip(activity, settings, dp, R.string.action_choose_pin, filled = true) {
                     showCompanionPinPicker(activity)
                 })
+                col.gravity = Gravity.CENTER
+                col.addView(
+                    card,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
             CompanionRoleResolve.PinHonesty.DUAL_CLAIM -> {
-                col.addView(TextView(activity).apply {
+                val card = framedCard()
+                addEyebrow(card)
+                card.addView(TextView(activity).apply {
                     setText(R.string.deck_pin_dual_claim)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                    setTextColor(0x99FFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setTextColor(UiDimens.ALPHA_SECONDARY)
                     gravity = Gravity.CENTER
-                    setPadding(0, dp(12), 0, 0)
+                    setPadding(0, dp(8), 0, dp(4))
                 })
+                col.gravity = Gravity.CENTER
+                col.addView(
+                    card,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
             CompanionRoleResolve.PinHonesty.READY -> {
+                val pkg = pinPkg!!
                 val label = runCatching {
                     val pm = activity.packageManager
-                    pm.getApplicationLabel(pm.getApplicationInfo(pinPkg!!, 0)).toString()
-                }.getOrDefault(pinPkg!!)
-                col.addView(TextView(activity).apply {
-                    text = label
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(12), 0, dp(16))
-                })
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                }.getOrDefault(pkg)
                 val embedHost = FrameLayout(activity)
+                ActivityEmbed.applyViewportFrame(embedHost, accentColor = settings.accentColor)
                 val pinAllowed = !DualPaintPolicy.sessionOwnsCompanionDisplay(
                     app.sessionSurface?.policy,
                     app.sessionSurface?.greedy == true,
                 )
                 val embedded = pinAllowed && ActivityEmbed.available() &&
-                    ActivityEmbed.attach(embedHost, activity, pinPkg)
+                    ActivityEmbed.attach(embedHost, activity, pkg)
                 if (embedded) {
+                    val bar = LinearLayout(activity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        clipChildren = false
+                        clipToPadding = false
+                        setPadding(dp(4), 0, dp(4), dp(4))
+                    }
+                    val miniPx = dp(32)
+                    val miniIcon = ImageView(activity).apply {
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    CustomIcon.bind(
+                        miniIcon,
+                        iconLoader(activity),
+                        app.artCache,
+                        settings,
+                        pkg,
+                        miniPx,
+                    )
+                    bar.addView(miniIcon, LinearLayout.LayoutParams(miniPx, miniPx).apply {
+                        marginEnd = dp(10)
+                    })
+                    bar.addView(
+                        TextView(activity).apply {
+                            text = label
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                            setTypeface(typeface, Typeface.BOLD)
+                            setTextColor(Color.WHITE)
+                            maxLines = 1
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    bar.addView(
+                        pinActionChip(
+                            activity,
+                            settings,
+                            dp,
+                            R.string.action_change_pin,
+                            filled = false,
+                        ) {
+                            ActivityEmbed.release(embedHost)
+                            showCompanionPinPicker(activity)
+                        },
+                    )
+                    col.addView(
+                        bar,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ),
+                    )
                     col.addView(
                         embedHost,
                         LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
-                        ).apply { topMargin = dp(8) },
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            0,
+                            1f,
+                        ).apply { topMargin = dp(6) },
                     )
                 } else {
+                    val card = framedCard()
+                    addEyebrow(card)
+                    val iconPx = dp(64)
+                    card.addView(
+                        buildFramedSessionArt(
+                            activity = activity,
+                            app = app,
+                            roms = emptyList(),
+                            settings = settings,
+                            slotKey = pkg,
+                            fallbackPackage = pkg,
+                            artPx = iconPx,
+                        ),
+                        LinearLayout.LayoutParams(iconPx, iconPx).apply {
+                            gravity = Gravity.CENTER_HORIZONTAL
+                            topMargin = dp(4)
+                            bottomMargin = dp(10)
+                        },
+                    )
+                    card.addView(TextView(activity).apply {
+                        text = label
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                        setTypeface(typeface, Typeface.BOLD)
+                        setTextColor(Color.WHITE)
+                        gravity = Gravity.CENTER
+                        maxLines = 2
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(0, 0, 0, dp(6))
+                    })
                     if (pinAllowed && ActivityEmbed.available()) {
-                        col.addView(TextView(activity).apply {
+                        card.addView(TextView(activity).apply {
                             setText(R.string.deck_embed_unavailable)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                            setTextColor(0x88FFFFFF.toInt())
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                            setTextColor(UiDimens.ALPHA_MUTED)
                             gravity = Gravity.CENTER
                             setPadding(0, 0, 0, dp(8))
                         })
                     }
-                    if (pinAllowed) {
-                        col.addView(pinActionChip(activity, settings, dp, R.string.action_launch_pin) {
-                            val intent = activity.packageManager.getLaunchIntentForPackage(pinPkg)
-                                ?: return@pinActionChip
-                            val displayId = activity.currentDisplayId() ?: 0
-                            val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
-                            runCatching {
-                                activity.startActivity(intent, options.toBundle())
-                            }
-                        })
+                    val actionRow = LinearLayout(activity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER
+                        clipChildren = false
+                        clipToPadding = false
+                        setPadding(0, dp(4), 0, 0)
                     }
+                    if (pinAllowed) {
+                        actionRow.addView(
+                            pinActionChip(
+                                activity,
+                                settings,
+                                dp,
+                                R.string.action_launch_pin,
+                                filled = true,
+                            ) {
+                                val intent = activity.packageManager.getLaunchIntentForPackage(pkg)
+                                    ?: return@pinActionChip
+                                val displayId = activity.currentDisplayId() ?: 0
+                                val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+                                runCatching {
+                                    activity.startActivity(intent, options.toBundle())
+                                }
+                            },
+                        )
+                        actionRow.addView(View(activity), LinearLayout.LayoutParams(dp(10), 1))
+                    }
+                    actionRow.addView(
+                        pinActionChip(
+                            activity,
+                            settings,
+                            dp,
+                            R.string.action_change_pin,
+                            filled = !pinAllowed,
+                        ) {
+                            ActivityEmbed.release(embedHost)
+                            showCompanionPinPicker(activity)
+                        },
+                    )
+                    card.addView(actionRow)
+                    col.gravity = Gravity.CENTER
+                    col.addView(
+                        card,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ),
+                    )
                 }
-                col.addView(pinActionChip(activity, settings, dp, R.string.action_change_pin) {
-                    ActivityEmbed.release(embedHost)
-                    showCompanionPinPicker(activity)
-                })
             }
         }
         return col
@@ -3694,20 +3855,40 @@ object CompanionPanel {
         settings: Settings,
         dp: (Int) -> Int,
         labelRes: Int,
+        filled: Boolean = true,
         onClick: () -> Unit,
-    ): TextView = TextView(activity).apply {
-        setText(labelRes)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-        background = TileBackgrounds.accentPill(activity, settings.accentColor)
-        setPadding(dp(20), dp(12), dp(20), dp(12))
-        gravity = Gravity.CENTER
-        setOnClickListener { onClick() }
-        val lp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) }
-        layoutParams = lp
+    ): TextView {
+        val insetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val base = if (filled) {
+            TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18)
+        } else {
+            TileBackgrounds.chipIdle(activity, cornerRadiusDp = 18)
+        }
+        return TextView(activity).apply {
+            setText(labelRes)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, if (filled) Typeface.BOLD else Typeface.NORMAL)
+            setTextColor(
+                if (filled) ThemePack.onFillTextColor(settings.accentColor)
+                else UiDimens.ALPHA_PRIMARY,
+            )
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = base,
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
+            setPadding(dp(18), insetV, dp(18), insetV)
+            gravity = Gravity.CENTER
+            setSingleLine()
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP),
+            )
+        }.also { attachChipTactileFeedback(it) }
     }
 
     private fun showCompanionPinPicker(activity: AppCompatActivity) {
