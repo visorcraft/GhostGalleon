@@ -80,4 +80,30 @@ class GridPageIndicatorMetricsTest {
             assertTrue("theme=${tokens.id} ratio=$ratio < 4.5", ratio >= ThemePack.MIN_TEXT_CONTRAST)
         }
     }
+
+    @Test
+    fun `symmetric chevron hit targets meet ergonomic bounds and strip fits 540dp Sugar panels`() {
+        assertTrue(
+            "chevron width ${GridPageIndicatorMetrics.CHEVRON_HIT_WIDTH_DP} < 36dp",
+            GridPageIndicatorMetrics.CHEVRON_HIT_WIDTH_DP >= 36,
+        )
+        assertTrue(
+            "chevron height ${GridPageIndicatorMetrics.CHEVRON_HIT_HEIGHT_DP} < 30dp",
+            GridPageIndicatorMetrics.CHEVRON_HIT_HEIGHT_DP >= 30,
+        )
+        // Optical glyph stays 16dp centered inside the expanded hit target.
+        assertEquals(
+            GridPageIndicatorMetrics.CHEVRON_GLYPH_DP,
+            GridPageIndicatorMetrics.CHEVRON_HIT_WIDTH_DP - GridPageIndicatorMetrics.CHEVRON_PAD_H_DP * 2,
+        )
+        assertEquals(
+            GridPageIndicatorMetrics.CHEVRON_GLYPH_DP,
+            GridPageIndicatorMetrics.CHEVRON_HIT_HEIGHT_DP - GridPageIndicatorMetrics.CHEVRON_PAD_V_DP * 2,
+        )
+        assertEquals(0, GridPageIndicatorMetrics.estimatedStripWidthDp(1))
+        for (pages in 2..16) {
+            val widthDp = GridPageIndicatorMetrics.estimatedStripWidthDp(pages)
+            assertTrue("strip width ${widthDp}dp for $pages pages exceeds 540dp Sugar", widthDp <= 540 - 32)
+        }
+    }
 }

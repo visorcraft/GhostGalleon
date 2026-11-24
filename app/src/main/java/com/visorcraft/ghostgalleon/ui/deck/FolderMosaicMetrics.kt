@@ -92,4 +92,58 @@ object FolderMosaicMetrics {
         count > 99 -> "99+"
         else -> count.toString()
     }
+
+    /** Proportional font size bounds (sp) for folder count pills across 48..128dp tiles. */
+    const val BADGE_MIN_TEXT_SP: Float = 8.5f
+    const val BADGE_MAX_TEXT_SP: Float = 11.5f
+
+    data class BadgeSpec(
+        val visible: Boolean,
+        val text: String,
+        val textSp: Float,
+        val padHPx: Int,
+        val padVPx: Int,
+        val minWidthPx: Int,
+        val pillHeightPx: Int,
+        val cornerRadiusPx: Float,
+    )
+
+    /**
+     * Pure folder count-pill sizing & visibility spec.
+     * Hides the pill on empty folders (`count <= 0`), scales font size smoothly
+     * across `48..128dp` icon boxes, and derives an exact half-height capsule radius.
+     */
+    fun badgeSpec(
+        iconSizePx: Int,
+        count: Int,
+        density: Float,
+    ): BadgeSpec {
+        val d = density.coerceAtLeast(0.1f)
+        val iconDp = iconSizePx.coerceAtLeast(1) / d
+        val frac = ((iconDp - 48f) / 80f).coerceIn(0f, 1f)
+        val rawSp = BADGE_MIN_TEXT_SP + (BADGE_MAX_TEXT_SP - BADGE_MIN_TEXT_SP) * frac
+        val textSp = (kotlin.math.round(rawSp * 2f) / 2f)
+            .coerceIn(BADGE_MIN_TEXT_SP, BADGE_MAX_TEXT_SP)
+
+        val padHDp = if (iconDp < 64f) 4f else 5f
+        val padVDp = if (iconDp < 64f) 1.5f else 2f
+        val padHPx = (padHDp * d).roundToInt().coerceAtLeast(2)
+        val padVPx = (padVDp * d).roundToInt().coerceAtLeast(1)
+        val textHeightPx = (textSp * d * 1.15f).roundToInt().coerceAtLeast(1)
+        val pillHeightPx = textHeightPx + padVPx * 2
+        val minWidthPx = maxOf(pillHeightPx, (16f * d).roundToInt())
+        val cornerRadiusPx = pillHeightPx * 0.5f
+
+        val visible = count > 0
+        return BadgeSpec(
+            visible = visible,
+            text = if (visible) countBadgeText(count) else "",
+            textSp = textSp,
+            padHPx = padHPx,
+            padVPx = padVPx,
+            minWidthPx = minWidthPx,
+            pillHeightPx = pillHeightPx,
+            cornerRadiusPx = cornerRadiusPx,
+        )
+    }
 }

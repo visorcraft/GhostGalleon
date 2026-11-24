@@ -25,6 +25,33 @@ object GridTileFeedbackMetrics {
     /** Fraction of lifted accent blended into white ripples on dark surfaces. */
     const val ACCENT_TINT_FRACTION: Float = 0.28f
 
+    /** Proportional blank-slot `+` font bounds (sp) across dense 7-col Sugar to wide 4-col Odin. */
+    const val MIN_BLANK_PLUS_SP: Float = 20f
+    const val MAX_BLANK_PLUS_SP: Float = 34f
+
+    /**
+     * Proportional `+` font size (sp) for a blank GridDeck tile derived from its
+     * shorter edge (`min(cellWidthDp, cellHeightDp)`), clamped to `20..34sp`.
+     */
+    fun blankPlusTextSp(cellWidthDp: Int, cellHeightDp: Int): Float {
+        val minSide = minOf(cellWidthDp, cellHeightDp).coerceAtLeast(1)
+        val raw = minSide * 0.28f
+        val roundedHalf = kotlin.math.round(raw * 2f) / 2f
+        return roundedHalf.coerceIn(MIN_BLANK_PLUS_SP, MAX_BLANK_PLUS_SP)
+    }
+
+    /** Crisp WCAG-AA accent-lifted `+` glyph tint when a blank grid tile is focused. */
+    fun focusedBlankPlusColor(accent: Int, selectedSurfaceFill: Int): Int =
+        ThemePack.accentTextColor(accent, selectedSurfaceFill)
+
+    /** True when measured layout bounds are valid (> 0) and width or height changed. */
+    fun layoutBoundsChanged(
+        width: Int,
+        height: Int,
+        lastWidth: Int,
+        lastHeight: Int,
+    ): Boolean = width > 0 && height > 0 && (width != lastWidth || height != lastHeight)
+
     /**
      * Surface-adaptive ARGB ripple color for [surfaceFill] and [accent].
      * Returns an accent-kissed light ripple on dark themes, or a soft dark

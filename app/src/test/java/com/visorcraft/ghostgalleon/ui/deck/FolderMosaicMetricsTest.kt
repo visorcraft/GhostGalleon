@@ -71,4 +71,40 @@ class FolderMosaicMetricsTest {
         assertEquals("99+", FolderMosaicMetrics.countBadgeText(100))
         assertEquals("99+", FolderMosaicMetrics.countBadgeText(512))
     }
+
+    @Test
+    fun `badgeSpec hides empty folders, derives half-height pill radius, and scales sp across 48 to 128dp`() {
+        val empty = FolderMosaicMetrics.badgeSpec(iconSizePx = 144, count = 0, density = 2f)
+        assertFalse("empty folder should hide count badge", empty.visible)
+        assertEquals("", empty.text)
+
+        val negative = FolderMosaicMetrics.badgeSpec(iconSizePx = 144, count = -3, density = 2f)
+        assertFalse(negative.visible)
+
+        var prevSp = 0f
+        for (iconDp in listOf(48, 64, 80, 96, 128)) {
+            val spec = FolderMosaicMetrics.badgeSpec(
+                iconSizePx = (iconDp * 2f).toInt(),
+                count = 12,
+                density = 2f,
+            )
+            assertTrue(spec.visible)
+            assertEquals("12", spec.text)
+            assertTrue(
+                "textSp ${spec.textSp} out of bounds at ${iconDp}dp",
+                spec.textSp in FolderMosaicMetrics.BADGE_MIN_TEXT_SP..FolderMosaicMetrics.BADGE_MAX_TEXT_SP,
+            )
+            assertTrue("textSp should scale monotonically at ${iconDp}dp", spec.textSp >= prevSp)
+            assertEquals(
+                "capsule cornerRadius must be half of pillHeightPx",
+                spec.pillHeightPx * 0.5f,
+                spec.cornerRadiusPx,
+                0.001f,
+            )
+            assertTrue(spec.minWidthPx >= spec.pillHeightPx)
+            prevSp = spec.textSp
+        }
+        val capped = FolderMosaicMetrics.badgeSpec(iconSizePx = 192, count = 140, density = 2f)
+        assertEquals("99+", capped.text)
+    }
 }

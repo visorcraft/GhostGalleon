@@ -21,6 +21,24 @@ object GridPageIndicatorMetrics {
     const val CHEVRON_ENABLED_ALPHA: Float = 0.78f
     const val CHEVRON_DISABLED_ALPHA: Float = 0.22f
 
+    /** Symmetric thumb-friendly chevron hit targets (36x30dp enclosing a 16dp glyph). */
+    const val CHEVRON_HIT_WIDTH_DP: Int = 36
+    const val CHEVRON_HIT_HEIGHT_DP: Int = 30
+    const val CHEVRON_GLYPH_DP: Int = 16
+    const val CHEVRON_PAD_H_DP: Int = (CHEVRON_HIT_WIDTH_DP - CHEVRON_GLYPH_DP) / 2
+    const val CHEVRON_PAD_V_DP: Int = (CHEVRON_HIT_HEIGHT_DP - CHEVRON_GLYPH_DP) / 2
+    const val CHEVRON_MARGIN_DP: Int = 4
+    const val DOT_HIT_PAD_H_DP: Int = 4
+
+    /** Total horizontal footprint (dp) of the symmetric chevron + page-pill strip. */
+    fun estimatedStripWidthDp(totalPages: Int): Int {
+        if (totalPages <= 1) return 0
+        val chevronsDp = 2 * (CHEVRON_HIT_WIDTH_DP + CHEVRON_MARGIN_DP)
+        val activeDotDp = ACTIVE_PILL_WIDTH_DP + DOT_HIT_PAD_H_DP * 2
+        val inactiveDotsDp = (totalPages - 1) * (INACTIVE_DOT_WIDTH_DP + DOT_HIT_PAD_H_DP * 2)
+        return chevronsDp + activeDotDp + inactiveDotsDp
+    }
+
     data class StripState(
         val currentPage: Int,
         val totalPages: Int,

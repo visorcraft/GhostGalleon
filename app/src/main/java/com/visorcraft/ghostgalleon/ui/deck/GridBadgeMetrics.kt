@@ -76,4 +76,11 @@ object GridBadgeMetrics {
     /** High-contrast accent dot color legible inside [BADGE_SCRIM_FILL]. */
     fun dockDotColor(accent: Int): Int =
         ThemePack.accentTextColor(accent, 0xFF000000.toInt())
+
+    /** Dimmed badge opacity during move mode on non-lifted drop-target tiles. */
+    const val DROP_TARGET_BADGE_ALPHA: Float = 0.45f
+
+    /** Corner-badge opacity for a tile's current [MoveChoreography.SlotRole]. */
+    fun badgeAlphaForRole(role: MoveChoreography.SlotRole): Float =
+        if (role == MoveChoreography.SlotRole.DROP_TARGET) DROP_TARGET_BADGE_ALPHA else 1f
 }

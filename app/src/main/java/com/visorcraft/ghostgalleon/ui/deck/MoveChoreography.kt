@@ -40,6 +40,45 @@ object MoveChoreography {
     const val DOCK_FLOAT_DP: Float = -2.0f
     const val DROP_TARGET_SCALE: Float = 0.96f
     const val SETTLE_DURATION_MS: Long = 110L
+    const val FOCUS_GAIN_DURATION_MS: Long = 110L
+    const val FOCUS_GAIN_OVERSHOOT_TENSION: Float = 0.9f
+    const val FOCUS_LOSS_DURATION_MS: Long = 80L
+
+    enum class MotionCurve {
+        OVERSHOOT,
+        DECELERATE,
+    }
+
+    data class SettleMotionSpec(
+        val durationMs: Long,
+        val curve: MotionCurve,
+        val overshootTension: Float = 0f,
+    )
+
+    /**
+     * Asymmetric focus settle choreography for [GridDeck] tiles:
+     * focus gain settles with a subtle `110ms` `OvershootInterpolator(0.9f)` spring,
+     * while focus loss snaps back cleanly over `80ms` `DecelerateInterpolator`.
+     */
+    fun gridSettleMotion(role: SlotRole): SettleMotionSpec = when (role) {
+        SlotRole.FOCUSED -> SettleMotionSpec(
+            durationMs = FOCUS_GAIN_DURATION_MS,
+            curve = MotionCurve.OVERSHOOT,
+            overshootTension = FOCUS_GAIN_OVERSHOOT_TENSION,
+        )
+        SlotRole.DROP_TARGET -> SettleMotionSpec(
+            durationMs = SETTLE_DURATION_MS,
+            curve = MotionCurve.DECELERATE,
+        )
+        SlotRole.NORMAL -> SettleMotionSpec(
+            durationMs = FOCUS_LOSS_DURATION_MS,
+            curve = MotionCurve.DECELERATE,
+        )
+        SlotRole.LIFTED -> SettleMotionSpec(
+            durationMs = SETTLE_DURATION_MS,
+            curve = MotionCurve.DECELERATE,
+        )
+    }
 
     /** Determine visual role for slot [position] given focus and move state. */
     fun resolveRole(

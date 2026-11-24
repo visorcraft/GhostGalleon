@@ -69,4 +69,17 @@ class GridBadgeMetricsTest {
             assertTrue("theme=${tokens.id} missing label contrast $missingLabelContrast < 4.5", missingLabelContrast >= ThemePack.MIN_TEXT_CONTRAST)
         }
     }
+
+    @Test
+    fun `badgeAlphaForRole dims drop-target badges to 0_45f while keeping active roles full opacity`() {
+        assertEquals(1f, GridBadgeMetrics.badgeAlphaForRole(MoveChoreography.SlotRole.NORMAL), 0.0001f)
+        assertEquals(1f, GridBadgeMetrics.badgeAlphaForRole(MoveChoreography.SlotRole.FOCUSED), 0.0001f)
+        assertEquals(1f, GridBadgeMetrics.badgeAlphaForRole(MoveChoreography.SlotRole.LIFTED), 0.0001f)
+        assertEquals(
+            GridBadgeMetrics.DROP_TARGET_BADGE_ALPHA,
+            GridBadgeMetrics.badgeAlphaForRole(MoveChoreography.SlotRole.DROP_TARGET),
+            0.0001f,
+        )
+        assertEquals(0.45f, GridBadgeMetrics.DROP_TARGET_BADGE_ALPHA, 0.0001f)
+    }
 }

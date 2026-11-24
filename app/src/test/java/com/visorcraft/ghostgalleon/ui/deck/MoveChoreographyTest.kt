@@ -91,4 +91,23 @@ class MoveChoreographyTest {
         assertEquals(128, (mid shr 8) and 0xFF)
         assertEquals(128, mid and 0xFF)
     }
+
+    @Test
+    fun `gridSettleMotion applies subtle overshoot spring on focus gain and crisp decelerate on loss`() {
+        val gain = MoveChoreography.gridSettleMotion(MoveChoreography.SlotRole.FOCUSED)
+        val loss = MoveChoreography.gridSettleMotion(MoveChoreography.SlotRole.NORMAL)
+        val drop = MoveChoreography.gridSettleMotion(MoveChoreography.SlotRole.DROP_TARGET)
+
+        assertEquals(110L, gain.durationMs)
+        assertEquals(MoveChoreography.MotionCurve.OVERSHOOT, gain.curve)
+        assertEquals(0.9f, gain.overshootTension, 0.0001f)
+
+        assertEquals(80L, loss.durationMs)
+        assertEquals(MoveChoreography.MotionCurve.DECELERATE, loss.curve)
+        assertEquals(0f, loss.overshootTension, 0.0001f)
+
+        assertEquals(MoveChoreography.SETTLE_DURATION_MS, drop.durationMs)
+        assertEquals(MoveChoreography.MotionCurve.DECELERATE, drop.curve)
+        assertTrue("focus gain duration should exceed focus loss", gain.durationMs > loss.durationMs)
+    }
 }

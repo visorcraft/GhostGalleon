@@ -191,4 +191,29 @@ class GridVisualDiffTest {
         assertFalse(GridVisualDiff.canReuseSubtree(GridCellKind.FOLDER, GridCellKind.FOLDER, true, true))
         assertFalse(GridVisualDiff.canReuseSubtree(GridCellKind.MISSING_ROM, GridCellKind.MISSING_ROM, true, true))
     }
+
+    @Test
+    fun `resolveAppCellLabel prefers trimmed custom name and falls back cleanly to stock label`() {
+        val custom = mapOf(
+            "com.example.retro" to "RetroArch",
+            "com.example.spaced" to "  Dolphin MMJR  ",
+            "com.example.blank" to "   ",
+        )
+        assertEquals(
+            "RetroArch",
+            GridVisualDiff.resolveAppCellLabel("com.example.retro", "RetroArch Plus", custom),
+        )
+        assertEquals(
+            "Dolphin MMJR",
+            GridVisualDiff.resolveAppCellLabel("com.example.spaced", "Dolphin", custom),
+        )
+        assertEquals(
+            "Stock App",
+            GridVisualDiff.resolveAppCellLabel("com.example.blank", "Stock App", custom),
+        )
+        assertEquals(
+            "Settings",
+            GridVisualDiff.resolveAppCellLabel("com.android.settings", "Settings", custom),
+        )
+    }
 }

@@ -18,6 +18,7 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.AbsListView
 import android.widget.AdapterView
 import android.widget.BaseAdapter
@@ -126,6 +127,19 @@ internal object GridVisualDiff {
         if (existingKind == GridCellKind.BLANK) return true
         if (existingShowLabels != nextShowLabels) return false
         return existingKind == GridCellKind.ROM || existingKind == GridCellKind.APP
+    }
+
+    /**
+     * Resolve displayed label for an app grid tile, honoring user custom names
+     * consistently across initial inflation, subtree reuse, and TalkBack.
+     */
+    fun resolveAppCellLabel(
+        packageName: String,
+        stockLabel: String,
+        customNames: Map<String, String>,
+    ): String {
+        val custom = customNames[packageName]?.trim()
+        return if (!custom.isNullOrEmpty()) custom else stockLabel
     }
 }
 
@@ -287,6 +301,7 @@ class GridDeck(
         val kind: GridCellKind,
         var boundKey: String? = null,
         val cellWidth: Int = 0,
+        val cellHeight: Int = 0,
         val iconSize: Int = 0,
         val labelSpec: GridLabelMetrics.Spec,
         val showLabels: Boolean = false,
@@ -298,6 +313,7 @@ class GridDeck(
         var dockBadge: FrameLayout? = null,
         var dockDot: View? = null,
         var favBadge: TextView? = null,
+        var folderCountBadge: TextView? = null,
         var badgeCornerDock: GridBadgeMetrics.BadgeCorner = GridBadgeMetrics.BadgeCorner.NONE,
         var badgeCornerFav: GridBadgeMetrics.BadgeCorner = GridBadgeMetrics.BadgeCorner.NONE,
         var badgeCellWidth: Int = -1,
@@ -305,9 +321,11 @@ class GridDeck(
     ) {
         fun matchesMetrics(
             wantCellWidth: Int,
+            wantCellHeight: Int,
             wantIconSize: Int,
             wantLabelSpec: GridLabelMetrics.Spec,
         ): Boolean = cellWidth == wantCellWidth &&
+            cellHeight == wantCellHeight &&
             iconSize == wantIconSize &&
             labelSpec == wantLabelSpec
     }
@@ -582,7 +600,11 @@ class GridDeck(
                         MoveChoreography.liftedBorderColor(settings.accentColor, surfaceFill)
                     MoveChoreography.SlotRole.DROP_TARGET ->
                         MoveChoreography.dropTargetStrokeColor(settings.accentColor, surfaceFill)
-                    MoveChoreography.SlotRole.FOCUSED -> UiDimens.ALPHA_SECONDARY
+                    MoveChoreography.SlotRole.FOCUSED ->
+                        GridTileFeedbackMetrics.focusedBlankPlusColor(
+                            settings.accentColor,
+                            selectedSurfaceFillColor,
+                        )
                     MoveChoreography.SlotRole.NORMAL -> BLANK_PLUS_IDLE_COLOR
                 },
             )
@@ -598,6 +620,21 @@ class GridDeck(
                 labelView.setTextColor(style.textColor)
                 labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
             }
+        }
+
+        val badgeAlpha = GridBadgeMetrics.badgeAlphaForRole(role)
+        val badgeElevation = if (role == MoveChoreography.SlotRole.DROP_TARGET) 0f else frame.dpF(2)
+        holder?.favBadge?.let {
+            it.alpha = badgeAlpha
+            it.elevation = badgeElevation
+        }
+        holder?.dockBadge?.let {
+            it.alpha = badgeAlpha
+            it.elevation = badgeElevation
+        }
+        holder?.folderCountBadge?.let {
+            it.alpha = badgeAlpha
+            it.elevation = badgeElevation
         }
 
         frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
@@ -616,19 +653,18 @@ class GridDeck(
             frame.translationY = 0f
             frame.alpha = spec.alpha
         } else if (allowMotion) {
+            val settle = MoveChoreography.gridSettleMotion(role)
+            val interpolator = when (settle.curve) {
+                MoveChoreography.MotionCurve.OVERSHOOT -> FOCUS_GAIN_INTERPOLATOR
+                MoveChoreography.MotionCurve.DECELERATE -> FOCUS_INTERPOLATOR
+            }
             frame.animate()
                 .scaleX(spec.scale)
                 .scaleY(spec.scale)
                 .translationY(0f)
                 .alpha(spec.alpha)
-                .setDuration(
-                    if (role == MoveChoreography.SlotRole.DROP_TARGET) {
-                        MoveChoreography.SETTLE_DURATION_MS
-                    } else {
-                        FOCUS_ANIM_MS
-                    },
-                )
-                .setInterpolator(FOCUS_INTERPOLATOR)
+                .setDuration(settle.durationMs)
+                .setInterpolator(interpolator)
                 .start()
         } else {
             frame.scaleX = spec.scale
@@ -709,7 +745,11 @@ class GridDeck(
         val appEntry = visibleByPkg[key]
         if (appEntry != null) {
             return DeckAccessibility.gridSlotDescription(
-                primaryLabel = settings.customNames[key] ?: appEntry.label,
+                primaryLabel = GridVisualDiff.resolveAppCellLabel(
+                    packageName = key,
+                    stockLabel = appEntry.label,
+                    customNames = settings.customNames,
+                ),
                 favoriteLabel = favLabel,
                 dockLabel = dockLabel,
                 positionLabel = posLabel,
@@ -921,16 +961,21 @@ class GridDeck(
         )
         val activeColor = GridPageIndicatorMetrics.activePillColor(settings.accentColor)
         val radius = GridPageIndicatorMetrics.PILL_CORNER_RADIUS_DP * density
-        val touchH = dp(24)
+        val touchH = dp(GridPageIndicatorMetrics.CHEVRON_HIT_HEIGHT_DP)
+        val chevronW = dp(GridPageIndicatorMetrics.CHEVRON_HIT_WIDTH_DP)
+        val chevronPadH = dp(GridPageIndicatorMetrics.CHEVRON_PAD_H_DP)
+        val chevronPadV = dp(GridPageIndicatorMetrics.CHEVRON_PAD_V_DP)
+        val chevronMargin = dp(GridPageIndicatorMetrics.CHEVRON_MARGIN_DP)
+        val dotPadH = dp(GridPageIndicatorMetrics.DOT_HIT_PAD_H_DP)
 
         dots.visibility = View.VISIBLE
 
         val prevBtn = ImageView(context).apply {
-            setImageResource(R.drawable.ic_back)
+            setImageResource(R.drawable.ic_chevron_left)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setColorFilter(UiDimens.ALPHA_PRIMARY, PorterDuff.Mode.SRC_IN)
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            background = pageStripRipple(context, cornerRadiusDp = 12)
+            setPadding(chevronPadH, chevronPadV, chevronPadH, chevronPadV)
+            background = pageStripRipple(context, cornerRadiusDp = 15)
             contentDescription = context.getString(R.string.action_page_left)
             alpha = if (stripState.canPagePrev) {
                 GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
@@ -942,8 +987,8 @@ class GridDeck(
             setOnClickListener { jumpToPageDelta(-1) }
         }
         pagePrevButton = prevBtn
-        dots.addView(prevBtn, LinearLayout.LayoutParams(dp(28), touchH).apply {
-            marginEnd = dp(4)
+        dots.addView(prevBtn, LinearLayout.LayoutParams(chevronW, touchH).apply {
+            marginEnd = chevronMargin
         })
 
         val pills = mutableListOf<View>()
@@ -956,8 +1001,8 @@ class GridDeck(
                 }
             }
             val hitTarget = FrameLayout(context).apply {
-                setPadding(dp(4), 0, dp(4), 0)
-                background = pageStripRipple(context, cornerRadiusDp = 12)
+                setPadding(dotPadH, 0, dotPadH, 0)
+                background = pageStripRipple(context, cornerRadiusDp = 15)
                 isClickable = true
                 isSelected = isCurrent
                 contentDescription = context.getString(
@@ -993,8 +1038,8 @@ class GridDeck(
             setImageResource(R.drawable.ic_chevron_right)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setColorFilter(UiDimens.ALPHA_PRIMARY, PorterDuff.Mode.SRC_IN)
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            background = pageStripRipple(context, cornerRadiusDp = 12)
+            setPadding(chevronPadH, chevronPadV, chevronPadH, chevronPadV)
+            background = pageStripRipple(context, cornerRadiusDp = 15)
             contentDescription = context.getString(R.string.action_page_right)
             alpha = if (stripState.canPageNext) {
                 GridPageIndicatorMetrics.CHEVRON_ENABLED_ALPHA
@@ -1006,8 +1051,8 @@ class GridDeck(
             setOnClickListener { jumpToPageDelta(+1) }
         }
         pageNextButton = nextBtn
-        dots.addView(nextBtn, LinearLayout.LayoutParams(dp(28), touchH).apply {
-            marginStart = dp(4)
+        dots.addView(nextBtn, LinearLayout.LayoutParams(chevronW, touchH).apply {
+            marginStart = chevronMargin
         })
         lastPaintedPage = stripState.currentPage
     }
@@ -1344,9 +1389,17 @@ class GridDeck(
         // changed height recomputes, so this converges without loops.
         grid.viewTreeObserver.addOnGlobalLayoutListener(object :
             android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            private var lastWidth = -1
             private var lastHeight = -1
             override fun onGlobalLayout() {
-                if (grid.height == 0 || grid.height == lastHeight) return
+                if (!GridTileFeedbackMetrics.layoutBoundsChanged(
+                        width = grid.width,
+                        height = grid.height,
+                        lastWidth = lastWidth,
+                        lastHeight = lastHeight,
+                    )
+                ) return
+                lastWidth = grid.width
                 lastHeight = grid.height
                 grid.setFadingEdgeLength(
                     dp(GridScrollFeedback.fadingEdgeLengthDp(grid.height, density)),
@@ -2512,7 +2565,7 @@ class GridDeck(
                 boundKey == key &&
                 moveIndex == null &&
                 frame.childCount > 0 &&
-                holder?.matchesMetrics(cellWidth, iconSize, labelSpec) == true
+                holder?.matchesMetrics(cellWidth, cellHeight, iconSize, labelSpec) == true
             ) {
                 applySelectionVisuals(frame, absPos, absPos == selectedIndex(), animate = false)
             } else {
@@ -2557,7 +2610,7 @@ class GridDeck(
                 existing.kind == nextKind &&
                 existing.boundKey == key &&
                 existing.showLabels == settings.showLabels &&
-                existing.matchesMetrics(cellWidth, iconSize, labelSpec) &&
+                existing.matchesMetrics(cellWidth, cellHeight, iconSize, labelSpec) &&
                 frame.childCount > 0
             ) {
                 syncBadges(frame, existing, key, filled)
@@ -2569,7 +2622,7 @@ class GridDeck(
             // Fast path 2: same-kind subtree reuse (ROM->ROM, APP->APP,
             // BLANK->BLANK) — rebind icon/art/label/badges in place.
             if (existing != null &&
-                existing.matchesMetrics(cellWidth, iconSize, labelSpec) &&
+                existing.matchesMetrics(cellWidth, cellHeight, iconSize, labelSpec) &&
                 GridVisualDiff.canReuseSubtree(
                     existingKind = existing.kind,
                     nextKind = nextKind,
@@ -2613,7 +2666,11 @@ class GridDeck(
                                 targetPx = iconSize,
                                 cornerRadiusPx = context.dpF(innerArtRadiusDp()),
                             )
-                            existing.labelView?.text = appEntry.label
+                            existing.labelView?.text = GridVisualDiff.resolveAppCellLabel(
+                                packageName = appEntry.packageName,
+                                stockLabel = appEntry.label,
+                                customNames = settings.customNames,
+                            )
                             existing.boundKey = key
                             syncBadges(frame, existing, key, filled = true)
                             frame.setTag(R.id.grid_cell_key, key)
@@ -2651,6 +2708,24 @@ class GridDeck(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
+            holder.folderCountBadge?.let { countBadge ->
+                val outerInsetPx = GridBadgeMetrics.compute(
+                    cellWidthPx = cellWidth,
+                    cardRadiusDp = themeTokens.cardRadiusDp,
+                    density = context.resources.displayMetrics.density,
+                ).insetPx
+                frame.addView(
+                    countBadge,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM or Gravity.END,
+                    ).apply {
+                        marginEnd = outerInsetPx
+                        bottomMargin = outerInsetPx
+                    },
+                )
+            }
             frame.tag = holder
             frame.setTag(R.id.grid_cell_key, key)
             syncBadges(frame, holder, key, filled)
@@ -2803,15 +2878,22 @@ class GridDeck(
         }
 
         private fun buildBlankCell(): GridCellHolder {
+            val safeDensity = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
+            val plusSp = GridTileFeedbackMetrics.blankPlusTextSp(
+                cellWidthDp = (cellWidth / safeDensity).toInt(),
+                cellHeightDp = (cellHeight / safeDensity).toInt(),
+            )
             val plus = TextView(context).apply {
                 setText(R.string.glyph_add)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, plusSp)
                 setTextColor(BLANK_PLUS_IDLE_COLOR)
                 gravity = Gravity.CENTER
+                includeFontPadding = false
             }
             return GridCellHolder(
                 kind = GridCellKind.BLANK,
                 cellWidth = cellWidth,
+                cellHeight = cellHeight,
                 iconSize = iconSize,
                 labelSpec = labelSpec,
                 showLabels = settings.showLabels,
@@ -2954,35 +3036,40 @@ class GridDeck(
                     FrameLayout.LayoutParams(vectorSize, vectorSize, Gravity.CENTER),
                 )
             }
-            // Compact dark-scrimmed count pill inside the folder box corner so
-            // the folder title fits cleanly in the single-line label budget.
-            val countBadge = TextView(context).apply {
-                text = FolderMosaicMetrics.countBadgeText(count)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                setTextColor(if (isEmpty) UiDimens.ALPHA_MUTED else UiDimens.ALPHA_PRIMARY)
-                setTypeface(typeface, Typeface.BOLD)
-                fontFeatureSettings = "tnum"
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                minWidth = context.dp(18)
-                setPadding(context.dp(5), context.dp(2), context.dp(5), context.dp(2))
-                background = GradientDrawable().apply {
-                    setColor(GridBadgeMetrics.BADGE_SCRIM_FILL)
-                    cornerRadius = context.dpF(8)
-                    setStroke(context.strokePx(1), GridBadgeMetrics.BADGE_SCRIM_STROKE)
-                }
-            }
-            iconBox.addView(
-                countBadge,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM or Gravity.END,
-                ).apply {
-                    marginEnd = context.dp(4)
-                    bottomMargin = context.dp(4)
-                },
+            // Compact dark-scrimmed count pill seated at the outer tile's bottom-end
+            // corner inset (hidden when empty) so all 4 mosaic covers stay unobstructed.
+            val countBadgeSpec = FolderMosaicMetrics.badgeSpec(
+                iconSizePx = iconSize,
+                count = count,
+                density = density,
             )
+            val countBadge = if (countBadgeSpec.visible) {
+                TextView(context).apply {
+                    text = countBadgeSpec.text
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, countBadgeSpec.textSp)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    setTypeface(typeface, Typeface.BOLD)
+                    fontFeatureSettings = "tnum"
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    minWidth = countBadgeSpec.minWidthPx
+                    minHeight = countBadgeSpec.pillHeightPx
+                    setPadding(
+                        countBadgeSpec.padHPx,
+                        countBadgeSpec.padVPx,
+                        countBadgeSpec.padHPx,
+                        countBadgeSpec.padVPx,
+                    )
+                    elevation = context.dpF(2)
+                    background = GradientDrawable().apply {
+                        setColor(GridBadgeMetrics.BADGE_SCRIM_FILL)
+                        cornerRadius = countBadgeSpec.cornerRadiusPx
+                        setStroke(context.strokePx(1), GridBadgeMetrics.BADGE_SCRIM_STROKE)
+                    }
+                }
+            } else {
+                null
+            }
             cell.addView(iconBox, LinearLayout.LayoutParams(iconSize, iconSize))
             val label = if (settings.showLabels) {
                 buildCellLabel(name).also { cell.addView(it, labelParams()) }
@@ -2992,11 +3079,13 @@ class GridDeck(
             return GridCellHolder(
                 kind = GridCellKind.FOLDER,
                 cellWidth = cellWidth,
+                cellHeight = cellHeight,
                 iconSize = iconSize,
                 labelSpec = labelSpec,
                 showLabels = settings.showLabels,
                 bodyView = cell,
                 labelView = label,
+                folderCountBadge = countBadge,
             )
         }
 
@@ -3132,6 +3221,7 @@ class GridDeck(
             return GridCellHolder(
                 kind = GridCellKind.ROM,
                 cellWidth = cellWidth,
+                cellHeight = cellHeight,
                 iconSize = iconSize,
                 labelSpec = labelSpec,
                 showLabels = settings.showLabels,
@@ -3194,6 +3284,7 @@ class GridDeck(
             return GridCellHolder(
                 kind = GridCellKind.MISSING_ROM,
                 cellWidth = cellWidth,
+                cellHeight = cellHeight,
                 iconSize = iconSize,
                 labelSpec = labelSpec,
                 showLabels = settings.showLabels,
@@ -3216,15 +3307,21 @@ class GridDeck(
                 cornerRadiusPx = context.dpF(innerArtRadiusDp()),
             )
             cell.addView(icon, LinearLayout.LayoutParams(iconSize, iconSize))
-            // Optional app-name label ("Show app names" setting).
+            // Optional app-name label ("Show app names" setting), honoring custom names.
             val label = if (settings.showLabels) {
-                buildCellLabel(entry.label).also { cell.addView(it, labelParams()) }
+                val resolvedName = GridVisualDiff.resolveAppCellLabel(
+                    packageName = entry.packageName,
+                    stockLabel = entry.label,
+                    customNames = settings.customNames,
+                )
+                buildCellLabel(resolvedName).also { cell.addView(it, labelParams()) }
             } else {
                 null
             }
             return GridCellHolder(
                 kind = GridCellKind.APP,
                 cellWidth = cellWidth,
+                cellHeight = cellHeight,
                 iconSize = iconSize,
                 labelSpec = labelSpec,
                 showLabels = settings.showLabels,
@@ -3236,7 +3333,7 @@ class GridDeck(
     }
 
     private companion object {
-        const val FOCUS_ANIM_MS = 80L
+        val FOCUS_GAIN_INTERPOLATOR = OvershootInterpolator(MoveChoreography.FOCUS_GAIN_OVERSHOOT_TENSION)
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
         const val BLANK_PLUS_IDLE_COLOR = 0x3DFFFFFF
