@@ -117,4 +117,23 @@ class QuickPanelNavTest {
         assertEquals(0x66000000, QuickPanelNav.swatchBorderColor(ThemePack.OLED.accentColor))
         assertEquals(0x66FFFFFF, QuickPanelNav.swatchBorderColor(ThemePack.GHOST.accentColor))
     }
+
+    @Test
+    fun `focus metrics, adaptive ripple colors, and builtin theme cycling behave consistently`() {
+        assertEquals(QuickPanelNav.FOCUS_SCALE, QuickPanelNav.focusScale(true), 0.0001f)
+        assertEquals(1f, QuickPanelNav.focusScale(false), 0.0001f)
+        assertEquals(QuickPanelNav.FOCUS_ELEVATION_DP, QuickPanelNav.focusElevationDp(true))
+        assertEquals(0, QuickPanelNav.focusElevationDp(false))
+
+        assertEquals(0x33000000, QuickPanelNav.tileRippleColor(QuickPanelNav.TileRole.PRIMARY, ThemePack.OLED.accentColor))
+        assertEquals(0x33FFFFFF, QuickPanelNav.tileRippleColor(QuickPanelNav.TileRole.PRIMARY, ThemePack.GHOST.accentColor))
+        assertEquals(
+            QuickPanelNav.STANDARD_RIPPLE_COLOR,
+            QuickPanelNav.tileRippleColor(QuickPanelNav.TileRole.STANDARD, ThemePack.OLED.accentColor),
+        )
+
+        assertEquals(ThemePack.THREEDS, QuickPanelNav.nextBuiltinTheme(ThemePack.GHOST.id))
+        assertEquals(ThemePack.GHOST, QuickPanelNav.nextBuiltinTheme(ThemePack.NEON.id))
+        assertEquals(ThemePack.THREEDS, QuickPanelNav.nextBuiltinTheme("unknown-custom"))
+    }
 }

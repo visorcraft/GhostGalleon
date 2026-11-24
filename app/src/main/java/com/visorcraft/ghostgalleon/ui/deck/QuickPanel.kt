@@ -1,15 +1,21 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -31,6 +37,7 @@ import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.browseModeName
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.themeName
@@ -61,6 +68,33 @@ internal object QuickPanelNav {
     const val NARROW_WIDTH_THRESHOLD_DP = 360
     const val COMPACT_TILE_HEIGHT_DP = 74
     const val EXPANDED_TILE_HEIGHT_DP = 64
+    const val FOCUS_SCALE = 1.04f
+    const val FOCUS_ELEVATION_DP = 4
+    const val FOCUS_ANIM_MS = 90L
+    internal const val STANDARD_RIPPLE_COLOR: Int = 0x28FFFFFF
+
+    fun focusScale(selected: Boolean): Float = if (selected) FOCUS_SCALE else 1f
+
+    fun focusElevationDp(selected: Boolean): Int = if (selected) FOCUS_ELEVATION_DP else 0
+
+    /** Adaptive ripple color so light accents (OLED) keep a visible dark press wash. */
+    fun tileRippleColor(role: TileRole, accent: Int): Int =
+        if (role == TileRole.PRIMARY) {
+            val onAccent = accessibleOnAccent(accent)
+            (0x33 shl 24) or (onAccent and 0x00FFFFFF)
+        } else {
+            STANDARD_RIPPLE_COLOR
+        }
+
+    /** Next built-in theme token in rotation order (defaults to index 1 on unknown id). */
+    fun nextBuiltinTheme(
+        currentId: String,
+        builtins: List<ThemeTokens> = ThemePack.BUILTINS,
+    ): ThemeTokens {
+        if (builtins.isEmpty()) return ThemePack.GHOST
+        val idx = builtins.indexOfFirst { it.id == currentId }.let { if (it < 0) 0 else it }
+        return builtins[(idx + 1) % builtins.size]
+    }
 
     fun columnsForCardWidthDp(cardWidthDp: Int): Int =
         if (cardWidthDp < NARROW_WIDTH_THRESHOLD_DP) NARROW_COLUMNS else DEFAULT_COLUMNS
@@ -177,6 +211,11 @@ class QuickPanel(
     private var accent: Int = 0
     private var themeTokens: ThemeTokens = ThemePack.GHOST
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
+    private var sheetContainer: LinearLayout? = null
+    private var headerSubtitleView: TextView? = null
+    private var topScrollCue: View? = null
+    private var bottomScrollCue: View? = null
+    private val focusInterpolator = DecelerateInterpolator()
 
     val view: View by lazy { build() }
 
@@ -320,17 +359,20 @@ class QuickPanel(
             padHorizontalDp = UiDimens.SPACE_LG,
             padVerticalDp = UiDimens.SPACE_LG,
         )
+        sheetContainer = sheet
 
         val themeSubtitle = context.getString(
             R.string.format_theme,
             context.themeName(themeTokens.id, themeTokens.displayName),
         )
+        val header = OverlayPrimitives.modalHeader(
+            context = context,
+            titleRes = R.string.deck_quick_panel,
+            subtitle = themeSubtitle,
+        )
+        headerSubtitleView = header.getChildAt(1) as? TextView
         sheet.addView(
-            OverlayPrimitives.modalHeader(
-                context = context,
-                titleRes = R.string.deck_quick_panel,
-                subtitle = themeSubtitle,
-            ),
+            header,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -361,6 +403,7 @@ class QuickPanel(
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
                     contentDescription = cell.label
+                    outlineProvider = ViewOutlineProvider.BACKGROUND
                     isClickable = true
                     setPadding(
                         context.dp(UiDimens.SPACE_SM),
@@ -370,7 +413,7 @@ class QuickPanel(
                     )
                     setOnClickListener {
                         selection = index
-                        paint()
+                        paint(animateFocus = false, scrollToFocused = false)
                         cell.onClick()
                     }
                 }
@@ -437,6 +480,20 @@ class QuickPanel(
             })
         }
 
+        val scrollCueColor = scrollCueTint()
+        val topCue = View(context).apply {
+            setBackgroundColor(scrollCueColor)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val bottomCue = View(context).apply {
+            setBackgroundColor(scrollCueColor)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        topScrollCue = topCue
+        bottomScrollCue = bottomCue
+
         val scroll = OverlayPrimitives.MaxHeightScrollView(
             context = context,
             maxHeightPx = OverlayPrimitives.maxModalHeight(
@@ -453,12 +510,37 @@ class QuickPanel(
                 ),
             )
         }
+        fun refreshScrollCues() {
+            val (topAlpha, bottomAlpha) = SlotMenuNav.scrollCueAlphas(
+                canScrollUp = scroll.canScrollVertically(-1),
+                canScrollDown = scroll.canScrollVertically(1),
+            )
+            topCue.alpha = topAlpha
+            bottomCue.alpha = bottomAlpha
+        }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refreshScrollCues() }
+        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshScrollCues() }
         scrollHost = scroll
+
+        sheet.addView(
+            topCue,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(2),
+            ),
+        )
         sheet.addView(
             scroll,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        sheet.addView(
+            bottomCue,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(2),
             ),
         )
 
@@ -470,7 +552,7 @@ class QuickPanel(
             ),
         )
 
-        paint()
+        paint(animateFocus = false, scrollToFocused = false)
         root.addView(sheet, FrameLayout.LayoutParams(
             cardWidth,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -479,17 +561,42 @@ class QuickPanel(
         return root
     }
 
-    private fun paint() {
+    private fun scrollCueTint(): Int {
+        val accentText = ThemePack.accentTextColor(accent, ThemePack.cardFill(themeTokens))
+        return (0x66 shl 24) or (accentText and 0x00FFFFFF)
+    }
+
+    private fun wrapRipple(
+        content: Drawable,
+        cornerRadiusDp: Int,
+        role: QuickPanelNav.TileRole,
+    ): Drawable {
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = activity.dpF(cornerRadiusDp)
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(QuickPanelNav.tileRippleColor(role, accent)),
+            content,
+            mask,
+        )
+    }
+
+    private fun paint(
+        animateFocus: Boolean = true,
+        scrollToFocused: Boolean = true,
+    ) {
         if (tileViews.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, tileViews.size)
         selection = sel
         val tileRadius = themeTokens.cardRadiusDp
         val swatchBorder = QuickPanelNav.swatchBorderColor(accent)
+        val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
         tileViews.forEachIndexed { index, bound ->
             val selected = index == sel
             val role = bound.cell.role
             val (_, textColor) = QuickPanelNav.tileColors(role, selected, accent, themeTokens)
-            bound.container.background = when {
+            val baseBg = when {
                 selected && role == QuickPanelNav.TileRole.PRIMARY ->
                     TileBackgrounds.accentPill(activity, accent, cornerRadiusDp = tileRadius)
                 selected ->
@@ -499,6 +606,7 @@ class QuickPanel(
                 else ->
                     TileBackgrounds.chipIdle(activity, cornerRadiusDp = tileRadius)
             }
+            bound.container.background = wrapRipple(baseBg, tileRadius, role)
             bound.labelView.setTextColor(textColor)
             bound.labelView.setTypeface(
                 null,
@@ -516,10 +624,22 @@ class QuickPanel(
             }
             bound.container.isSelected = selected
             bound.container.alpha = 1f
-            val scale = if (selected) 1.04f else 1f
-            bound.container.scaleX = scale
-            bound.container.scaleY = scale
+            bound.container.elevation = activity.dpF(QuickPanelNav.focusElevationDp(selected))
+            val scale = QuickPanelNav.focusScale(selected)
+            bound.container.animate().cancel()
+            if (shouldAnimate) {
+                bound.container.animate()
+                    .scaleX(scale)
+                    .scaleY(scale)
+                    .setDuration(QuickPanelNav.FOCUS_ANIM_MS)
+                    .setInterpolator(focusInterpolator)
+                    .start()
+            } else {
+                bound.container.scaleX = scale
+                bound.container.scaleY = scale
+            }
         }
+        if (!scrollToFocused) return
         val focusedRow = tileViews.getOrNull(sel)?.container?.parent as? View ?: return
         scrollHost?.smoothScrollToCenter(focusedRow)
     }
@@ -598,14 +718,21 @@ class QuickPanel(
     }
 
     private fun cycleTheme(app: GhostGalleonApp) {
-        val builtins = ThemePack.BUILTINS
         val current = ThemePack.resolve(app.settings).id
-        val i = builtins.indexOfFirst { it.id == current }.let { if (it < 0) 0 else it }
-        val next = builtins[(i + 1) % builtins.size]
+        val next = QuickPanelNav.nextBuiltinTheme(current)
         app.updateSettings(ThemePack.applyToSettings(app.settings, next))
-        activity.toast(
+        themeTokens = next
+        accent = next.accentColor
+        sheetContainer?.background = TileBackgrounds.card(activity)
+        val label = activity.getString(
             R.string.format_theme,
             activity.themeName(next.id, next.displayName),
         )
+        headerSubtitleView?.text = label
+        val cueColor = scrollCueTint()
+        topScrollCue?.setBackgroundColor(cueColor)
+        bottomScrollCue?.setBackgroundColor(cueColor)
+        paint(animateFocus = false, scrollToFocused = false)
+        activity.toast(label)
     }
 }
