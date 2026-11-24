@@ -623,6 +623,41 @@ class GameDeck(
         }
     }
 
+    private fun computeResponsiveMetrics(context: Context): Triple<Int, Int, Int> {
+        val dm = context.resources.displayMetrics
+        val density = dm.density.coerceAtLeast(0.5f)
+        val viewportWidthDp = (dm.widthPixels / density).toInt()
+        val viewportHeightDp = (dm.heightPixels / density).toInt()
+        val effectiveSizeDp = CarouselLayoutMetrics.effectiveCardSizeDp(
+            requestedCardSizeDp = settings.cardSizeDp,
+            viewportWidthDp = viewportWidthDp,
+            viewportHeightDp = viewportHeightDp,
+        )
+        val spacingDp = CarouselLayoutMetrics.cardSpacingDp(viewportWidthDp)
+        val cardWidthDp = effectiveSizeDp + CELL_PADDING_DP * 2
+        val edgePadDp = CarouselLayoutMetrics.horizontalEdgePaddingDp(viewportWidthDp, cardWidthDp)
+        return Triple(
+            (effectiveSizeDp * density).toInt().coerceAtLeast(1),
+            (spacingDp * density).toInt().coerceAtLeast(1),
+            (edgePadDp * density).toInt().coerceAtLeast(1),
+        )
+    }
+
+    private fun animateEdgeBump(direction: Int) {
+        val rv = recycler ?: return
+        val holder = rv.findViewHolderForAdapterPosition(selectedIndex()) as? CardAdapter.CardHolder
+            ?: return
+        val cardFrame = holder.cardFrame ?: return
+        val nudgePx = direction * rv.context.dpF(CarouselLayoutMetrics.EDGE_BUMP_DP)
+        cardFrame.animate().cancel()
+        cardFrame.translationX = nudgePx
+        cardFrame.animate()
+            .translationX(0f)
+            .setDuration(CarouselLayoutMetrics.EDGE_BUMP_MS)
+            .setInterpolator(FOCUS_INTERPOLATOR)
+            .start()
+    }
+
     /**
      * Rebuild carousel list + filter chrome in place (browse chips).
      * Keeps dock/root/modals — no activity setContentView.
@@ -647,10 +682,14 @@ class GameDeck(
             chromeStructureKey = nextChrome
         }
 
-        val nextSize = dp(settings.cardSizeDp).coerceAtLeast(1)
-        val nextSpacing = cardSpacingPx.coerceAtLeast(dp(12))
-        val nextPad = cellPaddingPx.coerceAtLeast(dp(8))
+        val (nextSize, nextSpacing, edgePadPx) = computeResponsiveMetrics(context)
+        val nextPad = cellPaddingPx.coerceAtLeast(dp(CELL_PADDING_DP))
         cardSizePx = nextSize
+        cardSpacingPx = nextSpacing
+        val vertPad = dp(CarouselLayoutMetrics.MIN_EDGE_PAD_DP)
+        if (rv.paddingStart != edgePadPx || rv.paddingEnd != edgePadPx) {
+            rv.setPadding(edgePadPx, vertPad, edgePadPx, vertPad)
+        }
         applyRootWallpaper(root)
         syncEmptyState(context)
         syncMultiSelectBanner(context)
@@ -1382,9 +1421,10 @@ class GameDeck(
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
         installEntries(buildEntries())
-        cardSizePx = dp(settings.cardSizeDp)
-        cardSpacingPx = dp(12)
-        cellPaddingPx = dp(8)
+        val (effectiveCardPx, spacingPx, edgePadPx) = computeResponsiveMetrics(context)
+        cardSizePx = effectiveCardPx
+        cardSpacingPx = spacingPx
+        cellPaddingPx = dp(CELL_PADDING_DP)
 
         // FrameLayout root so modals (dock slot menu, app picker) can sit
         // on top of the whole deck.
@@ -1426,8 +1466,8 @@ class GameDeck(
             // fades those cells on every D-pad tick.
             itemAnimator = null
             snapHelper.attachToRecyclerView(this)
-            val pad = dp(16)
-            setPadding(pad, pad, pad, pad)
+            val vertPad = dp(CarouselLayoutMetrics.MIN_EDGE_PAD_DP)
+            setPadding(edgePadPx, vertPad, edgePadPx, vertPad)
             clipChildren = false
             clipToPadding = false
         }
@@ -1516,8 +1556,14 @@ class GameDeck(
         val index = selectedIndex()
         val laidOut = lm.findViewByPosition(index)
         if (laidOut == null) {
-            // Prefer left-edge of card near viewport center (cardSize known).
-            val offset = ((rv.width - cardSizePx) / 2).coerceAtLeast(0)
+            // Prefer left-edge of card near viewport center relative to start padding.
+            val cardW = GameDeckChromeLogic.carouselCardWidthPx(cardSizePx, cellPaddingPx)
+            val offset = CarouselLayoutMetrics.centerScrollOffsetPx(
+                viewportWidthPx = rv.width,
+                paddingStartPx = rv.paddingStart,
+                paddingEndPx = rv.paddingEnd,
+                cardWidthPx = cardW,
+            )
             lm.scrollToPositionWithOffset(index, offset)
             rv.post {
                 val view = lm.findViewByPosition(index) ?: return@post
@@ -1698,8 +1744,14 @@ class GameDeck(
             Action.NAV_LEFT, Action.NAV_RIGHT, Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 // Select only — updateSelection → scrollSelectionToCenter once.
                 // (Was smoothScrollToPosition + center = fighting scroll systems.)
-                val newIndex = nav.move(selectedIndex(), action)
-                entries.getOrNull(newIndex)?.let { state.select(it.key) }
+                val currentIdx = selectedIndex()
+                val bump = nav.edgeBumpDirection(currentIdx, action)
+                if (bump != 0) {
+                    animateEdgeBump(bump)
+                } else {
+                    val newIndex = nav.move(currentIdx, action)
+                    entries.getOrNull(newIndex)?.let { state.select(it.key) }
+                }
                 true
             }
             // NAV DOWN leaves the carousel and focuses the dock.
@@ -4103,6 +4155,7 @@ class GameDeck(
             val targetLiftY = context.dpF(depthStyle.translationYDp)
             holder.root.translationZ = context.dpF(depthStyle.translationZDp)
             cardFrame.animate().cancel()
+            cardFrame.translationX = 0f
             if (animate && cardFrame.isLaidOut) {
                 cardFrame.animate()
                     .scaleX(depthStyle.scale)

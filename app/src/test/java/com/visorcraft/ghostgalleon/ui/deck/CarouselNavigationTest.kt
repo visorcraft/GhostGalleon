@@ -27,4 +27,21 @@ class CarouselNavigationTest {
         assertEquals(3, nav.move(3, Action.NAV_DOWN))
         assertEquals(3, nav.move(3, Action.CONFIRM))
     }
+
+    @Test
+    fun `edgeBumpDirection flags left wall at start and right wall at end only`() {
+        assertEquals(-1, nav.edgeBumpDirection(0, Action.NAV_LEFT))
+        assertEquals(-1, nav.edgeBumpDirection(0, Action.PAGE_PREV))
+        assertEquals(0, nav.edgeBumpDirection(0, Action.NAV_RIGHT))
+        assertEquals(0, nav.edgeBumpDirection(3, Action.NAV_LEFT))
+        assertEquals(0, nav.edgeBumpDirection(3, Action.NAV_RIGHT))
+        assertEquals(1, nav.edgeBumpDirection(7, Action.NAV_RIGHT))
+        assertEquals(1, nav.edgeBumpDirection(7, Action.PAGE_NEXT))
+        assertEquals(0, nav.edgeBumpDirection(7, Action.NAV_LEFT))
+        assertEquals(0, nav.edgeBumpDirection(0, Action.CONFIRM))
+
+        val empty = CarouselNavigation(itemCount = 0)
+        assertEquals(0, empty.edgeBumpDirection(0, Action.NAV_LEFT))
+        assertEquals(0, empty.edgeBumpDirection(0, Action.NAV_RIGHT))
+    }
 }
