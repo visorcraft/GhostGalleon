@@ -81,6 +81,31 @@ class WavEncoderTest {
         assertNull(WavEncoder.decodePcm16(ByteArray(44)))
     }
 
+    @Test
+    fun `decodePcm16 rejects corrupt headers with overflow-inducing dataBytes cleanly`() {
+        val base = WavEncoder.encodePcm16(shortArrayOf(10, 20), sampleRate = 44100, channels = 1)
+        val corruptSizes = listOf(
+            Int.MAX_VALUE,
+            Int.MAX_VALUE - 10,
+            Int.MAX_VALUE - WavEncoder.HEADER_BYTES + 1,
+            base.size - WavEncoder.HEADER_BYTES + 2,
+            -2,
+            Int.MIN_VALUE,
+        )
+        for (badDataBytes in corruptSizes) {
+            val corrupt = base.copyOf()
+            writeLe32(corrupt, 40, badDataBytes)
+            assertNull("expected null for corrupt dataBytes=$badDataBytes", WavEncoder.decodePcm16(corrupt))
+        }
+    }
+
+    private fun writeLe32(bytes: ByteArray, offset: Int, value: Int) {
+        bytes[offset] = (value and 0xFF).toByte()
+        bytes[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+        bytes[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+        bytes[offset + 3] = ((value ushr 24) and 0xFF).toByte()
+    }
+
     private fun readLe32(bytes: ByteArray, offset: Int): Int {
         val b0 = bytes[offset].toInt() and 0xFF
         val b1 = bytes[offset + 1].toInt() and 0xFF

@@ -100,7 +100,7 @@ object WavEncoder {
     fun decodePcm16(wav: ByteArray): ShortArray? {
         val info = inspectHeader(wav) ?: return null
         if (info.audioFormat != AUDIO_FORMAT_PCM || info.bitsPerSample != BITS_PER_SAMPLE) return null
-        if (info.dataBytes < 0 || HEADER_BYTES + info.dataBytes > wav.size) return null
+        if (info.dataBytes < 0 || info.dataBytes > wav.size - HEADER_BYTES) return null
         val count = info.dataBytes / 2
         return ShortArray(count) { i ->
             val off = HEADER_BYTES + i * 2

@@ -67,6 +67,54 @@ object AudioDsp {
     ): Double = sin(TWO_PI * carrierPhaseCycles + modIndex * sin(TWO_PI * modPhaseCycles))
 
     /**
+     * Band-limited sawtooth oscillator built via Lanczos-windowed Fourier harmonics.
+     *
+     * Caps partials below Nyquist (`0.45 * sampleRate`) for crisp retro synth sweeps
+     * without foldover aliasing on small handheld drivers.
+     */
+    fun bandLimitedSaw(
+        phaseCycles: Double,
+        maxHarmonics: Int = 8,
+        freqHz: Double = 440.0,
+        sampleRate: Int = SAMPLE_RATE,
+    ): Double {
+        val nyquistLimit = if (freqHz > 1.0) ((sampleRate * 0.45) / freqHz).toInt() else 1
+        val harmonics = minOf(maxHarmonics.coerceAtLeast(1), nyquistLimit.coerceAtLeast(1))
+        var acc = 0.0
+        for (k in 1..harmonics) {
+            val sigmaArg = PI * k / (harmonics + 1.0)
+            val sigma = sin(sigmaArg) / sigmaArg
+            val polarity = if (k % 2 == 1) 1.0 else -1.0
+            val amp = polarity * (2.0 / (k * PI)) * sigma
+            acc += amp * sin(TWO_PI * k * phaseCycles)
+        }
+        return acc.coerceIn(-1.25, 1.25)
+    }
+
+    /**
+     * Multi-partial glassy bell oscillator combining fundamental (`1.0x`), warm octave
+     * (`2.0x`), and a bright inharmonic bell partial (typically `2.76x`).
+     *
+     * Strictly normalized to `[-1.0, 1.0]`.
+     */
+    fun inharmonicBell(
+        fundamentalPhaseCycles: Double,
+        partial2PhaseCycles: Double,
+        upperPartialPhaseCycles: Double,
+        partial2Mix: Double = 0.22,
+        upperPartialMix: Double = 0.28,
+    ): Double {
+        val p2 = partial2Mix.coerceIn(0.0, 1.0)
+        val pu = upperPartialMix.coerceIn(0.0, 1.0)
+        val norm = 1.0 / (1.0 + p2 + pu)
+        return (
+            sin(TWO_PI * fundamentalPhaseCycles) +
+                p2 * sin(TWO_PI * partial2PhaseCycles) +
+                pu * sin(TWO_PI * upperPartialPhaseCycles)
+            ) * norm
+    }
+
+    /**
      * Deterministic SplitMix64/Xorshift64* PRNG producing repeatable white noise
      * and Paul Kellet 7-stage Voss-McCartney pink noise (`-3 dB/octave`).
      */
@@ -360,14 +408,67 @@ object AudioDsp {
         return out
     }
 
+    /** Mutually-prime reflection taps (ms) for a warm nautical chamber. */
+    val NAUTICAL_CHAMBER_TAPS_MS: DoubleArray = doubleArrayOf(9.1, 15.7, 24.3, 33.1)
+
+    /** Tight mutually-prime reflection taps (ms) for a crisp retro arcade plate. */
+    val ARCADE_PLATE_TAPS_MS: DoubleArray = doubleArrayOf(5.3, 8.9, 13.7)
+
+    /**
+     * Multi-tap early-reflection chamber with configurable delay taps and one-pole
+     * damping ([dampingAlpha] in `0.10..0.90`; lower = warmer, higher = brighter).
+     */
+    fun applyResonantRoom(
+        samples: DoubleArray,
+        sampleRate: Int = SAMPLE_RATE,
+        wetMix: Double = 0.22,
+        decay: Double = 0.34,
+        tapMs: DoubleArray = NAUTICAL_CHAMBER_TAPS_MS,
+        dampingAlpha: Double = 0.34,
+    ): DoubleArray {
+        val mix = wetMix.coerceIn(0.0, 0.5)
+        if (samples.isEmpty() || mix <= 0.0 || tapMs.isEmpty()) return samples.copyOf()
+        val fb = decay.coerceIn(0.0, 0.55)
+        val alpha = dampingAlpha.coerceIn(0.10, 0.90)
+        val taps = IntArray(tapMs.size) { i ->
+            (sampleRate * (tapMs[i].coerceAtLeast(0.5) / 1000.0)).toInt().coerceAtLeast(1)
+        }
+        val rawWeights = DoubleArray(taps.size) { i -> 0.62.pow(i.toDouble()) }
+        var weightSum = 0.0
+        for (w in rawWeights) weightSum += w
+        val invWeightSum = 1.0 / weightSum.coerceAtLeast(1e-9)
+        val weights = DoubleArray(taps.size) { i -> rawWeights[i] * invWeightSum }
+
+        val wet = DoubleArray(samples.size)
+        var lpState = 0.0
+        for (i in samples.indices) {
+            var sum = 0.0
+            for (t in taps.indices) {
+                val idx = i - taps[t]
+                if (idx >= 0) {
+                    sum += weights[t] * (samples[idx] + fb * wet[idx])
+                }
+            }
+            lpState = (1.0 - alpha) * lpState + alpha * sum
+            wet[i] = lpState
+        }
+        val out = DoubleArray(samples.size)
+        val dry = 1.0 - mix * 0.30
+        for (i in samples.indices) {
+            out[i] = samples[i] * dry + wet[i] * mix
+        }
+        return out
+    }
+
     /**
      * Constant-power stereo pan law (`left^2 + right^2 == 1.0`) for [pan] in `-1f..+1f`.
      *
      * At center (`pan = 0f`), both channels receive `sqrt(2)/2 ≈ 0.7071f` (`-3 dB` per
      * channel, preserving constant combined acoustic power across pan positions).
+     * Non-finite pan values (`NaN`, `±Infinity`) safely default to center (`0f`).
      */
     fun constantPowerPan(pan: Float): Pair<Float, Float> {
-        val clamped = pan.coerceIn(-1f, 1f).toDouble()
+        val clamped = if (pan.isFinite()) pan.coerceIn(-1f, 1f).toDouble() else 0.0
         val angle = (PI * 0.25) * (clamped + 1.0)
         return cos(angle).toFloat() to sin(angle).toFloat()
     }

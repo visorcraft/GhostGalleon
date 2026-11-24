@@ -115,9 +115,11 @@ object AudioPolicy {
      * using exact constant-power stereo panning (`left^2 + right^2 == masterGain^2`).
      */
     fun stereoGains(masterGain: Float, pan: Float): StereoGains {
+        if (!masterGain.isFinite()) return StereoGains(0f, 0f)
         val g = masterGain.coerceIn(0f, 1f)
         if (g <= 0f) return StereoGains(0f, 0f)
-        val (l, r) = AudioDsp.constantPowerPan(pan)
+        val safePan = if (pan.isFinite()) pan else 0f
+        val (l, r) = AudioDsp.constantPowerPan(safePan)
         return StereoGains(left = g * l, right = g * r)
     }
 

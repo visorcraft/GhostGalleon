@@ -85,6 +85,7 @@ class PcmSynthTest {
             SoundPackId.GHOST to SoundPackId.THREEDS,
             SoundPackId.GHOST to SoundPackId.OLED,
             SoundPackId.GHOST to SoundPackId.NEON,
+            SoundPackId.THREEDS to SoundPackId.OLED,
             SoundPackId.THREEDS to SoundPackId.NEON,
             SoundPackId.OLED to SoundPackId.NEON,
         )
@@ -94,6 +95,11 @@ class PcmSynthTest {
                 renders.getValue(a).contentEquals(renders.getValue(b)),
             )
         }
+        // AUTO defaults cleanly to GHOST
+        assertArrayEquals(
+            PcmSynth.synthesize(SoundCue.CONFIRM, SoundPackId.GHOST),
+            PcmSynth.synthesize(SoundCue.CONFIRM, SoundPackId.AUTO),
+        )
     }
 
     @Test

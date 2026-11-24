@@ -103,6 +103,19 @@ class AudioPolicyTest {
         val silent = AudioPolicy.stereoGains(0f, 0.28f)
         assertEquals(0f, silent.left, 0f)
         assertEquals(0f, silent.right, 0f)
+
+        // Non-finite masterGain returns safe zero; non-finite pan returns safe center
+        for (badGain in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            val zeroed = AudioPolicy.stereoGains(badGain, 0.25f)
+            assertEquals("left must be 0f for gain=$badGain", 0f, zeroed.left, 0f)
+            assertEquals("right must be 0f for gain=$badGain", 0f, zeroed.right, 0f)
+        }
+        for (badPan in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            val centered = AudioPolicy.stereoGains(0.8f, badPan)
+            assertTrue(centered.left.isFinite() && centered.right.isFinite())
+            assertEquals("left must match center for pan=$badPan", center.left, centered.left, 1e-6f)
+            assertEquals("right must match center for pan=$badPan", center.right, centered.right, 1e-6f)
+        }
     }
 
     @Test
