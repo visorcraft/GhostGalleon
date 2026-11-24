@@ -186,4 +186,20 @@ class SettingsUiLogicTest {
             )
         }
     }
+
+    @Test
+    fun `playtimeBarFraction and totalPlaytimeMs normalize stats rows cleanly`() {
+        assertEquals(0f, SettingsUiLogic.playtimeBarFraction(0L, 1000L), 0.0001f)
+        assertEquals(0f, SettingsUiLogic.playtimeBarFraction(500L, 0L), 0.0001f)
+        assertEquals(0.04f, SettingsUiLogic.playtimeBarFraction(1L, 100_000L), 0.0001f)
+        assertEquals(0.5f, SettingsUiLogic.playtimeBarFraction(500L, 1000L), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.playtimeBarFraction(1000L, 1000L), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.playtimeBarFraction(2000L, 1000L), 0.0001f)
+
+        assertEquals(0L, SettingsUiLogic.totalPlaytimeMs(emptyMap()))
+        assertEquals(
+            90_000L,
+            SettingsUiLogic.totalPlaytimeMs(mapOf("a" to 60_000L, "b" to 30_000L, "bad" to -50L)),
+        )
+    }
 }

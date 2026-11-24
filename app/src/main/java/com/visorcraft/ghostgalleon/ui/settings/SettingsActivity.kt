@@ -233,6 +233,21 @@ internal object SettingsUiLogic {
             ModalChipTone.DESTRUCTIVE -> UiDimens.COLOR_DESTRUCTIVE
             ModalChipTone.NEUTRAL -> ThemePack.accentTextColor(accent, tokens.chipIdle)
         }
+
+    /**
+     * Normalized `[0f..1f]` proportional bar width for Stats playtime rows.
+     * Applies a subtle 4% visual floor for positive scores so short sessions
+     * still render cleanly alongside long ones. Pure; host-tested.
+     */
+    fun playtimeBarFraction(scoreMs: Long, maxScoreMs: Long): Float {
+        if (scoreMs <= 0L || maxScoreMs <= 0L) return 0f
+        val raw = scoreMs.toDouble() / maxScoreMs.toDouble()
+        return raw.toFloat().coerceIn(0.04f, 1f)
+    }
+
+    /** Sum of positive accumulated playtime durations across all tracked keys. */
+    fun totalPlaytimeMs(playtimeByKey: Map<String, Long>): Long =
+        playtimeByKey.values.sumOf { if (it > 0L) it else 0L }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -316,16 +331,84 @@ class SettingsActivity : AppCompatActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            addView(rowLabel(label), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            addView(rowLabel(label).apply {
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(10) })
             addView(TextView(this@SettingsActivity).apply {
                 text = value
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
+                useTabularNumerals()
                 gravity = Gravity.END
             })
         }
+
+    private fun rankedPlaytimeRow(
+        rank: Int,
+        label: String,
+        duration: String,
+        barFraction: Float,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        val top = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val rankBadge = TextView(this@SettingsActivity).apply {
+                text = formatNumber(rank)
+                gravity = Gravity.CENTER
+                minWidth = dp(26)
+                styleStatusBadge(this, active = rank == 1)
+            }
+            addView(
+                rankBadge,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = dp(10) },
+            )
+            addView(
+                rowLabel(label).apply {
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(10)
+                },
+            )
+            addView(
+                TextView(this@SettingsActivity).apply {
+                    text = duration
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(if (rank == 1) accentOnCard else UiDimens.ALPHA_SECONDARY)
+                    setTypeface(typeface, if (rank == 1) Typeface.BOLD else Typeface.NORMAL)
+                    useTabularNumerals()
+                    gravity = Gravity.END
+                },
+            )
+        }
+        addView(
+            top,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val meter = DeterminateProgressBarView(this@SettingsActivity, themeTokens, accent).apply {
+            setFraction(barFraction)
+        }
+        addView(
+            meter,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)).apply {
+                marginStart = dp(36)
+                topMargin = dp(6)
+            },
+        )
+    }
 
     /** Bundled pack asset basenames under assets/platform_packs/. */
     private fun listBundledPackAssets(): List<String> =
@@ -3995,33 +4078,84 @@ class SettingsActivity : AppCompatActivity() {
         val recent = com.visorcraft.ghostgalleon.library.LibraryStats.recentlyPlayed(
             app.settings.lastLaunchedMs, limit = 12,
         )
+        val totalPlaytime = SettingsUiLogic.totalPlaytimeMs(app.settings.playtimeMs)
+        val statsBadge = if (totalPlaytime > 0L) {
+            resolveText(com.visorcraft.ghostgalleon.library.SessionMath.formatPlaytime(totalPlaytime))
+        } else {
+            null
+        }
         if (!com.visorcraft.ghostgalleon.library.LibraryStats.hasAnySessions(
                 app.settings.playtimeMs, app.settings.lastLaunchedMs,
             )
         ) {
-            statsCard.addView(TextView(this).apply {
-                setText(R.string.stats_no_sessions)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(0x99FFFFFF.toInt())
-                setPadding(0, dp(8), 0, dp(8))
-            })
+            val emptyBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+                setPadding(dp(18), dp(20), dp(18), dp(20))
+                addView(
+                    ImageView(this@SettingsActivity).apply {
+                        setImageResource(R.drawable.ic_nav_stats)
+                        imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_SUBTLE)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(dp(28), dp(28)).apply { bottomMargin = dp(8) },
+                )
+                addView(TextView(this@SettingsActivity).apply {
+                    setText(R.string.stats_no_sessions)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    gravity = Gravity.CENTER
+                })
+            }
+            statsCard.addView(
+                emptyBox,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    marginStart = dp(6)
+                    marginEnd = dp(6)
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                },
+            )
         } else {
-            statsCard.addView(sectionHeader(getString(R.string.stats_most_played)))
-            most.forEach { row ->
-                statsCard.addView(statRow(labelForStatsKey(row.key),
-                    resolveText(
-                        com.visorcraft.ghostgalleon.library.SessionMath.formatPlaytime(row.score),
-                    )))
+            statsCard.addView(
+                sectionHeader(getString(R.string.stats_most_played)).apply {
+                    setPadding(dp(10), dp(6), dp(10), dp(6))
+                },
+            )
+            val maxScore = most.firstOrNull()?.score ?: 0L
+            most.forEachIndexed { index, row ->
+                if (index > 0) addDivider(statsCard)
+                statsCard.addView(
+                    rankedPlaytimeRow(
+                        rank = index + 1,
+                        label = labelForStatsKey(row.key),
+                        duration = resolveText(
+                            com.visorcraft.ghostgalleon.library.SessionMath.formatPlaytime(row.score),
+                        ),
+                        barFraction = SettingsUiLogic.playtimeBarFraction(row.score, maxScore),
+                    ),
+                )
             }
             if (most.isEmpty()) {
                 statsCard.addView(TextView(this).apply {
                     setText(R.string.browse_no_playtime)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(0x66FFFFFF.toInt())
+                    setTextColor(UiDimens.ALPHA_SUBTLE)
+                    setPadding(dp(10), dp(4), dp(10), dp(8))
                 })
             }
-            statsCard.addView(sectionHeader(getString(R.string.stats_recently_played)))
-            recent.forEach { row ->
+            addDivider(statsCard)
+            statsCard.addView(
+                sectionHeader(getString(R.string.stats_recently_played)).apply {
+                    setPadding(dp(10), dp(14), dp(10), dp(6))
+                },
+            )
+            recent.forEachIndexed { index, row ->
+                if (index > 0) addDivider(statsCard)
                 val whenLabel = com.visorcraft.ghostgalleon.library.SessionMath.formatLastPlayed(
                     row.score, System.currentTimeMillis(),
                 )?.let(::resolveText) ?: getString(R.string.glyph_dash)
@@ -4031,11 +4165,18 @@ class SettingsActivity : AppCompatActivity() {
                 statsCard.addView(TextView(this).apply {
                     setText(R.string.stats_no_launches)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(0x66FFFFFF.toInt())
+                    setTextColor(UiDimens.ALPHA_SUBTLE)
+                    setPadding(dp(10), dp(4), dp(10), dp(8))
                 })
             }
         }
-        addSection(SettingsPage.STATS, getString(R.string.settings_page_stats), statsCard)
+        addSection(
+            page = SettingsPage.STATS,
+            title = getString(R.string.settings_page_stats),
+            card = statsCard,
+            badgeText = statsBadge,
+            badgeActive = totalPlaytime > 0L,
+        )
         val systemCard = sectionCard()
         val topo = app.refreshDisplayConfig()
         val systemCardExtra = systemCard
