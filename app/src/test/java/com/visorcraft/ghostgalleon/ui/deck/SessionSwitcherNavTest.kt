@@ -1,10 +1,13 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.settings.Action
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,5 +51,53 @@ class SessionSwitcherNavTest {
         assertEquals(2, SessionSwitcherNav.initialSelection(list, previousSelection = 3, activeKey = "a"))
         assertEquals(1, SessionSwitcherNav.initialSelection(list, previousSelection = 1, activeKey = "a"))
         assertEquals(0, SessionSwitcherNav.initialSelection(emptyList(), previousSelection = 2, activeKey = "a"))
+    }
+
+    @Test
+    fun `artworkFor distinguishes ROM platform entries from app packages`() {
+        val romEntry = entry("rom:snes:roms/snes/zelda.smc")
+        assertEquals(
+            SessionSwitcherNav.EntryArtwork.Rom(
+                romId = "snes:roms/snes/zelda.smc",
+                platformId = "snes",
+            ),
+            SessionSwitcherNav.artworkFor(romEntry),
+        )
+
+        val appEntry = SessionRingEntry(
+            key = "org.videolan.vlc",
+            playerId = null,
+            packageName = "org.videolan.vlc",
+            policy = SessionPolicy.KEEP_COMPANION,
+            launchedAtMs = 1_000L,
+            title = "VLC",
+        )
+        assertEquals(
+            SessionSwitcherNav.EntryArtwork.App("org.videolan.vlc"),
+            SessionSwitcherNav.artworkFor(appEntry),
+        )
+    }
+
+    @Test
+    fun `recencyText and metadataParts format timestamps and omit blank fragments`() {
+        val now = 10_000_000L
+        assertNull(SessionSwitcherNav.recencyText(launchedAtMs = 0L, nowMs = now))
+        assertEquals(
+            UiText.Resource(R.string.time_just_now),
+            SessionSwitcherNav.recencyText(launchedAtMs = now - 10_000L, nowMs = now),
+        )
+        assertEquals(
+            UiText.Resource(R.string.time_minutes_ago, listOf(5L)),
+            SessionSwitcherNav.recencyText(launchedAtMs = now - 5 * 60_000L, nowMs = now),
+        )
+        assertEquals(
+            listOf("RetroArch", "5m ago"),
+            SessionSwitcherNav.metadataParts("RetroArch", "5m ago"),
+        )
+        assertEquals(
+            listOf("Just now"),
+            SessionSwitcherNav.metadataParts("  ", "Just now"),
+        )
+        assertTrue(SessionSwitcherNav.metadataParts("", null).isEmpty())
     }
 }

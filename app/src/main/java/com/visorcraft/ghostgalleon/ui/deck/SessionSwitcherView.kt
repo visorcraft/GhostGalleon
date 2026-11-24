@@ -1,32 +1,48 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.art.ArtTile
+import com.visorcraft.ghostgalleon.i18n.UiText
+import com.visorcraft.ghostgalleon.library.SessionMath
+import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
+import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRing
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.playerSettingsLabel
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.resolveText
 
 /**
- * Pure, host-tested navigation and active-entry helpers for [SessionSwitcherView].
+ * Pure, host-tested navigation, artwork classification, recency, and
+ * active-entry helpers for [SessionSwitcherView].
  */
 internal object SessionSwitcherNav {
+
+    sealed class EntryArtwork {
+        data class Rom(val romId: String, val platformId: String?) : EntryArtwork()
+        data class App(val packageName: String) : EntryArtwork()
+    }
 
     fun move(selection: Int, count: Int, action: Action): Int =
         when (action) {
@@ -54,6 +70,30 @@ internal object SessionSwitcherNav {
             if (activeIdx >= 0) return activeIdx
         }
         return 0
+    }
+
+    /** Classify a session ring entry into ROM artwork vs installed app icon. */
+    fun artworkFor(entry: SessionRingEntry): EntryArtwork {
+        val romId = SlotKey.romId(entry.key)
+        if (romId != null) {
+            return EntryArtwork.Rom(
+                romId = romId,
+                platformId = SlotKey.platformIdOf(entry.key),
+            )
+        }
+        return EntryArtwork.App(entry.packageName.ifBlank { entry.key })
+    }
+
+    /** Relative recency text (e.g. "Just now", "5m ago") or null when timestamp absent. */
+    fun recencyText(launchedAtMs: Long, nowMs: Long): UiText? =
+        SessionMath.formatLastPlayed(launchedAtMs.takeIf { it > 0L }, nowMs)
+
+    /** Ordered non-blank metadata fragments (`player` and optional `recency`). */
+    fun metadataParts(playerLine: String, recency: String?): List<String> = buildList(2) {
+        val trimmedPlayer = playerLine.trim()
+        if (trimmedPlayer.isNotEmpty()) add(trimmedPlayer)
+        val trimmedRecency = recency?.trim().orEmpty()
+        if (trimmedRecency.isNotEmpty()) add(trimmedRecency)
     }
 }
 
@@ -261,11 +301,28 @@ object SessionSwitcherView {
                 )
             })
         } else {
+            val app = context.applicationContext as? GhostGalleonApp
+            val neededRomIds = entries.mapNotNull { SlotKey.romId(it.key) }.toSet()
+            val romsById: Map<String, RomEntry> = if (neededRomIds.isEmpty() || app == null) {
+                emptyMap()
+            } else {
+                app.romEntries.filter { it.id in neededRomIds }.associateBy { it.id }
+            }
+            val iconLoader = if (entries.any { !SlotKey.isRom(it.key) }) {
+                AppIconLoader(context.packageManager)
+            } else {
+                null
+            }
+            val nowMs = System.currentTimeMillis()
             val yieldHint = context.getString(R.string.settings_player_uses_both_screens)
             entries.forEachIndexed { index, entry ->
                 val isActive = SessionSwitcherNav.isActiveEntry(entry.key, activeKey)
                 val row = rowView(
                     context = context,
+                    app = app,
+                    romsById = romsById,
+                    iconLoader = iconLoader,
+                    nowMs = nowMs,
                     entry = entry,
                     yieldHint = yieldHint,
                     isActive = isActive,
@@ -347,6 +404,10 @@ object SessionSwitcherView {
 
     private fun rowView(
         context: Context,
+        app: GhostGalleonApp?,
+        romsById: Map<String, RomEntry>,
+        iconLoader: AppIconLoader?,
+        nowMs: Long,
         entry: SessionRingEntry,
         yieldHint: String,
         isActive: Boolean,
@@ -371,6 +432,20 @@ object SessionSwitcherView {
                 true
             }
         }
+        val thumbSize = context.dp(42)
+        row.addView(
+            artworkBadgeView(
+                context = context,
+                app = app,
+                romsById = romsById,
+                iconLoader = iconLoader,
+                entry = entry,
+                thumbSizePx = thumbSize,
+            ),
+            LinearLayout.LayoutParams(thumbSize, thumbSize).apply {
+                marginEnd = context.dp(UiDimens.SPACE_MD)
+            },
+        )
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -382,7 +457,14 @@ object SessionSwitcherView {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         })
-        val subtitle = playerLine(entry, yieldHint)
+        val recency = SessionSwitcherNav.recencyText(entry.launchedAtMs, nowMs)
+            ?.let { context.resolveText(it) }
+        val metaParts = SessionSwitcherNav.metadataParts(playerLine(entry, yieldHint), recency)
+        val subtitle = when (metaParts.size) {
+            0 -> ""
+            1 -> metaParts[0]
+            else -> context.getString(R.string.format_dot_pair, metaParts[0], metaParts[1])
+        }
         if (isActive || subtitle.isNotEmpty()) {
             val metaRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -465,6 +547,84 @@ object SessionSwitcherView {
             ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
         )
         return row
+    }
+
+    private fun artworkBadgeView(
+        context: Context,
+        app: GhostGalleonApp?,
+        romsById: Map<String, RomEntry>,
+        iconLoader: AppIconLoader?,
+        entry: SessionRingEntry,
+        thumbSizePx: Int,
+    ): View {
+        val frame = FrameLayout(context).apply {
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }
+        when (val art = SessionSwitcherNav.artworkFor(entry)) {
+            is SessionSwitcherNav.EntryArtwork.Rom -> {
+                val rom = romsById[art.romId]
+                val child: View = when {
+                    rom != null && app != null -> ArtTile.view(
+                        context = context,
+                        cache = app.artCache,
+                        rom = rom,
+                        targetPx = thumbSizePx,
+                        cornerRadiusDp = 10,
+                        artOverrides = app.settings.artOverrides,
+                    )
+                    art.platformId != null -> PlatformTile.view(
+                        context = context,
+                        platformId = art.platformId,
+                        cornerRadiusDp = 10,
+                    )
+                    else -> {
+                        frame.background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
+                        ImageView(context).apply {
+                            setImageResource(R.drawable.ic_folder)
+                            imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            val pad = context.dp(8)
+                            setPadding(pad, pad, pad, pad)
+                        }
+                    }
+                }
+                frame.addView(
+                    child,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            }
+            is SessionSwitcherNav.EntryArtwork.App -> {
+                frame.background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
+                val iconPad = context.dp(3)
+                frame.setPadding(iconPad, iconPad, iconPad, iconPad)
+                val innerSize = (thumbSizePx - iconPad * 2).coerceAtLeast(1)
+                val icon = ImageView(context).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                }
+                if (iconLoader != null && app != null) {
+                    CustomIcon.bind(
+                        image = icon,
+                        iconLoader = iconLoader,
+                        cache = app.artCache,
+                        settings = app.settings,
+                        packageName = art.packageName,
+                        targetPx = innerSize,
+                    )
+                } else if (iconLoader != null) {
+                    icon.setImageDrawable(iconLoader.load(art.packageName))
+                }
+                frame.addView(
+                    icon,
+                    FrameLayout.LayoutParams(innerSize, innerSize, Gravity.CENTER),
+                )
+            }
+        }
+        return frame
     }
 
     private fun playerLine(entry: SessionRingEntry, yieldHint: String): String {
