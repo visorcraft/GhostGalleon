@@ -144,6 +144,9 @@ object CompanionPanel {
     private const val TAG_STRIP_ART_HOST = "strip_art_host"
     private const val TAG_STRIP_DETAIL = "strip_detail"
     private const val TAG_STRIP_FAV = "strip_fav"
+    private const val TAG_STRIP_RA_ROW = "strip_ra_row"
+    private const val TAG_STRIP_RA_BAR = "strip_ra_bar"
+    private const val TAG_STRIP_DIVIDER = "strip_divider"
     /** High-contrast warm gold for favorite star indicator on OLED dark surfaces. */
     private const val FAVORITE_STAR_COLOR = 0xFFFFD54F.toInt()
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
@@ -1567,36 +1570,47 @@ object CompanionPanel {
         settings: Settings,
     ): View {
         val context: Context = activity
-        val density = context.resources.displayMetrics.density
+        val dm = context.resources.displayMetrics
+        val density = dm.density
         fun dp(value: Int) = (value * density).toInt()
         val app = activity.application as GhostGalleonApp
         val model = resolveStripModel(state, library, roms, settings, app)
+        val stripSpec = TopStripMetrics.forWidth(dm.widthPixels / density)
+        val stripAccent = model.platformId?.let { PlatformLook.accentColor(it) }
+            ?: settings.accentColor
+        val resolvedTitle = context.resolveText(model.title)
+        val resolvedSub = context.resolveText(model.subtitle)
 
         val root = FrameLayout(context).apply {
             tag = TAG_TOP_STRIP
             clipChildren = true
             clipToPadding = true
+            contentDescription = TopStripMetrics.accessibilitySummary(resolvedTitle, resolvedSub)
         }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             tag = TAG_PANEL_ROOT
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = panelBackground(
-                context,
-                model.platformId?.let { PlatformLook.accentColor(it) }
-                    ?: settings.accentColor,
+            clipChildren = false
+            clipToPadding = false
+            setPadding(
+                dp(stripSpec.padHorizontalDp),
+                dp(stripSpec.padVerticalDp),
+                dp(stripSpec.padHorizontalDp),
+                dp(stripSpec.padVerticalDp),
             )
+            background = panelBackground(context, stripAccent)
         }
 
         // Art host: square; holds ImageView (app) or platform tile (ROM).
-        val artSize = dp(SelectionStrip.ART_SIZE_DP)
+        val artSize = dp(stripSpec.artSizeDp)
         val artHost = FrameLayout(context).apply {
             tag = TAG_STRIP_ART_HOST
         }
+        applyStripArtFrame(artHost, isRom = model.isRom, accentColor = stripAccent, spec = stripSpec)
         bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
         row.addView(artHost, LinearLayout.LayoutParams(artSize, artSize).apply {
-            marginEnd = dp(12)
+            marginEnd = dp(stripSpec.artGapDp)
         })
 
         val texts = LinearLayout(context).apply {
@@ -1624,20 +1638,21 @@ object CompanionPanel {
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { marginEnd = dp(6) })
+        val stripRom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
         titleRow.addView(TextView(context).apply {
             tag = TAG_HERO_NAME
-            val stripRom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
             setTag(R.id.hero_bound_id, stripRom?.id ?: state.selectedKey)
             setTag(
                 R.id.hero_art_gen,
                 stripRom?.let { app.artCache.artGeneration(it.id) } ?: 0,
             )
-            text = context.resolveText(model.title)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            text = resolvedTitle
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.titleSp)
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTypeface(typeface, Typeface.BOLD)
+            includeFontPadding = false
         }, LinearLayout.LayoutParams(
             0,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1649,11 +1664,12 @@ object CompanionPanel {
         ))
         texts.addView(TextView(context).apply {
             tag = TAG_HERO_SUB
-            text = context.resolveText(model.subtitle)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            text = resolvedSub
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.subtitleSp)
             setTextColor(0xCCFFFFFF.toInt())
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1662,28 +1678,59 @@ object CompanionPanel {
             tag = TAG_STRIP_DETAIL
             text = model.detail?.let(context::resolveText).orEmpty()
             visibility = if (model.detail != null) View.VISIBLE else View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.detailSp)
             setTextColor(0x99FFFFFF.toInt())
+            fontFeatureSettings = "tnum"
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(2) })
-        texts.addView(TextView(context).apply {
-            tag = TAG_HERO_RA
-            text = model.raLine?.let(context::resolveText).orEmpty()
+        val raRow = LinearLayout(context).apply {
+            tag = TAG_STRIP_RA_ROW
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
             visibility = if (model.raLine != null) View.VISIBLE else View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(
-                ThemePack.accentTextColor(
-                    settings.accentColor,
-                    TileBackgrounds.surfaceColor(context),
-                ),
-            )
+        }
+        val stripRaTv = TextView(context).apply {
+            tag = TAG_HERO_RA
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, stripSpec.raSp)
+            fontFeatureSettings = "tnum"
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(
+            includeFontPadding = false
+        }
+        val stripRaBar = MeterBarView(context).apply {
+            tag = TAG_STRIP_RA_BAR
+            visibility = View.GONE
+        }
+        raRow.addView(
+            stripRaTv,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        raRow.addView(
+            stripRaBar,
+            LinearLayout.LayoutParams(
+                dp(stripSpec.raBarWidthDp),
+                dp(stripSpec.raBarHeightDp),
+            ).apply { marginStart = dp(8) },
+        )
+        val stripRaProgress = stripRom?.let { app.raProgressFor(it.id) }
+        bindRaLine(
+            tv = stripRaTv,
+            bar = stripRaBar,
+            progress = stripRaProgress,
+            hasCreds = !settings.raApiKey.isNullOrBlank(),
+            accentColor = settings.accentColor,
+        )
+        raRow.visibility = stripRaTv.visibility
+        texts.addView(raRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(2) })
@@ -1709,10 +1756,11 @@ object CompanionPanel {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
-        // Subtle 1dp bottom hairline separating TOP_STRIP from the deck below.
+        // Subtle 1dp accent-tinted bottom hairline separating TOP_STRIP from the deck below.
         root.addView(
             View(context).apply {
-                setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+                tag = TAG_STRIP_DIVIDER
+                setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             },
             FrameLayout.LayoutParams(
@@ -1723,11 +1771,30 @@ object CompanionPanel {
         )
 
         // Kick live RA for ROM selection (same as full hero).
-        if (model.isRom) {
-            val rom = selectedRom(state.selectedKey, roms, app)
-            if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
+        if (stripRom != null) {
+            app.requestRaProgress(stripRom.id, stripRom.name, stripRom.platformId)
         }
         return root
+    }
+
+    private fun applyStripArtFrame(
+        artHost: FrameLayout,
+        isRom: Boolean,
+        accentColor: Int,
+        spec: TopStripMetrics.Spec,
+    ) {
+        if (isRom) {
+            applyHeroArtFrame(
+                target = artHost,
+                accentColor = accentColor,
+                elevationDp = spec.artElevationDp,
+                cornerRadiusDp = spec.artCornerRadiusDp,
+            )
+        } else {
+            artHost.foreground = null
+            artHost.elevation = 0f
+            artHost.outlineProvider = ViewOutlineProvider.BACKGROUND
+        }
     }
 
     private fun resolveStripModel(
@@ -1774,12 +1841,13 @@ object CompanionPanel {
         host.removeAllViews()
         val rom = selectedRom(state.selectedKey, roms, app)
         if (rom != null) {
-            val tile = PlatformTile.view(context, rom.platformId, cornerRadiusDp = 12).apply {
+            val cornerDp = TopStripMetrics.ART_CORNER_RADIUS_DP
+            val tile = PlatformTile.view(context, rom.platformId, cornerRadiusDp = cornerDp).apply {
                 tag = TAG_HERO_ICON
             }
             host.addView(tile, FrameLayout.LayoutParams(artSize, artSize))
-            // Prefer grid art when available; 12dp rounded outline matches PlatformTile.
-            val radiusPx = context.dpF(12)
+            // Prefer grid art when available; corner radius matches PlatformTile & rim.
+            val radiusPx = context.dpF(cornerDp)
             val image = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 visibility = View.GONE
@@ -1843,25 +1911,12 @@ object CompanionPanel {
         val ra = view.findViewWithTag<TextView>(TAG_HERO_RA) ?: return false
         val artHost = view.findViewWithTag<FrameLayout>(TAG_STRIP_ART_HOST) ?: return false
         val app = context.applicationContext as GhostGalleonApp
+        val dm = context.resources.displayMetrics
+        val density = dm.density
+        val stripSpec = TopStripMetrics.forWidth(dm.widthPixels / density)
         val model = resolveStripModel(state, library, roms, settings, app)
-        name.text = context.resolveText(model.title)
-        sub.text = context.resolveText(model.subtitle)
-        detail.text = model.detail?.let(context::resolveText).orEmpty()
-        detail.visibility = if (model.detail != null) View.VISIBLE else View.GONE
-        ra.text = model.raLine?.let(context::resolveText).orEmpty()
-        ra.visibility = if (model.raLine != null) View.VISIBLE else View.GONE
-        view.findViewWithTag<View>(TAG_STRIP_FAV)?.let { fav ->
-            val nextVis = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
-            if (fav.visibility != nextVis) fav.visibility = nextVis
-        }
-        view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
-            context,
-            model.platformId?.let { PlatformLook.accentColor(it) } ?: settings.accentColor,
-        )
+        val stripAccent = model.platformId?.let { PlatformLook.accentColor(it) }
+            ?: settings.accentColor
         val rom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
         val bindId = rom?.id ?: state.selectedKey
         val artGen = rom?.let { app.artCache.artGeneration(it.id) } ?: 0
@@ -1872,10 +1927,52 @@ object CompanionPanel {
                 bindId,
                 artGen,
             )
+        val previousTitle = name.text
+        val nextTitle = context.resolveText(model.title)
+        val nextSubtitle = context.resolveText(model.subtitle)
+        val animateSelection = CompanionHeroStyle.shouldAnimateSelection(
+            alreadyBound = alreadyBound,
+            previousText = previousTitle,
+            nextText = nextTitle,
+        )
+        name.text = nextTitle
+        sub.text = nextSubtitle
+        detail.text = model.detail?.let(context::resolveText).orEmpty()
+        detail.visibility = if (model.detail != null) View.VISIBLE else View.GONE
+        if (animateSelection) {
+            animateHeroTextSettle(name, density)
+            animateHeroTextSettle(sub, density)
+        }
+        val stripRaBar = view.findViewWithTag<MeterBarView>(TAG_STRIP_RA_BAR)
+        bindRaLine(
+            tv = ra,
+            bar = stripRaBar,
+            progress = rom?.let { app.raProgressFor(it.id) },
+            hasCreds = !settings.raApiKey.isNullOrBlank(),
+            accentColor = settings.accentColor,
+        )
+        view.findViewWithTag<View>(TAG_STRIP_RA_ROW)?.let { raRow ->
+            if (raRow.visibility != ra.visibility) raRow.visibility = ra.visibility
+        }
+        view.findViewWithTag<View>(TAG_STRIP_FAV)?.let { fav ->
+            val nextVis = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+            if (fav.visibility != nextVis) fav.visibility = nextVis
+        }
+        view.findViewWithTag<View>(TAG_TOP_STRIP)?.contentDescription =
+            TopStripMetrics.accessibilitySummary(nextTitle, nextSubtitle)
+        view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
+            panelBackground(context, stripAccent)
+        view.findViewWithTag<View>(TAG_STRIP_DIVIDER)
+            ?.setBackgroundColor(TopStripMetrics.stripDividerColor(stripAccent))
         if (!alreadyBound) {
-            val density = context.resources.displayMetrics.density
-            val artSize = (SelectionStrip.ART_SIZE_DP * density).toInt()
+            val artSize = (stripSpec.artSizeDp * density).toInt()
+            applyStripArtFrame(artHost, isRom = model.isRom, accentColor = stripAccent, spec = stripSpec)
             bindStripArt(artHost, context, state, library, roms, settings, app, artSize)
+            animateHeroArtSettle(artHost)
             if (rom != null) app.requestRaProgress(rom.id, rom.name, rom.platformId)
         }
         name.setTag(R.id.hero_bound_id, bindId)
