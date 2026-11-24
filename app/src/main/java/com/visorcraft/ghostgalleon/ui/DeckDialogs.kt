@@ -2,11 +2,15 @@ package com.visorcraft.ghostgalleon.ui
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.StateListDrawable
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.KeyEvent
@@ -22,6 +26,8 @@ import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
+import com.visorcraft.ghostgalleon.ui.deck.SlotMenuNav
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 
 /** Pure, host-tested dialog surface and action-button color tokens. */
@@ -93,6 +99,36 @@ internal object DeckDialogTokens {
 
     /** Opacity for the positive submit action when enabled vs disabled by validation. */
     fun positiveButtonAlpha(enabled: Boolean): Float = if (enabled) 1f else 0.40f
+
+    internal const val LIST_PRESSED_WASH: Int = 0x22FFFFFF
+    internal const val LIST_FOCUSED_WASH_ALPHA: Int = 0x1F
+    const val BUTTON_MIN_HEIGHT_DP: Int = 44
+
+    /** Focus border color for dialog action buttons (destructive positive gets red ring). */
+    fun buttonFocusStrokeColor(
+        which: Int,
+        destructivePositive: Boolean,
+        accent: Int,
+    ): Int = if (which == AlertDialog.BUTTON_POSITIVE && destructivePositive) {
+        UiDimens.COLOR_DESTRUCTIVE
+    } else {
+        accent
+    }
+
+    /** Ripple wash color for dialog action buttons (destructive positive gets red ripple). */
+    fun buttonRippleColor(which: Int, destructivePositive: Boolean): Int =
+        if (which == AlertDialog.BUTTON_POSITIVE && destructivePositive) {
+            SlotMenuNav.DESTRUCTIVE_RIPPLE
+        } else {
+            OverlayPrimitives.DEFAULT_RIPPLE_COLOR
+        }
+
+    /** Subtle accent-tinted fill for focused/selected rows inside `chooseItem` lists. */
+    fun listFocusedFill(accent: Int, tokens: ThemeTokens): Int =
+        SlotMenuNav.blendOverOpaque(
+            (LIST_FOCUSED_WASH_ALPHA shl 24) or (accent and 0x00FFFFFF),
+            ThemePack.cardFill(tokens),
+        )
 }
 
 /**
@@ -128,36 +164,57 @@ object DeckDialogs {
         }
 
         dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
         }
         dialog.findViewById<TextView>(android.R.id.message)?.apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
+            setLineSpacing(0f, 1.18f)
         }
 
         dialog.listView?.apply {
             divider = ColorDrawable(TileBackgrounds.hairlineDivider(context))
             dividerHeight = context.strokePx(1)
+            setHeaderDividersEnabled(true)
             setPadding(0, context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_XS))
             clipToPadding = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(
+                OverlayPrimitives.fadingEdgeLengthPx(context.resources.displayMetrics.density),
+            )
+            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+            selector = listSelector(context, accent, tokens)
         }
 
         fun styleButton(which: Int, textColor: Int) {
             val btn = dialog.getButton(which) ?: return
+            val focusColor = DeckDialogTokens.buttonFocusStrokeColor(which, destructivePositive, accent)
+            val rippleColor = DeckDialogTokens.buttonRippleColor(which, destructivePositive)
             btn.setTextColor(textColor)
             btn.setTypeface(btn.typeface, Typeface.BOLD)
             btn.isFocusable = true
-            btn.background = TileBackgrounds.focusableRow(
+            btn.minHeight = context.dp(DeckDialogTokens.BUTTON_MIN_HEIGHT_DP)
+            val focusableBg = TileBackgrounds.focusableRow(
                 context = context,
-                accent = accent,
+                accent = focusColor,
                 cornerRadiusDp = 12,
                 strokeDp = 2,
             )
+            btn.background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = focusableBg,
+                cornerRadiusDp = 12,
+                rippleColor = rippleColor,
+            )
             btn.setPadding(
                 context.dp(14),
-                context.dp(UiDimens.SPACE_SM),
+                context.dp(10),
                 context.dp(14),
-                context.dp(UiDimens.SPACE_SM),
+                context.dp(10),
             )
         }
 
@@ -454,6 +511,43 @@ object DeckDialogs {
             b.setNegativeButton(negativeRes) { _, _ -> onNegative?.invoke() }
         }
         return show(b, context, destructivePositive = destructivePositive)
+    }
+
+    private fun listSelector(
+        context: Context,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): StateListDrawable {
+        val hInset = context.dp(UiDimens.SPACE_SM)
+        val vInset = context.dp(2)
+        val radiusPx = context.dpF(10)
+        val focused = InsetDrawable(
+            GradientDrawable().apply {
+                setColor(DeckDialogTokens.listFocusedFill(accent, tokens))
+                cornerRadius = radiusPx
+                setStroke(context.strokePx(2), accent)
+            },
+            hInset,
+            vInset,
+            hInset,
+            vInset,
+        )
+        val pressed = InsetDrawable(
+            GradientDrawable().apply {
+                setColor(DeckDialogTokens.LIST_PRESSED_WASH)
+                cornerRadius = radiusPx
+            },
+            hInset,
+            vInset,
+            hInset,
+            vInset,
+        )
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), pressed)
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(android.R.attr.state_selected), focused)
+            addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+        }
     }
 
     private fun resolveTokens(context: Context): ThemeTokens {

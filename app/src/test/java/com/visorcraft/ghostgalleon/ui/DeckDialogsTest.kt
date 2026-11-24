@@ -3,7 +3,10 @@ package com.visorcraft.ghostgalleon.ui
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
+import androidx.appcompat.app.AlertDialog
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
+import com.visorcraft.ghostgalleon.ui.deck.SlotMenuNav
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -119,5 +122,50 @@ class DeckDialogsTest {
         assertTrue(DeckDialogTokens.canSubmitText("RPGs", requireNonBlank = true))
         assertEquals(1f, DeckDialogTokens.positiveButtonAlpha(true), 0.0001f)
         assertEquals(0.40f, DeckDialogTokens.positiveButtonAlpha(false), 0.0001f)
+    }
+
+    @Test
+    fun `button focus and ripple tokens and chooseItem list focus fill meet WCAG AA across themes`() {
+        for (tokens in ThemePack.BUILTINS) {
+            assertEquals(
+                UiDimens.COLOR_DESTRUCTIVE,
+                DeckDialogTokens.buttonFocusStrokeColor(
+                    AlertDialog.BUTTON_POSITIVE,
+                    destructivePositive = true,
+                    accent = tokens.accentColor,
+                ),
+            )
+            assertEquals(
+                tokens.accentColor,
+                DeckDialogTokens.buttonFocusStrokeColor(
+                    AlertDialog.BUTTON_POSITIVE,
+                    destructivePositive = false,
+                    accent = tokens.accentColor,
+                ),
+            )
+            assertEquals(
+                tokens.accentColor,
+                DeckDialogTokens.buttonFocusStrokeColor(
+                    AlertDialog.BUTTON_NEGATIVE,
+                    destructivePositive = true,
+                    accent = tokens.accentColor,
+                ),
+            )
+            assertEquals(
+                SlotMenuNav.DESTRUCTIVE_RIPPLE,
+                DeckDialogTokens.buttonRippleColor(AlertDialog.BUTTON_POSITIVE, destructivePositive = true),
+            )
+            assertEquals(
+                OverlayPrimitives.DEFAULT_RIPPLE_COLOR,
+                DeckDialogTokens.buttonRippleColor(AlertDialog.BUTTON_POSITIVE, destructivePositive = false),
+            )
+
+            val listFocusBg = DeckDialogTokens.listFocusedFill(tokens.accentColor, tokens)
+            val ratio = ThemePack.contrastRatio(UiDimens.ALPHA_PRIMARY, listFocusBg)
+            assertTrue(
+                "Low list focused text contrast $ratio on theme=${tokens.id}",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
     }
 }
