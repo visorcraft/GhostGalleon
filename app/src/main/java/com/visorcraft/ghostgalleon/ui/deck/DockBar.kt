@@ -301,11 +301,15 @@ class DockBar(
     }
 
     private fun dockSlotRipple(context: Context, cornerRadiusDp: Int): RippleDrawable {
+        val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
+            surfaceFill = TileBackgrounds.surfaceColor(context),
+            accent = settings.accentColor,
+        )
         val mask = GradientDrawable().apply {
             cornerRadius = context.dpF(cornerRadiusDp)
             setColor(Color.WHITE)
         }
-        return RippleDrawable(ColorStateList.valueOf(DOCK_SLOT_RIPPLE_COLOR), null, mask)
+        return RippleDrawable(ColorStateList.valueOf(rippleColor), null, mask)
     }
 
     // Repopulates every slot's contents (a dock move swapped keys in the
@@ -400,7 +404,6 @@ class DockBar(
 
     private companion object {
         const val FOCUS_ANIM_MS = 90L
-        const val DOCK_SLOT_RIPPLE_COLOR = 0x38FFFFFF
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
     }

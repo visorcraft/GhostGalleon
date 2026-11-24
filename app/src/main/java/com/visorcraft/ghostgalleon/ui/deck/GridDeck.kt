@@ -2103,7 +2103,9 @@ class GridDeck(
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val absPos = slotOffset + position
             val key = slotPackages().getOrNull(absPos)
-            val frame = (convertView as? FrameLayout) ?: FrameLayout(context)
+            val frame = (convertView as? FrameLayout) ?: FrameLayout(context).apply {
+                foreground = buildTileRipple(context)
+            }
             val boundKey = frame.getTag(R.id.grid_cell_key) as? String
             // Reuse convertView when the slot key is unchanged and we are not
             // in move mode (contents may have swapped). Selection-only path
@@ -2241,6 +2243,20 @@ class GridDeck(
                 })
             }
             applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
+        }
+
+        private fun buildTileRipple(ctx: Context): RippleDrawable {
+            val tokens = ThemePack.resolve(settings)
+            val radiusPx = ctx.dpF(GridTileFeedbackMetrics.gridTileRippleRadiusDp(tokens))
+            val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
+                surfaceFill = TileBackgrounds.surfaceColor(ctx),
+                accent = settings.accentColor,
+            )
+            val mask = GradientDrawable().apply {
+                cornerRadius = radiusPx
+                setColor(Color.WHITE)
+            }
+            return RippleDrawable(ColorStateList.valueOf(rippleColor), null, mask)
         }
 
         private fun cornerBadgeScrim(ctx: Context): GradientDrawable =
