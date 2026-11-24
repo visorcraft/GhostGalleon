@@ -178,4 +178,33 @@ class CompanionChromeErgonomicsTest {
         assertEquals(80f * 2.2f, clamped.translationX, 0.01f)
         assertEquals(CompanionChromeErgonomics.RESUME_SWIPE_MIN_ALPHA, clamped.alpha, 0.001f)
     }
+
+    @Test
+    fun `icon button scale and cold-start breathing constants stay bounded`() {
+        assertEquals(
+            CompanionChromeErgonomics.ICON_PRESS_SCALE,
+            CompanionChromeErgonomics.targetScale(
+                pressed = true,
+                focused = false,
+                pressScale = CompanionChromeErgonomics.ICON_PRESS_SCALE,
+                focusScale = CompanionChromeErgonomics.ICON_FOCUS_SCALE,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            CompanionChromeErgonomics.ICON_FOCUS_SCALE,
+            CompanionChromeErgonomics.targetScale(
+                pressed = false,
+                focused = true,
+                pressScale = CompanionChromeErgonomics.ICON_PRESS_SCALE,
+                focusScale = CompanionChromeErgonomics.ICON_FOCUS_SCALE,
+            ),
+            0.001f,
+        )
+        assertTrue(CompanionChromeErgonomics.COLD_START_ALPHA_MIN < CompanionChromeErgonomics.COLD_START_ALPHA_STATIC)
+        assertTrue(CompanionChromeErgonomics.COLD_START_ALPHA_STATIC < CompanionChromeErgonomics.COLD_START_ALPHA_MAX)
+        val glow = CompanionChromeErgonomics.coldStartGlowColor(0xFF00A8A0.toInt())
+        assertEquals(0x24, (glow ushr 24) and 0xFF)
+        assertEquals(0x00A8A0, glow and 0x00FFFFFF)
+    }
 }

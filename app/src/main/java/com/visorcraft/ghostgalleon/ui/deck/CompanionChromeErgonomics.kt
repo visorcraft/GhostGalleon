@@ -136,4 +136,16 @@ object CompanionChromeErgonomics {
             shouldDismiss = shouldDismiss,
         )
     }
+
+    /** Cold-start hold crest breathing alpha range (when system animators enabled). */
+    const val COLD_START_ALPHA_MIN: Float = 0.24f
+    const val COLD_START_ALPHA_MAX: Float = 0.44f
+    const val COLD_START_ALPHA_STATIC: Float = 0.32f
+    const val COLD_START_SCALE_MIN: Float = 0.98f
+    const val COLD_START_SCALE_MAX: Float = 1.02f
+    const val COLD_START_BREATHE_MS: Long = 1_100L
+
+    /** Subtle radial halo behind the cold-start ship emblem (~14% alpha theme tint). */
+    fun coldStartGlowColor(accentColor: Int): Int =
+        (0x24 shl 24) or (accentColor and 0x00FFFFFF)
 }

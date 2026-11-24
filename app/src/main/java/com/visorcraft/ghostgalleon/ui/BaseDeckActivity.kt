@@ -367,27 +367,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         val displayId = currentDisplayId()
         if (shouldRenderOnCreate() && displayId != null) {
             if (DualPaintPolicy.holdFirstPaintUntilReady(app.romIndexReady)) {
-                val holdRoot = FrameLayout(this).apply {
-                    setBackgroundColor(0xFF000000.toInt())
-                }
-                val crestSize = dp(96)
-                val crest = android.widget.ImageView(this).apply {
-                    setImageResource(R.drawable.ic_brand_ship)
-                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                    alpha = 0.28f
-                    val mono = android.graphics.ColorMatrix().apply { setSaturation(0f) }
-                    colorFilter = android.graphics.ColorMatrixColorFilter(mono)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }
-                holdRoot.addView(
-                    crest,
-                    FrameLayout.LayoutParams(
-                        crestSize,
-                        crestSize,
-                        android.view.Gravity.CENTER,
-                    ),
-                )
-                setContentView(holdRoot)
+                setContentView(buildColdStartHoldView())
                 app.whenRomIndexReady {
                     if (!isFinishing && !isDestroyed) {
                         renderFromState("library-ready")
@@ -397,6 +377,92 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 renderFromState("onCreate d=$displayId")
             }
         }
+    }
+
+    private fun buildColdStartHoldView(): View {
+        val holdRoot = FrameLayout(this).apply {
+            setBackgroundColor(0xFF000000.toInt())
+            contentDescription = getString(R.string.app_name)
+        }
+        val haloSize = dp(220)
+        val halo = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
+                colors = intArrayOf(
+                    com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                        .coldStartGlowColor(settings.accentColor),
+                    Color.TRANSPARENT,
+                )
+                setGradientCenter(0.5f, 0.5f)
+                gradientRadius = haloSize * 0.5f
+            }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        holdRoot.addView(
+            halo,
+            FrameLayout.LayoutParams(
+                haloSize,
+                haloSize,
+                android.view.Gravity.CENTER,
+            ),
+        )
+        val crestSize = dp(96)
+        val animEnabled = android.animation.ValueAnimator.areAnimatorsEnabled()
+        val crest = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_brand_ship)
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            alpha = if (animEnabled) {
+                com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics.COLD_START_ALPHA_MIN
+            } else {
+                com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics.COLD_START_ALPHA_STATIC
+            }
+            val mono = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+            colorFilter = android.graphics.ColorMatrixColorFilter(mono)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        holdRoot.addView(
+            crest,
+            FrameLayout.LayoutParams(
+                crestSize,
+                crestSize,
+                android.view.Gravity.CENTER,
+            ),
+        )
+        if (animEnabled) {
+            val breathe = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                    .COLD_START_BREATHE_MS
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                addUpdateListener { anim ->
+                    val f = anim.animatedValue as Float
+                    val aMin = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                        .COLD_START_ALPHA_MIN
+                    val aMax = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                        .COLD_START_ALPHA_MAX
+                    val sMin = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                        .COLD_START_SCALE_MIN
+                    val sMax = com.visorcraft.ghostgalleon.ui.deck.CompanionChromeErgonomics
+                        .COLD_START_SCALE_MAX
+                    crest.alpha = aMin + (aMax - aMin) * f
+                    val scale = sMin + (sMax - sMin) * f
+                    crest.scaleX = scale
+                    crest.scaleY = scale
+                    halo.alpha = 0.65f + 0.35f * f
+                }
+            }
+            holdRoot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    if (!breathe.isStarted) breathe.start()
+                }
+
+                override fun onViewDetachedFromWindow(v: View) {
+                    breathe.cancel()
+                }
+            })
+        }
+        return holdRoot
     }
 
     override fun onAttachedToWindow() {
