@@ -403,6 +403,41 @@ class RomScannerTest {
         assertNull(entries[0].description)
     }
 
+    @Test
+    fun `scan 20000 DocFiles completes fast with exact art and dotfile parity`() {
+        val docs = ArrayList<DocFile>(20_000)
+        val folders = listOf("snes" to "smc", "gba" to "gba", "gb" to "gb", "nds" to "nds", "3ds" to "3ds")
+        for (i in 0 until 15_000) {
+            val (folder, ext) = folders[i % folders.size]
+            docs.add(doc("7F7E-2949:roms/$folder/Game_$i.$ext"))
+        }
+        for (i in 0 until 4_500) {
+            val (folder, _) = folders[i % folders.size]
+            docs.add(doc("7F7E-2949:roms/$folder/images/Game_$i.png"))
+        }
+        for (i in 0 until 500) {
+            docs.add(doc("7F7E-2949:roms/snes/._Junk_$i.smc"))
+        }
+
+        // Warm up JIT.
+        RomScanner.scan(listOf(cardTree(docs)))
+
+        var bestNs = Long.MAX_VALUE
+        var scanned: List<RomEntry> = emptyList()
+        repeat(3) {
+            val t0 = System.nanoTime()
+            scanned = RomScanner.scan(listOf(cardTree(docs)))
+            val dt = System.nanoTime() - t0
+            if (dt < bestNs) bestNs = dt
+        }
+        val elapsedMs = bestNs / 1_000_000.0
+        println("RomScannerTest (20,000 DocFiles scan): ${"%.2f".format(elapsedMs)}ms (${scanned.size} ROMs)")
+        assertEquals(15_000, scanned.size)
+        assertEquals(4_500, scanned.count { it.artUri != null })
+        assertTrue(scanned.none { it.name.startsWith("._") })
+        assertTrue("20k RomScanner.scan too slow: ${"%.2f".format(elapsedMs)}ms", elapsedMs < 250.0)
+    }
+
     private fun packSfo(fields: List<Pair<String, String>>): ByteArray {
         val keys = fields.map { (k, _) -> (k + '\u0000').toByteArray(Charsets.UTF_8) }
         val values = fields.map { (_, v) -> (v + '\u0000').toByteArray(Charsets.UTF_8) }

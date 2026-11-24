@@ -1,5 +1,7 @@
 package com.visorcraft.ghostgalleon.rom
 
+import java.util.Locale
+
 /**
  * Pure offline helpers for ES-DE / EmulationStation-style `gamelist.xml`.
  *
@@ -50,6 +52,7 @@ object GamelistMeta {
         """<!\[CDATA\[(.*?)]]>""",
         setOf(RegexOption.DOT_MATCHES_ALL),
     )
+    private val RESIDUAL_TAG = Regex("""<[^>]+>""")
 
     /**
      * Parse every `<game>` block in [xml]. Malformed or empty input yields
@@ -153,9 +156,20 @@ object GamelistMeta {
         gamelistEntries: List<GamelistEntry>,
         preferGamelistName: Boolean = true,
     ): List<RomEntry> {
-        if (gamelistEntries.isEmpty()) return roms
+        if (gamelistEntries.isEmpty() || roms.isEmpty()) return roms
+        // O(M) index with putIfAbsent preserving exact first-match precedence.
+        val byStem = HashMap<String, GamelistEntry>(gamelistEntries.size * 4 / 3 + 1)
+        for (entry in gamelistEntries) {
+            val key = entry.stem.lowercase(Locale.ROOT)
+            if (key.isNotEmpty()) {
+                byStem.putIfAbsent(key, entry)
+            }
+        }
+        if (byStem.isEmpty()) return roms
         return roms.map { rom ->
-            val hit = matchByStem(gamelistEntries, rom.name) ?: return@map rom
+            val target = stemOf(rom.name).lowercase(Locale.ROOT)
+            if (target.isEmpty()) return@map rom
+            val hit = byStem[target] ?: return@map rom
             rom.copy(
                 name = if (preferGamelistName && !hit.name.isNullOrBlank()) {
                     hit.name
@@ -175,16 +189,20 @@ object GamelistMeta {
     private fun decodeXmlText(raw: String): String {
         val trimmed = raw.trim()
         // Unwrap a top-level CDATA section; content is literal (keep <>&).
-        CDATA.matchEntire(trimmed)?.let { return it.groupValues[1].trim() }
+        if (trimmed.startsWith("<![CDATA[")) {
+            CDATA.matchEntire(trimmed)?.let { return it.groupValues[1].trim() }
+        }
         // Plain text: drop residual nested markup, then decode entities.
         // &amp; first so sequences like &amp;lt; become &lt; then <.
-        return trimmed
-            .replace(Regex("""<[^>]+>"""), "")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .trim()
+        var out = if ('<' in trimmed) RESIDUAL_TAG.replace(trimmed, "") else trimmed
+        if ('&' in out) {
+            out = out
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+        }
+        return out.trim()
     }
 }

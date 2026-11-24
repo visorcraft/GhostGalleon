@@ -606,4 +606,41 @@ class RomLibraryTest {
         )
         assertTrue("10k RomLibrary.load() too slow: ${"%.2f".format(loadMs)}ms", loadMs < 80.0)
     }
+
+    @Test
+    fun `rescanBlockingWithFingerprints evaluates isReadable exactly once per tree`() {
+        val trees = listOf(cardTree, internalTree, treeUri("USB-1:roms"))
+        val calls = HashMap<String, Int>()
+        val (result, _) = RomLibrary.rescanBlockingWithFingerprints(
+            treeUris = trees,
+            prior = listOf(
+                entry(uri = childUri("7F7E-2949:roms", "7F7E-2949:roms/snes/smw.smc")),
+            ),
+            isReadable = { uri ->
+                calls[uri] = (calls[uri] ?: 0) + 1
+                uri != cardTree
+            },
+            treeFor = { FakeTree(emptyList()) to "roms" },
+            force = true,
+        )
+        assertTrue(result is RomLibrary.RescanResult.Success)
+        assertEquals(trees.size, calls.values.sum())
+        for (u in trees) {
+            assertEquals("expected exactly 1 isReadable call for $u", 1, calls[u])
+        }
+
+        // All-unreadable case also evaluates isReadable exactly once per tree.
+        calls.clear()
+        val (unreadable, _) = RomLibrary.rescanBlockingWithFingerprints(
+            treeUris = trees,
+            prior = null,
+            isReadable = { uri ->
+                calls[uri] = (calls[uri] ?: 0) + 1
+                false
+            },
+            treeFor = { error("must not scan") },
+        )
+        assertEquals(RomLibrary.RescanResult.Unreadable, unreadable)
+        assertEquals(trees.size, calls.values.sum())
+    }
 }

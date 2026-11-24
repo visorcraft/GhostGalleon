@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.audio
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
@@ -335,9 +336,20 @@ object CustomSoundPackLoader {
 
     private const val COPY_BUFFER_BYTES: Int = 16 * 1024
 
+    private val PACK_CHILD_PROJECTION = arrayOf(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_MIME_TYPE,
+        DocumentsContract.Document.COLUMN_SIZE,
+        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+    )
+
     /**
      * Scans the SAF tree at [treeUriString] without copying any audio bytes.
-     * Safe against blank, malformed, revoked, or inaccessible URIs.
+     * Uses a single [DocumentsContract] projection cursor (1 Binder IPC instead
+     * of 5 IPCs/file via `DocumentFile`), falling back to `DocumentFile` only
+     * if the provider returns a null cursor. Safe against blank, malformed,
+     * revoked, or inaccessible URIs.
      */
     fun scanTree(context: Context, treeUriString: String?): CustomPackScanResult {
         val rawUri = treeUriString?.trim().orEmpty()
@@ -346,6 +358,12 @@ object CustomSoundPackLoader {
         }
         val treeUri = runCatching { Uri.parse(rawUri) }.getOrNull()
             ?: return CustomPackScanResult(cueEntries = emptyMap(), totalMatched = 0)
+
+        val projectionCandidates = scanTreeProjection(context, treeUri)
+        if (projectionCandidates != null) {
+            return CustomSoundPackMatcher.scanCandidates(projectionCandidates)
+        }
+
         val root = runCatching { DocumentFile.fromTreeUri(context, treeUri) }.getOrNull()
             ?: return CustomPackScanResult(cueEntries = emptyMap(), totalMatched = 0)
 
@@ -373,6 +391,55 @@ object CustomSoundPackLoader {
             }
         }
         return CustomSoundPackMatcher.scanCandidates(candidates)
+    }
+
+    private fun scanTreeProjection(context: Context, treeUri: Uri): List<CustomSoundCandidate>? {
+        val rootDocId = runCatching {
+            if (DocumentsContract.isDocumentUri(context, treeUri)) {
+                DocumentsContract.getDocumentId(treeUri)
+            } else {
+                DocumentsContract.getTreeDocumentId(treeUri)
+            }
+        }.getOrNull() ?: return null
+
+        val childrenUri = runCatching {
+            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocId)
+        }.getOrNull() ?: return null
+
+        val cursor = runCatching {
+            context.contentResolver.query(childrenUri, PACK_CHILD_PROJECTION, null, null, null)
+        }.getOrNull() ?: return null
+
+        return runCatching {
+            cursor.use { c ->
+                val idIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val sizeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                val mtimeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                if (idIdx < 0 || nameIdx < 0) return@runCatching null
+                val candidates = ArrayList<CustomSoundCandidate>(minOf(c.count.coerceAtLeast(0), MAX_SCAN_FILES))
+                while (candidates.size < MAX_SCAN_FILES && c.moveToNext()) {
+                    val docId = if (!c.isNull(idIdx)) c.getString(idIdx) else null
+                    if (docId.isNullOrEmpty()) continue
+                    val displayName = if (!c.isNull(nameIdx)) c.getString(nameIdx).orEmpty() else ""
+                    val mime = if (mimeIdx >= 0 && !c.isNull(mimeIdx)) c.getString(mimeIdx) else null
+                    val sizeBytes = if (sizeIdx >= 0 && !c.isNull(sizeIdx)) c.getLong(sizeIdx) else 0L
+                    val lastModifiedMs = if (mtimeIdx >= 0 && !c.isNull(mtimeIdx)) c.getLong(mtimeIdx) else 0L
+                    val childUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                    candidates.add(
+                        CustomSoundCandidate(
+                            displayName = displayName,
+                            uriString = childUri.toString(),
+                            sizeBytes = sizeBytes,
+                            lastModifiedMs = lastModifiedMs,
+                            isDirectory = mime == DocumentsContract.Document.MIME_TYPE_DIR,
+                        ),
+                    )
+                }
+                candidates
+            }
+        }.getOrNull()
     }
 
     /**

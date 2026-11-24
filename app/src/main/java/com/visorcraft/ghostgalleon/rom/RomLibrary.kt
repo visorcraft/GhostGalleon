@@ -150,6 +150,7 @@ class RomLibrary(private val file: File) {
         settings: Settings,
         force: Boolean = false,
         onProgress: ((doneTrees: Int, totalTrees: Int) -> Unit)? = null,
+        prior: List<RomEntry>? = null,
         onDone: (RescanResult) -> Unit,
     ) {
         val appContext = context.applicationContext
@@ -164,7 +165,7 @@ class RomLibrary(private val file: File) {
                 main.post { onProgress?.invoke(0, total) }
                 val (scanResult, newFp) = rescanBlockingWithFingerprints(
                     treeUris = settings.romTreeUris,
-                    prior = load(),
+                    prior = prior ?: load(),
                     isReadable = { isTreeReadable(appContext, it) },
                     treeFor = { uriString ->
                         SafDocumentTree(appContext, Uri.parse(uriString)) to
@@ -765,7 +766,7 @@ class RomLibrary(private val file: File) {
          */
         internal fun rescanBlockingWithFingerprints(
             treeUris: List<String>,
-            prior: List<RomEntry>,
+            prior: List<RomEntry>? = null,
             isReadable: (String) -> Boolean,
             treeFor: (String) -> Pair<DocumentTree, String>,
             priorFingerprints: Map<String, String> = emptyMap(),
@@ -784,12 +785,17 @@ class RomLibrary(private val file: File) {
             /** Invoked once per granted tree after it is classified (clean/dirty/unreadable). */
             onTreeProcessed: (() -> Unit)? = null,
         ): Pair<RescanResult, Map<String, String>> {
-            if (treeUris.isNotEmpty() && treeUris.none(isReadable)) {
+            val priorEntries = prior.orEmpty()
+            // Evaluate isReadable ONCE per tree (was 3× per tree = 6 SAF IPCs/tree).
+            val readable = ArrayList<String>(treeUris.size)
+            val skippedUnreadable = ArrayList<String>()
+            for (uri in treeUris) {
+                if (isReadable(uri)) readable.add(uri) else skippedUnreadable.add(uri)
+            }
+            if (treeUris.isNotEmpty() && readable.isEmpty()) {
                 treeUris.forEach { onTreeProcessed?.invoke() }
                 return RescanResult.Unreadable to priorFingerprints
             }
-            val skippedUnreadable = treeUris.filterNot(isReadable)
-            val readable = treeUris.filter(isReadable)
             val freshTrees = mutableListOf<Pair<DocumentTree, String>>()
             val cleanTrees = mutableListOf<String>()
             val newFingerprints = priorFingerprints.toMutableMap()
@@ -845,12 +851,14 @@ class RomLibrary(private val file: File) {
                 RomScanner.scan(freshTrees, readText = readText, openStream = openStream)
             }
             val retainedUris = skippedUnreadable + cleanTrees
-            val retained = prior.filter { entry ->
-                retainedUris.any { tree -> entry.uri.startsWith(tree) }
+            val retained = if (retainedUris.isEmpty()) {
+                emptyList()
+            } else {
+                priorEntries.filter { entry ->
+                    retainedUris.any { tree -> entry.uri.startsWith(tree) }
+                }
             }
-            val merged = (fresh + retained).distinctBy { it.id }.sortedWith(
-                compareBy({ it.platformId }, { it.name.lowercase() }, { it.id }),
-            )
+            val merged = RomScanner.sortScannedEntries((fresh + retained).distinctBy { it.id })
             val success = RescanResult.Success(
                 entries = SwitchDedupe.apply(merged),
                 skippedCleanTrees = cleanTrees.size,

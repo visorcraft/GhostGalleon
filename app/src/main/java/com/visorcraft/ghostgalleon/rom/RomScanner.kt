@@ -1,10 +1,39 @@
 package com.visorcraft.ghostgalleon.rom
 
+import com.visorcraft.ghostgalleon.library.LibraryBrowse
+import java.util.Arrays
+
 /**
  * Tree walk → RomEntry matching. Pure logic over the DocumentTree
  * abstraction; host-tested with fake trees.
  */
 object RomScanner {
+
+    private class RomSortNode(
+        val platformId: String,
+        val nameLower: String,
+        val id: String,
+        val entry: RomEntry,
+    )
+
+    internal fun sortScannedEntries(entries: List<RomEntry>): List<RomEntry> {
+        val n = entries.size
+        if (n <= 1) return entries
+        val arr = Array(n) { i ->
+            val e = entries[i]
+            RomSortNode(e.platformId, LibraryBrowse.fastLowercase(e.name), e.id, e)
+        }
+        Arrays.sort(arr) { a, b ->
+            val c1 = a.platformId.compareTo(b.platformId)
+            if (c1 != 0) return@sort c1
+            val c2 = a.nameLower.compareTo(b.nameLower)
+            if (c2 != 0) return@sort c2
+            a.id.compareTo(b.id)
+        }
+        val out = ArrayList<RomEntry>(n)
+        for (node in arr) out.add(node.entry)
+        return out
+    }
 
     /**
      * Walk every tree and match files against the platform registry.
@@ -32,10 +61,18 @@ object RomScanner {
             val docs = tree.walk()
             val media = LocalMedia.indexImages(docs, rootPlatform != null)
             val videos = LocalMedia.indexVideos(docs, rootPlatform != null)
-            val sfoByDir = docs.filter { it.name.equals("param.sfo", ignoreCase = true) }
-                .associateBy { it.relativePath.substringBeforeLast('/').lowercase() }
+            val sfoByDir = LinkedHashMap<String, DocFile>()
+            for (d in docs) {
+                if (d.name.equals("param.sfo", ignoreCase = true)) {
+                    sfoByDir[d.relativePath.substringBeforeLast('/').lowercase()] = d
+                }
+            }
+            val folderPlatformCache = HashMap<String, Platform?>(32)
+            fun platformForFirstSegment(firstSeg: String): Platform? =
+                folderPlatformCache.getOrPut(firstSeg) { Platforms.platformForFolder(firstSeg) }
+
             fun sfoBeside(relPath: String): VitaSfo.Info? {
-                if (openStream == null) return null
+                if (openStream == null || sfoByDir.isEmpty()) return null
                 val dir = relPath.substringBeforeLast('/')
                 val dirs = listOf("$dir/sce_sys", dir)
                 for (candidate in dirs) {
@@ -47,54 +84,53 @@ object RomScanner {
                 }
                 return null
             }
-            docs.forEach docs@{ doc ->
+            for (doc in docs) {
+                val relPath = doc.relativePath
                 // Dotfiles/junk anywhere in the path: .DS_Store, ._ AppleDouble
-                // files, hidden directories.
-                if (doc.relativePath.split('/').any { it.startsWith('.') }) return@docs
-                if (DiscHygiene.skipPath(doc.relativePath)) return@docs
+                // files, hidden directories (zero-alloc index scan).
+                if (LocalMedia.hasDotSegment(relPath)) continue
+                if (DiscHygiene.skipPath(relPath)) continue
                 if (doc.name.equals("gamelist.xml", ignoreCase = true)) {
                     gamelistDocs.add(doc)
-                    return@docs
+                    continue
                 }
-                val vitaTitle = VitaTitles.titleIdIn(doc.relativePath)
-                if (VitaTitles.isEboot(doc.name) &&
-                    (rootPlatform?.id == "psvita" || vitaTitle != null)
-                ) {
-                    val prefix =
-                        if (rootPlatform != null) "" else doc.relativePath.substringBefore('/')
-                    val sfo = sfoBeside(doc.relativePath)
-                    val titleId = sfo?.titleId ?: vitaTitle
-                    val title = sfo?.title?.takeIf { it.isNotBlank() } ?: titleId ?: doc.name
-                    val artKey = titleId ?: title
-                    entries.add(
-                        RomEntry(
-                            id = "psvita:${titleId ?: doc.relativePath}",
-                            name = title,
-                            platformId = "psvita",
-                            uri = doc.uri,
-                            path = StoragePaths.filesystemPath(doc.uri),
-                            artUri = LocalMedia.lookupArt(media, prefix, artKey)
-                                ?: LocalMedia.lookupArt(media, prefix, title),
-                            screenshotUri = LocalMedia.screenshotUri(
-                                media, prefix, artKey, null,
+                val slashIdx = relPath.indexOf('/')
+                val firstSeg = if (slashIdx >= 0) relPath.substring(0, slashIdx) else relPath
+                if (VitaTitles.isEboot(doc.name)) {
+                    val vitaTitle = VitaTitles.titleIdIn(relPath)
+                    if (rootPlatform?.id == "psvita" || vitaTitle != null) {
+                        val prefix = if (rootPlatform != null) "" else firstSeg
+                        val sfo = sfoBeside(relPath)
+                        val titleId = sfo?.titleId ?: vitaTitle
+                        val title = sfo?.title?.takeIf { it.isNotBlank() } ?: titleId ?: doc.name
+                        val artKey = titleId ?: title
+                        entries.add(
+                            RomEntry(
+                                id = "psvita:${titleId ?: relPath}",
+                                name = title,
+                                platformId = "psvita",
+                                uri = doc.uri,
+                                path = StoragePaths.filesystemPath(doc.uri),
+                                artUri = LocalMedia.lookupArt(media, prefix, artKey)
+                                    ?: LocalMedia.lookupArt(media, prefix, title),
+                                screenshotUri = LocalMedia.screenshotUri(
+                                    media, prefix, artKey, null,
+                                ),
+                                logoUri = LocalMedia.lookupLogo(media, prefix, artKey),
+                                videoUri = LocalMedia.lookupVideo(videos, prefix, artKey),
                             ),
-                            logoUri = LocalMedia.lookupLogo(media, prefix, artKey),
-                            videoUri = LocalMedia.lookupVideo(videos, prefix, artKey),
-                        ),
-                    )
-                    return@docs
+                        )
+                        continue
+                    }
                 }
                 val dot = doc.name.lastIndexOf('.')
-                if (dot <= 0 || dot == doc.name.length - 1) return@docs
+                if (dot <= 0 || dot == doc.name.length - 1) continue
                 val ext = doc.name.substring(dot + 1).lowercase()
-                val platform = rootPlatform
-                    ?: Platforms.platformForFolder(doc.relativePath.substringBefore('/'))
-                    ?: return@docs
-                if (!platform.acceptsExtension(ext)) return@docs
+                val platform = rootPlatform ?: platformForFirstSegment(firstSeg) ?: continue
+                if (!platform.acceptsExtension(ext)) continue
                 // The platform folder path prefix that artwork hangs off:
                 // "" for a platform-rooted tree, else the first segment.
-                val prefix =
-                    if (rootPlatform != null) "" else doc.relativePath.substringBefore('/')
+                val prefix = if (rootPlatform != null) "" else firstSeg
                 val stem = doc.name.substring(0, dot)
                 val vitaSfo = if (platform.id == "psvita" && openStream != null &&
                     (ext == "vpk" || ext == "zip")
@@ -109,7 +145,7 @@ object RomScanner {
                 }
                 val artStem = vitaSfo?.titleId ?: stem
                 val artUri = LocalMedia.lookupArt(media, prefix, artStem)
-                    ?: LocalMedia.lookupArt(media, prefix, stem)
+                    ?: if (artStem != stem) LocalMedia.lookupArt(media, prefix, stem) else null
                 val sfoTitle = vitaSfo?.title?.takeIf { it.isNotBlank() }
                 val display = when {
                     platform.id == "arcade" -> ArcadeTitles.displayName(stem)
@@ -117,9 +153,9 @@ object RomScanner {
                     else -> stem
                 }
                 val entryId = if (platform.id == "psvita") {
-                    "psvita:${vitaSfo?.titleId ?: vitaTitle ?: doc.relativePath}"
+                    "psvita:${vitaSfo?.titleId ?: VitaTitles.titleIdIn(relPath) ?: relPath}"
                 } else {
-                    "${platform.id}:${doc.relativePath}"
+                    "${platform.id}:$relPath"
                 }
                 entries.add(
                     RomEntry(
@@ -135,42 +171,40 @@ object RomScanner {
                     ),
                 )
             }
-            val seenVita = entries.mapNotNull { e ->
-                e.id.takeIf { e.platformId == "psvita" }
-            }.toHashSet()
-            sfoByDir.forEach folder@{ (dir, sfoDoc) ->
-                val titleId = VitaTitles.titleIdIn(dir) ?: return@folder
-                val id = "psvita:$titleId"
-                if (id in seenVita) return@folder
-                val inVita = rootPlatform?.id == "psvita" ||
-                    Platforms.platformForFolder(dir.substringBefore('/'))?.id == "psvita"
-                if (!inVita) return@folder
-                val prefix =
-                    if (rootPlatform != null) "" else sfoDoc.relativePath.substringBefore('/')
-                val info = sfoBeside(sfoDoc.relativePath)
-                val title = info?.title?.takeIf { it.isNotBlank() } ?: titleId
-                entries.add(
-                    RomEntry(
-                        id = id,
-                        name = title,
-                        platformId = "psvita",
-                        uri = sfoDoc.uri,
-                        path = StoragePaths.filesystemPath(sfoDoc.uri),
-                        artUri = LocalMedia.lookupArt(media, prefix, titleId)
-                            ?: LocalMedia.lookupArt(media, prefix, title),
-                        screenshotUri = LocalMedia.screenshotUri(media, prefix, titleId, null),
-                        logoUri = LocalMedia.lookupLogo(media, prefix, titleId),
-                        videoUri = LocalMedia.lookupVideo(videos, prefix, titleId),
-                    ),
-                )
-                seenVita.add(id)
+            if (sfoByDir.isNotEmpty()) {
+                val seenVita = entries.mapNotNull { e ->
+                    e.id.takeIf { e.platformId == "psvita" }
+                }.toHashSet()
+                sfoByDir.forEach folder@{ (dir, sfoDoc) ->
+                    val titleId = VitaTitles.titleIdIn(dir) ?: return@folder
+                    val id = "psvita:$titleId"
+                    if (id in seenVita) return@folder
+                    val inVita = rootPlatform?.id == "psvita" ||
+                        platformForFirstSegment(dir.substringBefore('/'))?.id == "psvita"
+                    if (!inVita) return@folder
+                    val prefix =
+                        if (rootPlatform != null) "" else sfoDoc.relativePath.substringBefore('/')
+                    val info = sfoBeside(sfoDoc.relativePath)
+                    val title = info?.title?.takeIf { it.isNotBlank() } ?: titleId
+                    entries.add(
+                        RomEntry(
+                            id = id,
+                            name = title,
+                            platformId = "psvita",
+                            uri = sfoDoc.uri,
+                            path = StoragePaths.filesystemPath(sfoDoc.uri),
+                            artUri = LocalMedia.lookupArt(media, prefix, titleId)
+                                ?: LocalMedia.lookupArt(media, prefix, title),
+                            screenshotUri = LocalMedia.screenshotUri(media, prefix, titleId, null),
+                            logoUri = LocalMedia.lookupLogo(media, prefix, titleId),
+                            videoUri = LocalMedia.lookupVideo(videos, prefix, titleId),
+                        ),
+                    )
+                    seenVita.add(id)
+                }
             }
         }
-        val sorted = DiscHygiene.preferDiscMasters(
-            entries.sortedWith(
-                compareBy({ it.platformId }, { it.name.lowercase() }, { it.id }),
-            ),
-        )
+        val sorted = DiscHygiene.preferDiscMasters(sortScannedEntries(entries))
         if (readText == null || gamelistDocs.isEmpty()) return applyFilenameYears(sorted)
         val meta = gamelistDocs.flatMap { doc ->
             val xml = readText(doc.uri) ?: return@flatMap emptyList()

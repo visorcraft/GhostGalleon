@@ -186,4 +186,66 @@ Line 2 <raw>]]></desc>
         assertEquals("Save Hyrule.", out[0].description)
     }
 
+    @Test
+    fun `enrichRoms 10000 ROMs x 10000 gamelist entries preserves first-match precedence under 40ms`() {
+        val n = 10_000
+        val roms = List(n) { i ->
+            RomEntry(
+                id = "snes:snes/Game_$i.smc",
+                name = "Game_$i",
+                platformId = "snes",
+                uri = "content://doc/$i",
+                path = "/storage/roms/snes/Game_$i.smc",
+            )
+        }
+        val gamelist = ArrayList<GamelistEntry>(n + 2)
+        // Duplicate stem for Game_0: first entry must win (exact matchByStem parity).
+        gamelist.add(
+            GamelistEntry(
+                path = "./game_0.smc",
+                stem = "game_0",
+                name = "First Game 0",
+                description = "Winner desc",
+                year = "1991",
+                genre = "RPG",
+                developer = "Nintendo",
+                rating = "9.5",
+            ),
+        )
+        for (i in 0 until n) {
+            gamelist.add(
+                GamelistEntry(
+                    path = "./GAME_$i.smc",
+                    stem = "GAME_$i",
+                    name = "Title $i",
+                    description = "Desc $i",
+                    year = "${1985 + (i % 30)}",
+                    genre = "Action",
+                    developer = "Dev ${i % 20}",
+                    rating = "8.0",
+                ),
+            )
+        }
+
+        // Warm up JIT.
+        repeat(2) { GamelistMeta.enrichRoms(roms, gamelist) }
+
+        var bestNs = Long.MAX_VALUE
+        var enriched: List<RomEntry> = emptyList()
+        repeat(5) {
+            val t0 = System.nanoTime()
+            enriched = GamelistMeta.enrichRoms(roms, gamelist)
+            val dt = System.nanoTime() - t0
+            if (dt < bestNs) bestNs = dt
+        }
+        val elapsedMs = bestNs / 1_000_000.0
+        println("GamelistMetaTest (10k x 10k enrichRoms): ${"%.2f".format(elapsedMs)}ms")
+
+        assertEquals(n, enriched.size)
+        assertEquals("First Game 0", enriched[0].name)
+        assertEquals("Winner desc", enriched[0].description)
+        assertEquals("Title 9999", enriched[9999].name)
+        assertEquals("Desc 9999", enriched[9999].description)
+        assertTrue("10k x 10k enrichRoms too slow: ${"%.2f".format(elapsedMs)}ms", elapsedMs < 40.0)
+    }
 }

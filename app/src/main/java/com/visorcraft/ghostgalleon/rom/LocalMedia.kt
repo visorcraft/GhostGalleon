@@ -43,6 +43,31 @@ object LocalMedia {
         "wheels", "marquee", "logos", "boxart",
     )
 
+    // Precomputed static lookup sets/maps so per-file walks never rebuild Sets/Lists.
+    private val ART_DIRS_SET: Set<String> = ART_DIRS.map { it.lowercase() }.toSet()
+    private val ART_DIR_RANK: Map<String, Int> = ART_DIRS.withIndex().associate { (i, d) -> d.lowercase() to i }
+    private val VIDEO_DIRS_SET: Set<String> = VIDEO_DIRS.map { it.lowercase() }.toSet()
+    private val ART_SUFFIXES_NON_EMPTY: List<String> = ART_SUFFIXES.drop(1)
+    private val LOGO_SUFFIXES: List<String> = listOf(
+        "-logo", "_logo", "-wheel", "_wheel", "-marquee", "_marquee",
+    )
+
+    /**
+     * Zero-allocation check equivalent to `relativePath.split('/').any { it.startsWith('.') }`.
+     * Rejects `.DS_Store`, `._*` AppleDouble files, and hidden dot-directories.
+     */
+    internal fun hasDotSegment(relativePath: String): Boolean {
+        val len = relativePath.length
+        var i = 0
+        while (i < len) {
+            if (relativePath[i] == '.') return true
+            val nextSlash = relativePath.indexOf('/', i)
+            if (nextSlash < 0) return false
+            i = nextSlash + 1
+        }
+        return false
+    }
+
     /**
      * Index image files under art dirs. [rootIsPlatform] matches
      * [RomScanner] tree layout (platform-rooted vs container grant).
@@ -50,25 +75,37 @@ object LocalMedia {
      */
     fun indexImages(docs: List<DocFile>, rootIsPlatform: Boolean): Map<String, String> {
         data class Candidate(val key: String, val uri: String, val dirRank: Int, val suffixed: Boolean)
-        val candidates = mutableListOf<Candidate>()
-        docs.forEach { doc ->
-            if (doc.relativePath.split('/').any { it.startsWith('.') }) return@forEach
-            val parsed = parseMediaPath(doc.relativePath, rootIsPlatform) ?: return@forEach
+        val candidates = ArrayList<Candidate>()
+        for (doc in docs) {
+            if (hasDotSegment(doc.relativePath)) continue
+            val parsed = parseMediaPath(doc.relativePath, rootIsPlatform) ?: continue
             val (prefix, dir, fileName) = parsed
-            val dirRank = ART_DIRS.indexOf(dir.lowercase()).let { if (it < 0) 50 else it }
             val dot = fileName.lastIndexOf('.')
-            if (dot <= 0 || dot == fileName.length - 1) return@forEach
-            if (fileName.substring(dot + 1).lowercase() !in IMAGE_EXTENSIONS) return@forEach
+            if (dot <= 0 || dot == fileName.length - 1) continue
+            if (fileName.substring(dot + 1).lowercase() !in IMAGE_EXTENSIONS) continue
+            val dirRank = ART_DIR_RANK[dir.lowercase()] ?: 50
             val stem = fileName.substring(0, dot).lowercase()
-            val artSuffixed = ART_SUFFIXES.drop(1).any { stem.endsWith(it) }
-            val shotSuffixed = SCREENSHOT_SUFFIXES.any { stem.endsWith(it) }
-            candidates.add(
-                Candidate("$prefix|$stem", doc.uri, dirRank, artSuffixed || shotSuffixed),
-            )
+            var suffixed = false
+            for (s in ART_SUFFIXES_NON_EMPTY) {
+                if (stem.endsWith(s)) {
+                    suffixed = true
+                    break
+                }
+            }
+            if (!suffixed) {
+                for (s in SCREENSHOT_SUFFIXES) {
+                    if (stem.endsWith(s)) {
+                        suffixed = true
+                        break
+                    }
+                }
+            }
+            candidates.add(Candidate("$prefix|$stem", doc.uri, dirRank, suffixed))
         }
-        val map = LinkedHashMap<String, String>()
-        candidates.sortedWith(compareBy({ it.suffixed }, { it.dirRank }))
-            .forEach { map.putIfAbsent(it.key, it.uri) }
+        if (candidates.isEmpty()) return emptyMap()
+        val map = LinkedHashMap<String, String>(candidates.size)
+        candidates.sortWith(compareBy({ it.suffixed }, { it.dirRank }))
+        for (c in candidates) map.putIfAbsent(c.key, c.uri)
         return map
     }
 
@@ -82,28 +119,44 @@ object LocalMedia {
         relativePath: String,
         rootIsPlatform: Boolean,
     ): Triple<String, String, String>? {
-        val segments = relativePath.split('/').filter { it.isNotEmpty() }
-        if (segments.size < 2) return null
+        val len = relativePath.length
+        var s0Start = 0; var s0End = 0
+        var s1Start = 0; var s1End = 0
+        var s2Start = 0; var s2End = 0
+        var s3Start = 0; var s3End = 0
+        var count = 0
+        var i = 0
+        while (i < len) {
+            while (i < len && relativePath[i] == '/') i++
+            if (i >= len) break
+            val start = i
+            while (i < len && relativePath[i] != '/') i++
+            when (count) {
+                0 -> { s0Start = start; s0End = i }
+                1 -> { s1Start = start; s1End = i }
+                2 -> { s2Start = start; s2End = i }
+                3 -> { s3Start = start; s3End = i }
+                else -> return null
+            }
+            count++
+        }
         return if (rootIsPlatform) {
-            when (segments.size) {
+            when (count) {
                 2 -> {
-                    val dir = segments[0]
-                    if (dir.lowercase() !in ART_DIRS.map { it.lowercase() }.toSet() &&
-                        dir.lowercase() !in NESTED_MEDIA
-                    ) {
-                        return null
-                    }
-                    Triple("", dir, segments[1])
+                    val dir = relativePath.substring(s0Start, s0End)
+                    val dirLower = dir.lowercase()
+                    if (dirLower !in ART_DIRS_SET && dirLower !in NESTED_MEDIA) return null
+                    Triple("", dir, relativePath.substring(s1Start, s1End))
                 }
                 3 -> {
                     // media/screenshots/file.png
-                    val mid = segments[0].lowercase()
-                    val sub = segments[1].lowercase()
+                    val mid = relativePath.substring(s0Start, s0End).lowercase()
+                    val sub = relativePath.substring(s1Start, s1End).lowercase()
                     if (mid == "media" && sub in NESTED_MEDIA) {
-                        Triple("", sub, segments[2])
-                    } else if (mid in ART_DIRS.map { it.lowercase() }.toSet()) {
+                        Triple("", sub, relativePath.substring(s2Start, s2End))
+                    } else if (mid in ART_DIRS_SET) {
                         // images/extra/file.png — treat mid as dir
-                        Triple("", mid, segments[2])
+                        Triple("", mid, relativePath.substring(s2Start, s2End))
                     } else {
                         null
                     }
@@ -111,27 +164,28 @@ object LocalMedia {
                 else -> null
             }
         } else {
-            when (segments.size) {
+            when (count) {
                 3 -> {
-                    val prefix = segments[0]
-                    val dir = segments[1]
-                    if (dir.lowercase() !in ART_DIRS.map { it.lowercase() }.toSet() &&
-                        dir.lowercase() !in NESTED_MEDIA
-                    ) {
-                        return null
-                    }
-                    Triple(prefix, dir, segments[2])
+                    val dir = relativePath.substring(s1Start, s1End)
+                    val dirLower = dir.lowercase()
+                    if (dirLower !in ART_DIRS_SET && dirLower !in NESTED_MEDIA) return null
+                    Triple(
+                        relativePath.substring(s0Start, s0End),
+                        dir,
+                        relativePath.substring(s2Start, s2End),
+                    )
                 }
                 4 -> {
                     // snes/media/screenshots/file.png
-                    val prefix = segments[0]
-                    val mid = segments[1].lowercase()
-                    val sub = segments[2].lowercase()
-                    if (mid == "media" && sub in NESTED_MEDIA) {
-                        Triple(prefix, sub, segments[3])
-                    } else {
-                        null
-                    }
+                    val mid = relativePath.substring(s1Start, s1End).lowercase()
+                    if (mid != "media") return null
+                    val sub = relativePath.substring(s2Start, s2End).lowercase()
+                    if (sub !in NESTED_MEDIA) return null
+                    Triple(
+                        relativePath.substring(s0Start, s0End),
+                        sub,
+                        relativePath.substring(s3Start, s3End),
+                    )
                 }
                 else -> null
             }
@@ -139,19 +193,22 @@ object LocalMedia {
     }
 
     fun lookupArt(index: Map<String, String>, prefix: String, stem: String): String? {
-        val norm = stem.lowercase()
-        ART_SUFFIXES.forEach { suffix ->
-            index["$prefix|$norm$suffix"]?.let { return it }
+        if (index.isEmpty()) return null
+        val base = "$prefix|${stem.lowercase()}"
+        index[base]?.let { return it }
+        for (suffix in ART_SUFFIXES_NON_EMPTY) {
+            index[base + suffix]?.let { return it }
         }
         return null
     }
 
     fun lookupScreenshot(index: Map<String, String>, prefix: String, stem: String): String? {
-        val norm = stem.lowercase()
-        SCREENSHOT_SUFFIXES.forEach { suffix ->
-            index["$prefix|$norm$suffix"]?.let { return it }
+        if (index.isEmpty()) return null
+        val base = "$prefix|${stem.lowercase()}"
+        for (suffix in SCREENSHOT_SUFFIXES) {
+            index[base + suffix]?.let { return it }
         }
-        return index["$prefix|$norm"]
+        return index[base]
     }
 
     /**
@@ -160,12 +217,13 @@ object LocalMedia {
      * (already merged into the flat index by stem).
      */
     fun lookupLogo(index: Map<String, String>, prefix: String, stem: String): String? {
-        val norm = stem.lowercase()
-        listOf("-logo", "_logo", "-wheel", "_wheel", "-marquee", "_marquee").forEach { suffix ->
-            index["$prefix|$norm$suffix"]?.let { return it }
+        if (index.isEmpty()) return null
+        val base = "$prefix|${stem.lowercase()}"
+        for (suffix in LOGO_SUFFIXES) {
+            index[base + suffix]?.let { return it }
         }
         // Bare stem: ES-DE media/logos/Game.png indexes as prefix|game.
-        return index["$prefix|$norm"]
+        return index[base]
     }
 
     /**
@@ -179,11 +237,12 @@ object LocalMedia {
         stem: String,
         artUri: String?,
     ): String? {
-        val norm = stem.lowercase()
-        SCREENSHOT_SUFFIXES.forEach { suffix ->
-            index["$prefix|$norm$suffix"]?.let { return it }
+        if (index.isEmpty()) return null
+        val base = "$prefix|${stem.lowercase()}"
+        for (suffix in SCREENSHOT_SUFFIXES) {
+            index[base + suffix]?.let { return it }
         }
-        val bare = index["$prefix|$norm"]
+        val bare = index[base]
         return if (bare != null && bare != artUri) bare else null
     }
 
@@ -194,13 +253,13 @@ object LocalMedia {
      */
     fun indexVideos(docs: List<DocFile>, rootIsPlatform: Boolean): Map<String, String> {
         val map = LinkedHashMap<String, String>()
-        docs.forEach { doc ->
-            if (doc.relativePath.split('/').any { it.startsWith('.') }) return@forEach
-            val parsed = parseVideoPath(doc.relativePath, rootIsPlatform) ?: return@forEach
+        for (doc in docs) {
+            if (hasDotSegment(doc.relativePath)) continue
+            val parsed = parseVideoPath(doc.relativePath, rootIsPlatform) ?: continue
             val (prefix, fileName) = parsed
             val dot = fileName.lastIndexOf('.')
-            if (dot <= 0 || dot == fileName.length - 1) return@forEach
-            if (fileName.substring(dot + 1).lowercase() !in VIDEO_EXTENSIONS) return@forEach
+            if (dot <= 0 || dot == fileName.length - 1) continue
+            if (fileName.substring(dot + 1).lowercase() !in VIDEO_EXTENSIONS) continue
             val stem = fileName.substring(0, dot).lowercase()
             map.putIfAbsent("$prefix|$stem", doc.uri)
         }
@@ -208,7 +267,7 @@ object LocalMedia {
     }
 
     fun lookupVideo(index: Map<String, String>, prefix: String, stem: String): String? =
-        index["$prefix|${stem.lowercase()}"]
+        if (index.isEmpty()) null else index["$prefix|${stem.lowercase()}"]
 
     /**
      * Parse video relative path → (platformPrefix, fileName).
@@ -219,21 +278,38 @@ object LocalMedia {
         relativePath: String,
         rootIsPlatform: Boolean,
     ): Pair<String, String>? {
-        val segments = relativePath.split('/').filter { it.isNotEmpty() }
-        if (segments.size < 2) return null
-        val videoDirs = VIDEO_DIRS.map { it.lowercase() }.toSet()
+        val len = relativePath.length
+        var s0Start = 0; var s0End = 0
+        var s1Start = 0; var s1End = 0
+        var s2Start = 0; var s2End = 0
+        var s3Start = 0; var s3End = 0
+        var count = 0
+        var i = 0
+        while (i < len) {
+            while (i < len && relativePath[i] == '/') i++
+            if (i >= len) break
+            val start = i
+            while (i < len && relativePath[i] != '/') i++
+            when (count) {
+                0 -> { s0Start = start; s0End = i }
+                1 -> { s1Start = start; s1End = i }
+                2 -> { s2Start = start; s2End = i }
+                3 -> { s3Start = start; s3End = i }
+                else -> return null
+            }
+            count++
+        }
         return if (rootIsPlatform) {
-            when (segments.size) {
+            when (count) {
                 2 -> {
-                    if (segments[0].lowercase() !in videoDirs) return null
-                    "" to segments[1]
+                    if (relativePath.substring(s0Start, s0End).lowercase() !in VIDEO_DIRS_SET) return null
+                    "" to relativePath.substring(s1Start, s1End)
                 }
                 3 -> {
-                    // media/videos/file.mp4
-                    if (segments[0].lowercase() == "media" &&
-                        segments[1].lowercase() in videoDirs
+                    if (relativePath.substring(s0Start, s0End).lowercase() == "media" &&
+                        relativePath.substring(s1Start, s1End).lowercase() in VIDEO_DIRS_SET
                     ) {
-                        "" to segments[2]
+                        "" to relativePath.substring(s2Start, s2End)
                     } else {
                         null
                     }
@@ -241,16 +317,16 @@ object LocalMedia {
                 else -> null
             }
         } else {
-            when (segments.size) {
+            when (count) {
                 3 -> {
-                    if (segments[1].lowercase() !in videoDirs) return null
-                    segments[0] to segments[2]
+                    if (relativePath.substring(s1Start, s1End).lowercase() !in VIDEO_DIRS_SET) return null
+                    relativePath.substring(s0Start, s0End) to relativePath.substring(s2Start, s2End)
                 }
                 4 -> {
-                    if (segments[1].lowercase() == "media" &&
-                        segments[2].lowercase() in videoDirs
+                    if (relativePath.substring(s1Start, s1End).lowercase() == "media" &&
+                        relativePath.substring(s2Start, s2End).lowercase() in VIDEO_DIRS_SET
                     ) {
-                        segments[0] to segments[3]
+                        relativePath.substring(s0Start, s0End) to relativePath.substring(s3Start, s3End)
                     } else {
                         null
                     }

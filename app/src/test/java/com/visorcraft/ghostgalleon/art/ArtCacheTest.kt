@@ -277,4 +277,173 @@ class ArtCacheTest {
             ),
         )
     }
+
+    @Test
+    fun `computeMemoryCacheBytes scales dynamically between 16 MiB and 48 MiB`() {
+        assertEquals(ArtCache.MIN_MEMORY_BYTES, ArtCache.computeMemoryCacheBytes(64L * 1024 * 1024))
+        assertEquals(ArtCache.MIN_MEMORY_BYTES, ArtCache.computeMemoryCacheBytes(128L * 1024 * 1024))
+        assertEquals(32 * 1024 * 1024, ArtCache.computeMemoryCacheBytes(256L * 1024 * 1024))
+        assertEquals(ArtCache.MAX_MEMORY_BYTES, ArtCache.computeMemoryCacheBytes(512L * 1024 * 1024))
+        assertEquals(ArtCache.MAX_MEMORY_BYTES, ArtCache.computeMemoryCacheBytes(2048L * 1024 * 1024))
+    }
+
+    @Test
+    fun `memKeyFor skips SHA-256 and keyCache stays strictly bounded`() {
+        ArtCache.clearKeyCacheForTest()
+        val mk = ArtCache.memKeyFor("snes:a.smc", ArtCache.ArtKind.GRID, "content://provider/doc/123")
+        assertEquals("snes:a.smc|src:content://provider/doc/123", mk)
+        // memKeyFor must NOT touch keyCache / SHA-256 on the main thread!
+        assertEquals(0, ArtCache.keyCacheSize())
+
+        for (i in 0 until ArtCache.KEY_CACHE_MAX_ENTRIES + 500) {
+            ArtCache.keyFor("snes:rom_$i.smc")
+            assertTrue(
+                "keyCache exceeded cap: ${ArtCache.keyCacheSize()}",
+                ArtCache.keyCacheSize() <= ArtCache.KEY_CACHE_MAX_ENTRIES,
+            )
+        }
+    }
+
+    @Test
+    fun `disk presence index short-circuits misses and stays consistent across write evict invalidate clear`() {
+        val artDir = tmp.root.resolve("art-idx")
+        val cache = ArtCache(artDir)
+        val idA = "snes:snes/a.smc"
+        val idB = "snes:snes/b.smc"
+        val idMissing = "snes:snes/missing.smc"
+
+        // Pre-populate one file before seeding (simulates cold start with prior disk cache).
+        artDir.mkdirs()
+        File(artDir, cache.fileNameFor(idA, ArtCache.ArtKind.GRID)).writeBytes(ByteArray(100))
+        File(artDir, cache.fileNameFor(idA, ArtCache.ArtKind.GRID)).setLastModified(1_000L)
+
+        assertFalse(cache.isDiskIndexReady())
+        assertFalse(cache.isKnownDiskMiss(idMissing)) // never false-negatives before seed!
+
+        cache.ensureDiskIndexSeeded()
+        assertTrue(cache.isDiskIndexReady())
+        assertTrue(cache.diskHas(idA))
+        assertFalse(cache.isKnownDiskMiss(idA))
+        assertTrue(cache.isKnownDiskMiss(idMissing))
+        // Empty HERO/LOGO kind sets short-circuit in O(1) without touching SHA-256/keyCache.
+        ArtCache.clearKeyCacheForTest()
+        assertTrue(cache.isKnownDiskMiss(idA, ArtCache.ArtKind.HERO))
+        assertTrue(cache.isKnownDiskMiss(idMissing, ArtCache.ArtKind.LOGO))
+        assertEquals(0, ArtCache.keyCacheSize())
+        assertNull(cache.readDiskBytes(idMissing))
+
+        // Write updates index immediately for GRID, HERO, LOGO.
+        cache.writeDiskBytes(idB, ByteArray(100), ArtCache.ArtKind.GRID)
+        cache.writeDiskBytes(idB, ByteArray(80), ArtCache.ArtKind.HERO)
+        cache.writeDiskBytes(idB, ByteArray(60), ArtCache.ArtKind.LOGO)
+        assertFalse(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.GRID))
+        assertFalse(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.HERO))
+        assertFalse(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.LOGO))
+        assertTrue(cache.diskHas(idB, ArtCache.ArtKind.HERO))
+        assertTrue(cache.diskHas(idB, ArtCache.ArtKind.LOGO))
+
+        // Eviction removes evicted entries from index (idA is oldest with mtime 1_000L).
+        File(artDir, cache.fileNameFor(idB, ArtCache.ArtKind.GRID)).setLastModified(5_000L)
+        File(artDir, cache.fileNameFor(idB, ArtCache.ArtKind.HERO)).setLastModified(6_000L)
+        File(artDir, cache.fileNameFor(idB, ArtCache.ArtKind.LOGO)).setLastModified(7_000L)
+        cache.evictIfOverCap(capBytes = 250L) // total 340 -> evicts idA (100B), leaves 240B
+        assertFalse(cache.diskHas(idA))
+        assertTrue(cache.isKnownDiskMiss(idA))
+        assertTrue(cache.diskHas(idB, ArtCache.ArtKind.GRID))
+
+        // Invalidate removes all kinds for idB from disk + index.
+        cache.invalidate(idB)
+        assertTrue(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.GRID))
+        assertTrue(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.HERO))
+        assertTrue(cache.isKnownDiskMiss(idB, ArtCache.ArtKind.LOGO))
+
+        // Clear removes everything and marks index empty.
+        cache.writeDiskBytes(idA, ByteArray(50))
+        assertTrue(cache.diskHas(idA))
+        cache.clear()
+        assertFalse(cache.diskHas(idA))
+        assertTrue(cache.isKnownDiskMiss(idA))
+
+        // External write to artDir (e.g. ArtArchive.unzip) + invalidateDiskIndex() re-seeds cleanly.
+        val externalId = "snes:snes/restored.smc"
+        File(artDir, cache.fileNameFor(externalId, ArtCache.ArtKind.GRID)).writeBytes(ByteArray(64))
+        assertTrue(cache.isKnownDiskMiss(externalId)) // stale before invalidation
+        cache.invalidateDiskIndex()
+        assertFalse(cache.isDiskIndexReady())
+        assertFalse(cache.isKnownDiskMiss(externalId))
+        assertTrue(cache.diskHas(externalId))
+        cache.ensureDiskIndexSeeded()
+        assertTrue(cache.isDiskIndexReady())
+        assertTrue(cache.diskHas(externalId))
+        assertFalse(cache.isKnownDiskMiss(externalId))
+    }
+
+    @Test
+    fun `concurrent GRID HERO LOGO writes for same romId have zero tmp races`() {
+        val artDir = tmp.root.resolve("art-concurrent")
+        val cache = ArtCache(artDir)
+        val romId = "snes:snes/Chrono Trigger.smc"
+        val threads = 6
+        val rounds = 40
+        val start = java.util.concurrent.CountDownLatch(1)
+        val done = java.util.concurrent.CountDownLatch(threads)
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val kinds = arrayOf(ArtCache.ArtKind.GRID, ArtCache.ArtKind.HERO, ArtCache.ArtKind.LOGO)
+
+        repeat(threads) { t ->
+            val kind = kinds[t % kinds.size]
+            val payload = ByteArray(128) { (kind.ordinal + 1).toByte() }
+            Thread {
+                try {
+                    start.await()
+                    repeat(rounds) {
+                        cache.writeDiskBytes(romId, payload, kind)
+                    }
+                } catch (e: Throwable) {
+                    errors.add(e)
+                } finally {
+                    done.countDown()
+                }
+            }.start()
+        }
+        start.countDown()
+        assertTrue("concurrent writers timed out", done.await(30, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue("concurrent write errors: $errors", errors.isEmpty())
+        assertTrue(artDir.listFiles()!!.none { it.name.endsWith(".tmp") })
+        for (kind in kinds) {
+            val expected = ByteArray(128) { (kind.ordinal + 1).toByte() }
+            assertArrayEquals(expected, cache.readDiskBytes(romId, kind))
+        }
+    }
+
+    @Test
+    fun `evictionCandidates 5000-file single-stat benchmark selects oldest accurately`() {
+        val dir = tmp.newFolder("evict-5k")
+        val count = 5_000
+        val files = ArrayList<File>(count)
+        for (i in 0 until count) {
+            // Scramble mtime order so TimSort exercises full O(N log N) comparisons.
+            val f = File(dir, "f_$i.png")
+            f.writeBytes(ByteArray(100))
+            val mtime = ((i * 7919) % count + 1) * 1_000L
+            f.setLastModified(mtime)
+            files.add(f)
+        }
+        val capBytes = 100L * 2_500L // evict oldest half (2,500 files)
+
+        val t0 = System.nanoTime()
+        val evict = ArtCache.evictionCandidates(files, capBytes)
+        val elapsedMs = (System.nanoTime() - t0) / 1_000_000.0
+        println("ArtCacheTest (5,000-file single-stat evictionCandidates): ${"%.2f".format(elapsedMs)}ms (evicted=${evict.size})")
+
+        assertEquals(2_500, evict.size)
+        // Verify monotonically non-decreasing mtime across evicted candidates.
+        var prevMtime = Long.MIN_VALUE
+        for (f in evict) {
+            val m = f.lastModified()
+            assertTrue("expected sorted oldest-first mtime ($m >= $prevMtime)", m >= prevMtime)
+            prevMtime = m
+        }
+        assertTrue("5k evictionCandidates too slow: ${"%.2f".format(elapsedMs)}ms", elapsedMs < 500.0)
+    }
 }

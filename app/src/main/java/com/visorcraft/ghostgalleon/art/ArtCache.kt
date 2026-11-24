@@ -13,9 +13,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.ArrayDeque
+import java.util.Arrays
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * ROM artwork cache: a disk cache under `filesDir/art/` keyed by RomEntry
@@ -38,7 +41,8 @@ class ArtCache(private val dir: File) {
     enum class ArtKind { GRID, HERO, LOGO }
 
     private val memory by lazy {
-        object : LruCache<String, Bitmap>(MEMORY_BYTES) {
+        val capBytes = computeMemoryCacheBytes(Runtime.getRuntime().maxMemory())
+        object : LruCache<String, Bitmap>(capBytes) {
             override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
 
             override fun entryRemoved(
@@ -54,13 +58,124 @@ class ArtCache(private val dir: File) {
         }
     }
 
-    private fun fileFor(romId: String, kind: ArtKind = ArtKind.GRID): File {
+    // Per-kind in-memory index of cached image filenames in [dir], seeded lazily
+    // off-UI via dir.list() so guaranteed disk misses short-circuit in O(1) RAM
+    // without waking DECODE_EXECUTOR or issuing stat() syscalls (and empty
+    // HERO/LOGO sets skip SHA-256 hashing completely).
+    private val diskIndexLock = Any()
+    private val gridDiskIndex: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val heroDiskIndex: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val logoDiskIndex: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile
+    private var diskIndexReady: Boolean = false
+    private val diskIndexSeedScheduled = AtomicBoolean(false)
+
+    private val evictLock = Any()
+    private val tmpCounter = AtomicLong(0L)
+
+    private fun indexFor(kind: ArtKind): MutableSet<String> = when (kind) {
+        ArtKind.GRID -> gridDiskIndex
+        ArtKind.HERO -> heroDiskIndex
+        ArtKind.LOGO -> logoDiskIndex
+    }
+
+    private fun addFileNameToIndexLocked(name: String) {
+        when {
+            name.endsWith(".hero.png") -> heroDiskIndex.add(name)
+            name.endsWith(".logo.png") -> logoDiskIndex.add(name)
+            name.endsWith(".png") -> gridDiskIndex.add(name)
+        }
+    }
+
+    private fun removeFileNameFromIndexLocked(name: String) {
+        when {
+            name.endsWith(".hero.png") -> heroDiskIndex.remove(name)
+            name.endsWith(".logo.png") -> logoDiskIndex.remove(name)
+            name.endsWith(".png") -> gridDiskIndex.remove(name)
+        }
+    }
+
+    internal fun fileNameFor(romId: String, kind: ArtKind = ArtKind.GRID): String {
         val suffix = when (kind) {
             ArtKind.HERO -> ".hero.png"
             ArtKind.LOGO -> ".logo.png"
             ArtKind.GRID -> ".png"
         }
-        return File(dir, keyFor(romId) + suffix)
+        return keyFor(romId) + suffix
+    }
+
+    private fun fileFor(romId: String, kind: ArtKind = ArtKind.GRID): File =
+        File(dir, fileNameFor(romId, kind))
+
+    internal fun tempFileFor(romId: String, kind: ArtKind): File {
+        val kindTag = when (kind) {
+            ArtKind.GRID -> "grid"
+            ArtKind.HERO -> "hero"
+            ArtKind.LOGO -> "logo"
+        }
+        return File(dir, "${keyFor(romId)}.$kindTag.${tmpCounter.incrementAndGet()}.tmp")
+    }
+
+    /** Seed the disk-presence index once (blocking; call off UI thread). */
+    internal fun ensureDiskIndexSeeded() {
+        if (diskIndexReady) return
+        synchronized(diskIndexLock) {
+            if (diskIndexReady) return
+            val names = dir.list()
+            if (names != null) {
+                for (name in names) {
+                    addFileNameToIndexLocked(name)
+                }
+            }
+            diskIndexReady = true
+        }
+    }
+
+    private fun scheduleDiskIndexSeed() {
+        if (diskIndexReady) return
+        if (diskIndexSeedScheduled.compareAndSet(false, true)) {
+            DECODE_EXECUTOR.execute { ensureDiskIndexSeeded() }
+        }
+    }
+
+    internal fun isDiskIndexReady(): Boolean = diskIndexReady
+
+    /** True when the disk index is seeded and proves [romId]/[kind] is absent on disk. */
+    internal fun isKnownDiskMiss(romId: String, kind: ArtKind = ArtKind.GRID): Boolean {
+        if (!diskIndexReady) return false
+        val set = indexFor(kind)
+        if (set.isEmpty()) return true
+        return !set.contains(fileNameFor(romId, kind))
+    }
+
+    private fun recordDiskPresent(kind: ArtKind, fileName: String) {
+        synchronized(diskIndexLock) {
+            indexFor(kind).add(fileName)
+        }
+    }
+
+    private fun recordDiskAbsent(kind: ArtKind, fileName: String) {
+        synchronized(diskIndexLock) {
+            if (!File(dir, fileName).isFile) {
+                indexFor(kind).remove(fileName)
+            }
+        }
+    }
+
+    /**
+     * Reset the in-memory disk-presence index and size estimate so external
+     * writers to [dir] (e.g. backup/restore `ArtArchive.unzip`) are picked up
+     * cleanly on the next lazy re-seed.
+     */
+    fun invalidateDiskIndex() {
+        synchronized(diskIndexLock) {
+            gridDiskIndex.clear()
+            heroDiskIndex.clear()
+            logoDiskIndex.clear()
+            diskIndexReady = false
+            diskIndexSeedScheduled.set(false)
+        }
+        approxDiskBytes.set(-1L)
     }
 
     /** Sidecar recording which source URI produced the GRID disk bytes.
@@ -77,17 +192,28 @@ class ArtCache(private val dir: File) {
     }
 
     /** True when a downscaled copy is already on disk. */
-    fun diskHas(romId: String, kind: ArtKind = ArtKind.GRID): Boolean =
-        fileFor(romId, kind).isFile
+    fun diskHas(romId: String, kind: ArtKind = ArtKind.GRID): Boolean {
+        if (diskIndexReady) {
+            val set = indexFor(kind)
+            if (set.isEmpty()) return false
+            return set.contains(fileNameFor(romId, kind))
+        }
+        return fileFor(romId, kind).isFile
+    }
 
     /** Raw cached bytes for [romId], or null on a miss. A hit may bump the
      *  file's lastModified (throttled) so disk eviction stays LRU without
      *  rewriting mtime on every carousel fling hit. */
-    fun readDiskBytes(romId: String, kind: ArtKind = ArtKind.GRID): ByteArray? =
-        fileFor(romId, kind).takeIf { it.isFile }?.let { file ->
-            touchLruIfStale(file)
-            file.readBytes()
+    fun readDiskBytes(romId: String, kind: ArtKind = ArtKind.GRID): ByteArray? {
+        if (isKnownDiskMiss(romId, kind)) return null
+        val file = fileFor(romId, kind)
+        if (!file.isFile) {
+            recordDiskAbsent(kind, file.name)
+            return null
         }
+        touchLruIfStale(file)
+        return file.readBytes()
+    }
 
     /** Bump mtime at most every [LRU_TOUCH_MIN_GAP_MS] to cut fs metadata
      *  thrash when the same tiles are re-read during flings. */
@@ -99,7 +225,7 @@ class ArtCache(private val dir: File) {
     }
 
     /**
-     * Drop memory + disk GRID/HERO slots for [romId] (and their source
+     * Drop memory + disk GRID/HERO/LOGO slots for [romId] (and their source
      * stamps). Call after SET_ART / clear override so the next load
      * re-decodes the new effective URI instead of serving stale bytes.
      */
@@ -117,33 +243,70 @@ class ArtCache(private val dir: File) {
             }
             doomed.forEach { memory.remove(it) }
         }
-        fileFor(romId, ArtKind.GRID).delete()
-        fileFor(romId, ArtKind.HERO).delete()
-        fileFor(romId, ArtKind.LOGO).delete()
-        sourceStampFile(romId, ArtKind.GRID).delete()
-        sourceStampFile(romId, ArtKind.HERO).delete()
-        sourceStampFile(romId, ArtKind.LOGO).delete()
+        val gridFile = fileFor(romId, ArtKind.GRID)
+        val heroFile = fileFor(romId, ArtKind.HERO)
+        val logoFile = fileFor(romId, ArtKind.LOGO)
+        val gridStamp = sourceStampFile(romId, ArtKind.GRID)
+        val heroStamp = sourceStampFile(romId, ArtKind.HERO)
+        val logoStamp = sourceStampFile(romId, ArtKind.LOGO)
+        gridFile.delete()
+        heroFile.delete()
+        logoFile.delete()
+        gridStamp.delete()
+        heroStamp.delete()
+        logoStamp.delete()
+        synchronized(diskIndexLock) {
+            gridDiskIndex.remove(gridFile.name)
+            heroDiskIndex.remove(heroFile.name)
+            logoDiskIndex.remove(logoFile.name)
+        }
         bumpArtGeneration(romId)
     }
 
-    /** Atomic write (tmp + rename), like RomLibrary/SettingsStore. Triggers
-     *  disk-cap eviction afterwards so scrapes cannot grow the cache
+    /** Delete all cached disk & memory art entries cleanly and reset disk index. */
+    fun clear() {
+        runCatching { memory.evictAll() }
+        synchronized(evictLock) {
+            val files = dir.listFiles()
+            if (files != null) {
+                for (f in files) f.delete()
+            }
+            approxDiskBytes.set(0L)
+            synchronized(diskIndexLock) {
+                gridDiskIndex.clear()
+                heroDiskIndex.clear()
+                logoDiskIndex.clear()
+                diskIndexReady = true
+            }
+        }
+    }
+
+    /** Atomic write (kind-scoped unique tmp + rename), like RomLibrary/SettingsStore.
+     *  Triggers disk-cap eviction afterwards so scrapes cannot grow the cache
      *  without bound. Clears any prior source stamp so a later URI-backed
      *  load cannot treat scrape bytes as override art. */
     fun writeDiskBytes(romId: String, bytes: ByteArray, kind: ArtKind = ArtKind.GRID) {
         dir.mkdirs()
-        val tmp = File(dir, keyFor(romId) + ".tmp")
-        tmp.writeBytes(bytes)
+        val tmp = tempFileFor(romId, kind)
         val target = fileFor(romId, kind)
-        if (!tmp.renameTo(target)) {
-            tmp.copyTo(target, overwrite = true)
+        try {
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
             tmp.delete()
+            throw t
         }
-        sourceStampFile(romId, kind).delete()
+        val stamp = sourceStampFile(romId, kind)
+        stamp.delete()
+        recordDiskPresent(kind, target.name)
         bumpArtGeneration(romId)
         // Scrape / non-URI writers own the bytes without a URI stamp.
         runCatching { memory.remove(romId) }
         if (kind == ArtKind.HERO) runCatching { memory.remove(romId + ".hero") }
+        if (kind == ArtKind.LOGO) runCatching { memory.remove(romId + ".logo") }
         noteDiskWrite(bytes.size)
         evictIfOverCap()
     }
@@ -152,21 +315,60 @@ class ArtCache(private val dir: File) {
     // the directory is back under DISK_CACHE_CAP_BYTES. The just-written
     // file has the newest timestamp, so a single oversized write survives.
     /** Approximate on-disk size; -1 means unknown (force a scan). */
-    @Volatile
-    private var approxDiskBytes: Long = -1L
+    private val approxDiskBytes = AtomicLong(-1L)
 
-    private fun evictIfOverCap(capBytes: Long = DISK_CACHE_CAP_BYTES) {
+    internal fun evictIfOverCap(capBytes: Long = DISK_CACHE_CAP_BYTES) {
         // Skip a full directory listing while we still believe we are under cap.
-        if (approxDiskBytes in 0L until capBytes) return
-        val files = dir.listFiles()?.toList() ?: return
-        val evict = evictionCandidates(files, capBytes)
-        evict.forEach { it.delete() }
-        approxDiskBytes = files.sumOf { it.length() } - evict.sumOf { it.length() }
+        val approx = approxDiskBytes.get()
+        if (approx in 0L until capBytes) return
+        synchronized(evictLock) {
+            val recheck = approxDiskBytes.get()
+            if (recheck in 0L until capBytes) return
+            val files = dir.listFiles() ?: return
+            val stats = ArrayList<FileStat>(files.size)
+            var total = 0L
+            for (file in files) {
+                if (!file.isFile || file.name.endsWith(".tmp")) continue
+                val len = file.length()
+                val mtime = file.lastModified()
+                stats.add(FileStat(file, mtime, len))
+                total += len
+            }
+            if (total <= capBytes) {
+                approxDiskBytes.set(total)
+                return
+            }
+            val arr = stats.toTypedArray()
+            Arrays.sort(arr) { a, b -> a.lastModified.compareTo(b.lastModified) }
+            val deletedNames = ArrayList<String>()
+            for (entry in arr) {
+                if (total <= capBytes) break
+                if (entry.file.delete()) {
+                    deletedNames.add(entry.file.name)
+                }
+                total -= entry.length
+            }
+            if (deletedNames.isNotEmpty()) {
+                synchronized(diskIndexLock) {
+                    for (name in deletedNames) {
+                        // Guard against a concurrent write recreating [name]
+                        // between delete() above and acquiring diskIndexLock.
+                        if (!File(dir, name).isFile) {
+                            removeFileNameFromIndexLocked(name)
+                        }
+                    }
+                }
+            }
+            approxDiskBytes.set(total.coerceAtLeast(0L))
+        }
     }
 
     private fun noteDiskWrite(addedBytes: Int) {
-        val cur = approxDiskBytes
-        if (cur >= 0L) approxDiskBytes = cur + addedBytes.toLong()
+        while (true) {
+            val cur = approxDiskBytes.get()
+            if (cur < 0L) return
+            if (approxDiskBytes.compareAndSet(cur, cur + addedBytes.toLong())) return
+        }
     }
 
     /**
@@ -260,6 +462,14 @@ class ArtCache(private val dir: File) {
         onResult: (Bitmap?) -> Unit,
     ) {
         memory.get(memKey)?.let { onResult(it); return }
+        if (!diskIndexReady) {
+            scheduleDiskIndexSeed()
+        } else if (uriString == null && isKnownDiskMiss(diskKey, kind)) {
+            // O(1) RAM negative-miss fast path: no source URI and disk index
+            // proves no cached art exists, so skip waking DECODE_EXECUTOR.
+            onResult(null)
+            return
+        }
         // Coalesce concurrent loads (bind + ±2 prefetch for the same tile).
         var startWork = false
         val waiters = inFlight.compute(memKey) { _, existing ->
@@ -278,7 +488,7 @@ class ArtCache(private val dir: File) {
             // Sole waiter already scrolled away: skip disk decode too.
             // Coalesced bind+prefetch (waiters > 1) still warms memory.
             val onlyStale = waiters.size == 1 && !isStillValid()
-            val diskHit = if (onlyStale) {
+            val diskHit = if (onlyStale || isKnownDiskMiss(diskKey, kind)) {
                 null
             } else {
                 decodeCached(diskKey, kind, expectedSourceUri = uriString)
@@ -315,8 +525,12 @@ class ArtCache(private val dir: File) {
         kind: ArtKind = ArtKind.GRID,
         expectedSourceUri: String? = null,
     ): Bitmap? {
+        if (isKnownDiskMiss(romId, kind)) return null
         val file = fileFor(romId, kind)
-        if (!file.isFile) return null
+        if (!file.isFile) {
+            recordDiskAbsent(kind, file.name)
+            return null
+        }
         // Stamp first: a SET_ART mismatch must not pay for a full read.
         // Scraped / no-URI loads have no expected source — skip the sidecar.
         if (expectedSourceUri != null) {
@@ -336,17 +550,25 @@ class ArtCache(private val dir: File) {
         sourceUri: String,
     ) {
         dir.mkdirs()
-        val tmp = File(dir, keyFor(romId) + ".tmp")
-        tmp.writeBytes(bytes)
+        val tmp = tempFileFor(romId, kind)
         val target = fileFor(romId, kind)
-        if (!tmp.renameTo(target)) {
-            tmp.copyTo(target, overwrite = true)
+        try {
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
             tmp.delete()
+            throw t
         }
-        sourceStampFile(romId, kind).writeText(sourceUri)
+        val stamp = sourceStampFile(romId, kind)
+        stamp.writeText(sourceUri)
+        recordDiskPresent(kind, target.name)
         noteDiskWrite(bytes.size)
         runCatching { memory.remove(romId) }
         if (kind == ArtKind.HERO) runCatching { memory.remove(romId + ".hero") }
+        if (kind == ArtKind.LOGO) runCatching { memory.remove(romId + ".logo") }
         // Also drop any source-suffixed mem keys for this rom (best-effort).
         runCatching { memory.remove(memKeyFor(romId, kind, sourceUri)) }
         evictIfOverCap()
@@ -366,8 +588,21 @@ class ArtCache(private val dir: File) {
         artGenerations.merge(romId, 1, Int::plus)
     }
 
+    private class FileStat(
+        val file: File,
+        val lastModified: Long,
+        val length: Long,
+    )
+
     companion object {
-        private const val MEMORY_BYTES = 16 * 1024 * 1024
+        internal const val MIN_MEMORY_BYTES = 16 * 1024 * 1024
+        internal const val MAX_MEMORY_BYTES = 48 * 1024 * 1024
+
+        /** Dynamic in-memory LRU budget: 1/8 of max heap, clamped to 16..48 MiB. Pure. */
+        internal fun computeMemoryCacheBytes(maxHeapBytes: Long): Int =
+            (maxHeapBytes / 8L)
+                .coerceIn(MIN_MEMORY_BYTES.toLong(), MAX_MEMORY_BYTES.toLong())
+                .toInt()
 
         /** Min age before a disk hit rewrites lastModified (ms). */
         internal const val LRU_TOUCH_MIN_GAP_MS = 60_000L
@@ -541,9 +776,10 @@ class ArtCache(private val dir: File) {
         const val DISK_CACHE_CAP_BYTES = 256L * 1024 * 1024
 
         /**
-         * Memory key for a load: plain rom id (or `.hero`) when there is no
-         * local source URI; otherwise rom id + a short hash of the URI so
-         * SET_ART cannot hit a prior entry for a different source.
+         * Memory key for a load: plain rom id (or `.hero`/`.logo`) when there
+         * is no local source URI; otherwise rom id + raw source URI so SET_ART
+         * cannot hit a prior entry for a different source — with zero SHA-256
+         * hashing on the UI thread and zero [keyCache] pollution.
          */
         internal fun memKeyFor(romId: String, kind: ArtKind, sourceUri: String?): String {
             val base = when (kind) {
@@ -552,7 +788,7 @@ class ArtCache(private val dir: File) {
                 ArtKind.GRID -> romId
             }
             if (sourceUri.isNullOrBlank()) return base
-            return "$base|src:${keyFor(sourceUri).take(16)}"
+            return "$base|src:$sourceUri"
         }
 
         /**
@@ -567,18 +803,29 @@ class ArtCache(private val dir: File) {
         }
 
         /**
-         * Pure eviction selection: the oldest-lastModified [files] to delete
-         * so the remaining total is at most [capBytes]. Deletion is the
-         * caller's job, so host tests can drive this on a temp dir.
+         * Pure eviction selection: snapshots `(file, lastModified, length)`
+         * ONCE per file before sorting so TimSort never issues O(N log N)
+         * `stat()` syscalls or races against concurrent `touchLruIfStale()`.
          */
         internal fun evictionCandidates(files: List<File>, capBytes: Long): List<File> {
-            val sorted = files.filter { it.isFile }.sortedBy { it.lastModified() }
-            var total = sorted.sumOf { it.length() }
-            val evict = mutableListOf<File>()
-            for (file in sorted) {
+            if (files.isEmpty()) return emptyList()
+            val stats = ArrayList<FileStat>(files.size)
+            var total = 0L
+            for (file in files) {
+                if (!file.isFile) continue
+                val len = file.length()
+                val mtime = file.lastModified()
+                stats.add(FileStat(file, mtime, len))
+                total += len
+            }
+            if (total <= capBytes || stats.isEmpty()) return emptyList()
+            val arr = stats.toTypedArray()
+            Arrays.sort(arr) { a, b -> a.lastModified.compareTo(b.lastModified) }
+            val evict = ArrayList<File>()
+            for (entry in arr) {
                 if (total <= capBytes) break
-                evict += file
-                total -= file.length()
+                evict.add(entry.file)
+                total -= entry.length
             }
             return evict
         }
@@ -597,19 +844,37 @@ class ArtCache(private val dir: File) {
         private val DECODE_EXECUTOR = Executors.newFixedThreadPool(3)
 
         private val KEY_HEX = "0123456789abcdef".toCharArray()
+        internal const val KEY_CACHE_MAX_ENTRIES: Int = 4096
         private val keyCache = ConcurrentHashMap<String, String>(256)
+
+        internal fun keyCacheSize(): Int = keyCache.size
+
+        internal fun clearKeyCacheForTest() {
+            keyCache.clear()
+        }
 
         /**
          * Stable cache key for a RomEntry id: SHA-256 hex (ids contain
          * ':'/'/', unusable in a filename). Pure — pinned by host tests.
-         * Results are memoized: carousel flings hashed the same ids twice
-         * per tile (file + stamp) on every disk hit.
+         * Results are memoized in a strictly bounded cache so 20k ROM cards
+         * cannot grow [keyCache] unboundedly.
          */
-        fun keyFor(romId: String): String = keyCache.getOrPut(romId) { sha256Hex(romId) }
+        fun keyFor(romId: String): String {
+            keyCache[romId]?.let { return it }
+            val hashed = sha256Hex(romId)
+            if (keyCache.size >= KEY_CACHE_MAX_ENTRIES) {
+                keyCache.clear()
+            }
+            keyCache[romId] = hashed
+            return hashed
+        }
+
+        private val SHA256_LOCAL = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
         internal fun sha256Hex(value: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(value.toByteArray(Charsets.UTF_8))
+            val md = SHA256_LOCAL.get()!!
+            md.reset()
+            val digest = md.digest(value.toByteArray(Charsets.UTF_8))
             val out = CharArray(digest.size * 2)
             var i = 0
             for (b in digest) {
