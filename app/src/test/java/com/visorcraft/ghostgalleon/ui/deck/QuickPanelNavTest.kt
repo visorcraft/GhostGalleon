@@ -1,8 +1,11 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -89,5 +92,29 @@ class QuickPanelNavTest {
         val g = (fgCh * a + bgCh * (1.0 - a)).toInt().coerceIn(0, 255)
         val b = (fb * a + bb * (1.0 - a)).toInt().coerceIn(0, 255)
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    @Test
+    fun `tileHeightDp adapts cleanly between compact and expanded browse layouts`() {
+        assertEquals(QuickPanelNav.COMPACT_TILE_HEIGHT_DP, QuickPanelNav.tileHeightDp(tileCount = 8, columns = 4))
+        assertEquals(QuickPanelNav.COMPACT_TILE_HEIGHT_DP, QuickPanelNav.tileHeightDp(tileCount = 6, columns = 3))
+        assertEquals(QuickPanelNav.EXPANDED_TILE_HEIGHT_DP, QuickPanelNav.tileHeightDp(tileCount = 9, columns = 4))
+        assertEquals(QuickPanelNav.EXPANDED_TILE_HEIGHT_DP, QuickPanelNav.tileHeightDp(tileCount = 14, columns = 4))
+        assertEquals(QuickPanelNav.COMPACT_TILE_HEIGHT_DP, QuickPanelNav.tileHeightDp(tileCount = 0, columns = 0))
+    }
+
+    @Test
+    fun `iconResFor maps semantic glyphs and swatchBorderColor stays legible across themes`() {
+        assertEquals(R.drawable.ic_settings, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_SETTINGS))
+        assertEquals(R.drawable.ic_swap, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_DISPLAY))
+        assertEquals(R.drawable.ic_chevron_right, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CONTINUE))
+        assertEquals(R.drawable.ic_close, QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_CLOSE))
+        assertNotNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_RAIL))
+        assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.ICON_THEME_SWATCH))
+        assertNull(QuickPanelNav.iconResFor(QuickPanelNav.TileGlyph.NONE))
+
+        // OLED light accent gets dark translucent border; dark accents get white translucent border.
+        assertEquals(0x66000000, QuickPanelNav.swatchBorderColor(ThemePack.OLED.accentColor))
+        assertEquals(0x66FFFFFF, QuickPanelNav.swatchBorderColor(ThemePack.GHOST.accentColor))
     }
 }

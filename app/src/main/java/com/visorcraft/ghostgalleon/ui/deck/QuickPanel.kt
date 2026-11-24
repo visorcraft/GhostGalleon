@@ -1,7 +1,9 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.TypedValue
@@ -9,8 +11,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -28,22 +32,67 @@ import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.browseModeName
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
+import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.themeName
 import com.visorcraft.ghostgalleon.ui.toast
 
 /**
- * Pure, host-tested navigation and contrast style helpers for [QuickPanel].
+ * Pure, host-tested navigation, iconography, grid rhythm, and contrast style
+ * helpers for [QuickPanel].
  */
 internal object QuickPanelNav {
 
     enum class TileRole { STANDARD, PRIMARY, CLOSE }
 
+    enum class TileGlyph {
+        NONE,
+        ICON_SETTINGS,
+        ICON_DISPLAY,
+        ICON_CONTINUE,
+        ICON_RANDOM,
+        ICON_RAIL,
+        ICON_THEME_SWATCH,
+        ICON_CONTROLLER,
+        ICON_CLOSE,
+    }
+
     const val DEFAULT_COLUMNS = 4
     const val NARROW_COLUMNS = 3
     const val NARROW_WIDTH_THRESHOLD_DP = 360
+    const val COMPACT_TILE_HEIGHT_DP = 74
+    const val EXPANDED_TILE_HEIGHT_DP = 64
 
     fun columnsForCardWidthDp(cardWidthDp: Int): Int =
         if (cardWidthDp < NARROW_WIDTH_THRESHOLD_DP) NARROW_COLUMNS else DEFAULT_COLUMNS
+
+    /**
+     * Balanced tile height across compact (<= 2 rows) and expanded
+     * `quickPanelBrowse` (3+ rows) grids so tall panels stay scannable on
+     * short 540dp handheld screens.
+     */
+    fun tileHeightDp(tileCount: Int, columns: Int): Int {
+        val cols = columns.coerceAtLeast(1)
+        val rows = if (tileCount <= 0) 1 else (tileCount + cols - 1) / cols
+        return if (rows <= 2) COMPACT_TILE_HEIGHT_DP else EXPANDED_TILE_HEIGHT_DP
+    }
+
+    @DrawableRes
+    fun iconResFor(glyph: TileGlyph): Int? = when (glyph) {
+        TileGlyph.ICON_SETTINGS -> R.drawable.ic_settings
+        TileGlyph.ICON_DISPLAY -> R.drawable.ic_swap
+        TileGlyph.ICON_CONTINUE -> R.drawable.ic_chevron_right
+        TileGlyph.ICON_RANDOM -> R.drawable.ic_swap
+        TileGlyph.ICON_RAIL -> R.drawable.ic_folder
+        TileGlyph.ICON_CONTROLLER -> R.drawable.ic_status_bolt
+        TileGlyph.ICON_CLOSE -> R.drawable.ic_close
+        TileGlyph.ICON_THEME_SWATCH, TileGlyph.NONE -> null
+    }
+
+    /** Crisp translucent rim for the Theme tile's live accent swatch dot. */
+    fun swatchBorderColor(accent: Int): Int {
+        val onAccent = accessibleOnAccent(accent)
+        return (0x66 shl 24) or (onAccent and 0x00FFFFFF)
+    }
 
     fun move(selection: Int, count: Int, columns: Int, action: Action): Int =
         when (action) {
@@ -109,12 +158,21 @@ class QuickPanel(
     private data class Cell(
         val label: String,
         val role: QuickPanelNav.TileRole = QuickPanelNav.TileRole.STANDARD,
+        val glyph: QuickPanelNav.TileGlyph = QuickPanelNav.TileGlyph.NONE,
         val onClick: () -> Unit,
+    )
+
+    private data class BoundTile(
+        val container: LinearLayout,
+        val labelView: TextView,
+        val iconView: ImageView?,
+        val swatchView: View?,
+        val cell: Cell,
     )
 
     private var columns = QuickPanelNav.DEFAULT_COLUMNS
     private var selection = 0
-    private val rowViews = mutableListOf<TextView>()
+    private val tileViews = mutableListOf<BoundTile>()
     private lateinit var cells: List<Cell>
     private var accent: Int = 0
     private var themeTokens: ThemeTokens = ThemePack.GHOST
@@ -162,10 +220,16 @@ class QuickPanel(
             Cell(context.getString(R.string.label_bluetooth)) {
                 openSystem(Settings.ACTION_BLUETOOTH_SETTINGS)
             },
-            Cell(context.getString(R.string.quick_display)) {
+            Cell(
+                label = context.getString(R.string.quick_display),
+                glyph = QuickPanelNav.TileGlyph.ICON_DISPLAY,
+            ) {
                 openSystem(Settings.ACTION_DISPLAY_SETTINGS)
             },
-            Cell(context.getString(R.string.quick_settings)) {
+            Cell(
+                label = context.getString(R.string.quick_settings),
+                glyph = QuickPanelNav.TileGlyph.ICON_SETTINGS,
+            ) {
                 launchOnOtherDisplay(
                     activity, state, Intent(activity, SettingsActivity::class.java))
                 onClose()
@@ -173,6 +237,7 @@ class QuickPanel(
             Cell(
                 label = context.getString(R.string.label_continue),
                 role = QuickPanelNav.TileRole.PRIMARY,
+                glyph = QuickPanelNav.TileGlyph.ICON_CONTINUE,
             ) {
                 launchContinue(app)
                 onClose()
@@ -180,36 +245,62 @@ class QuickPanel(
         )
         if (chrome.quickPanelBrowse) {
             if (chrome.randomChip) {
-                core.add(Cell(context.getString(R.string.label_random)) {
-                    launchRandom(app)
-                    onClose()
-                })
+                core.add(
+                    Cell(
+                        label = context.getString(R.string.label_random),
+                        glyph = QuickPanelNav.TileGlyph.ICON_RANDOM,
+                    ) {
+                        launchRandom(app)
+                        onClose()
+                    },
+                )
             }
             if (chrome.topRail) {
-                core.add(Cell(context.getString(R.string.label_top)) {
-                    openTopPlayed()
-                    onClose()
-                })
+                core.add(
+                    Cell(
+                        label = context.getString(R.string.label_top),
+                        glyph = QuickPanelNav.TileGlyph.ICON_RAIL,
+                    ) {
+                        openTopPlayed()
+                        onClose()
+                    },
+                )
             }
             // Fav / Games / Installed / Week / Month / A–Z / New — each rail
             // still gated by its own BrowseChrome flag via quickPanelRailShortcuts.
             chrome.quickPanelRailShortcuts().forEach { mode ->
                 val label = context.browseModeName(mode)
-                core.add(Cell(label) {
-                    openGameRail(mode, label)
-                    onClose()
-                })
+                core.add(
+                    Cell(
+                        label = label,
+                        glyph = QuickPanelNav.TileGlyph.ICON_RAIL,
+                    ) {
+                        openGameRail(mode, label)
+                        onClose()
+                    },
+                )
             }
         }
-        core.add(Cell(context.getString(R.string.quick_theme)) { cycleTheme(app) })
-        core.add(Cell(context.getString(R.string.quick_controller)) {
-            activity.startActivity(Intent(activity, ControllerLabActivity::class.java))
-            onClose()
-        })
+        core.add(
+            Cell(
+                label = context.getString(R.string.quick_theme),
+                glyph = QuickPanelNav.TileGlyph.ICON_THEME_SWATCH,
+            ) { cycleTheme(app) },
+        )
+        core.add(
+            Cell(
+                label = context.getString(R.string.quick_controller),
+                glyph = QuickPanelNav.TileGlyph.ICON_CONTROLLER,
+            ) {
+                activity.startActivity(Intent(activity, ControllerLabActivity::class.java))
+                onClose()
+            },
+        )
         core.add(
             Cell(
                 label = context.getString(R.string.action_close),
                 role = QuickPanelNav.TileRole.CLOSE,
+                glyph = QuickPanelNav.TileGlyph.ICON_CLOSE,
             ) { onClose() },
         )
         cells = core
@@ -254,6 +345,7 @@ class QuickPanel(
             setPadding(gridPad, gridPad, gridPad, gridPad)
         }
 
+        val tileHeightPx = context.dp(QuickPanelNav.tileHeightDp(cells.size, columns))
         cells.chunked(columns).forEachIndexed { rowIndex, rowCells ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -263,17 +355,18 @@ class QuickPanel(
             }
             rowCells.forEachIndexed { colIndex, cell ->
                 val index = rowIndex * columns + colIndex
-                val btn = TextView(context).apply {
-                    text = cell.label
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                var iconView: ImageView? = null
+                var swatchView: View? = null
+                val tile = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
+                    contentDescription = cell.label
+                    isClickable = true
                     setPadding(
                         context.dp(UiDimens.SPACE_SM),
-                        context.dp(10),
                         context.dp(UiDimens.SPACE_SM),
-                        context.dp(10),
+                        context.dp(UiDimens.SPACE_SM),
+                        context.dp(UiDimens.SPACE_SM),
                     )
                     setOnClickListener {
                         selection = index
@@ -281,8 +374,49 @@ class QuickPanel(
                         cell.onClick()
                     }
                 }
-                rowViews.add(btn)
-                row.addView(btn, LinearLayout.LayoutParams(0, context.dp(68), 1f).apply {
+                val iconRes = QuickPanelNav.iconResFor(cell.glyph)
+                if (cell.glyph == QuickPanelNav.TileGlyph.ICON_THEME_SWATCH) {
+                    val dot = View(context).apply {
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    swatchView = dot
+                    tile.addView(
+                        dot,
+                        LinearLayout.LayoutParams(context.dp(15), context.dp(15)).apply {
+                            bottomMargin = context.dp(5)
+                        },
+                    )
+                } else if (iconRes != null) {
+                    val iv = ImageView(context).apply {
+                        setImageResource(iconRes)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    iconView = iv
+                    tile.addView(
+                        iv,
+                        LinearLayout.LayoutParams(context.dp(18), context.dp(18)).apply {
+                            bottomMargin = context.dp(4)
+                        },
+                    )
+                }
+                val labelTv = TextView(context).apply {
+                    text = cell.label
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                tile.addView(
+                    labelTv,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+                tileViews.add(BoundTile(tile, labelTv, iconView, swatchView, cell))
+                row.addView(tile, LinearLayout.LayoutParams(0, tileHeightPx, 1f).apply {
                     if (colIndex > 0) marginStart = context.dp(UiDimens.SPACE_SM)
                 })
             }
@@ -290,7 +424,7 @@ class QuickPanel(
             repeat(columns - rowCells.size) {
                 row.addView(
                     View(context),
-                    LinearLayout.LayoutParams(0, context.dp(68), 1f).apply {
+                    LinearLayout.LayoutParams(0, tileHeightPx, 1f).apply {
                         marginStart = context.dp(UiDimens.SPACE_SM)
                     },
                 )
@@ -346,15 +480,16 @@ class QuickPanel(
     }
 
     private fun paint() {
-        if (rowViews.isEmpty()) return
-        val sel = GridWrapNav.clampIndex(selection, rowViews.size)
+        if (tileViews.isEmpty()) return
+        val sel = GridWrapNav.clampIndex(selection, tileViews.size)
         selection = sel
         val tileRadius = themeTokens.cardRadiusDp
-        rowViews.forEachIndexed { index, tv ->
+        val swatchBorder = QuickPanelNav.swatchBorderColor(accent)
+        tileViews.forEachIndexed { index, bound ->
             val selected = index == sel
-            val role = cells.getOrNull(index)?.role ?: QuickPanelNav.TileRole.STANDARD
+            val role = bound.cell.role
             val (_, textColor) = QuickPanelNav.tileColors(role, selected, accent, themeTokens)
-            tv.background = when {
+            bound.container.background = when {
                 selected && role == QuickPanelNav.TileRole.PRIMARY ->
                     TileBackgrounds.accentPill(activity, accent, cornerRadiusDp = tileRadius)
                 selected ->
@@ -364,8 +499,8 @@ class QuickPanel(
                 else ->
                     TileBackgrounds.chipIdle(activity, cornerRadiusDp = tileRadius)
             }
-            tv.setTextColor(textColor)
-            tv.setTypeface(
+            bound.labelView.setTextColor(textColor)
+            bound.labelView.setTypeface(
                 null,
                 if (selected || role == QuickPanelNav.TileRole.PRIMARY) {
                     Typeface.BOLD
@@ -373,12 +508,19 @@ class QuickPanel(
                     Typeface.NORMAL
                 },
             )
-            tv.alpha = 1f
+            bound.iconView?.imageTintList = ColorStateList.valueOf(textColor)
+            bound.swatchView?.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(accent)
+                setStroke(activity.strokePx(1), swatchBorder)
+            }
+            bound.container.isSelected = selected
+            bound.container.alpha = 1f
             val scale = if (selected) 1.04f else 1f
-            tv.scaleX = scale
-            tv.scaleY = scale
+            bound.container.scaleX = scale
+            bound.container.scaleY = scale
         }
-        val focusedRow = rowViews.getOrNull(sel)?.parent as? View ?: return
+        val focusedRow = tileViews.getOrNull(sel)?.container?.parent as? View ?: return
         scrollHost?.smoothScrollToCenter(focusedRow)
     }
 
