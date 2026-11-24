@@ -171,6 +171,7 @@ class ControllerLabActivity : AppCompatActivity() {
     private var sunkenSurface: Int = 0xFF101014.toInt()
     private var hairline: Int = ThemePack.HAIRLINE_LIGHT
     private var stickReleaseThreshold: Float = 0.5f
+    private var motionEnabled: Boolean = true
     private val padViews = mutableMapOf<PadIndicator, TextView>()
     private val pressedButtons = mutableSetOf<PadIndicator>()
     private val pressedHatDirs = mutableSetOf<PadIndicator>()
@@ -200,6 +201,7 @@ class ControllerLabActivity : AppCompatActivity() {
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accentColor)
         val deadzonePercent = app.settings.stickDeadzone
         stickReleaseThreshold = StickThresholds.release(deadzonePercent)
+        motionEnabled = UiDimens.areAnimationsEnabled(this)
 
         val dm = resources.displayMetrics
         val screenHeightDp = (dm.heightPixels / dm.density).toInt()
@@ -225,7 +227,9 @@ class ControllerLabActivity : AppCompatActivity() {
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
             background = TileBackgrounds.chromeButton(this@ControllerLabActivity, accentColor)
-            contentDescription = getString(R.string.action_back)
+            val backLabel = getString(R.string.action_back)
+            contentDescription = backLabel
+            tooltipText = backLabel
             isFocusable = true
             setOnClickListener { finish() }
         }
@@ -282,6 +286,7 @@ class ControllerLabActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTypeface(typeface, Typeface.BOLD)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
@@ -399,7 +404,9 @@ class ControllerLabActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             isFocusable = true
-            contentDescription = getString(R.string.controller_bind_last)
+            val bindLabel = getString(R.string.controller_bind_last)
+            contentDescription = bindLabel
+            tooltipText = bindLabel
             minHeight = dp(UiDimens.TOUCH_MIN_DP)
             setPadding(dp(16), dp(10), dp(16), dp(10))
             background = TileBackgrounds.pressableRow(
@@ -566,7 +573,9 @@ class ControllerLabActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             isFocusable = true
-            contentDescription = getString(R.string.action_clear)
+            val clearLabel = getString(R.string.action_clear)
+            contentDescription = clearLabel
+            tooltipText = clearLabel
             minHeight = dp(36)
             background = TileBackgrounds.pressableRow(
                 context = this@ControllerLabActivity,
@@ -653,6 +662,8 @@ class ControllerLabActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         hideStatusBar(window)
+        motionEnabled = UiDimens.areAnimationsEnabled(this)
+        stickReleaseThreshold = StickThresholds.release(app.settings.stickDeadzone)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -753,7 +764,7 @@ class ControllerLabActivity : AppCompatActivity() {
                 else -> UiDimens.ALPHA_MUTED
             },
         )
-        val scale = if (active) 1.06f else 1f
+        val scale = if (active && motionEnabled) 1.06f else 1f
         tv.scaleX = scale
         tv.scaleY = scale
     }

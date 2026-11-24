@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -1751,6 +1752,11 @@ class SettingsActivity : AppCompatActivity() {
         super.onPause()
     }
 
+    override fun onDestroy() {
+        cancelKeyCapture()
+        super.onDestroy()
+    }
+
     private fun dp(value: Int): Int =
         com.visorcraft.ghostgalleon.ui.UiDimens.dp(this, value)
 
@@ -1783,6 +1789,9 @@ class SettingsActivity : AppCompatActivity() {
         setTextColor(accentOnCard)
         setTypeface(typeface, Typeface.BOLD)
         letterSpacing = 0.15f
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            isAccessibilityHeading = true
+        }
     }
 
     private fun sectionCard(): LinearLayout = LinearLayout(this).apply {
@@ -2091,11 +2100,13 @@ class SettingsActivity : AppCompatActivity() {
         chip.contentDescription = getString(R.string.settings_press_button)
         chip.setTextColor(onAccentFill)
         chip.background = pillDrawable(accent, UiDimens.RADIUS_SM, activeFocusRing)
-        capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.45f).apply {
-            duration = 520
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            start()
+        if (UiDimens.areAnimationsEnabled(this)) {
+            capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.45f).apply {
+                duration = 520
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
+                start()
+            }
         }
     }
 
@@ -3085,6 +3096,12 @@ class SettingsActivity : AppCompatActivity() {
             imageTintList = ColorStateList.valueOf(accentOnCard)
             scaleType = ImageView.ScaleType.FIT_CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) {
+                    v.animate().cancel()
+                }
+            })
         }
         updatePowerExpanderMeta = { c, animate ->
             val enabled = SettingsUiLogic.enabledPowerRailsCount(c)
@@ -3096,7 +3113,7 @@ class SettingsActivity : AppCompatActivity() {
             styleStatusBadge(powerCountBadge, active = enabled > 0)
             val targetDeg = SettingsUiLogic.chevronRotationDegrees(powerHost.visibility == View.VISIBLE)
             expanderChevron.animate().cancel()
-            if (animate) {
+            if (animate && UiDimens.areAnimationsEnabled(this)) {
                 expanderChevron.animate().rotation(targetDeg).setDuration(160L).start()
             } else {
                 expanderChevron.rotation = targetDeg

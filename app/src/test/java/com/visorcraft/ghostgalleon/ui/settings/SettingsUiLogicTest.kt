@@ -270,4 +270,13 @@ class SettingsUiLogicTest {
         assertEquals(200, SettingsUiLogic.navBladeWidthDp(720))
         assertEquals(224, SettingsUiLogic.navBladeWidthDp(960))
     }
+
+    @Test
+    fun `UiDimens isMotionEnabled disables transitions when animator duration scale is zero or invalid`() {
+        assertFalse(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(0f))
+        assertFalse(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(-1f))
+        assertFalse(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(Float.NaN))
+        assertTrue(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(0.5f))
+        assertTrue(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(1f))
+    }
 }

@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui
 
 import android.content.Context
+import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 
@@ -66,6 +67,22 @@ object UiDimens {
     /** Enable tabular numerals (`tnum`) so live counters and slider badges do not jitter. */
     fun applyTabularNumerals(view: TextView) {
         view.fontFeatureSettings = TABULAR_NUMS_FEATURE
+    }
+
+    /** Pure check for system reduced-motion (`ANIMATOR_DURATION_SCALE == 0`). Host-tested. */
+    fun isMotionEnabled(animatorDurationScale: Float): Boolean =
+        !animatorDurationScale.isNaN() && animatorDurationScale > 0f
+
+    /** True when system animator duration scale allows subtle motion transitions. */
+    fun areAnimationsEnabled(context: Context): Boolean {
+        val scale = runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            )
+        }.getOrDefault(1f)
+        return isMotionEnabled(scale)
     }
 }
 
