@@ -30,6 +30,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.GhostGalleonApp
@@ -132,6 +133,27 @@ internal object SettingsUiLogic {
         ThemePack.accentTextColor(accent, ThemePack.surfaceSunken(tokens))
 
     fun isSecondSeatLayoutVisible(secondSeatEnabled: Boolean): Boolean = secondSeatEnabled
+
+    /**
+     * Wraps [currentIndex] by [delta] across [pageCount] settings pages for
+     * gamepad L1/R1 quick tab switching. Pure; host-tested.
+     */
+    fun stepPageIndex(currentIndex: Int, delta: Int, pageCount: Int): Int {
+        if (pageCount <= 1) return 0
+        val start = currentIndex.coerceIn(0, pageCount - 1)
+        return ((start + delta) % pageCount + pageCount) % pageCount
+    }
+
+    /**
+     * Subtly accent-tinted elevated fill for the active left-blade navigation
+     * item. Guarantees high contrast for both primary white text and the
+     * luminance-lifted accent icon across Ghost, Teal, OLED, and Neon.
+     */
+    fun navActiveSurface(tokens: ThemeTokens, accent: Int): Int {
+        val base = ThemePack.surfaceElevated(tokens)
+        val tint = if (ThemePack.relativeLuminance(accent) > 0.55) 0.08f else 0.14f
+        return ThemePack.blendColors(base, accent, tint)
+    }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -139,22 +161,34 @@ class SettingsActivity : AppCompatActivity() {
     private val app get() = application as GhostGalleonApp
 
     /** Settings pages: Display & Grid stay together; others are their own. */
-    private enum class SettingsPage(val titleRes: Int) {
-        DISPLAY_GRID(R.string.settings_page_display_grid),
-        APPS(R.string.settings_page_apps),
-        CONTROLS(R.string.settings_page_controls),
-        LIBRARY(R.string.settings_page_library),
-        ART_DATA(R.string.settings_page_art),
-        STATS(R.string.settings_page_stats),
-        SYSTEM(R.string.settings_page_system),
-        ABOUT(R.string.settings_page_about),
+    private enum class SettingsPage(val titleRes: Int, @DrawableRes val iconRes: Int) {
+        DISPLAY_GRID(R.string.settings_page_display_grid, R.drawable.ic_nav_display),
+        APPS(R.string.settings_page_apps, R.drawable.ic_nav_apps),
+        CONTROLS(R.string.settings_page_controls, R.drawable.ic_nav_controls),
+        LIBRARY(R.string.settings_page_library, R.drawable.ic_nav_library),
+        ART_DATA(R.string.settings_page_art, R.drawable.ic_nav_art),
+        STATS(R.string.settings_page_stats, R.drawable.ic_nav_stats),
+        SYSTEM(R.string.settings_page_system, R.drawable.ic_nav_system),
+        ABOUT(R.string.settings_page_about, R.drawable.ic_nav_about),
     }
+
+    private data class NavRowViews(
+        val container: LinearLayout,
+        val indicator: View,
+        val icon: ImageView,
+        val label: TextView,
+    )
 
     private var currentPage: SettingsPage = SettingsPage.DISPLAY_GRID
     private var pageHost: LinearLayout? = null
+    private var contentScroll: ScrollView? = null
     private val pageBodies = mutableMapOf<SettingsPage, LinearLayout>()
-    private val navItems = mutableMapOf<SettingsPage, TextView>()
+    private val navItems = mutableMapOf<SettingsPage, NavRowViews>()
+    private var pageDropdownRow: View? = null
+    private var pageDropdownIcon: ImageView? = null
     private var pageDropdownLabel: TextView? = null
+    private var headerBackBtn: View? = null
+    private var headerSearchBtn: View? = null
 
     private val remappable = listOf(
         Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
@@ -1332,7 +1366,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun styleFocusableRow(row: View) {
         row.isFocusable = true
         row.setPadding(dp(10), dp(6), dp(10), dp(6))
-        row.background = TileBackgrounds.focusableRow(
+        row.background = TileBackgrounds.pressableRow(
             context = this,
             accent = accent,
             cornerRadiusDp = 12,
@@ -1563,6 +1597,85 @@ class SettingsActivity : AppCompatActivity() {
         return dm.widthPixels >= (700f * dm.density).toInt()
     }
 
+    private fun ensureViewId(view: View): Int {
+        if (view.id == View.NO_ID) {
+            view.id = View.generateViewId()
+        }
+        return view.id
+    }
+
+    private fun firstFocusableIn(view: View): View? {
+        if (view.visibility != View.VISIBLE || !view.isEnabled) return null
+        if (view is ViewGroup) {
+            if (view.isFocusable && view !is ScrollView && view !is HorizontalScrollView) {
+                return view
+            }
+            for (i in 0 until view.childCount) {
+                firstFocusableIn(view.getChildAt(i))?.let { return it }
+            }
+            return null
+        }
+        return if (view.isFocusable) view else null
+    }
+
+    /**
+     * Wire D-pad Left from vertical settings rows and the leftmost pill of
+     * horizontal groups back to [navId] without interfering with SeekBars,
+     * EditTexts, or inner horizontal navigation.
+     */
+    private fun wireContentBackToNav(view: View, navId: Int) {
+        if (view.visibility != View.VISIBLE) return
+        if (view is SeekBar || view is EditText) return
+        if (view is HorizontalScrollView) {
+            firstFocusableIn(view)?.nextFocusLeftId = navId
+            return
+        }
+        if (view is LinearLayout && view.orientation == LinearLayout.HORIZONTAL) {
+            if (view.isFocusable) {
+                view.nextFocusLeftId = navId
+            } else {
+                for (i in 0 until view.childCount) {
+                    val leftChild = firstFocusableIn(view.getChildAt(i))
+                    if (leftChild != null && leftChild !is SeekBar && leftChild !is EditText) {
+                        leftChild.nextFocusLeftId = navId
+                        break
+                    }
+                }
+            }
+            return
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                wireContentBackToNav(view.getChildAt(i), navId)
+            }
+        }
+    }
+
+    private fun wirePageFocusTraversal(body: View) {
+        val firstContent = firstFocusableIn(body)
+        val firstContentId = firstContent?.let(::ensureViewId) ?: View.NO_ID
+        val backBtn = headerBackBtn
+        val searchBtn = headerSearchBtn
+        val activeNav = navItems[currentPage]?.container
+        if (activeNav != null) {
+            val activeNavId = ensureViewId(activeNav)
+            navItems.values.forEach { row ->
+                row.container.nextFocusRightId = firstContentId
+            }
+            navItems[SettingsPage.entries.first()]?.container?.nextFocusUpId =
+                backBtn?.let(::ensureViewId) ?: View.NO_ID
+            backBtn?.nextFocusDownId = activeNavId
+            searchBtn?.nextFocusDownId = if (firstContentId != View.NO_ID) firstContentId else activeNavId
+            wireContentBackToNav(body, activeNavId)
+        } else {
+            val dropdown = pageDropdownRow
+            val dropdownId = dropdown?.let(::ensureViewId) ?: View.NO_ID
+            backBtn?.nextFocusDownId = dropdownId
+            searchBtn?.nextFocusDownId = dropdownId
+            dropdown?.nextFocusDownId = firstContentId
+        }
+    }
+
     private fun selectPage(page: SettingsPage) {
         currentPage = page
         val host = pageHost ?: return
@@ -1573,58 +1686,94 @@ class SettingsActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
+        contentScroll?.scrollTo(0, 0)
         paintNav()
         pageDropdownLabel?.setText(page.titleRes)
+        pageDropdownIcon?.setImageResource(page.iconRes)
+        wirePageFocusTraversal(body)
     }
 
     private fun paintNav() {
-        navItems.forEach { (page, view) ->
+        val activeBgColor = SettingsUiLogic.navActiveSurface(themeTokens, accent)
+        val activeIconTint = ThemePack.accentTextColor(accent, activeBgColor)
+        val activeBorder = ThemePack.accentHairline(accent)
+        navItems.forEach { (page, row) ->
             val selected = page == currentPage
-            view.setTextColor(if (selected) onAccentFill else UiDimens.ALPHA_PRIMARY)
-            view.background = if (selected) {
-                TileBackgrounds.focusableRow(
+            row.container.isSelected = selected
+            row.indicator.visibility = if (selected) View.VISIBLE else View.INVISIBLE
+            row.icon.imageTintList = ColorStateList.valueOf(
+                if (selected) activeIconTint else UiDimens.ALPHA_MUTED,
+            )
+            row.label.setTextColor(if (selected) UiDimens.ALPHA_PRIMARY else UiDimens.ALPHA_SECONDARY)
+            row.label.setTypeface(
+                null,
+                if (selected) Typeface.BOLD else Typeface.NORMAL,
+            )
+            row.container.background = if (selected) {
+                TileBackgrounds.pressableRow(
                     context = this,
                     accent = activeFocusRing,
-                    idleBackground = pillDrawable(accent, 14),
+                    idleBackground = pillDrawable(activeBgColor, 14, activeBorder),
                     cornerRadiusDp = 14,
                     strokeDp = 2,
                 )
             } else {
-                TileBackgrounds.focusableRow(
+                TileBackgrounds.pressableRow(
                     context = this,
                     accent = accent,
                     cornerRadiusDp = 14,
                     strokeDp = 2,
                 )
             }
-            view.setTypeface(
-                null,
-                if (selected) Typeface.BOLD else Typeface.NORMAL,
-            )
         }
     }
 
     private fun buildNavBlade(): View {
         val blade = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 20)
         }
         val items = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
         SettingsPage.entries.forEach { page ->
-            val item = TextView(this).apply {
-                setText(page.titleRes)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(UiDimens.ALPHA_PRIMARY)
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(16), dp(14), dp(16), dp(14))
-                isFocusable = true
-                setOnClickListener { selectPage(page) }
+            val indicator = View(this).apply {
+                background = TileBackgrounds.activeAccentBar(this@SettingsActivity, accent, cornerRadiusDp = 2)
+                visibility = View.INVISIBLE
             }
-            navItems[page] = item
-            items.addView(item, LinearLayout.LayoutParams(
+            val icon = ImageView(this).apply {
+                setImageResource(page.iconRes)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            val label = TextView(this).apply {
+                setText(page.titleRes)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                setTextColor(UiDimens.ALPHA_SECONDARY)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }
+            val container = LinearLayout(this).apply {
+                id = View.generateViewId()
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(48)
+                setPadding(dp(8), dp(10), dp(12), dp(10))
+                isFocusable = true
+                contentDescription = getString(page.titleRes)
+                setOnClickListener { selectPage(page) }
+                addView(indicator, LinearLayout.LayoutParams(dp(3), dp(22)))
+                addView(
+                    icon,
+                    LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                        marginStart = dp(10)
+                        marginEnd = dp(10)
+                    },
+                )
+                addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            navItems[page] = NavRowViews(container, indicator, icon, label)
+            items.addView(container, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = dp(6) })
@@ -1635,6 +1784,9 @@ class SettingsActivity : AppCompatActivity() {
         // items below the fold (System/About) stay reachable at any height.
         blade.addView(ScrollView(this).apply {
             isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
             addView(items, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1648,9 +1800,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun buildPageDropdown(): View {
         val row = LinearLayout(this).apply {
+            id = View.generateViewId()
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = TileBackgrounds.focusableRow(
+            background = TileBackgrounds.pressableRow(
                 context = this@SettingsActivity,
                 accent = accent,
                 idleBackground = TileBackgrounds.card(this@SettingsActivity),
@@ -1665,11 +1818,24 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
         }
+        pageDropdownRow = row
+        val icon = ImageView(this).apply {
+            setImageResource(currentPage.iconRes)
+            imageTintList = ColorStateList.valueOf(accentOnCard)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        pageDropdownIcon = icon
+        row.addView(
+            icon,
+            LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) },
+        )
         val label = TextView(this).apply {
             setText(currentPage.titleRes)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
         pageDropdownLabel = label
         row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -1749,11 +1915,17 @@ class SettingsActivity : AppCompatActivity() {
     private fun buildContent(): View {
         val s = app.settings
         val wide = isWideSettings()
+        navItems.clear()
+        pageDropdownRow = null
+        pageDropdownIcon = null
+        pageDropdownLabel = null
+        headerBackBtn = null
+        headerSearchBtn = null
 
         SettingsPage.entries.forEach { page ->
             pageBodies[page] = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(0, 0, 0, dp(24))
+                setPadding(0, 0, 0, dp(32))
             }
         }
 
@@ -1782,18 +1954,21 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        val backBtn = ImageView(this).apply {
+            id = View.generateViewId()
+            setImageResource(R.drawable.ic_back)
+            imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val pad = dp(10)
+            setPadding(pad, pad, pad, pad)
+            background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+            contentDescription = getString(R.string.action_back)
+            isFocusable = true
+            setOnClickListener { finish() }
+        }
+        headerBackBtn = backBtn
         header.addView(
-            ImageView(this).apply {
-                setImageResource(R.drawable.ic_back)
-                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                val pad = dp(10)
-                setPadding(pad, pad, pad, pad)
-                background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
-                contentDescription = getString(R.string.action_back)
-                isFocusable = true
-                setOnClickListener { finish() }
-            },
+            backBtn,
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
         header.addView(
@@ -1808,18 +1983,23 @@ class SettingsActivity : AppCompatActivity() {
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
+        val searchBtn = ImageView(this).apply {
+            id = View.generateViewId()
+            setImageResource(R.drawable.ic_search)
+            imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val pad = dp(10)
+            setPadding(pad, pad, pad, pad)
+            background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+            contentDescription = getString(R.string.settings_search_hint)
+            isFocusable = true
+            setOnClickListener { showSettingsSearch() }
+        }
+        headerSearchBtn = searchBtn
+        backBtn.nextFocusRightId = searchBtn.id
+        searchBtn.nextFocusLeftId = backBtn.id
         header.addView(
-            ImageView(this).apply {
-                setImageResource(R.drawable.ic_search)
-                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                val pad = dp(10)
-                setPadding(pad, pad, pad, pad)
-                background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
-                contentDescription = getString(R.string.settings_search_hint)
-                isFocusable = true
-                setOnClickListener { showSettingsSearch() }
-            },
+            searchBtn,
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
         shell.addView(header, LinearLayout.LayoutParams(
@@ -3447,11 +3627,16 @@ class SettingsActivity : AppCompatActivity() {
         pageHost = host
         val scroll = ScrollView(this).apply {
             isFillViewport = true
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(18))
+            clipToPadding = false
+            setPadding(0, 0, 0, dp(12))
             addView(host, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
         }
+        contentScroll = scroll
         body.addView(scroll, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.MATCH_PARENT, 1f,
         ))
@@ -3462,8 +3647,36 @@ class SettingsActivity : AppCompatActivity() {
         return shell
     }
 
+    private fun switchPageBy(delta: Int) {
+        val pages = SettingsPage.entries
+        val nextIndex = SettingsUiLogic.stepPageIndex(pages.indexOf(currentPage), delta, pages.size)
+        val nextPage = pages[nextIndex]
+        if (nextPage == currentPage) return
+        val wasInNav = navItems.values.any { it.container.hasFocus() }
+        selectPage(nextPage)
+        if (wasInNav) {
+            navItems[nextPage]?.container?.requestFocus()
+        } else {
+            val target = pageBodies[nextPage]?.let(::firstFocusableIn)
+                ?: navItems[nextPage]?.container
+                ?: pageDropdownRow
+            target?.requestFocus()
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val target = captureTarget ?: return super.onKeyDown(keyCode, event)
+        val target = captureTarget
+        if (target == null) {
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_L1) {
+                switchPageBy(-1)
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_BUTTON_R1) {
+                switchPageBy(1)
+                return true
+            }
+            return super.onKeyDown(keyCode, event)
+        }
         val withoutTarget = app.settings.keyMap.filterValues { it != target }
         val newMap = withoutTarget + (keyCode to target)
         app.updateSettings(app.settings.copy(keyMap = newMap))

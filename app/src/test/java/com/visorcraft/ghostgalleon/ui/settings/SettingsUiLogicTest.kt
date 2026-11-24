@@ -64,4 +64,33 @@ class SettingsUiLogicTest {
         assertFalse(SettingsUiLogic.isSecondSeatLayoutVisible(false))
         assertTrue(SettingsUiLogic.isSecondSeatLayoutVisible(true))
     }
+
+    @Test
+    fun `stepPageIndex wraps forward and backward cleanly across settings tabs`() {
+        org.junit.Assert.assertEquals(1, SettingsUiLogic.stepPageIndex(0, 1, 8))
+        org.junit.Assert.assertEquals(7, SettingsUiLogic.stepPageIndex(0, -1, 8))
+        org.junit.Assert.assertEquals(0, SettingsUiLogic.stepPageIndex(7, 1, 8))
+        org.junit.Assert.assertEquals(6, SettingsUiLogic.stepPageIndex(7, -1, 8))
+        org.junit.Assert.assertEquals(0, SettingsUiLogic.stepPageIndex(0, 1, 1))
+        org.junit.Assert.assertEquals(0, SettingsUiLogic.stepPageIndex(5, -1, 0))
+    }
+
+    @Test
+    fun `navActiveSurface maintains high contrast for active text and accent icon across all themes`() {
+        val white = 0xFFFFFFFF.toInt()
+        for (tokens in ThemePack.BUILTINS) {
+            val activeBg = SettingsUiLogic.navActiveSurface(tokens, tokens.accentColor)
+            val textContrast = ThemePack.contrastRatio(white, activeBg)
+            assertTrue(
+                "Active nav white text contrast=$textContrast too low on theme=${tokens.id}",
+                textContrast >= 8.0,
+            )
+            val iconColor = ThemePack.accentTextColor(tokens.accentColor, activeBg)
+            val iconContrast = ThemePack.contrastRatio(iconColor, activeBg)
+            assertTrue(
+                "Active nav icon contrast=$iconContrast too low on theme=${tokens.id}",
+                iconContrast >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }
