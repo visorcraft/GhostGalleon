@@ -18,7 +18,8 @@ object GridLabelMetrics {
     const val WALLPAPER_SCRIM_FILL: Int = 0x99000000.toInt()
     const val WALLPAPER_SHADOW_COLOR: Int = 0xCC000000.toInt()
     const val LABEL_UNFOCUSED_COLOR: Int = 0xEBFFFFFF.toInt()
-    const val LABEL_MISSING_FOCUSED_COLOR: Int = 0xB3FFFFFF.toInt()
+    const val LABEL_MISSING_FOCUSED_COLOR: Int = UiDimens.COLOR_DESTRUCTIVE
+    const val LABEL_MISSING_IDLE_COLOR: Int = 0xCCFF8A80.toInt()
 
     const val MIN_TEXT_SP: Float = 10.5f
     const val MAX_TEXT_SP: Float = 14f
@@ -107,7 +108,7 @@ object GridLabelMetrics {
         )
         MoveChoreography.SlotRole.NORMAL -> LabelStyle(
             bold = false,
-            textColor = if (isMissing) UiDimens.ALPHA_SUBTLE else LABEL_UNFOCUSED_COLOR,
+            textColor = if (isMissing) LABEL_MISSING_IDLE_COLOR else LABEL_UNFOCUSED_COLOR,
         )
     }
 

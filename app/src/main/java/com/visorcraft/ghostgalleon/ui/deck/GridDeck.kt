@@ -2026,7 +2026,6 @@ class GridDeck(
         // corner badges) or a recessed blank "+" tile, then selection visuals.
         fun populateFrame(frame: FrameLayout, position: Int) {
             val density = context.resources.displayMetrics.density
-            fun dp(value: Int) = (value * density).toInt()
 
             frame.removeAllViews()
             val key = slotPackages().getOrNull(position)
@@ -2074,52 +2073,70 @@ class GridDeck(
                 }
             }
             val filled = key != null && (romEntry != null || appEntry != null || isFolder)
-            val badgeSize = dp(18)
-            val badgeInset = dp(6)
-            // Dock pin badge: accent dot centered inside a dark circular scrim
-            // so it stays legible over bright cover artwork.
-            if (filled && key in settings.dockSlots) {
+            val tokens = ThemePack.resolve(settings)
+            val badgeSpec = GridBadgeMetrics.compute(
+                cellWidthPx = cellWidth,
+                cardRadiusDp = tokens.cardRadiusDp,
+                density = density,
+            )
+            val badgePlacement = if (filled && key != null) {
+                GridBadgeMetrics.placement(
+                    isFavorite = key in settings.favorites,
+                    isPinnedToDock = key in settings.dockSlots,
+                )
+            } else {
+                GridBadgeMetrics.Placement(
+                    GridBadgeMetrics.BadgeCorner.NONE,
+                    GridBadgeMetrics.BadgeCorner.NONE,
+                )
+            }
+            // Dock pin badge: luminous accent dot centered inside an 80% dark
+            // circular scrim so it stays legible over bright cover artwork.
+            if (badgePlacement.dockCorner != GridBadgeMetrics.BadgeCorner.NONE) {
                 val scrim = FrameLayout(context).apply {
                     background = cornerBadgeScrim(context)
+                    elevation = context.dpF(2)
                 }
                 val dot = View(context).apply {
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(ThemePack.accentTextColor(settings.accentColor, Color.BLACK))
+                        setColor(GridBadgeMetrics.dockDotColor(settings.accentColor))
                     }
                 }
-                scrim.addView(dot, FrameLayout.LayoutParams(dp(8), dp(8), Gravity.CENTER))
-                // When a favorite star is also shown, park the dock dot at
-                // top-start so it does not cover the ★ at top-end.
-                val dockGravity = if (key in settings.favorites) {
-                    Gravity.TOP or Gravity.START
-                } else {
-                    Gravity.TOP or Gravity.END
-                }
+                scrim.addView(
+                    dot,
+                    FrameLayout.LayoutParams(
+                        badgeSpec.dockDotSizePx,
+                        badgeSpec.dockDotSizePx,
+                        Gravity.CENTER,
+                    ),
+                )
+                val isEnd = badgePlacement.dockCorner == GridBadgeMetrics.BadgeCorner.TOP_END
+                val dockGravity = Gravity.TOP or if (isEnd) Gravity.END else Gravity.START
                 frame.addView(scrim, FrameLayout.LayoutParams(
-                    badgeSize, badgeSize, dockGravity).apply {
-                    topMargin = badgeInset
-                    if (dockGravity and Gravity.END == Gravity.END) marginEnd = badgeInset
-                    else marginStart = badgeInset
+                    badgeSpec.badgeSizePx, badgeSpec.badgeSizePx, dockGravity).apply {
+                    topMargin = badgeSpec.insetPx
+                    if (isEnd) marginEnd = badgeSpec.insetPx else marginStart = badgeSpec.insetPx
                 })
             }
             // Favorite badge: ★ inside a matching dark circular scrim at top-end.
-            if (filled && key in settings.favorites) {
+            if (badgePlacement.favoriteCorner != GridBadgeMetrics.BadgeCorner.NONE) {
                 val star = TextView(context).apply {
                     setText(R.string.glyph_favorite)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(0xFFFFD54F.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, badgeSpec.starTextSp)
+                    setTextColor(GridBadgeMetrics.FAVORITE_STAR_COLOR)
                     gravity = Gravity.CENTER
                     includeFontPadding = false
                     background = cornerBadgeScrim(context)
+                    elevation = context.dpF(2)
                 }
                 frame.addView(star, FrameLayout.LayoutParams(
-                    badgeSize,
-                    badgeSize,
+                    badgeSpec.badgeSizePx,
+                    badgeSpec.badgeSizePx,
                     Gravity.TOP or Gravity.END,
                 ).apply {
-                    topMargin = badgeInset
-                    marginEnd = badgeInset
+                    topMargin = badgeSpec.insetPx
+                    marginEnd = badgeSpec.insetPx
                 })
             }
             applySelectionVisuals(frame, position, position == selectedIndex(), animate = false)
@@ -2128,8 +2145,8 @@ class GridDeck(
         private fun cornerBadgeScrim(ctx: Context): GradientDrawable =
             GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(BADGE_SCRIM_FILL)
-                setStroke(ctx.strokePx(1), BADGE_SCRIM_STROKE)
+                setColor(GridBadgeMetrics.BADGE_SCRIM_FILL)
+                setStroke(ctx.strokePx(1), GridBadgeMetrics.BADGE_SCRIM_STROKE)
             }
 
         private fun buildCellLabel(
@@ -2258,9 +2275,9 @@ class GridDeck(
                 minWidth = context.dp(18)
                 setPadding(context.dp(5), context.dp(2), context.dp(5), context.dp(2))
                 background = GradientDrawable().apply {
-                    setColor(BADGE_SCRIM_FILL)
+                    setColor(GridBadgeMetrics.BADGE_SCRIM_FILL)
                     cornerRadius = context.dpF(8)
-                    setStroke(context.strokePx(1), BADGE_SCRIM_STROKE)
+                    setStroke(context.strokePx(1), GridBadgeMetrics.BADGE_SCRIM_STROKE)
                 }
             }
             iconBox.addView(
@@ -2423,15 +2440,44 @@ class GridDeck(
                 gravity = Gravity.CENTER
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
             }
+            val innerRadiusDp = innerArtRadiusDp()
+            val innerRadiusPx = context.dpF(innerRadiusDp)
+            val missingBox = FrameLayout(context).apply {
+                background = GradientDrawable().apply {
+                    setColor(GridBadgeMetrics.MISSING_FRAME_FILL)
+                    cornerRadius = innerRadiusPx
+                    setStroke(
+                        context.strokePx(1),
+                        GridBadgeMetrics.MISSING_FRAME_STROKE,
+                        context.dpF(4),
+                        context.dpF(3),
+                    )
+                }
+            }
+            val tileInset = context.dp(2)
             val tile = PlatformTile.view(
                 context,
                 SlotKey.platformIdOf(key) ?: "rom",
-                cornerRadiusDp = innerArtRadiusDp(),
+                cornerRadiusDp = DeckCornerMetrics.nestedRadiusDp(
+                    outerRadiusDp = innerRadiusDp,
+                    insetDp = 2,
+                    minRadiusDp = 4,
+                ),
             )
-            tile.alpha = 0.4f
-            cell.addView(tile, LinearLayout.LayoutParams(iconSize, iconSize))
+            tile.alpha = 0.42f
+            missingBox.addView(
+                tile,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ).apply { setMargins(tileInset, tileInset, tileInset, tileInset) },
+            )
+            cell.addView(missingBox, LinearLayout.LayoutParams(iconSize, iconSize))
             cell.addView(
-                buildCellLabel(context.getString(R.string.label_missing), UiDimens.ALPHA_SUBTLE),
+                buildCellLabel(
+                    context.getString(R.string.label_missing),
+                    GridBadgeMetrics.MISSING_LABEL_COLOR,
+                ),
                 labelParams(),
             )
             return cell
@@ -2464,8 +2510,6 @@ class GridDeck(
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
         const val BLANK_PLUS_IDLE_COLOR = 0x3DFFFFFF
-        const val BADGE_SCRIM_FILL = 0xB3000000.toInt()
-        const val BADGE_SCRIM_STROKE = 0x26FFFFFF
         const val FOLDER_GHOST_WELL_FILL = 0x12FFFFFF
         const val FOLDER_GHOST_WELL_STROKE = 0x10FFFFFF
         const val PAGE_STRIP_RIPPLE_COLOR = 0x33FFFFFF
