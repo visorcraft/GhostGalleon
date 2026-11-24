@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -8,11 +9,14 @@ import android.os.Build
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.annotation.DrawableRes
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
@@ -173,6 +177,48 @@ internal object SlotMenuNav {
     /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling scrollable overflow. */
     fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
         OverlayPrimitives.scrollCueAlphas(canScrollUp, canScrollDown)
+
+    /** Trailing cue icon for drill-down/sub-modal actions and destructive rows. */
+    @DrawableRes
+    fun trailingGlyphRes(choice: SlotMenu.Choice, destructive: Boolean): Int? {
+        if (destructive) return R.drawable.ic_close
+        return when (choice) {
+            SlotMenu.Choice.RENAME,
+            SlotMenu.Choice.CUSTOM_ICON,
+            SlotMenu.Choice.OPEN_WITH,
+            SlotMenu.Choice.PLAYER,
+            SlotMenu.Choice.SCREENS,
+            SlotMenu.Choice.SET_ART,
+            SlotMenu.Choice.ADD_TO_COLLECTION,
+            SlotMenu.Choice.DETAILS,
+            SlotMenu.Choice.BROWSE_RELATED,
+            SlotMenu.Choice.APP_INFO,
+            SlotMenu.Choice.NEW_FOLDER,
+            SlotMenu.Choice.ADD_MEMBER,
+            SlotMenu.Choice.OPEN_IN_GAME_MODE,
+            SlotMenu.Choice.SEARCH_LIBRARY,
+            -> R.drawable.ic_chevron_right
+            else -> null
+        }
+    }
+
+    /** Subtle tint for a row's trailing drill-down or destructive glyph. */
+    fun trailingGlyphTint(tone: RowTone, selected: Boolean): Int = when (tone) {
+        RowTone.DESTRUCTIVE ->
+            if (selected) DESTRUCTIVE_TEXT_SELECTED else UiDimens.COLOR_DESTRUCTIVE
+        RowTone.STANDARD, RowTone.CANCEL ->
+            if (selected) UiDimens.ALPHA_SECONDARY else UiDimens.ALPHA_SUBTLE
+    }
+
+    /**
+     * True when a direct touch tap should trigger a tactile `VIRTUAL_KEY`
+     * pulse (gamepad nav/confirm haptics are emitted centrally by
+     * `BaseDeckActivity.handleAction` so controller input never double-buzzes).
+     */
+    fun shouldTriggerTouchHaptic(
+        hapticsEnabled: Boolean,
+        isCancel: Boolean = false,
+    ): Boolean = hapticsEnabled && !isCancel
 }
 
 /**
@@ -243,7 +289,9 @@ class SlotMenu(
     }
 
     private data class BoundAction(
-        val view: TextView,
+        val container: LinearLayout,
+        val labelView: TextView,
+        val glyphView: ImageView?,
         val item: Row.Item,
         val tone: SlotMenuNav.RowTone,
     )
@@ -258,6 +306,20 @@ class SlotMenu(
     private fun resolveTokens(): ThemeTokens {
         val app = context.applicationContext
         return if (app is GhostGalleonApp) ThemePack.resolve(app.settings) else ThemePack.GHOST
+    }
+
+    private fun hapticsEnabled(): Boolean {
+        val app = context.applicationContext
+        return app is GhostGalleonApp && app.settings.haptics
+    }
+
+    @Suppress("DEPRECATION")
+    private fun performHaptic(target: View?, constant: Int) {
+        if (!hapticsEnabled() || target == null) return
+        target.performHapticFeedback(
+            constant,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+        )
     }
 
     val view: View by lazy {
@@ -355,25 +417,67 @@ class SlotMenu(
                 is Row.Item -> {
                     val label = row.labelRes ?: row.choice.labelRes
                     val tone = SlotMenuNav.rowTone(row)
-                    val actionTv = TextView(context).apply {
-                        setText(label)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                        maxLines = 2
-                        ellipsize = TextUtils.TruncateAt.END
-                        minHeight = context.dp(44)
+                    val actionIdx = actionRows.size
+                    val labelText = context.getString(label)
+                    val rowContainer = LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        minimumHeight = context.dp(44)
+                        contentDescription = labelText
                         setPadding(
                             context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
                             context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
                         )
-                        setOnClickListener { onChoice(row.choice) }
                         isClickable = true
+                        setOnClickListener {
+                            selection = actionIdx
+                            paintRows(scrollToFocused = false, animateFocus = false)
+                            if (SlotMenuNav.shouldTriggerTouchHaptic(
+                                    hapticsEnabled(),
+                                    isCancel = row.choice == Choice.CANCEL,
+                                )
+                            ) {
+                                performHaptic(this, HapticFeedbackConstants.VIRTUAL_KEY)
+                            }
+                            onChoice(row.choice)
+                        }
                     }
-                    actionRows.add(BoundAction(actionTv, row, tone))
-                    list.addView(
+                    val actionTv = TextView(context).apply {
+                        text = labelText
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    rowContainer.addView(
                         actionTv,
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    val glyphRes = SlotMenuNav.trailingGlyphRes(
+                        choice = row.choice,
+                        destructive = tone == SlotMenuNav.RowTone.DESTRUCTIVE,
+                    )
+                    val glyphIv = glyphRes?.let { resId ->
+                        val sizeDp = if (tone == SlotMenuNav.RowTone.DESTRUCTIVE) 14 else 16
+                        ImageView(context).apply {
+                            setImageResource(resId)
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                        }.also { iv ->
+                            rowContainer.addView(
+                                iv,
+                                LinearLayout.LayoutParams(context.dp(sizeDp), context.dp(sizeDp)).apply {
+                                    marginStart = context.dp(UiDimens.SPACE_SM)
+                                },
+                            )
+                        }
+                    }
+                    actionRows.add(BoundAction(rowContainer, actionTv, glyphIv, row, tone))
+                    list.addView(
+                        rowContainer,
                         LinearLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -488,12 +592,15 @@ class SlotMenu(
                 accent = accentColor,
                 tokens = themeTokens,
             )
-            bound.view.background = rowBackground(spec)
-            bound.view.setTextColor(spec.textColor)
-            bound.view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
-            bound.view.isSelected = selected
+            bound.container.background = rowBackground(spec)
+            bound.container.isSelected = selected
+            bound.labelView.setTextColor(spec.textColor)
+            bound.labelView.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            bound.glyphView?.imageTintList = ColorStateList.valueOf(
+                SlotMenuNav.trailingGlyphTint(bound.tone, selected),
+            )
             OverlayPrimitives.applyFocusScale(
-                view = bound.view,
+                view = bound.container,
                 selected = selected,
                 focusedScale = SlotMenuNav.FOCUS_SCALE,
                 animate = animateFocus,
@@ -501,7 +608,7 @@ class SlotMenu(
             )
         }
         if (!scrollToFocused) return
-        val focused = actionRows.getOrNull(sel)?.view ?: return
+        val focused = actionRows.getOrNull(sel)?.container ?: return
         scrollHost?.smoothScrollToCenter(focused)
     }
 

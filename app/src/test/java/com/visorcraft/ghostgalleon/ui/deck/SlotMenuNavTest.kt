@@ -7,6 +7,7 @@ import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -99,5 +100,27 @@ class SlotMenuNavTest {
         assertEquals(0f to 1f, SlotMenuNav.scrollCueAlphas(canScrollUp = false, canScrollDown = true))
         assertEquals(1f to 0f, SlotMenuNav.scrollCueAlphas(canScrollUp = true, canScrollDown = false))
         assertEquals(1f to 1f, SlotMenuNav.scrollCueAlphas(canScrollUp = true, canScrollDown = true))
+    }
+
+    @Test
+    fun `trailingGlyphRes maps drill-down chevrons, destructive close icons, and unadorned toggles`() {
+        assertEquals(
+            R.drawable.ic_chevron_right,
+            SlotMenuNav.trailingGlyphRes(SlotMenu.Choice.ADD_TO_COLLECTION, destructive = false),
+        )
+        assertEquals(
+            R.drawable.ic_chevron_right,
+            SlotMenuNav.trailingGlyphRes(SlotMenu.Choice.SCREENS, destructive = false),
+        )
+        assertEquals(
+            R.drawable.ic_close,
+            SlotMenuNav.trailingGlyphRes(SlotMenu.Choice.REMOVE_FROM_GRID, destructive = true),
+        )
+        assertNull(SlotMenuNav.trailingGlyphRes(SlotMenu.Choice.MOVE, destructive = false))
+        assertNull(SlotMenuNav.trailingGlyphRes(SlotMenu.Choice.CANCEL, destructive = false))
+
+        assertTrue(SlotMenuNav.shouldTriggerTouchHaptic(hapticsEnabled = true, isCancel = false))
+        assertFalse(SlotMenuNav.shouldTriggerTouchHaptic(hapticsEnabled = true, isCancel = true))
+        assertFalse(SlotMenuNav.shouldTriggerTouchHaptic(hapticsEnabled = false, isCancel = false))
     }
 }
