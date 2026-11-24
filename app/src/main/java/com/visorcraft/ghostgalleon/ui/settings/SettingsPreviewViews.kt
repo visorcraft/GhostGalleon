@@ -516,3 +516,58 @@ internal class GridDensityPreviewView(
         canvas.drawRoundRect(rect, outerR, outerR, hairlinePaint)
     }
 }
+
+/**
+ * Lightweight zero-allocation determinate progress bar for Settings jobs
+ * (artwork scraping, storage/playtime meters). Updates strictly in-place via
+ * [setFraction].
+ */
+internal class DeterminateProgressBarView(
+    context: Context,
+    tokens: ThemeTokens,
+    accent: Int,
+) : View(context) {
+
+    private var fraction: Float = 0f
+    private val rect = RectF()
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.surfaceSunken(tokens)
+    }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = accent
+    }
+    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ThemePack.hairlineDivider(tokens)
+        style = Paint.Style.STROKE
+        strokeWidth = context.strokePx(1).toFloat()
+    }
+
+    init {
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    fun setFraction(next: Float) {
+        val clamped = if (next.isNaN() || next.isInfinite()) 0f else next.coerceIn(0f, 1f)
+        if (kotlin.math.abs(clamped - fraction) >= 0.0005f) {
+            fraction = clamped
+            invalidate()
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val r = h * 0.5f
+        rect.set(0f, 0f, w, h)
+        canvas.drawRoundRect(rect, r, r, trackPaint)
+        if (fraction > 0.002f) {
+            val fillW = (w * fraction).coerceAtLeast(h)
+            rect.set(0f, 0f, fillW.coerceAtMost(w), h)
+            canvas.drawRoundRect(rect, r, r, fillPaint)
+        }
+        val inset = borderPaint.strokeWidth * 0.5f
+        rect.set(inset, inset, w - inset, h - inset)
+        canvas.drawRoundRect(rect, r, r, borderPaint)
+    }
+}

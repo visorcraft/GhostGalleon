@@ -111,4 +111,14 @@ class SettingsUiLogicTest {
         assertEquals(KeyEvent.KEYCODE_BUTTON_A, SettingsUiLogic.boundKeyCodeFor(Action.CONFIRM, map))
         assertNull(SettingsUiLogic.boundKeyCodeFor(Action.SWAP_SCREENS, map))
     }
+
+    @Test
+    fun `scrapeProgressFraction clamps zero, partial, complete, and overflow totals`() {
+        assertEquals(0f, SettingsUiLogic.scrapeProgressFraction(0, 0), 0.0001f)
+        assertEquals(0f, SettingsUiLogic.scrapeProgressFraction(5, -2), 0.0001f)
+        assertEquals(0f, SettingsUiLogic.scrapeProgressFraction(-3, 10), 0.0001f)
+        assertEquals(0.25f, SettingsUiLogic.scrapeProgressFraction(5, 20), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.scrapeProgressFraction(20, 20), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.scrapeProgressFraction(25, 20), 0.0001f)
+    }
 }

@@ -191,6 +191,12 @@ internal object SettingsUiLogic {
     /** Resolve the first keycode currently mapped to [action], or null if unbound. */
     fun boundKeyCodeFor(action: Action, keyMap: Map<Int, Action>): Int? =
         keyMap.entries.firstOrNull { it.value == action }?.key
+
+    /** Normalized `[0f..1f]` progress ratio for determinate Settings progress bars. */
+    fun scrapeProgressFraction(done: Int, total: Int): Float {
+        if (total <= 0) return 0f
+        return (done.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -873,11 +879,23 @@ class SettingsActivity : AppCompatActivity() {
     private var scrapeLabel: TextView? = null
     private var scrapeValue: TextView? = null
     private var scrapeRow: View? = null
+    private var scrapeProgressBar: DeterminateProgressBarView? = null
 
     private val scrapeListener = object : ScrapeJob.Listener {
         override fun onProgress(done: Int, total: Int) {
             scrapeLabel?.setText(R.string.action_cancel)
-            scrapeValue?.text = getString(R.string.format_progress, done, total)
+            scrapeLabel?.setTextColor(UiDimens.COLOR_DESTRUCTIVE)
+            scrapeValue?.apply {
+                text = getString(R.string.format_progress, done, total)
+                setTextColor(accentOnSunken)
+                background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                visibility = View.VISIBLE
+            }
+            scrapeProgressBar?.apply {
+                visibility = View.VISIBLE
+                setFraction(SettingsUiLogic.scrapeProgressFraction(done, total))
+            }
         }
 
         override fun onFinished(summary: SgdbScraper.Summary) {
@@ -905,18 +923,49 @@ class SettingsActivity : AppCompatActivity() {
         sgdbKeyValue?.setText(if (hasKey) R.string.label_set else R.string.label_not_set)
         if (running) {
             scrapeLabel?.setText(R.string.action_cancel)
-            scrapeValue?.text = if (job.progressTotal > 0) {
-                getString(
-                    R.string.format_progress,
-                    job.progressDone,
-                    job.progressTotal,
+            scrapeLabel?.setTextColor(UiDimens.COLOR_DESTRUCTIVE)
+            scrapeValue?.apply {
+                text = if (job.progressTotal > 0) {
+                    getString(
+                        R.string.format_progress,
+                        job.progressDone,
+                        job.progressTotal,
+                    )
+                } else {
+                    getString(R.string.glyph_ellipsis)
+                }
+                setTextColor(accentOnSunken)
+                background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                visibility = View.VISIBLE
+            }
+            scrapeProgressBar?.apply {
+                visibility = View.VISIBLE
+                setFraction(
+                    SettingsUiLogic.scrapeProgressFraction(job.progressDone, job.progressTotal),
                 )
-            } else {
-                getString(R.string.glyph_ellipsis)
             }
         } else {
             scrapeLabel?.setText(R.string.settings_download_artwork)
-            scrapeValue?.text = if (hasKey) "" else getString(R.string.settings_add_api_key_first)
+            scrapeLabel?.setTextColor(UiDimens.ALPHA_PRIMARY)
+            scrapeValue?.apply {
+                if (hasKey) {
+                    text = ""
+                    background = null
+                    setPadding(0, 0, 0, 0)
+                    visibility = View.GONE
+                } else {
+                    setText(R.string.settings_add_api_key_first)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    background = null
+                    setPadding(0, 0, 0, 0)
+                    visibility = View.VISIBLE
+                }
+            }
+            scrapeProgressBar?.apply {
+                setFraction(0f)
+                visibility = View.GONE
+            }
         }
         val usable = hasKey || running
         scrapeRow?.isEnabled = usable
@@ -1210,7 +1259,18 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (job.start(key, app.romEntries)) {
             scrapeLabel?.setText(R.string.action_cancel)
-            scrapeValue?.setText(R.string.glyph_ellipsis)
+            scrapeLabel?.setTextColor(UiDimens.COLOR_DESTRUCTIVE)
+            scrapeValue?.apply {
+                setText(R.string.glyph_ellipsis)
+                setTextColor(accentOnSunken)
+                background = TileBackgrounds.valueBadge(this@SettingsActivity, accent)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                visibility = View.VISIBLE
+            }
+            scrapeProgressBar?.apply {
+                setFraction(0f)
+                visibility = View.VISIBLE
+            }
         }
     }
 
@@ -1738,6 +1798,10 @@ class SettingsActivity : AppCompatActivity() {
                     }
                 }
             }
+            return
+        }
+        if (view.isFocusable && view !is ScrollView) {
+            view.nextFocusLeftId = navId
             return
         }
         if (view is ViewGroup) {
@@ -3465,22 +3529,55 @@ class SettingsActivity : AppCompatActivity() {
         })
         addActionRow(artCard, datRow)
         val downloadRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(60)
+            setOnClickListener { onScrapeRowClicked() }
+        }
+        val downloadTop = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setOnClickListener { onScrapeRowClicked() }
         }
         val downloadLabel = rowLabel(getString(R.string.settings_download_artwork))
         scrapeLabel = downloadLabel
-        downloadRow.addView(downloadLabel, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        downloadTop.addView(downloadLabel, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
         val downloadValue = TextView(this).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(accentOnCard)
+            setTypeface(typeface, Typeface.BOLD)
+            useTabularNumerals()
         }
         scrapeValue = downloadValue
-        downloadRow.addView(downloadValue)
+        downloadTop.addView(downloadValue)
+        downloadRow.addView(
+            downloadTop,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val progressBar = DeterminateProgressBarView(this, themeTokens, accent).apply {
+            visibility = View.GONE
+        }
+        scrapeProgressBar = progressBar
+        downloadRow.addView(
+            progressBar,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply {
+                topMargin = dp(8)
+            },
+        )
         scrapeRow = downloadRow
-        addActionRow(artCard, downloadRow)
+        addDividerIfNeeded(artCard)
+        styleFocusableRow(downloadRow)
+        downloadRow.setPadding(dp(10), dp(12), dp(10), dp(12))
+        artCard.addView(
+            downloadRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         toggle(
             artCard,
             getString(R.string.settings_scrape_wifi_only),
