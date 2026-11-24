@@ -67,6 +67,9 @@ object ThemePack {
     /** WCAG AA minimum contrast ratio for normal-size text. */
     const val MIN_TEXT_CONTRAST: Double = 4.5
 
+    /** Relative luminance cutoff above which accent glows/tints dampen alpha (e.g. OLED `#E0E0E0`). */
+    const val HIGH_LUMINANCE_THRESHOLD: Double = 0.55
+
     fun byId(id: String?): ThemeTokens =
         BUILTINS.firstOrNull { it.id.equals(id?.trim(), ignoreCase = true) } ?: GHOST
 
@@ -255,14 +258,21 @@ object ThemePack {
         return blendColors(fill, 0xFFFFFFFF.toInt(), lift)
     }
 
+    /** True when [accent] is bright enough (like OLED `#E0E0E0`) to dampen aura/tint alpha. */
+    fun isHighLuminanceAccent(accent: Int): Boolean =
+        relativeLuminance(accent) > HIGH_LUMINANCE_THRESHOLD
+
+    /** Root OLED screen backdrop color sitting beneath [surfaceSunken] and [cardFill]. */
+    @Suppress("UNUSED_PARAMETER")
+    fun backdropColor(tokens: ThemeTokens): Int = 0xFF000000.toInt()
+
     /**
      * Luminance-adaptive translucent aura derived from [accent]. Bright accents
      * (such as OLED `#E0E0E0`) scale down alpha so glows stay refined on dark cards.
      */
     fun accentGlowColor(accent: Int, alpha: Int = 0x44): Int {
         val clamped = alpha.coerceIn(0, 255)
-        val lum = relativeLuminance(accent)
-        val scaled = if (lum > 0.55) (clamped * 0.65).toInt() else clamped
+        val scaled = if (isHighLuminanceAccent(accent)) (clamped * 0.65).toInt() else clamped
         return withAlpha(accent, scaled)
     }
 
@@ -272,8 +282,7 @@ object ThemePack {
      */
     fun accentHairline(accent: Int, alpha: Int = 0x66): Int {
         val clamped = alpha.coerceIn(0, 255)
-        val lum = relativeLuminance(accent)
-        val scaled = if (lum > 0.55) (clamped * 0.72).toInt() else clamped
+        val scaled = if (isHighLuminanceAccent(accent)) (clamped * 0.72).toInt() else clamped
         return withAlpha(accent, scaled)
     }
 

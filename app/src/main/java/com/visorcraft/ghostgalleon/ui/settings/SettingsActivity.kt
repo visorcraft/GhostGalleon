@@ -155,7 +155,7 @@ internal object SettingsUiLogic {
      */
     fun navActiveSurface(tokens: ThemeTokens, accent: Int): Int {
         val base = ThemePack.surfaceElevated(tokens)
-        val tint = if (ThemePack.relativeLuminance(accent) > 0.55) 0.08f else 0.14f
+        val tint = if (ThemePack.isHighLuminanceAccent(accent)) 0.08f else 0.14f
         return ThemePack.blendColors(base, accent, tint)
     }
 
@@ -1694,11 +1694,12 @@ class SettingsActivity : AppCompatActivity() {
         view.setTypeface(null, Typeface.BOLD)
         view.useTabularNumerals()
         view.setTextColor(if (active) accentOnSunken else UiDimens.ALPHA_MUTED)
-        view.background = if (active) {
-            TileBackgrounds.valueBadge(this, accent, cornerRadiusDp = UiDimens.RADIUS_SM)
-        } else {
-            TileBackgrounds.sunkenField(this, cornerRadiusDp = UiDimens.RADIUS_SM)
-        }
+        TileBackgrounds.applyStatusBadgeState(
+            view = view,
+            active = active,
+            accent = accent,
+            cornerRadiusDp = UiDimens.RADIUS_SM,
+        )
         view.setPadding(dp(9), dp(3), dp(9), dp(3))
     }
 
@@ -1777,9 +1778,6 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun dpF(value: Int): Float =
         com.visorcraft.ghostgalleon.ui.UiDimens.dpF(this, value)
-
-    private fun withAlpha(color: Int, alpha: Int): Int =
-        (color and 0x00FFFFFF) or (alpha shl 24)
 
     private val offTint = 0x4DFFFFFF.toInt()
 

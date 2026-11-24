@@ -168,8 +168,10 @@ class ControllerLabActivity : AppCompatActivity() {
     private var accentOnCard: Int = UiDimens.ALPHA_PRIMARY
     private var accentOnSunken: Int = UiDimens.ALPHA_PRIMARY
     private var onAccent: Int = UiDimens.ALPHA_PRIMARY
+    private var cardSurface: Int = ThemePack.DEFAULT_CARD_FILL
     private var sunkenSurface: Int = 0xFF101014.toInt()
     private var hairline: Int = ThemePack.HAIRLINE_LIGHT
+    private var accentBorder: Int = ThemePack.HAIRLINE_LIGHT
     private var stickReleaseThreshold: Float = 0.5f
     private var motionEnabled: Boolean = true
     private val padViews = mutableMapOf<PadIndicator, TextView>()
@@ -193,9 +195,11 @@ class ControllerLabActivity : AppCompatActivity() {
 
         val tokens = ThemePack.resolve(app.settings)
         accentColor = app.settings.accentColor
+        cardSurface = ThemePack.cardFill(tokens)
         sunkenSurface = ThemePack.surfaceSunken(tokens)
         hairline = ThemePack.hairlineDivider(tokens)
-        accentOnCard = ThemePack.accentTextColor(accentColor, ThemePack.cardFill(tokens))
+        accentBorder = ThemePack.accentHairline(accentColor)
+        accentOnCard = ThemePack.accentTextColor(accentColor, cardSurface)
         accentOnSunken = ThemePack.accentTextColor(accentColor, sunkenSurface)
         onAccent = SettingsUiLogic.accessibleOnAccent(accentColor)
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accentColor)
@@ -740,23 +744,25 @@ class ControllerLabActivity : AppCompatActivity() {
         val tv = padViews[indicator] ?: return
         val active = indicator in pressedButtons || indicator in pressedHatDirs
         val seen = indicator in seenIndicators
-        val bg = GradientDrawable().apply {
-            cornerRadius = dpF(8)
-            when {
-                active -> {
-                    setColor(accentColor)
-                }
-                seen -> {
-                    setColor(ThemePack.cardFill(ThemePack.resolve(app.settings)))
-                    setStroke(strokePx(1), ThemePack.accentHairline(accentColor))
-                }
-                else -> {
-                    setColor(sunkenSurface)
-                    setStroke(strokePx(1), hairline)
-                }
+        val bg = (tv.background as? GradientDrawable)?.apply { mutate() }
+            ?: GradientDrawable().also {
+                it.cornerRadius = dpF(8)
+                tv.background = it
+            }
+        when {
+            active -> {
+                bg.setColor(accentColor)
+                bg.setStroke(0, Color.TRANSPARENT)
+            }
+            seen -> {
+                bg.setColor(cardSurface)
+                bg.setStroke(strokePx(1), accentBorder)
+            }
+            else -> {
+                bg.setColor(sunkenSurface)
+                bg.setStroke(strokePx(1), hairline)
             }
         }
-        tv.background = bg
         tv.setTextColor(
             when {
                 active -> onAccent

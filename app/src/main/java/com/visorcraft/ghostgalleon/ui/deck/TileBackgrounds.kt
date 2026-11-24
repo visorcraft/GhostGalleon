@@ -414,6 +414,37 @@ object TileBackgrounds {
         }
     }
 
+    /**
+     * Zero-allocation in-place badge restyle for live counters, deadzone pills,
+     * and Browse Chrome power-rail counts: mutates an existing [GradientDrawable]
+     * stroke without re-allocating on slider drags or toggle ticks.
+     */
+    fun applyStatusBadgeState(
+        view: View,
+        active: Boolean,
+        accent: Int,
+        cornerRadiusDp: Int = UiDimens.RADIUS_SM,
+    ) {
+        val context = view.context
+        val existing = view.background as? GradientDrawable
+        if (existing == null) {
+            view.background = if (active) {
+                valueBadge(context, accent, cornerRadiusDp)
+            } else {
+                sunkenField(context, cornerRadiusDp)
+            }
+            return
+        }
+        val t = tokens(context)
+        existing.mutate()
+        existing.setColor(ThemePack.surfaceSunken(t))
+        existing.cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
+        existing.setStroke(
+            UiDimens.strokePx(context, 1),
+            if (active) ThemePack.accentHairline(accent) else ThemePack.hairlineDivider(t),
+        )
+    }
+
     /** Vertical rounded pill bar (e.g. 3dp active indicator on left nav blade). */
     fun activeAccentBar(
         context: Context,

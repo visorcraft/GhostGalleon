@@ -187,5 +187,13 @@ class ThemePackTest {
         assertEquals(0xFF000000.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0f))
         assertEquals(0xFFFFFFFF.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 1f))
         assertEquals(0xFF7F7F7F.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0.5f))
+
+        org.junit.Assert.assertTrue(ThemePack.isHighLuminanceAccent(ThemePack.OLED.accentColor))
+        org.junit.Assert.assertFalse(ThemePack.isHighLuminanceAccent(ThemePack.GHOST.accentColor))
+        org.junit.Assert.assertFalse(ThemePack.isHighLuminanceAccent(ThemePack.THREEDS.accentColor))
+        org.junit.Assert.assertFalse(ThemePack.isHighLuminanceAccent(ThemePack.NEON.accentColor))
+        for (tokens in ThemePack.BUILTINS) {
+            assertEquals(0xFF000000.toInt(), ThemePack.backdropColor(tokens))
+        }
     }
 }
