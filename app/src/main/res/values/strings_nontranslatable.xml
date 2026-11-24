@@ -14,7 +14,6 @@
     <string name="credit_listenablefuture" translatable="false">Guava ListenableFuture (transitive)</string>
     <string name="glyph_add" translatable="false">+</string>
     <string name="glyph_favorite" translatable="false">★</string>
-    <string name="glyph_folder" translatable="false">📁</string>
     <string name="glyph_back" translatable="false">←</string>
     <string name="glyph_dropdown" translatable="false">▾</string>
     <string name="glyph_check_prefix" translatable="false">✓ </string>

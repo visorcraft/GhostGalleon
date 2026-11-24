@@ -4,12 +4,15 @@ import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
 import android.widget.AdapterView
 import android.widget.BaseAdapter
@@ -40,11 +43,17 @@ import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.settings.Folders
 import com.visorcraft.ghostgalleon.settings.GridSlots
+import com.visorcraft.ghostgalleon.settings.RomNames
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
+import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 // The curated grid: renders settings.gridSlots — ordered, null = blank
 // ("+") cell — padded up to a whole number of rows (GridSlots.paddedCount)
@@ -207,20 +216,40 @@ class GridDeck(
         }
     }
 
-    // Accent ring + 1.08 scale for the selected cell, plain card for the
-    // rest. Shared by the adapter bind and the in-place rebind so both
-    // paths paint identical visuals. While the dock holds focus the grid
-    // shows NO ring — the focused dock slot carries it instead.
-    private fun applySelectionVisuals(frame: FrameLayout, selected: Boolean) {
-        val cell = frame.getChildAt(0)
-        cell.background = if (selected && state.dockSlot == null) {
-            TileBackgrounds.selected(frame.context, settings.accentColor)
-        } else {
-            TileBackgrounds.card(frame.context)
+    // Accent ring + 1.08 scale + Z-lift for the selected cell; recessed blank
+    // surface for empty "+" slots; standard card for unfocused filled tiles.
+    // Shared by adapter bind (snap) and in-place rebind (cancelable 80ms scale).
+    // While the dock holds focus the grid shows NO ring.
+    private fun applySelectionVisuals(
+        frame: FrameLayout,
+        selected: Boolean,
+        animate: Boolean = frame.isLaidOut,
+    ) {
+        val cell = frame.getChildAt(0) ?: return
+        val isFocused = selected && state.dockSlot == null
+        val isBlank = cell is TextView
+        cell.background = when {
+            isFocused -> TileBackgrounds.selected(frame.context, settings.accentColor)
+            isBlank -> TileBackgrounds.blankSlot(frame.context)
+            else -> TileBackgrounds.card(frame.context)
         }
-        val scale = if (selected && state.dockSlot == null) 1.08f else 1f
-        frame.scaleX = scale
-        frame.scaleY = scale
+        if (cell is TextView) {
+            cell.setTextColor(if (isFocused) UiDimens.ALPHA_SECONDARY else BLANK_PLUS_IDLE_COLOR)
+        }
+        val scale = if (isFocused) FOCUS_SCALE else 1f
+        frame.animate().cancel()
+        frame.translationZ = if (isFocused) frame.dpF(8) else 0f
+        if (animate) {
+            frame.animate()
+                .scaleX(scale)
+                .scaleY(scale)
+                .setDuration(FOCUS_ANIM_MS)
+                .setInterpolator(FOCUS_INTERPOLATOR)
+                .start()
+        } else {
+            frame.scaleX = scale
+            frame.scaleY = scale
+        }
     }
 
     // The lifted tile pulses its alpha so it reads as "in hand".
@@ -546,7 +575,7 @@ class GridDeck(
         val gridPadTop = gridPadV + dp(8)
         val spacing = dp(12)
         val cellPadding = dp(8)
-        val labelHeight = if (settings.showLabels) dp(20) else 0
+        val labelHeight = if (settings.showLabels) dp(24) else 0
 
         val grid = GridView(context).apply {
             numColumns = columns
@@ -580,16 +609,24 @@ class GridDeck(
                 lastHeight = grid.height
                 val cellWidth =
                     (grid.width - gridPadH * 2 - spacing * (columns - 1)) / columns
-                val iconSize = GridIconMetrics.iconSizePx(
+                val guessIconSize = GridIconMetrics.iconSizePx(
                     cellWidth, settings.iconSizeDp, density,
                 )
-                val guessCellHeight = iconSize + labelHeight + cellPadding * 2
+                val guessCellHeight = guessIconSize + labelHeight + cellPadding * 2
                 val visibleRows =
                     ((grid.height - gridPadTop - gridPadV + spacing) /
                         (guessCellHeight + spacing)).coerceAtLeast(1)
                 val cellHeight =
                     (grid.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
+                val iconSize = GridIconMetrics.iconSizePx(
+                    cellWidthPx = cellWidth,
+                    cellHeightPx = cellHeight,
+                    cellPaddingPx = cellPadding,
+                    labelHeightPx = labelHeight,
+                    iconSizeDp = settings.iconSizeDp,
+                    density = density,
+                )
                 val adapter = (grid.adapter as? GridAdapter)
                     ?: GridAdapter(context, cellWidth, iconSize, cellHeight, cellPadding)
                         .also { grid.adapter = it }
@@ -637,7 +674,7 @@ class GridDeck(
         val gridPadTop = gridPadV + dp(8)
         val spacing = dp(12)
         val cellPadding = dp(8)
-        val labelHeight = if (settings.showLabels) dp(20) else 0
+        val labelHeight = if (settings.showLabels) dp(24) else 0
 
         val pager = object : HorizontalScrollView(context) {
             override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean = false
@@ -667,16 +704,24 @@ class GridDeck(
                 val pageWidth = pager.width
                 val cellWidth =
                     (pageWidth - gridPadH * 2 - spacing * (columns - 1)) / columns
-                val iconSize = GridIconMetrics.iconSizePx(
+                val guessIconSize = GridIconMetrics.iconSizePx(
                     cellWidth, settings.iconSizeDp, density,
                 )
-                val guessCellHeight = iconSize + labelHeight + cellPadding * 2
+                val guessCellHeight = guessIconSize + labelHeight + cellPadding * 2
                 val visibleRows =
                     ((pager.height - gridPadTop - gridPadV + spacing) /
                         (guessCellHeight + spacing)).coerceAtLeast(1)
                 val cellHeight =
                     (pager.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
+                val iconSize = GridIconMetrics.iconSizePx(
+                    cellWidthPx = cellWidth,
+                    cellHeightPx = cellHeight,
+                    cellPaddingPx = cellPadding,
+                    labelHeightPx = labelHeight,
+                    iconSizeDp = settings.iconSizeDp,
+                    density = density,
+                )
                 val cellsPerPage = columns * visibleRows
                 val totalPages =
                     ((slotCount + cellsPerPage - 1) / cellsPerPage).coerceAtLeast(1)
@@ -725,49 +770,6 @@ class GridDeck(
         })
         return pager
     }
-
-    // Kicks the wallpaper decode onto a background executor so view build
-    // never blocks on I/O + bitmap work. The result is applied on the main
-    // thread only when it is still current: the target view must still be
-    // attached and the wallpaper setting unchanged (a settings rebuild
-    // races the decode, and the stale bitmap must not land on a recycled
-    // view).
-    private fun loadWallpaperAsync(context: Context, uriString: String, target: ImageView) {
-        WALLPAPER_EXECUTOR.execute {
-            val bitmap = loadWallpaper(context, uriString) ?: return@execute
-            target.post {
-                val current = (activity.application as GhostGalleonApp).settings.wallpaperUri
-                if (target.isAttachedToWindow && current == uriString) {
-                    target.setImageBitmap(bitmap)
-                }
-            }
-        }
-    }
-
-    // Decodes the SAF-picked wallpaper downscaled to roughly display size;
-    // null on any failure (revoked grant, deleted file) so the grid simply
-    // falls back to black. Runs on WALLPAPER_EXECUTOR, never the UI thread.
-    private fun loadWallpaper(context: Context, uriString: String): android.graphics.Bitmap? =
-        runCatching {
-            val uri = android.net.Uri.parse(uriString)
-            val metrics = context.resources.displayMetrics
-            val bounds = android.graphics.BitmapFactory.Options()
-                .apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(uri)?.use {
-                android.graphics.BitmapFactory.decodeStream(it, null, bounds)
-            }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= metrics.widthPixels &&
-                bounds.outHeight / (sample * 2) >= metrics.heightPixels
-            ) {
-                sample *= 2
-            }
-            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-            context.contentResolver.openInputStream(uri)?.use {
-                android.graphics.BitmapFactory.decodeStream(it, null, opts)
-            }
-        }.getOrNull()
 
     private fun updateDockSlots(slots: List<String?>, feedback: UiText? = null) {
         val app = activity.application as GhostGalleonApp
@@ -1668,7 +1670,7 @@ class GridDeck(
                 moveIndex == null &&
                 frame.childCount > 0
             ) {
-                applySelectionVisuals(frame, absPos == selectedIndex())
+                applySelectionVisuals(frame, absPos == selectedIndex(), animate = false)
             } else {
                 populateFrame(frame, absPos)
                 frame.setTag(R.id.grid_cell_key, key)
@@ -1678,10 +1680,8 @@ class GridDeck(
         }
 
         // (Re)builds a cell for the slot at [position]: a filled tile
-        // (app icon or ROM platform tile + optional label + dock badge) or
-        // a blank "+" tile, then the current selection visuals. Called by
-        // getView and by the in-place rebind during move mode, where
-        // contents swap.
+        // (app icon or ROM cover/platform tile + optional label + scrimmed
+        // corner badges) or a recessed blank "+" tile, then selection visuals.
         fun populateFrame(frame: FrameLayout, position: Int) {
             val density = context.resources.displayMetrics.density
             fun dp(value: Int) = (value * density).toInt()
@@ -1719,28 +1719,34 @@ class GridDeck(
                         ViewGroup.LayoutParams.MATCH_PARENT))
                 }
                 else -> {
-                    // Blank slot (or a value that no longer resolves): empty
-                    // card with a large dim "+".
+                    // Blank slot (or a value that no longer resolves): recessed
+                    // outline surface with a clean subtle "+".
                     frame.addView(TextView(context).apply {
                         setText(R.string.glyph_add)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 44f)
-                        setTextColor(0x44FFFFFF)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+                        setTextColor(BLANK_PLUS_IDLE_COLOR)
                         gravity = Gravity.CENTER
                     }, FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT))
                 }
             }
-            // Frame wrapper so pinned tiles can carry an accent badge dot at
-            // their top-right corner; ROM and app keys pin identically.
             val filled = key != null && (romEntry != null || appEntry != null || isFolder)
+            val badgeSize = dp(18)
+            val badgeInset = dp(6)
+            // Dock pin badge: accent dot centered inside a dark circular scrim
+            // so it stays legible over bright cover artwork.
             if (filled && key in settings.dockSlots) {
-                val badge = View(context).apply {
+                val scrim = FrameLayout(context).apply {
+                    background = cornerBadgeScrim(context)
+                }
+                val dot = View(context).apply {
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(settings.accentColor)
+                        setColor(ThemePack.accentTextColor(settings.accentColor, Color.BLACK))
                     }
                 }
+                scrim.addView(dot, FrameLayout.LayoutParams(dp(8), dp(8), Gravity.CENTER))
                 // When a favorite star is also shown, park the dock dot at
                 // top-start so it does not cover the ★ at top-end.
                 val dockGravity = if (key in settings.favorites) {
@@ -1748,84 +1754,134 @@ class GridDeck(
                 } else {
                     Gravity.TOP or Gravity.END
                 }
-                frame.addView(badge, FrameLayout.LayoutParams(
-                    dp(10), dp(10), dockGravity).apply {
-                    topMargin = dp(4)
-                    if (dockGravity and Gravity.END == Gravity.END) marginEnd = dp(4)
-                    else marginStart = dp(4)
+                frame.addView(scrim, FrameLayout.LayoutParams(
+                    badgeSize, badgeSize, dockGravity).apply {
+                    topMargin = badgeInset
+                    if (dockGravity and Gravity.END == Gravity.END) marginEnd = badgeInset
+                    else marginStart = badgeInset
                 })
             }
-            // Favorite badge: small ★ at top-end on filled favorited slots.
+            // Favorite badge: ★ inside a matching dark circular scrim at top-end.
             if (filled && key in settings.favorites) {
-                frame.addView(TextView(context).apply {
+                val star = TextView(context).apply {
                     setText(R.string.glyph_favorite)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTextColor(0xFFFFD54F.toInt())
                     gravity = Gravity.CENTER
                     includeFontPadding = false
-                }, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    background = cornerBadgeScrim(context)
+                }
+                frame.addView(star, FrameLayout.LayoutParams(
+                    badgeSize,
+                    badgeSize,
                     Gravity.TOP or Gravity.END,
                 ).apply {
-                    topMargin = dp(2)
-                    marginEnd = dp(4)
+                    topMargin = badgeInset
+                    marginEnd = badgeInset
                 })
             }
-            applySelectionVisuals(frame, position == selectedIndex())
+            applySelectionVisuals(frame, position == selectedIndex(), animate = false)
         }
+
+        private fun cornerBadgeScrim(ctx: Context): GradientDrawable =
+            GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(BADGE_SCRIM_FILL)
+                setStroke(ctx.strokePx(1), BADGE_SCRIM_STROKE)
+            }
+
+        private fun buildCellLabel(labelText: String, color: Int = Color.WHITE): TextView =
+            TextView(context).apply {
+                text = labelText
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(color)
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                includeFontPadding = false
+            }
+
+        private fun labelParams(): LinearLayout.LayoutParams =
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = context.dp(4) }
 
         private fun buildFolderCell(key: String): View {
             val folderId = SlotKey.folderId(key)
             val spec = folderId?.let { settings.folders[it] }
             val name = spec?.name ?: folderId ?: context.getString(R.string.label_folder)
             val count = spec?.members?.size ?: 0
+            val countLabel = context.resources.getQuantityString(
+                R.plurals.count_items,
+                count,
+                count,
+            )
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
+                contentDescription = listOf(name, countLabel).joinToString(", ")
             }
-            val glyph = TextView(context).apply {
-                setText(R.string.glyph_folder)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-                gravity = Gravity.CENTER
+            val sunkenFill = TileBackgrounds.surfaceSunken(context)
+            val iconBox = FrameLayout(context).apply {
                 background = GradientDrawable().apply {
-                    setColor(0xFF2A2A38.toInt())
-                    cornerRadius = 12 * context.resources.displayMetrics.density
+                    setColor(sunkenFill)
+                    cornerRadius = context.dpF(12)
+                    setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
                 }
             }
-            cell.addView(glyph, LinearLayout.LayoutParams(iconSize, iconSize))
-            if (settings.showLabels) {
-                cell.addView(TextView(context).apply {
-                    text = name
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                }, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
-            cell.addView(TextView(context).apply {
-                text = context.resources.getQuantityString(
-                    R.plurals.count_items,
-                    count,
-                    count,
+            val vectorSize = (iconSize * 0.54f).toInt().coerceAtLeast(context.dp(20))
+            val folderIcon = ImageView(context).apply {
+                setImageResource(R.drawable.ic_folder)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setColorFilter(
+                    ThemePack.accentTextColor(settings.accentColor, sunkenFill),
+                    PorterDuff.Mode.SRC_IN,
                 )
+            }
+            iconBox.addView(
+                folderIcon,
+                FrameLayout.LayoutParams(vectorSize, vectorSize, Gravity.CENTER),
+            )
+            // Compact dark-scrimmed count pill inside the folder box corner so
+            // the folder title fits cleanly in the single-line label budget.
+            val countBadge = TextView(context).apply {
+                text = count.toString()
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                setTextColor(0x88FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
-                maxLines = 1
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT))
+                includeFontPadding = false
+                minWidth = context.dp(18)
+                setPadding(context.dp(5), context.dp(2), context.dp(5), context.dp(2))
+                background = GradientDrawable().apply {
+                    setColor(BADGE_SCRIM_FILL)
+                    cornerRadius = context.dpF(8)
+                    setStroke(context.strokePx(1), BADGE_SCRIM_STROKE)
+                }
+            }
+            iconBox.addView(
+                countBadge,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.END,
+                ).apply {
+                    marginEnd = context.dp(4)
+                    bottomMargin = context.dp(4)
+                },
+            )
+            cell.addView(iconBox, LinearLayout.LayoutParams(iconSize, iconSize))
+            if (settings.showLabels) {
+                cell.addView(buildCellLabel(name), labelParams())
+            }
             return cell
         }
 
         // ROM tile: cached artwork over the platform placeholder (async
-        // fill; placeholder shows until/unless art arrives) plus the ROM
-        // name label under the same showLabels setting as apps.
+        // fill; placeholder shows until/unless art arrives) plus the custom or
+        // original ROM display name under the same showLabels setting as apps.
         private fun buildRomCell(entry: RomEntry): View {
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1842,17 +1898,8 @@ class GridDeck(
                 ),
                 LinearLayout.LayoutParams(iconSize, iconSize))
             if (settings.showLabels) {
-                val label = TextView(context).apply {
-                    text = entry.name
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                }
-                cell.addView(label, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT))
+                val displayName = RomNames.display(entry, settings.romNames)
+                cell.addView(buildCellLabel(displayName), labelParams())
             }
             return cell
         }
@@ -1872,15 +1919,10 @@ class GridDeck(
                 context, SlotKey.platformIdOf(key) ?: "rom")
             tile.alpha = 0.4f
             cell.addView(tile, LinearLayout.LayoutParams(iconSize, iconSize))
-            cell.addView(TextView(context).apply {
-                setText(R.string.label_missing)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(0x66FFFFFF)
-                gravity = Gravity.CENTER
-                maxLines = 1
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT))
+            cell.addView(
+                buildCellLabel(context.getString(R.string.label_missing), UiDimens.ALPHA_SUBTLE),
+                labelParams(),
+            )
             return cell
         }
 
@@ -1898,25 +1940,18 @@ class GridDeck(
             cell.addView(icon, LinearLayout.LayoutParams(iconSize, iconSize))
             // Optional app-name label ("Show app names" setting).
             if (settings.showLabels) {
-                val label = TextView(context).apply {
-                    text = entry.label
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                }
-                cell.addView(label, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT))
+                cell.addView(buildCellLabel(entry.label), labelParams())
             }
             return cell
         }
     }
 
     private companion object {
-        // Serializes wallpaper decodes; a new decode simply queues behind
-        // a stale one (which is then dropped by the main-thread guard).
-        val WALLPAPER_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()
+        const val FOCUS_SCALE = 1.08f
+        const val FOCUS_ANIM_MS = 80L
+        val FOCUS_INTERPOLATOR = DecelerateInterpolator()
+        const val BLANK_PLUS_IDLE_COLOR = 0x3DFFFFFF
+        const val BADGE_SCRIM_FILL = 0xB3000000.toInt()
+        const val BADGE_SCRIM_STROKE = 0x26FFFFFF
     }
 }

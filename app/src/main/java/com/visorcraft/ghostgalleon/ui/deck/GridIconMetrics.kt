@@ -21,4 +21,23 @@ object GridIconMetrics {
         val cap = (cell * 0.92f).toInt().coerceAtLeast(1)
         return want.coerceAtMost(cap)
     }
+
+    /**
+     * Pixel icon size capped against BOTH [cellWidthPx] and the usable inner
+     * height inside [cellHeightPx] (after [cellPaddingPx] on top/bottom and
+     * [labelHeightPx]) so icons never clip or squash labels on short panels.
+     */
+    fun iconSizePx(
+        cellWidthPx: Int,
+        cellHeightPx: Int,
+        cellPaddingPx: Int,
+        labelHeightPx: Int,
+        iconSizeDp: Int,
+        density: Float,
+    ): Int {
+        val widthCapped = iconSizePx(cellWidthPx, iconSizeDp, density)
+        val innerHeight = (cellHeightPx - cellPaddingPx * 2 - labelHeightPx).coerceAtLeast(1)
+        val heightCap = (innerHeight * 0.96f).toInt().coerceAtLeast(1)
+        return widthCapped.coerceAtMost(heightCap)
+    }
 }
