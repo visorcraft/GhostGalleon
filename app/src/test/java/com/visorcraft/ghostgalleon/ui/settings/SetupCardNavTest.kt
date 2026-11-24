@@ -3,6 +3,8 @@ package com.visorcraft.ghostgalleon.ui.settings
 import com.visorcraft.ghostgalleon.library.SetupNeeds
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -177,5 +179,71 @@ class SetupCardNavTest {
         val g = (fgCh * a + bgCh * (1.0 - a)).toInt().coerceIn(0, 255)
         val b = (fb * a + bb * (1.0 - a)).toInt().coerceIn(0, 255)
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    @Test
+    fun `dirtyButtonIndices paints all on initial bind and strictly at most two buttons per nav step`() {
+        assertEquals(emptyList<Int>(), SetupCardNav.dirtyButtonIndices(0, 1, count = 0))
+        // Initial paint (prev = -1) covers every button once.
+        assertEquals(listOf(0, 1, 2, 3, 4, 5), SetupCardNav.dirtyButtonIndices(-1, 0, count = 6))
+        // No-op transition touches 0 buttons.
+        assertEquals(emptyList<Int>(), SetupCardNav.dirtyButtonIndices(2, 2, count = 6))
+        // Any nav move mutates at most 2 buttons.
+        val step = SetupCardNav.dirtyButtonIndices(1, 2, count = 6)
+        assertEquals(listOf(1, 2), step)
+        assertTrue(step.size <= 2)
+        val wrap = SetupCardNav.dirtyButtonIndices(0, 5, count = 6)
+        assertEquals(listOf(0, 5), wrap)
+        assertTrue(wrap.size <= 2)
+    }
+
+    @Test
+    fun `buttonFocusStroke and QUIET buttonRoleFor meet contrast matrix across built-in and custom accents`() {
+        assertEquals(SetupCardNav.ButtonRole.PRIMARY, SetupCardNav.buttonRoleFor(isPrimary = true, isSkip = false))
+        assertEquals(SetupCardNav.ButtonRole.QUIET, SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = true))
+        assertEquals(SetupCardNav.ButtonRole.SECONDARY, SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = false))
+
+        val themes = ThemePack.BUILTINS + listOf(
+            ThemeTokens("custom-dark", "Dark", 0xFF1A237E.toInt(), panelLift = 0xFF12141E.toInt(), chipIdle = 0xFF1B1E2E.toInt()),
+            ThemeTokens("custom-white", "White", 0xFFFFFDF5.toInt(), panelLift = 0xFF181818.toInt(), chipIdle = 0xFF242424.toInt()),
+        )
+        for (tokens in themes) {
+            val accent = tokens.accentColor
+            val card = ThemePack.cardFill(tokens)
+
+            // Primary ring distinguishes from both accent fill AND dark card (fixes OLED white-on-white).
+            val primaryStroke = SetupCardNav.buttonFocusStroke(SetupCardNav.ButtonRole.PRIMARY, accent, tokens)
+            assertTrue(
+                "Primary focus ring blends with accent on ${tokens.id}",
+                ThemePack.contrastRatio(primaryStroke, accent) >= 2.5,
+            )
+            assertTrue(
+                "Primary focus ring blends with card on ${tokens.id}",
+                ThemePack.contrastRatio(primaryStroke, card) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+
+            // Secondary & Quiet rings meet WCAG 1.4.11 (>= 3.0:1) over card and chipIdle.
+            for (role in listOf(SetupCardNav.ButtonRole.SECONDARY, SetupCardNav.ButtonRole.QUIET)) {
+                val stroke = SetupCardNav.buttonFocusStroke(role, accent, tokens)
+                assertTrue(
+                    "$role focus ring too dim on card for ${tokens.id}",
+                    ThemePack.contrastRatio(stroke, card) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                )
+                assertTrue(
+                    "$role focus ring too dim on chipIdle for ${tokens.id}",
+                    ThemePack.contrastRatio(stroke, tokens.chipIdle) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                )
+            }
+
+            // Quiet Skip button text meets WCAG AA even when alpha-blended over dark card.
+            for (selected in listOf(false, true)) {
+                val (bg, fg) = SetupCardNav.buttonColors(SetupCardNav.ButtonRole.QUIET, selected, accent, tokens)
+                val blendedFg = blendOverOpaque(fg, bg)
+                assertTrue(
+                    "QUIET button contrast too low on ${tokens.id} selected=$selected",
+                    ThemePack.contrastRatio(blendedFg, bg) >= ThemePack.MIN_TEXT_CONTRAST,
+                )
+            }
+        }
     }
 }

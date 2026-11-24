@@ -4,12 +4,20 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -17,11 +25,12 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
@@ -31,16 +40,89 @@ import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.toast
 import com.visorcraft.ghostgalleon.ui.useTabularNumerals
+import java.text.NumberFormat
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
-/** Pure host-tested visual contrast and tab rules for [AboutPage]. */
+/** Pure host-tested visual contrast, formatting, and tab rules for [AboutPage]. */
 internal object AboutPageLogic {
 
     const val LICENSE_TAB_COUNT = 4
+    const val LICENSE_TAB_MIN_HEIGHT_DP = UiDimens.TOUCH_MIN_DP
     const val HERO_SHEEN_BASE_ALPHA = 0x24
+
+    internal data class CreditGroupCounts(
+        val runtimeCount: Int,
+        val bundledCount: Int,
+        val totalCount: Int,
+    )
 
     fun clampTabIndex(index: Int, count: Int = LICENSE_TAB_COUNT): Int =
         if (count <= 0) 0 else index.coerceIn(0, count - 1)
+
+    /** Wrap tab index on `L1`/`R1` shoulder stepping inside Licenses dialog. Pure; host-tested. */
+    fun stepTabIndex(current: Int, delta: Int, count: Int = LICENSE_TAB_COUNT): Int {
+        if (count <= 1) return 0
+        val start = current.coerceIn(0, count - 1)
+        return ((start + delta) % count + count) % count
+    }
+
+    /** Horizontal scroll target centering an active tab inside its [HorizontalScrollView]. Pure; host-tested. */
+    fun tabScrollCenterX(tabLeft: Int, tabW: Int, viewportW: Int, contentW: Int): Int {
+        if (viewportW <= 0) return 0
+        val safeW = tabW.coerceAtLeast(0)
+        val ideal = tabLeft + (safeW - viewportW) / 2
+        val maxScroll = (contentW - viewportW).coerceAtLeast(0)
+        return ideal.coerceIn(0, maxScroll)
+    }
+
+    /** Format clipboard build report string (e.g. `"Ghost Galleon v0.16.0 (abc1234)"`). Pure; host-tested. */
+    fun formatBuildCopyText(
+        appName: String,
+        versionName: String,
+        gitSha: String,
+    ): String {
+        val name = appName.trim()
+        val ver = versionName.trim().removePrefix("v").removePrefix("V")
+        val sha = gitSha.trim()
+        val versionPart = when {
+            ver.isNotEmpty() && sha.isNotEmpty() -> "v$ver ($sha)"
+            ver.isNotEmpty() -> "v$ver"
+            sha.isNotEmpty() -> sha
+            else -> ""
+        }
+        return when {
+            name.isNotEmpty() && versionPart.isNotEmpty() -> "$name $versionPart"
+            name.isNotEmpty() -> name
+            else -> versionPart
+        }
+    }
+
+    /** True across handheld viewports so Licenses & Credits buttons share balanced 50/50 widths. Pure; host-tested. */
+    fun legalButtonsEqualWeight(screenWidthDp: Int): Boolean = screenWidthDp >= 240
+
+    /** Clamped credit-section counts for the Credits dialog section badges. Pure; host-tested. */
+    fun creditGroupCounts(runtimeCount: Int, bundledCount: Int): CreditGroupCounts {
+        val safeRuntime = runtimeCount.coerceAtLeast(0)
+        val safeBundled = bundledCount.coerceAtLeast(0)
+        return CreditGroupCounts(
+            runtimeCount = safeRuntime,
+            bundledCount = safeBundled,
+            totalCount = safeRuntime + safeBundled,
+        )
+    }
+
+    /** Existing nav drawable icon paired with each `"What's inside"` feature card. Pure; host-tested. */
+    @DrawableRes
+    fun featureIconResForIndex(index: Int): Int = when (index) {
+        0 -> R.drawable.ic_nav_apps
+        1 -> R.drawable.ic_nav_display
+        2 -> R.drawable.ic_nav_library
+        3 -> R.drawable.ic_swap
+        else -> R.drawable.ic_nav_display
+    }
 
     fun heroSheenAlpha(accent: Int): Int =
         (ThemePack.accentGlowColor(accent, alpha = HERO_SHEEN_BASE_ALPHA) ushr 24) and 0xFF
@@ -68,6 +150,22 @@ internal object AboutPageLogic {
 object AboutPage {
 
     private const val PROJECT_URL = "https://github.com/visorcraft/GhostGalleon"
+
+    private val RAW_IO = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "gg-about-raw").apply { isDaemon = true }
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val rawTextCache = ConcurrentHashMap<String, String>()
+
+    private fun playSfx(context: Context, cue: SoundCue, pan: Float = 0f) {
+        (context.applicationContext as? GhostGalleonApp)?.playSfx(cue, pan = pan)
+    }
+
+    private fun copyTextToClipboard(context: Context, label: CharSequence, value: CharSequence): Boolean =
+        runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        }.isSuccess
 
     private data class Credit(
         @StringRes val nameRes: Int,
@@ -207,6 +305,7 @@ object AboutPage {
         val accentOnSunken = ThemePack.accentTextColor(accent, sunkenSurface)
         val onAccent = SettingsUiLogic.accessibleOnAccent(accent)
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accent)
+        val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, cardSurface)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -299,15 +398,6 @@ object AboutPage {
         val pillsRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        val versionChip = chip(
-            context = context,
-            value = context.getString(R.string.about_version, BuildConfig.VERSION_NAME),
-            textColor = accentOnSunken,
-            fill = sunkenSurface,
-            stroke = ThemePack.accentHairline(accent),
-            tabular = true,
-        )
-        pillsRow.addView(versionChip)
         pillsRow.addView(
             chip(
                 context = context,
@@ -317,10 +407,6 @@ object AboutPage {
                 stroke = hairline,
                 tabular = true,
             ),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
         )
         pillsRow.addView(
             chip(
@@ -349,18 +435,47 @@ object AboutPage {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
+        val buildCopyText = AboutPageLogic.formatBuildCopyText(
+            appName = context.getString(R.string.app_name),
+            versionName = BuildConfig.VERSION_NAME,
+            gitSha = BuildConfig.GIT_SHA,
+        )
+        val buildPillText = context.getString(
+            R.string.format_dot_pair,
+            context.getString(R.string.about_version, BuildConfig.VERSION_NAME),
+            BuildConfig.GIT_SHA,
+        )
+        val buildPill = chip(
+            context = context,
+            value = buildPillText,
+            sp = 12.5f,
+            textColor = accentOnSunken,
+            fill = sunkenSurface,
+            stroke = ThemePack.accentHairline(accent),
+            focusable = true,
+            focusAccent = focusStroke,
+            tabular = true,
+        ).apply {
+            id = View.generateViewId()
+            typeface = Typeface.MONOSPACE
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            contentDescription = context.getString(
+                R.string.format_colon_pair,
+                context.getString(R.string.action_copy),
+                buildCopyText,
+            )
+            tooltipText = context.getString(R.string.action_copy)
+            setOnClickListener {
+                if (copyTextToClipboard(context, context.getString(R.string.app_name), buildCopyText)) {
+                    playSfx(context, SoundCue.CONFIRM)
+                    context.toast(R.string.about_copied)
+                }
+            }
+        }
         heroText.addView(
-            text(
-                context,
-                BuildConfig.GIT_SHA,
-                11.5f,
-                UiDimens.ALPHA_MUTED,
-            ).apply {
-                typeface = Typeface.MONOSPACE
-                useTabularNumerals()
-                background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 8)
-                setPadding(context.dp(8), context.dp(3), context.dp(8), context.dp(3))
-            },
+            buildPill,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -398,6 +513,7 @@ object AboutPage {
                 isBaselineAligned = false
             }
             pair.forEachIndexed { colIndex, feature ->
+                val featureIndex = rowIndex * featureCols + colIndex
                 val cell = card(context)
                 val titleRow = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -409,6 +525,17 @@ object AboutPage {
                     },
                     LinearLayout.LayoutParams(context.dp(3), context.dp(16)).apply {
                         marginEnd = context.dp(8)
+                    },
+                )
+                titleRow.addView(
+                    ImageView(context).apply {
+                        setImageResource(AboutPageLogic.featureIconResForIndex(featureIndex))
+                        imageTintList = ColorStateList.valueOf(accentOnCard)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(context.dp(16), context.dp(16)).apply {
+                        marginEnd = context.dp(7)
                     },
                 )
                 titleRow.addView(
@@ -499,8 +626,20 @@ object AboutPage {
         ).apply {
             id = View.generateViewId()
             setOnClickListener {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL)))
+                val opened = runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL)))
+                }.isSuccess
+                if (!opened) {
+                    if (copyTextToClipboard(
+                            context,
+                            context.getString(R.string.project_url_label),
+                            PROJECT_URL,
+                        )
+                    ) {
+                        playSfx(context, SoundCue.CONFIRM)
+                        context.toast(R.string.about_copied)
+                    }
+                }
             }
         }
         projectRow.addView(visitBtn)
@@ -535,9 +674,11 @@ object AboutPage {
             fill = sunkenSurface,
             stroke = hairline,
             focusable = true,
-            focusAccent = accent,
+            focusAccent = focusStroke,
         ).apply {
             id = View.generateViewId()
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener { showLicensesDialog(context, accent) }
         }
         val creditsBtn = chip(
@@ -547,24 +688,41 @@ object AboutPage {
             fill = sunkenSurface,
             stroke = hairline,
             focusable = true,
-            focusAccent = accent,
+            focusAccent = focusStroke,
         ).apply {
             id = View.generateViewId()
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener { showCreditsDialog(context, accent) }
         }
+        buildPill.nextFocusDownId = visitBtn.id
+        visitBtn.nextFocusUpId = buildPill.id
         visitBtn.nextFocusDownId = licensesBtn.id
         licensesBtn.nextFocusUpId = visitBtn.id
         creditsBtn.nextFocusUpId = visitBtn.id
         licensesBtn.nextFocusRightId = creditsBtn.id
         creditsBtn.nextFocusLeftId = licensesBtn.id
-        buttons.addView(licensesBtn)
-        buttons.addView(
-            creditsBtn,
+        val equalWeight = AboutPageLogic.legalButtonsEqualWeight(screenWidthDp)
+        val leftLp = if (equalWeight) {
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        } else {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { marginStart = context.dp(UiDimens.SPACE_MD) },
-        )
+            )
+        }
+        val rightLp = if (equalWeight) {
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = context.dp(UiDimens.SPACE_MD)
+            }
+        } else {
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = context.dp(UiDimens.SPACE_MD) }
+        }
+        buttons.addView(licensesBtn, leftLp)
+        buttons.addView(creditsBtn, rightLp)
         legal.addView(buttons)
         addSection(null, legal, topMarginDp = 16)
 
@@ -589,14 +747,19 @@ object AboutPage {
         context.resources.openRawResource(resId).bufferedReader().use { it.readText() }
     }.getOrDefault(context.getString(R.string.about_text_unavailable))
 
-    /** Licenses dialog: four gamepad-focusable tabs over the bundled texts, plus Copy. */
+    /** Licenses dialog: four 44dp gamepad-focusable tabs (L1/R1 stepping, off-UI cached load) + Copy. */
     fun showLicensesDialog(context: Context, accent: Int) {
         val tokens = resolveTokens(context)
         val idleFill = tokens.chipIdle
         val hairline = ThemePack.hairlineDivider(tokens)
         val onAccent = SettingsUiLogic.accessibleOnAccent(accent)
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accent)
+        val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, idleFill)
         val underlineColor = AboutPageLogic.tabUnderlineColor(accent)
+        val stroke1 = context.strokePx(1)
+        val stroke2 = context.strokePx(2)
+        val tabRadiusPx = context.dpF(12)
+        val localeTag = context.resources.configuration.locales[0].toLanguageTag()
 
         val tabs = listOf(
             R.string.about_ghost_license to R.raw.license_ghost_galleon,
@@ -605,6 +768,8 @@ object AboutPage {
             R.string.about_runtime_components to R.raw.runtime_components,
         )
         var selected = 0
+        var loadGen = 0
+        var dismissed = false
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -612,12 +777,24 @@ object AboutPage {
             setPadding(pad, context.dp(UiDimens.SPACE_SM), pad, 0)
         }
 
-        data class TabWidgets(val root: LinearLayout, val label: TextView, val underline: View)
+        data class TabWidgets(
+            val root: LinearLayout,
+            val label: TextView,
+            val underline: View,
+            val bgDrawable: GradientDrawable,
+            val focusRing: GradientDrawable,
+        )
         val tabWidgets = mutableListOf<TabWidgets>()
         val tabRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 16)
             setPadding(context.dp(4), context.dp(4), context.dp(4), context.dp(4))
+        }
+        val tabsScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(context.dp(12))
+            addView(tabRow)
         }
         val body = text(context, "", 12f, 0xE6FFFFFF.toInt()).apply {
             typeface = Typeface.MONOSPACE
@@ -639,35 +816,86 @@ object AboutPage {
             addView(body)
         }
 
+        fun cacheKeyFor(resId: Int): String = "$localeTag:$resId"
+
+        fun loadTabTextAsync(resId: Int) {
+            val key = cacheKeyFor(resId)
+            val cached = rawTextCache[key]
+            if (cached != null) {
+                body.text = cached
+                bodyScroll.scrollTo(0, 0)
+                return
+            }
+            val gen = ++loadGen
+            body.setText(R.string.glyph_ellipsis)
+            bodyScroll.scrollTo(0, 0)
+            val appCtx = context.applicationContext
+            RAW_IO.execute {
+                val loaded = loadRaw(appCtx, resId)
+                rawTextCache[key] = loaded
+                mainHandler.post {
+                    if (dismissed || gen != loadGen) return@post
+                    body.text = loaded
+                    bodyScroll.scrollTo(0, 0)
+                }
+            }
+        }
+
+        fun centerSelectedTab() {
+            val activeView = tabWidgets.getOrNull(selected)?.root ?: return
+            tabsScroll.post {
+                if (dismissed) return@post
+                val targetX = AboutPageLogic.tabScrollCenterX(
+                    tabLeft = activeView.left,
+                    tabW = activeView.width,
+                    viewportW = tabsScroll.width,
+                    contentW = tabRow.width,
+                )
+                if (UiDimens.areAnimationsEnabled(context)) {
+                    tabsScroll.smoothScrollTo(targetX, 0)
+                } else {
+                    tabsScroll.scrollTo(targetX, 0)
+                }
+            }
+        }
+
         fun restyle() {
             selected = AboutPageLogic.clampTabIndex(selected, tabs.size)
-            tabs.forEachIndexed { index, _ ->
+            for (index in 0 until tabWidgets.size) {
                 val widgets = tabWidgets[index]
                 val active = index == selected
                 widgets.root.isSelected = active
                 widgets.underline.visibility = if (active) View.VISIBLE else View.INVISIBLE
                 if (active) {
-                    widgets.root.background = TileBackgrounds.pressableRow(
-                        context = context,
-                        accent = activeFocusRing,
-                        idleBackground = pill(context, accent, 12),
-                        cornerRadiusDp = 12,
-                        strokeDp = 2,
-                    )
+                    widgets.bgDrawable.setColor(accent)
+                    widgets.bgDrawable.setStroke(0, Color.TRANSPARENT)
+                    widgets.focusRing.setStroke(stroke2, activeFocusRing)
                     widgets.label.setTextColor(onAccent)
                 } else {
-                    widgets.root.background = TileBackgrounds.pressableRow(
-                        context = context,
-                        accent = accent,
-                        idleBackground = pill(context, idleFill, 12, hairline),
-                        cornerRadiusDp = 12,
-                        strokeDp = 2,
-                    )
+                    widgets.bgDrawable.setColor(idleFill)
+                    widgets.bgDrawable.setStroke(stroke1, hairline)
+                    widgets.focusRing.setStroke(stroke2, focusStroke)
                     widgets.label.setTextColor(UiDimens.ALPHA_PRIMARY)
                 }
+                widgets.root.invalidate()
             }
-            body.text = loadRaw(context, tabs[selected].second)
-            bodyScroll.scrollTo(0, 0)
+            centerSelectedTab()
+            loadTabTextAsync(tabs[selected].second)
+        }
+
+        fun selectTab(nextIndex: Int, playTurnSound: Boolean, direction: Int = 0) {
+            val clamped = AboutPageLogic.clampTabIndex(nextIndex, tabs.size)
+            if (clamped == selected) return
+            selected = clamped
+            if (playTurnSound) {
+                val pan = when {
+                    direction < 0 -> -0.25f
+                    direction > 0 -> 0.25f
+                    else -> 0f
+                }
+                playSfx(context, SoundCue.NAV_PAGE_TURN, pan = pan)
+            }
+            restyle()
         }
 
         tabs.forEachIndexed { index, (labelRes, _) ->
@@ -685,17 +913,35 @@ object AboutPage {
                 background = TileBackgrounds.activeAccentBar(context, underlineColor, cornerRadiusDp = 2)
                 visibility = View.INVISIBLE
             }
+            val bgDrawable = GradientDrawable().apply {
+                cornerRadius = tabRadiusPx
+            }
+            val focusRing = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = tabRadiusPx
+                setStroke(stroke2, focusStroke)
+            }
+            val focusRingState = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), focusRing)
+                addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+            }
+            val tabBg = LayerDrawable(arrayOf(bgDrawable, focusRingState))
             val tabRoot = LinearLayout(context).apply {
                 id = View.generateViewId()
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 isFocusable = true
-                minimumHeight = context.dp(38)
+                minimumHeight = context.dp(AboutPageLogic.LICENSE_TAB_MIN_HEIGHT_DP)
+                background = OverlayPrimitives.roundedRipple(
+                    context = context,
+                    content = tabBg,
+                    cornerRadiusDp = 12,
+                )
                 setPadding(
                     context.dp(UiDimens.SPACE_MD),
-                    context.dp(6),
+                    context.dp(8),
                     context.dp(UiDimens.SPACE_MD),
-                    context.dp(5),
+                    context.dp(6),
                 )
                 addView(labelView)
                 addView(
@@ -705,13 +951,10 @@ object AboutPage {
                     },
                 )
                 setOnClickListener {
-                    if (selected != index) {
-                        selected = index
-                        restyle()
-                    }
+                    selectTab(index, playTurnSound = true)
                 }
             }
-            tabWidgets.add(TabWidgets(tabRoot, labelView, underline))
+            tabWidgets.add(TabWidgets(tabRoot, labelView, underline, bgDrawable, focusRing))
             tabRow.addView(tabRoot, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -723,12 +966,7 @@ object AboutPage {
         }
         // Tabs can overflow the dialog width on narrow panels; scroll them.
         content.addView(
-            HorizontalScrollView(context).apply {
-                isHorizontalScrollBarEnabled = false
-                isHorizontalFadingEdgeEnabled = true
-                setFadingEdgeLength(context.dp(12))
-                addView(tabRow)
-            },
+            tabsScroll,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -743,33 +981,117 @@ object AboutPage {
         )
         restyle()
 
-        DeckDialogs.customView(
+        val dialog = DeckDialogs.customView(
             context = context,
             titleRes = R.string.about_licenses,
             view = content,
             positiveRes = R.string.action_copy,
             onPositive = {
-                val clipboard = context.getSystemService(
-                    Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText(
-                    context.getString(tabs[selected].first),
-                    loadRaw(context, tabs[selected].second),
-                ))
-                Toast.makeText(context, R.string.about_copied, Toast.LENGTH_SHORT).show()
+                val tabLabel = context.getString(tabs[selected].first)
+                val resId = tabs[selected].second
+                val key = cacheKeyFor(resId)
+                val cached = rawTextCache[key]
+                if (cached != null) {
+                    if (copyTextToClipboard(context, tabLabel, cached)) {
+                        context.toast(R.string.about_copied)
+                    }
+                } else {
+                    val appCtx = context.applicationContext
+                    RAW_IO.execute {
+                        val loaded = loadRaw(appCtx, resId)
+                        rawTextCache[key] = loaded
+                        mainHandler.post {
+                            if (copyTextToClipboard(appCtx, tabLabel, loaded)) {
+                                appCtx.toast(R.string.about_copied)
+                            }
+                        }
+                    }
+                }
             },
             negativeRes = R.string.action_close,
         )
+        dialog.setOnDismissListener { dismissed = true }
+        dialog.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_BUTTON_L1 -> {
+                        selectTab(
+                            AboutPageLogic.stepTabIndex(selected, -1, tabs.size),
+                            playTurnSound = true,
+                            direction = -1,
+                        )
+                        return@setOnKeyListener true
+                    }
+                    KeyEvent.KEYCODE_BUTTON_R1 -> {
+                        selectTab(
+                            AboutPageLogic.stepTabIndex(selected, 1, tabs.size),
+                            playTurnSound = true,
+                            direction = 1,
+                        )
+                        return@setOnKeyListener true
+                    }
+                }
+            }
+            false
+        }
     }
 
-    /** Credits dialog: runtime components + bundled library table. */
+    /** Credits dialog: runtime components + bundled library table with count badges & scroll cues. */
     fun showCreditsDialog(context: Context, accent: Int) {
         val tokens = resolveTokens(context)
         val licenseTextColor = AboutPageLogic.creditLicenseTextColor(accent, tokens)
         val hairline = ThemePack.hairlineDivider(tokens)
+        val numberFormat = NumberFormat.getIntegerInstance(context.resources.configuration.locales[0])
+        val counts = AboutPageLogic.creditGroupCounts(runtimeComponents.size, bundledLibraries.size)
         val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             val pad = context.dp(20)
             setPadding(pad, context.dp(UiDimens.SPACE_SM), pad, context.dp(UiDimens.SPACE_SM))
+        }
+
+        fun addGroupHeading(@StringRes titleRes: Int, count: Int, topPadDp: Int) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, context.dp(topPadDp), 0, 0)
+            }
+            val titleView = text(
+                context,
+                context.getString(titleRes),
+                15f,
+                UiDimens.ALPHA_PRIMARY,
+                bold = true,
+            ).apply {
+                OverlayPrimitives.markHeading(this)
+            }
+            row.addView(
+                titleView,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = context.dp(UiDimens.SPACE_SM)
+                },
+            )
+            row.addView(
+                text(
+                    context,
+                    numberFormat.format(count),
+                    11.5f,
+                    licenseTextColor,
+                    bold = true,
+                ).apply {
+                    useTabularNumerals()
+                    gravity = Gravity.CENTER
+                    minWidth = context.dp(26)
+                    background = TileBackgrounds.valueBadge(context, accent, cornerRadiusDp = 8)
+                    setPadding(context.dp(8), context.dp(3), context.dp(8), context.dp(3))
+                },
+            )
+            list.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
         }
 
         fun addCreditGroup(items: List<Credit>) {
@@ -824,13 +1146,7 @@ object AboutPage {
             }
         }
 
-        list.addView(text(
-            context,
-            context.getString(R.string.about_runtime_components),
-            15f,
-            UiDimens.ALPHA_PRIMARY,
-            bold = true,
-        ))
+        addGroupHeading(R.string.about_runtime_components, counts.runtimeCount, topPadDp = 0)
         list.addView(text(
             context,
             context.getString(R.string.about_runtime_components_body),
@@ -841,15 +1157,7 @@ object AboutPage {
         })
         addCreditGroup(runtimeComponents)
 
-        list.addView(text(
-            context,
-            context.getString(R.string.about_bundled_libraries),
-            15f,
-            UiDimens.ALPHA_PRIMARY,
-            bold = true,
-        ).apply {
-            setPadding(0, context.dp(14), 0, 0)
-        })
+        addGroupHeading(R.string.about_bundled_libraries, counts.bundledCount, topPadDp = 14)
         list.addView(text(
             context,
             context.getString(R.string.about_bundled_libraries_body),
@@ -872,10 +1180,39 @@ object AboutPage {
             setFadingEdgeLength(context.dp(14))
             addView(list)
         }
+        val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(tokens))
+        val topCue = OverlayPrimitives.scrollCueBar(context, cueColor)
+        val bottomCue = OverlayPrimitives.scrollCueBar(context, cueColor)
+        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue)
+        val viewport = FrameLayout(context).apply {
+            addView(
+                scroll,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                topCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.dp(2),
+                    Gravity.TOP,
+                ),
+            )
+            addView(
+                bottomCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.dp(2),
+                    Gravity.BOTTOM,
+                ),
+            )
+        }
         DeckDialogs.customView(
             context = context,
             titleRes = R.string.about_credits,
-            view = scroll,
+            view = viewport,
             negativeRes = R.string.action_close,
         )
     }

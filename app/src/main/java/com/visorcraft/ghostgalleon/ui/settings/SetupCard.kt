@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.settings
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
@@ -32,6 +33,7 @@ import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 
 /**
  * Pure, host-tested navigation, progress, checklist hierarchy, and contrast
@@ -39,7 +41,7 @@ import com.visorcraft.ghostgalleon.ui.strokePx
  */
 internal object SetupCardNav {
 
-    enum class ButtonRole { PRIMARY, SECONDARY }
+    enum class ButtonRole { PRIMARY, SECONDARY, QUIET }
 
     enum class CheckRowTone { DONE, REQUIRED_PENDING, OPTIONAL_PENDING }
 
@@ -149,6 +151,54 @@ internal object SetupCardNav {
         }
     }
 
+    /** Classify a setup CTA into PRIMARY, QUIET (Skip), or SECONDARY. Pure; host-tested. */
+    fun buttonRoleFor(isPrimary: Boolean, isSkip: Boolean): ButtonRole = when {
+        isPrimary -> ButtonRole.PRIMARY
+        isSkip -> ButtonRole.QUIET
+        else -> ButtonRole.SECONDARY
+    }
+
+    /**
+     * Indices needing visual repaint on selection transition `[prev] -> [next]`:
+     * returns all indices on initial paint (`prev < 0`), empty on no-op, and
+     * strictly `<= 2` indices `[prev, next]` on every gamepad navigation step.
+     * Pure; host-tested.
+     */
+    fun dirtyButtonIndices(prev: Int, next: Int, count: Int): List<Int> {
+        if (count <= 0) return emptyList()
+        val safeNext = GridWrapNav.clampIndex(next, count)
+        if (prev < 0) return (0 until count).toList()
+        val safePrev = GridWrapNav.clampIndex(prev, count)
+        return if (safePrev == safeNext) emptyList() else listOf(safePrev, safeNext)
+    }
+
+    /**
+     * OLED-safe & WCAG 1.4.11 focus stroke color for each [ButtonRole]:
+     * - [ButtonRole.PRIMARY]: [SettingsUiLogic.activePillFocusRing] (distinct from both
+     *   the filled accent pill and dark card, preventing white-on-white OLED rings).
+     * - [ButtonRole.SECONDARY] / [ButtonRole.QUIET]: [OverlayPrimitives.accessibleFocusStroke]
+     *   against the lighter of `cardFill` and `chipIdle` (`>= 3.0:1`).
+     * Pure; host-tested.
+     */
+    fun buttonFocusStroke(
+        role: ButtonRole,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): Int = when (role) {
+        ButtonRole.PRIMARY -> SettingsUiLogic.activePillFocusRing(accent)
+        ButtonRole.SECONDARY, ButtonRole.QUIET -> {
+            val card = ThemePack.cardFill(tokens)
+            val surface = if (ThemePack.relativeLuminance(tokens.chipIdle) >
+                ThemePack.relativeLuminance(card)
+            ) {
+                tokens.chipIdle
+            } else {
+                card
+            }
+            OverlayPrimitives.accessibleFocusStroke(accent, surface)
+        }
+    }
+
     /** Resolved `(backgroundFill, textColor)` for unit-testing button legibility. */
     fun buttonColors(
         role: ButtonRole,
@@ -161,6 +211,11 @@ internal object SetupCardNav {
             ThemePack.cardFill(tokens) to UiDimens.ALPHA_PRIMARY
         } else {
             tokens.chipIdle to UiDimens.ALPHA_PRIMARY
+        }
+        ButtonRole.QUIET -> if (selected) {
+            ThemePack.cardFill(tokens) to UiDimens.ALPHA_PRIMARY
+        } else {
+            ThemePack.cardFill(tokens) to UiDimens.ALPHA_SECONDARY
         }
     }
 }
@@ -192,9 +247,16 @@ class SetupCard(
         val onClick: () -> Unit,
     )
 
+    private data class BoundButton(
+        val view: TextView,
+        val bgDrawable: GradientDrawable,
+        val spec: ActionSpec,
+    )
+
     private var selection = 0
+    private var paintedSelection = -1
     private val specs = mutableListOf<ActionSpec>()
-    private val buttonViews = mutableListOf<TextView>()
+    private val boundButtons = mutableListOf<BoundButton>()
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
     private var themeTokens: ThemeTokens = ThemePack.GHOST
 
@@ -259,18 +321,31 @@ class SetupCard(
             padVerticalDp = 14,
         )
 
-        // Compact brand header (ship emblem + welcome/chrome title + live progress pill).
+        // Compact brand header (radial-glow ship emblem + welcome/chrome title + tnum progress pill).
         val headerRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        val emblemHalo = FrameLayout(context).apply {
+            background = TileBackgrounds.accentGlow(
+                context = context,
+                accent = accent,
+                cornerRadiusDp = 20,
+                radial = true,
+                peakAlpha = 0x48,
+            )
+            addView(
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_brand_ship)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                FrameLayout.LayoutParams(context.dp(30), context.dp(30), Gravity.CENTER),
+            )
+        }
         headerRow.addView(
-            ImageView(context).apply {
-                setImageResource(R.drawable.ic_brand_ship)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            LinearLayout.LayoutParams(context.dp(34), context.dp(34)).apply {
+            emblemHalo,
+            LinearLayout.LayoutParams(context.dp(40), context.dp(40)).apply {
                 marginEnd = context.dp(10)
             },
         )
@@ -308,6 +383,7 @@ class SetupCard(
                         },
                     )
                     setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
                     maxLines = 1
                     background = if (progress.allDone) {
                         TileBackgrounds.accentPill(context, accent, cornerRadiusDp = 10)
@@ -497,14 +573,15 @@ class SetupCard(
             ).apply { bottomMargin = context.dp(14) },
         )
 
-        // Build ordered action specs (primary CTA first, secondary actions below).
+        // Build ordered action specs (primary CTA first, secondary actions, quiet Skip last).
         specs.clear()
-        buttonViews.clear()
+        boundButtons.clear()
+        paintedSelection = -1
         if (chromeOnly) {
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.setup_enable_companion_chrome),
-                    role = SetupCardNav.ButtonRole.PRIMARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = true, isSkip = false),
                     isActionCue = false,
                     onClick = onEnableCompanionChrome,
                 ),
@@ -512,7 +589,7 @@ class SetupCard(
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.action_skip_for_now),
-                    role = SetupCardNav.ButtonRole.SECONDARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = true),
                     isActionCue = false,
                     onClick = onDismiss,
                 ),
@@ -521,7 +598,7 @@ class SetupCard(
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.setup_add_rom_folder),
-                    role = SetupCardNav.ButtonRole.PRIMARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = true, isSkip = false),
                     onClick = onAddRomFolder,
                 ),
             )
@@ -529,7 +606,7 @@ class SetupCard(
                 specs.add(
                     ActionSpec(
                         label = context.getString(R.string.setup_get_emulator),
-                        role = SetupCardNav.ButtonRole.SECONDARY,
+                        role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = false),
                         onClick = onGetEmulator,
                     ),
                 )
@@ -540,14 +617,14 @@ class SetupCard(
                         if (snap.hasSgdbKey) R.string.setup_sgdb_set
                         else R.string.setup_sgdb_optional,
                     ),
-                    role = SetupCardNav.ButtonRole.SECONDARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = false),
                     onClick = onSgdbKey,
                 ),
             )
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.setup_enable_companion_chrome),
-                    role = SetupCardNav.ButtonRole.SECONDARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = false),
                     isActionCue = false,
                     onClick = onEnableCompanionChrome,
                 ),
@@ -555,21 +632,26 @@ class SetupCard(
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.setup_open_settings),
-                    role = SetupCardNav.ButtonRole.SECONDARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = false),
                     onClick = onOpenSettings,
                 ),
             )
             specs.add(
                 ActionSpec(
                     label = context.getString(R.string.action_skip_for_now),
-                    role = SetupCardNav.ButtonRole.SECONDARY,
+                    role = SetupCardNav.buttonRoleFor(isPrimary = false, isSkip = true),
                     isActionCue = false,
                     onClick = onDismiss,
                 ),
             )
         }
 
+        val btnRadiusDp = themeTokens.cardRadiusDp
+        val btnRadiusPx = context.dpF(btnRadiusDp)
         specs.forEachIndexed { index, spec ->
+            val bgDrawable = GradientDrawable().apply {
+                cornerRadius = btnRadiusPx
+            }
             val btn = TextView(context).apply {
                 text = spec.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -583,6 +665,12 @@ class SetupCard(
                     context.dp(UiDimens.SPACE_LG),
                     context.dp(11),
                 )
+                background = OverlayPrimitives.roundedRipple(
+                    context = context,
+                    content = bgDrawable,
+                    cornerRadiusDp = btnRadiusDp,
+                    rippleColor = SetupCardNav.BUTTON_RIPPLE_COLOR,
+                )
                 setOnClickListener {
                     selection = index
                     paintButtons(scrollToFocused = false, animateFocus = false)
@@ -590,7 +678,7 @@ class SetupCard(
                     spec.onClick()
                 }
             }
-            buttonViews.add(btn)
+            boundButtons.add(BoundButton(btn, bgDrawable, spec))
             body.addView(
                 btn,
                 LinearLayout.LayoutParams(
@@ -619,8 +707,37 @@ class SetupCard(
             )
         }
         scrollHost = scroll
+        val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
+        val topCue = OverlayPrimitives.scrollCueBar(context, cueColor)
+        val bottomCue = OverlayPrimitives.scrollCueBar(context, cueColor)
+        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue)
+        val scrollViewport = FrameLayout(context).apply {
+            addView(
+                scroll,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                topCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.dp(2),
+                    Gravity.TOP,
+                ),
+            )
+            addView(
+                bottomCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.dp(2),
+                    Gravity.BOTTOM,
+                ),
+            )
+        }
         card.addView(
-            scroll,
+            scrollViewport,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -649,63 +766,71 @@ class SetupCard(
         return overlay
     }
 
-    private fun paintButtons(scrollToFocused: Boolean, animateFocus: Boolean = true) {
-        if (buttonViews.isEmpty()) return
-        val sel = GridWrapNav.clampIndex(selection, buttonViews.size)
-        selection = sel
-        val btnRadius = themeTokens.cardRadiusDp
-        buttonViews.forEachIndexed { index, tv ->
-            val selected = index == sel
-            val role = specs.getOrNull(index)?.role ?: SetupCardNav.ButtonRole.SECONDARY
-            val (_, textColor) = SetupCardNav.buttonColors(role, selected, accent, themeTokens)
-            val baseBg = when (role) {
-                SetupCardNav.ButtonRole.PRIMARY -> if (selected) {
-                    TileBackgrounds.focusStroke(
-                        context = activity,
-                        accent = UiDimens.ALPHA_PRIMARY,
-                        fill = accent,
-                        cornerRadiusDp = btnRadius,
-                        strokeDp = 3,
-                    )
+    private fun paintButtonAt(bound: BoundButton, selected: Boolean, animateFocus: Boolean) {
+        val role = bound.spec.role
+        val (_, textColor) = SetupCardNav.buttonColors(role, selected, accent, themeTokens)
+        val bg = bound.bgDrawable
+        val focusColor = SetupCardNav.buttonFocusStroke(role, accent, themeTokens)
+        when (role) {
+            SetupCardNav.ButtonRole.PRIMARY -> {
+                bg.setColor(accent)
+                if (selected) {
+                    bg.setStroke(activity.strokePx(3), focusColor)
                 } else {
-                    TileBackgrounds.accentPill(
-                        context = activity,
-                        accent = accent,
-                        cornerRadiusDp = btnRadius,
-                    )
-                }
-                SetupCardNav.ButtonRole.SECONDARY -> if (selected) {
-                    TileBackgrounds.selected(activity, accent)
-                } else {
-                    TileBackgrounds.chipIdle(activity, cornerRadiusDp = btnRadius)
+                    bg.setStroke(0, Color.TRANSPARENT)
                 }
             }
-            tv.background = OverlayPrimitives.roundedRipple(
-                context = activity,
-                content = baseBg,
-                cornerRadiusDp = btnRadius,
-                rippleColor = SetupCardNav.BUTTON_RIPPLE_COLOR,
-            )
-            tv.setTextColor(textColor)
-            tv.setTypeface(
-                null,
-                if (selected || role == SetupCardNav.ButtonRole.PRIMARY) {
-                    Typeface.BOLD
+            SetupCardNav.ButtonRole.SECONDARY -> {
+                if (selected) {
+                    bg.setColor(ThemePack.cardFill(themeTokens))
+                    bg.setStroke(activity.strokePx(3), focusColor)
                 } else {
-                    Typeface.NORMAL
-                },
-            )
-            tv.isSelected = selected
-            OverlayPrimitives.applyFocusScale(
-                view = tv,
-                selected = selected,
-                focusedScale = 1.02f,
-                animate = animateFocus,
-                durationMs = SetupCardNav.FOCUS_ANIM_MS,
-            )
+                    bg.setColor(themeTokens.chipIdle)
+                    bg.setStroke(activity.strokePx(1), ThemePack.hairlineDivider(themeTokens))
+                }
+            }
+            SetupCardNav.ButtonRole.QUIET -> {
+                if (selected) {
+                    bg.setColor(ThemePack.cardFill(themeTokens))
+                    bg.setStroke(activity.strokePx(2), focusColor)
+                } else {
+                    bg.setColor(Color.TRANSPARENT)
+                    bg.setStroke(0, Color.TRANSPARENT)
+                }
+            }
         }
+        val tv = bound.view
+        tv.setTextColor(textColor)
+        tv.setTypeface(
+            null,
+            if (selected || role == SetupCardNav.ButtonRole.PRIMARY) {
+                Typeface.BOLD
+            } else {
+                Typeface.NORMAL
+            },
+        )
+        tv.isSelected = selected
+        OverlayPrimitives.applyFocusScale(
+            view = tv,
+            selected = selected,
+            focusedScale = 1.02f,
+            animate = animateFocus,
+            durationMs = SetupCardNav.FOCUS_ANIM_MS,
+        )
+    }
+
+    private fun paintButtons(scrollToFocused: Boolean, animateFocus: Boolean = true) {
+        if (boundButtons.isEmpty()) return
+        val sel = GridWrapNav.clampIndex(selection, boundButtons.size)
+        selection = sel
+        val dirty = SetupCardNav.dirtyButtonIndices(paintedSelection, sel, boundButtons.size)
+        for (i in 0 until dirty.size) {
+            val index = dirty[i]
+            paintButtonAt(boundButtons[index], selected = index == sel, animateFocus = animateFocus)
+        }
+        paintedSelection = sel
         if (!scrollToFocused) return
-        val focused = buttonViews.getOrNull(sel) ?: return
+        val focused = boundButtons.getOrNull(sel)?.view ?: return
         scrollHost?.smoothScrollToCenter(focused)
     }
 

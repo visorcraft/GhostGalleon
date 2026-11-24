@@ -165,7 +165,19 @@ class TrackEVisualContractTest {
                 ThemePack.contrastRatio(previewStroke, ThemePack.surfaceElevated(tokens)) >=
                     OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
             )
+
+            for (role in SetupCardNav.ButtonRole.entries) {
+                val setupStroke = SetupCardNav.buttonFocusStroke(role, accent, tokens)
+                assertTrue(
+                    "SetupCard($role) focusStroke on card failed WCAG 1.4.11 on ${tokens.id}",
+                    ThemePack.contrastRatio(setupStroke, card) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                )
+            }
         }
+        assertTrue(
+            "About Licenses tabs minimum height must be >= 44dp",
+            AboutPageLogic.LICENSE_TAB_MIN_HEIGHT_DP >= 44,
+        )
         assertTrue(
             "Settings minimum touch comfort must be >= 44dp",
             SettingsUiLogic.MIN_CONTROL_TOUCH_DP >= 44,
