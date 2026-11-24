@@ -1,13 +1,18 @@
 package com.visorcraft.ghostgalleon.ui
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.InsetDrawable
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -59,6 +64,35 @@ internal object DeckDialogTokens {
         } else {
             inputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
+
+    /**
+     * Pure check for whether an IME editor action or hardware Enter key event
+     * should submit a single-line [DeckDialogs.promptText] modal. Host-tested.
+     */
+    fun isImeSubmitAction(
+        actionId: Int,
+        keyCode: Int? = null,
+        keyAction: Int? = null,
+    ): Boolean {
+        if (actionId == EditorInfo.IME_ACTION_DONE ||
+            actionId == EditorInfo.IME_ACTION_GO ||
+            actionId == EditorInfo.IME_ACTION_SEND
+        ) {
+            return true
+        }
+        val isEnterKey = keyCode == KeyEvent.KEYCODE_ENTER ||
+            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+        return actionId == EditorInfo.IME_NULL &&
+            isEnterKey &&
+            (keyAction == null || keyAction == KeyEvent.ACTION_DOWN)
+    }
+
+    /** True when [rawText] satisfies the prompt's [requireNonBlank] policy. */
+    fun canSubmitText(rawText: String, requireNonBlank: Boolean): Boolean =
+        !requireNonBlank || rawText.trim().isNotEmpty()
+
+    /** Opacity for the positive submit action when enabled vs disabled by validation. */
+    fun positiveButtonAlpha(enabled: Boolean): Float = if (enabled) 1f else 0.40f
 }
 
 /**
@@ -155,18 +189,32 @@ object DeckDialogs {
         singleLine: Boolean = true,
         selectAllOnFocus: Boolean = true,
     ): Pair<FrameLayout, EditText> {
+        val tokens = resolveTokens(context)
+        val accent = resolveAccent(context, tokens)
         val input = EditText(context).apply {
             // Apply singleLine BEFORE inputType so TextView.applySingleLine does
             // not overwrite PasswordTransformationMethod on masked API key prompts.
-            if (singleLine) isSingleLine = true
+            if (singleLine) {
+                isSingleLine = true
+                imeOptions = EditorInfo.IME_ACTION_DONE
+            }
             this.inputType = DeckDialogTokens.resolvedInputType(inputType, singleLine)
-            if (initialText.isNotEmpty()) setText(initialText)
+            if (initialText.isNotEmpty()) {
+                setText(initialText)
+                setSelection(initialText.length)
+            }
             if (hintRes != null) setHint(hintRes)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setHintTextColor(UiDimens.ALPHA_SUBTLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setSelectAllOnFocus(selectAllOnFocus)
-            background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 12)
+            background = TileBackgrounds.focusableRow(
+                context = context,
+                accent = accent,
+                idleBackground = TileBackgrounds.sunkenField(context, cornerRadiusDp = 12),
+                cornerRadiusDp = 12,
+                strokeDp = 2,
+            )
             setPadding(
                 context.dp(14),
                 context.dp(12),
@@ -197,6 +245,7 @@ object DeckDialogs {
         inputType: Int = InputType.TYPE_CLASS_TEXT,
         @StringRes positiveRes: Int = R.string.action_save,
         @StringRes negativeRes: Int = R.string.action_cancel,
+        requireNonBlank: Boolean = false,
         onSubmit: (String) -> Unit,
     ): AlertDialog = promptText(
         context = context,
@@ -206,6 +255,7 @@ object DeckDialogs {
         inputType = inputType,
         positiveRes = positiveRes,
         negativeRes = negativeRes,
+        requireNonBlank = requireNonBlank,
         onSubmit = onSubmit,
     )
 
@@ -218,6 +268,7 @@ object DeckDialogs {
         inputType: Int = InputType.TYPE_CLASS_TEXT,
         @StringRes positiveRes: Int = R.string.action_save,
         @StringRes negativeRes: Int = R.string.action_cancel,
+        requireNonBlank: Boolean = false,
         onSubmit: (String) -> Unit,
     ): AlertDialog {
         val (container, input) = createInput(
@@ -229,11 +280,77 @@ object DeckDialogs {
         val b = builder(context)
             .setTitle(title)
             .setView(container)
-            .setPositiveButton(positiveRes) { _, _ ->
-                onSubmit(input.text?.toString().orEmpty())
-            }
+            .setPositiveButton(positiveRes, null)
             .setNegativeButton(negativeRes, null)
-        return show(b, context)
+        val dialog = show(b, context)
+
+        fun nudgeInvalidInput() {
+            if (!ValueAnimator.areAnimatorsEnabled() || !input.isAttachedToWindow) return
+            val dx = context.dpF(6)
+            input.animate().cancel()
+            input.animate()
+                .translationX(-dx)
+                .setDuration(45L)
+                .withEndAction {
+                    if (input.isAttachedToWindow) {
+                        input.animate()
+                            .translationX(dx)
+                            .setDuration(60L)
+                            .withEndAction {
+                                if (input.isAttachedToWindow) {
+                                    input.animate()
+                                        .translationX(0f)
+                                        .setDuration(45L)
+                                        .start()
+                                }
+                            }
+                            .start()
+                    }
+                }
+                .start()
+        }
+        dialog.setOnDismissListener { input.animate().cancel() }
+
+        fun attemptSubmit() {
+            val raw = input.text?.toString().orEmpty()
+            if (!DeckDialogTokens.canSubmitText(raw, requireNonBlank)) {
+                nudgeInvalidInput()
+                return
+            }
+            dialog.dismiss()
+            onSubmit(raw)
+        }
+
+        fun syncPositiveState() {
+            if (!requireNonBlank) return
+            val valid = DeckDialogTokens.canSubmitText(
+                input.text?.toString().orEmpty(),
+                requireNonBlank = true,
+            )
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                isEnabled = valid
+                alpha = DeckDialogTokens.positiveButtonAlpha(valid)
+            }
+        }
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener { attemptSubmit() }
+        if (requireNonBlank) {
+            input.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun afterTextChanged(s: Editable?) = syncPositiveState()
+            })
+            syncPositiveState()
+        }
+        input.setOnEditorActionListener { _, actionId, event ->
+            if (DeckDialogTokens.isImeSubmitAction(actionId, event?.keyCode, event?.action)) {
+                attemptSubmit()
+                true
+            } else {
+                false
+            }
+        }
+        return dialog
     }
 
     /** Styled list-picker dialog (resource title). */

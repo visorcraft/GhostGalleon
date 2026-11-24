@@ -1,8 +1,11 @@
 package com.visorcraft.ghostgalleon.ui
 
 import android.text.InputType
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +78,46 @@ class DeckDialogsTest {
         val g = (fgCh * a + bgCh * (1.0 - a)).toInt().coerceIn(0, 255)
         val b = (fb * a + bb * (1.0 - a)).toInt().coerceIn(0, 255)
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    @Test
+    fun `isImeSubmitAction accepts Done, Go, Send, and hardware Enter key down only`() {
+        assertTrue(DeckDialogTokens.isImeSubmitAction(EditorInfo.IME_ACTION_DONE))
+        assertTrue(DeckDialogTokens.isImeSubmitAction(EditorInfo.IME_ACTION_GO))
+        assertTrue(DeckDialogTokens.isImeSubmitAction(EditorInfo.IME_ACTION_SEND))
+        assertTrue(
+            DeckDialogTokens.isImeSubmitAction(
+                EditorInfo.IME_NULL,
+                keyCode = KeyEvent.KEYCODE_ENTER,
+                keyAction = KeyEvent.ACTION_DOWN,
+            ),
+        )
+        assertTrue(
+            DeckDialogTokens.isImeSubmitAction(
+                EditorInfo.IME_NULL,
+                keyCode = KeyEvent.KEYCODE_NUMPAD_ENTER,
+                keyAction = KeyEvent.ACTION_DOWN,
+            ),
+        )
+        assertFalse(
+            DeckDialogTokens.isImeSubmitAction(
+                EditorInfo.IME_NULL,
+                keyCode = KeyEvent.KEYCODE_ENTER,
+                keyAction = KeyEvent.ACTION_UP,
+            ),
+        )
+        assertFalse(DeckDialogTokens.isImeSubmitAction(EditorInfo.IME_ACTION_NEXT))
+        assertFalse(DeckDialogTokens.isImeSubmitAction(EditorInfo.IME_NULL, keyCode = KeyEvent.KEYCODE_A, keyAction = KeyEvent.ACTION_DOWN))
+    }
+
+    @Test
+    fun `canSubmitText and positiveButtonAlpha honor requireNonBlank guard`() {
+        assertTrue(DeckDialogTokens.canSubmitText("", requireNonBlank = false))
+        assertTrue(DeckDialogTokens.canSubmitText("   ", requireNonBlank = false))
+        assertFalse(DeckDialogTokens.canSubmitText("", requireNonBlank = true))
+        assertFalse(DeckDialogTokens.canSubmitText("   ", requireNonBlank = true))
+        assertTrue(DeckDialogTokens.canSubmitText("RPGs", requireNonBlank = true))
+        assertEquals(1f, DeckDialogTokens.positiveButtonAlpha(true), 0.0001f)
+        assertEquals(0.40f, DeckDialogTokens.positiveButtonAlpha(false), 0.0001f)
     }
 }
