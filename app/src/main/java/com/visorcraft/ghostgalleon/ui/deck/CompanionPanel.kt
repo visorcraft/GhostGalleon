@@ -3655,6 +3655,97 @@ object CompanionPanel {
         }
     }
 
+    private fun applySessionTimerPillStyle(
+        tv: TextView,
+        isActive: Boolean,
+        compact: Boolean,
+        dp: (Int) -> Int,
+    ) {
+        val context = tv.context
+        val sunken = TileBackgrounds.surfaceSunken(context)
+        val dotSize = dp(PlayHudMetrics.SESSION_DOT_DP)
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(PlayHudMetrics.sessionStatusColor(isActive))
+            setBounds(0, 0, dotSize, dotSize)
+        }
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 13f else 15f)
+        tv.setTextColor(PlayHudMetrics.sessionTimerTextColor(isActive, sunken))
+        tv.fontFeatureSettings = "tnum"
+        tv.includeFontPadding = false
+        tv.gravity = Gravity.CENTER
+        tv.setCompoundDrawablesRelative(dot, null, null, null)
+        tv.compoundDrawablePadding = dp(7)
+        tv.background = GradientDrawable().apply {
+            setColor(sunken)
+            cornerRadius = context.dpF(16)
+            setStroke(context.strokePx(1), PlayHudMetrics.sessionPillBorderColor(isActive))
+        }
+        tv.setPadding(dp(12), dp(5), dp(12), dp(5))
+    }
+
+    private fun buildFramedSessionArt(
+        activity: AppCompatActivity,
+        app: GhostGalleonApp,
+        roms: List<RomEntry>,
+        settings: Settings,
+        slotKey: String,
+        fallbackPackage: String?,
+        artPx: Int,
+        viewTag: Any? = null,
+    ): View {
+        val rom = selectedRom(slotKey, roms, app)
+        if (rom != null) {
+            val tile = ArtTile.view(
+                activity,
+                app.artCache,
+                rom,
+                targetPx = artPx,
+                cornerRadiusDp = PlayHudMetrics.ART_CORNER_RADIUS_DP,
+                artOverrides = settings.artOverrides,
+            )
+            tile.tag = viewTag
+            applyHeroArtFrame(
+                target = tile,
+                accentColor = PlatformLook.accentColor(rom.platformId),
+                elevationDp = 6f,
+                cornerRadiusDp = PlayHudMetrics.ART_CORNER_RADIUS_DP,
+            )
+            return tile
+        }
+        val pkg = fallbackPackage?.ifBlank { slotKey } ?: slotKey
+        val inset = (artPx * 0.14f).toInt().coerceAtLeast(1)
+        val pedestal = FrameLayout(activity).apply {
+            tag = viewTag
+            setPadding(inset, inset, inset, inset)
+        }
+        applyAppPedestalFrame(
+            pedestal = pedestal,
+            accentColor = glowColor(activity, pkg, settings),
+            artSizePx = artPx,
+            elevationDp = 6f,
+        )
+        val icon = ImageView(activity).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        CustomIcon.bind(
+            icon,
+            iconLoader(activity),
+            app.artCache,
+            settings,
+            pkg,
+            artPx,
+        )
+        pedestal.addView(
+            icon,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        return pedestal
+    }
+
     private fun buildNowPlayingCard(
         activity: AppCompatActivity,
         library: AppLibrary,
@@ -3670,16 +3761,10 @@ object CompanionPanel {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             background = TileBackgrounds.card(activity)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(16), dp(12), dp(16), dp(10))
         }
-        nowPlaying.addView(TextView(activity).apply {
-            setText(R.string.label_now_playing)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER
-        })
         val label = when {
             SlotKey.isRom(session.key) ->
                 selectedRom(session.key, roms, app)
@@ -3688,57 +3773,170 @@ object CompanionPanel {
             else -> library.byPackage(settings)[session.key]?.label
                 ?: session.key
         }
-        nowPlaying.addView(TextView(activity).apply {
+        val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
+        val artPx = dp(PlayHudMetrics.nowPlayingArtDp(compact))
+        val artView = buildFramedSessionArt(
+            activity = activity,
+            app = app,
+            roms = roms,
+            settings = settings,
+            slotKey = session.key,
+            fallbackPackage = session.key,
+            artPx = artPx,
+        )
+        val eyebrow = TextView(activity).apply {
+            setText(R.string.label_now_playing)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
+            letterSpacing = 0.12f
+            gravity = if (compact) Gravity.START else Gravity.CENTER
+            includeFontPadding = false
+        }
+        val titleTv = TextView(activity).apply {
             text = label
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 18f else 26f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            gravity = if (compact) Gravity.START else Gravity.CENTER
             maxLines = if (compact) 1 else 2
             ellipsize = android.text.TextUtils.TruncateAt.END
-        })
-        val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
-        nowPlaying.addView(TextView(activity).apply {
+            includeFontPadding = false
+        }
+        val timerTv = TextView(activity).apply {
             text = activity.getString(
                 if (session.isActive) R.string.format_session else R.string.format_session_paused,
                 activity.resolveText(SessionMath.formatPlaytime(elapsed)),
             )
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 16f)
-            setTextColor(0x99FFFFFF.toInt())
-            gravity = Gravity.CENTER
-        })
+            applySessionTimerPillStyle(this, session.isActive, compact, dp)
+        }
+        if (compact) {
+            val headerRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                clipChildren = false
+                clipToPadding = false
+            }
+            headerRow.addView(
+                artView,
+                LinearLayout.LayoutParams(artPx, artPx).apply { marginEnd = dp(12) },
+            )
+            val textCol = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.START
+            }
+            textCol.addView(eyebrow)
+            textCol.addView(
+                titleTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) },
+            )
+            textCol.addView(
+                timerTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(6) },
+            )
+            headerRow.addView(
+                textCol,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            nowPlaying.addView(
+                headerRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        } else {
+            nowPlaying.addView(eyebrow)
+            nowPlaying.addView(
+                artView,
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(10)
+                    bottomMargin = dp(10)
+                },
+            )
+            nowPlaying.addView(
+                titleTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            nowPlaying.addView(
+                timerTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                },
+            )
+        }
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+            clipChildren = false
+            clipToPadding = false
+            setPadding(0, dp(if (compact) 4 else 8), 0, 0)
         }
-        actions.addView(TextView(activity).apply {
+        val chipTouchH = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
+        val insetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val swapBtn = TextView(activity).apply {
             setText(R.string.action_swap)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-            background = TileBackgrounds.accentPill(activity, settings.accentColor)
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
             gravity = Gravity.CENTER
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(16), insetV, dp(16), insetV)
+            setSingleLine()
             isClickable = true
             isFocusable = true
             setOnClickListener {
                 (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
                     ?.swapInteractiveDisplay()
             }
-        })
+        }
+        attachChipTactileFeedback(swapBtn)
+        actions.addView(
+            swapBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipTouchH),
+        )
         actions.addView(View(activity), LinearLayout.LayoutParams(dp(10), 1))
-        actions.addView(TextView(activity).apply {
+        val endBtn = TextView(activity).apply {
             setText(R.string.action_end_session)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
-            background = TileBackgrounds.chipIdle(activity, cornerRadiusDp = 20)
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = TileBackgrounds.chipIdle(activity, cornerRadiusDp = 18),
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
             gravity = Gravity.CENTER
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(16), insetV, dp(16), insetV)
+            setSingleLine()
             isClickable = true
             isFocusable = true
             setOnClickListener { app.clearOpenSession() }
-        })
+        }
+        attachChipTactileFeedback(endBtn)
+        actions.addView(
+            endBtn,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipTouchH),
+        )
         nowPlaying.addView(actions)
         return nowPlaying
     }
