@@ -160,4 +160,28 @@ class HintBarFormatTest {
             )
         }
     }
+
+    @Test
+    fun `dock move banner keycaps tokenize cleanly and fit single-line on 540dp Sugar across all 5 locales`() {
+        // 540dp minus 56dp*2 chrome insets minus 12dp*2 banner padding minus 16dp pulsing dot/margin = 388dp.
+        val usableDockBannerDp = 540f - 112f - 24f - 16f
+        val moveHints = listOf(
+            "Moving - A drop · B cancel" to "Moving",
+            "Verschieben - A Ablegen · B Abbrechen" to "Verschieben",
+            "Moviendo - A soltar · B cancelar" to "Moviendo",
+            "Déplacement - A Déposer · B Annuler" to "Déplacement",
+            "ย้ายอยู่ - A วาง · B ยกเลิก" to "ย้ายอยู่",
+        )
+        for ((raw, expectedPrefix) in moveHints) {
+            assertEquals(listOf(expectedPrefix), extract(raw, TokenKind.PREFIX))
+            assertEquals(listOf("A", "B"), extract(raw, TokenKind.KEYCAP))
+            assertEquals(listOf("-", "·"), extract(raw, TokenKind.SEPARATOR))
+            assertEquals(2, extract(raw, TokenKind.ACTION).size)
+            val estDpAt10Sp = HintBarFormat.estimateLineWidthDp(raw, textSizeSp = 10f)
+            assertTrue(
+                "move banner '$raw' (${estDpAt10Sp}dp) overflows 540dp Sugar dock banner (${usableDockBannerDp}dp) at 10sp",
+                estDpAt10Sp <= usableDockBannerDp,
+            )
+        }
+    }
 }

@@ -8,6 +8,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -21,6 +22,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.TextViewCompat
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.art.ArtTile
@@ -91,6 +93,7 @@ class DockBar(
     private class SlotHolder(
         var boundKey: String? = null,
         var visualState: DockSlotVisualState? = null,
+        var blankPlusView: TextView? = null,
     )
 
     private val slotFrames = mutableListOf<FrameLayout>()
@@ -98,6 +101,7 @@ class DockBar(
     private var moveHintBanner: LinearLayout? = null
     private var moveDotView: View? = null
     private var moveDotAnimator: ObjectAnimator? = null
+    private var edgeBumpAnimator: ObjectAnimator? = null
     private var contentView: LinearLayout? = null
     private var pulseAnimator: AnimatorSet? = null
     private var slotSize: Int = 0
@@ -106,6 +110,7 @@ class DockBar(
     private var innerContentRadiusDp: Int = 10
     private var paintedFocus: Int? = null
     private var paintedMoving: Int? = null
+    private var paintedBarActive: Boolean? = null
     private var focusPainted = false
     private val themeTokens by lazy { ThemePack.resolve(settings) }
     private val surfaceFillColor by lazy { ThemePack.cardFill(themeTokens) }
@@ -192,7 +197,7 @@ class DockBar(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = TileBackgrounds.pill(context)
-            elevation = context.dpF(4)
+            elevation = context.dpF(DockBarMetrics.BAR_ELEVATION_IDLE_DP)
             contentDescription = context.getString(R.string.label_dock)
             setPadding(spec.barPadHPx, padV, spec.barPadHPx, padV)
             minimumHeight = slotSize + padV * 2
@@ -218,10 +223,20 @@ class DockBar(
         }
         moveDotView = moveDot
         val moveHint = TextView(context).apply {
-            setText(R.string.deck_hint_move)
+            text = HintBar.formatStyled(context, HintBar.moveText(context))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(moveAccent)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
             gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                this,
+                10,
+                14,
+                1,
+                TypedValue.COMPLEX_UNIT_SP,
+            )
         }
         val moveBanner = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -239,7 +254,7 @@ class DockBar(
                 moveHint,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
         }
@@ -305,6 +320,7 @@ class DockBar(
         val key = keyAt(index)
         holder.boundKey = key
         holder.visualState = null
+        holder.blankPlusView = null
         val romEntry = romForKey(key)
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
         val primaryLabel = when {
@@ -340,9 +356,38 @@ class DockBar(
                     cornerRadiusPx = innerRadiusPx,
                 )
             }
-            SlotKey.isRom(key) -> PlatformTile.view(
-                context, SlotKey.platformIdOf(key) ?: "rom",
-                cornerRadiusDp = innerContentRadiusDp).apply { alpha = 0.4f }
+            SlotKey.isRom(key) -> {
+                val missingBox = FrameLayout(context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(GridBadgeMetrics.MISSING_FRAME_FILL)
+                        cornerRadius = innerRadiusPx
+                        setStroke(
+                            context.strokePx(1),
+                            GridBadgeMetrics.MISSING_FRAME_STROKE,
+                            context.dpF(4),
+                            context.dpF(3),
+                        )
+                    }
+                }
+                val tileInset = context.dp(2)
+                val tile = PlatformTile.view(
+                    context,
+                    SlotKey.platformIdOf(key) ?: "rom",
+                    cornerRadiusDp = DeckCornerMetrics.nestedRadiusDp(
+                        outerRadiusDp = innerContentRadiusDp,
+                        insetDp = 2,
+                        minRadiusDp = 4,
+                    ),
+                ).apply { alpha = 0.42f }
+                missingBox.addView(
+                    tile,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ).apply { setMargins(tileInset, tileInset, tileInset, tileInset) },
+                )
+                missingBox
+            }
             else -> TextView(context).apply {
                 setText(R.string.glyph_add)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, DockBarMetrics.blankPlusTextSp(slotSizeDp))
@@ -353,6 +398,7 @@ class DockBar(
                     context,
                     cornerRadiusDp = innerContentRadiusDp,
                 )
+                holder.blankPlusView = this
             }
         }
         frame.addView(content, FrameLayout.LayoutParams(
@@ -440,6 +486,7 @@ class DockBar(
         paintedMoving = moving
         focusPainted = true
         val surfaceFill = surfaceFillColor
+        applyBarFocusChrome(focused, moving, surfaceFill)
         val visibleTotal = slotFrames.size.coerceAtLeast(1)
         val accent = settings.accentColor
         val animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled()
@@ -471,6 +518,14 @@ class DockBar(
             holder.visualState = nextState
             val ctx = frame.context
             val spec = MoveChoreography.dockVisualSpec(role, blank)
+            val targetScale = when (role) {
+                MoveChoreography.SlotRole.FOCUSED -> DockBarMetrics.focusScaleForSlot(slotSizeDp)
+                MoveChoreography.SlotRole.LIFTED -> DockBarMetrics.liftScaleForSlot(slotSizeDp)
+                else -> spec.scale
+            }
+            holder.blankPlusView?.setTextColor(
+                DockBarMetrics.blankPlusColorForRole(role, accent, surfaceFill),
+            )
             frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
                 role == MoveChoreography.SlotRole.LIFTED
             updateSlotDescription(frame, index, role == MoveChoreography.SlotRole.LIFTED)
@@ -496,15 +551,15 @@ class DockBar(
                 isLaidOut = frame.isLaidOut,
             )
             if (role == MoveChoreography.SlotRole.LIFTED) {
-                frame.scaleX = spec.scale
-                frame.scaleY = spec.scale
+                frame.scaleX = targetScale
+                frame.scaleY = targetScale
                 frame.translationY = 0f
                 frame.alpha = spec.alpha
                 startPulse(frame)
             } else if (allowMotion) {
                 frame.animate()
-                    .scaleX(spec.scale)
-                    .scaleY(spec.scale)
+                    .scaleX(targetScale)
+                    .scaleY(targetScale)
                     .translationY(0f)
                     .alpha(spec.alpha)
                     .setDuration(
@@ -517,11 +572,51 @@ class DockBar(
                     .setInterpolator(FOCUS_INTERPOLATOR)
                     .start()
             } else {
-                frame.scaleX = spec.scale
-                frame.scaleY = spec.scale
+                frame.scaleX = targetScale
+                frame.scaleY = targetScale
                 frame.translationY = 0f
                 frame.alpha = spec.alpha
             }
+        }
+    }
+
+    private fun applyBarFocusChrome(focused: Int?, moving: Int?, surfaceFill: Int) {
+        val bar = contentView ?: return
+        val chrome = DockBarMetrics.barFocusChrome(
+            focused = focused,
+            moving = moving,
+            accent = settings.accentColor,
+            surface = surfaceFill,
+            hairline = ThemePack.hairlineDivider(themeTokens),
+        )
+        if (paintedBarActive == chrome.active) return
+        paintedBarActive = chrome.active
+        (bar.background as? GradientDrawable)?.setStroke(bar.strokePx(1), chrome.strokeColor)
+        bar.elevation = bar.dpF(chrome.elevationDp)
+    }
+
+    /**
+     * Cancelable horizontal wall-clamp micro edge bump (`4dp` out-and-back over
+     * `120ms`, `DeckMotionPolicy`-gated) when D-pad left/right clamps at slot 0
+     * or the last visible dock slot.
+     */
+    fun triggerEdgeBump(direction: Int) {
+        if (direction == 0) return
+        val bar = contentView ?: return
+        cancelEdgeBumpAnimator()
+        if (!DeckMotionPolicy.shouldAnimate(
+                animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                isLaidOut = bar.isLaidOut,
+            )
+        ) {
+            bar.translationX = 0f
+            return
+        }
+        val nudgePx = (if (direction < 0) -1f else 1f) * bar.dpF(DockBarMetrics.EDGE_BUMP_DP)
+        edgeBumpAnimator = ObjectAnimator.ofFloat(bar, View.TRANSLATION_X, 0f, nudgePx, 0f).apply {
+            duration = DockBarMetrics.EDGE_BUMP_DURATION_MS
+            interpolator = FOCUS_INTERPOLATOR
+            start()
         }
     }
 
@@ -579,9 +674,16 @@ class DockBar(
         moveDotView?.alpha = 1f
     }
 
+    private fun cancelEdgeBumpAnimator() {
+        edgeBumpAnimator?.cancel()
+        edgeBumpAnimator = null
+        contentView?.translationX = 0f
+    }
+
     private fun cancelAllAnimations() {
         cancelPulseAnimator()
         cancelMoveDotAnimator()
+        cancelEdgeBumpAnimator()
         for (i in 0 until slotFrames.size) {
             val frame = slotFrames[i]
             frame.animate().cancel()
@@ -589,6 +691,7 @@ class DockBar(
             frame.alpha = 1f
             slotHolders.getOrNull(i)?.visualState = null
         }
+        paintedBarActive = null
         focusPainted = false
     }
 
@@ -596,16 +699,19 @@ class DockBar(
         cancelPulseAnimator()
         if (!DeckMotionPolicy.shouldPulse(DeckMotionPolicy.areSystemAnimatorsEnabled())) return
         val floatPx = frame.dpF(MoveChoreography.DOCK_FLOAT_DP)
+        val tight = slotSizeDp <= DockBarMetrics.FOCUS_SCALE_TIGHT_THRESHOLD_DP
+        val pulseMin = if (tight) 1.06f else MoveChoreography.DOCK_PULSE_SCALE_MIN
+        val pulseMax = if (tight) 1.09f else MoveChoreography.DOCK_PULSE_SCALE_MAX
         val scaleX = ObjectAnimator.ofFloat(
             frame, View.SCALE_X,
-            MoveChoreography.DOCK_PULSE_SCALE_MIN, MoveChoreography.DOCK_PULSE_SCALE_MAX,
+            pulseMin, pulseMax,
         ).apply {
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
         }
         val scaleY = ObjectAnimator.ofFloat(
             frame, View.SCALE_Y,
-            MoveChoreography.DOCK_PULSE_SCALE_MIN, MoveChoreography.DOCK_PULSE_SCALE_MAX,
+            pulseMin, pulseMax,
         ).apply {
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE

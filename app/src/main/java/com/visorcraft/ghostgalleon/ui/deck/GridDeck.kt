@@ -1656,6 +1656,7 @@ class GridDeck(
                 if (to != from) {
                     val next = dockMove.swap(from, to)
                     if (next == null) {
+                        dockBar?.triggerEdgeBump(DockBarMetrics.edgeBumpDirection(from, from, action))
                         playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, from, visible))
                         return true
                     }
@@ -1672,6 +1673,7 @@ class GridDeck(
                     state.focusDock(next)
                     dockBar?.updateFocus(next, moving = next)
                 } else {
+                    dockBar?.triggerEdgeBump(DockBarMetrics.edgeBumpDirection(from, to, action))
                     playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, to, visible))
                 }
             }
@@ -1707,6 +1709,10 @@ class GridDeck(
         when (action) {
             Action.NAV_LEFT, Action.NAV_RIGHT -> {
                 val next = dockNav.move(dockIndex, action)
+                val bumpDir = DockBarMetrics.edgeBumpDirection(dockIndex, next, action)
+                if (bumpDir != 0) {
+                    dockBar?.triggerEdgeBump(bumpDir)
+                }
                 playAudio(
                     DeckAudioLogic.dockNavigationEvent(
                         action = action,

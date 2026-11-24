@@ -118,4 +118,121 @@ class DockBarMetricsTest {
         assertEquals(1, DockBarMetrics.iconSizePx(-10))
         assertEquals(DockBarMetrics.MIN_BLANK_PLUS_SP, DockBarMetrics.blankPlusTextSp(0), 0.01f)
     }
+
+    @Test
+    fun `barFocusChrome lifts elevation and tints accessible accent hairline on focus or move`() {
+        for (tokens in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val surface = com.visorcraft.ghostgalleon.settings.ThemePack.cardFill(tokens)
+            val hairline = com.visorcraft.ghostgalleon.settings.ThemePack.hairlineDivider(tokens)
+
+            val idle = DockBarMetrics.barFocusChrome(null, null, tokens.accentColor, surface, hairline)
+            assertEquals(false, idle.active)
+            assertEquals(hairline, idle.strokeColor)
+            assertEquals(DockBarMetrics.BAR_ELEVATION_IDLE_DP, idle.elevationDp, 0.001f)
+
+            val focused = DockBarMetrics.barFocusChrome(2, null, tokens.accentColor, surface, hairline)
+            val moving = DockBarMetrics.barFocusChrome(null, 1, tokens.accentColor, surface, hairline)
+            for (activeChrome in listOf(focused, moving)) {
+                assertTrue(activeChrome.active)
+                assertEquals(DockBarMetrics.BAR_ELEVATION_ACTIVE_DP, activeChrome.elevationDp, 0.001f)
+                assertTrue(activeChrome.elevationDp > idle.elevationDp)
+                val opaqueStroke = (0xFF shl 24) or (activeChrome.strokeColor and 0x00FFFFFF)
+                val ratio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(opaqueStroke, surface)
+                assertTrue(
+                    "${tokens.id} active dock border contrast $ratio < 3.0",
+                    ratio >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `blankPlusColorForRole highlights focused and lifted slots with WCAG AA contrast`() {
+        for (tokens in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val surface = com.visorcraft.ghostgalleon.settings.ThemePack.cardFill(tokens)
+            val normal = DockBarMetrics.blankPlusColorForRole(
+                MoveChoreography.SlotRole.NORMAL,
+                tokens.accentColor,
+                surface,
+            )
+            assertEquals(com.visorcraft.ghostgalleon.ui.UiDimens.ALPHA_SUBTLE, normal)
+
+            val focused = DockBarMetrics.blankPlusColorForRole(
+                MoveChoreography.SlotRole.FOCUSED,
+                tokens.accentColor,
+                surface,
+            )
+            val lifted = DockBarMetrics.blankPlusColorForRole(
+                MoveChoreography.SlotRole.LIFTED,
+                tokens.accentColor,
+                surface,
+            )
+            val drop = DockBarMetrics.blankPlusColorForRole(
+                MoveChoreography.SlotRole.DROP_TARGET,
+                tokens.accentColor,
+                surface,
+            )
+            assertTrue(
+                "${tokens.id} focused blank '+' contrast < 4.5",
+                com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(focused, surface) >= 4.5,
+            )
+            assertTrue(
+                "${tokens.id} lifted blank '+' contrast < 4.5",
+                com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(lifted, surface) >= 4.5,
+            )
+            assertEquals(
+                MoveChoreography.dropTargetStrokeColor(tokens.accentColor, surface),
+                drop,
+            )
+        }
+    }
+
+    @Test
+    fun `edgeBumpDirection fires only on horizontal wall clamp`() {
+        assertEquals(-1, DockBarMetrics.edgeBumpDirection(0, 0, com.visorcraft.ghostgalleon.settings.Action.NAV_LEFT))
+        assertEquals(+1, DockBarMetrics.edgeBumpDirection(8, 8, com.visorcraft.ghostgalleon.settings.Action.NAV_RIGHT))
+        assertEquals(0, DockBarMetrics.edgeBumpDirection(2, 1, com.visorcraft.ghostgalleon.settings.Action.NAV_LEFT))
+        assertEquals(0, DockBarMetrics.edgeBumpDirection(2, 3, com.visorcraft.ghostgalleon.settings.Action.NAV_RIGHT))
+        assertEquals(0, DockBarMetrics.edgeBumpDirection(0, 0, com.visorcraft.ghostgalleon.settings.Action.NAV_UP))
+        assertEquals(0, DockBarMetrics.edgeBumpDirection(0, 0, com.visorcraft.ghostgalleon.settings.Action.CONFIRM))
+    }
+
+    @Test
+    fun `adaptive tight padding and capped focus scale prevent neighbor ring collisions across 540dp and 1080dp`() {
+        assertEquals(DockBarMetrics.FOCUS_SCALE_TIGHT, DockBarMetrics.focusScaleForSlot(32), 0.0001f)
+        assertEquals(DockBarMetrics.FOCUS_SCALE_TIGHT, DockBarMetrics.focusScaleForSlot(36), 0.0001f)
+        assertEquals(DockBarMetrics.FOCUS_SCALE_COMFY, DockBarMetrics.focusScaleForSlot(40), 0.0001f)
+
+        val viewports = listOf(
+            Triple(720, 2.0f, 44),   // 360dp compact (slotSizeDp <= 36 tight cap exercised!)
+            Triple(1080, 2.0f, 48),  // 540dp Sugar
+            Triple(2160, 2.0f, 72),  // 1080dp wide
+        )
+        for ((widthPx, density, suggestedDp) in viewports) {
+            for (hasChrome in listOf(false, true)) {
+                for (slots in DockSlots.MIN_VISIBLE..DockSlots.CAPACITY) {
+                    val spec = DockBarMetrics.compute(
+                        windowWidthPx = widthPx,
+                        density = density,
+                        suggestedSlotDp = suggestedDp,
+                        visibleSlots = slots,
+                        hasChromeIcons = hasChrome,
+                    )
+                    val slotDp = (spec.slotSizePx / density).toInt()
+                    val scale = DockBarMetrics.focusScaleForSlot(slotDp)
+                    val focusedHalfW = (spec.slotSizePx * scale) / 2f
+                    val halfBudget = (spec.slotSizePx / 2f) + spec.slotMarginHPx
+                    assertTrue(
+                        "ring collision on w=$widthPx d=$density chrome=$hasChrome slots=$slots: focusedHalf=$focusedHalfW > budget=$halfBudget",
+                        focusedHalfW <= halfBudget + 0.01f,
+                    )
+                    assertTrue(
+                        "barPadHPx must be tight (6dp) or comfy (10dp)",
+                        spec.barPadHPx == (DockBarMetrics.BAR_PAD_H_TIGHT_DP * density).toInt() ||
+                            spec.barPadHPx == (DockBarMetrics.BAR_PAD_H_COMFY_DP * density).toInt(),
+                    )
+                }
+            }
+        }
+    }
 }

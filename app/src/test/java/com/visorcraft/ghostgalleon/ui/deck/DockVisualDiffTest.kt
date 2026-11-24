@@ -127,4 +127,38 @@ class DockVisualDiffTest {
         assertTrue(DockVisualDiff.needsRepaint(base, base.copy(isBlank = true)))
         assertTrue(DockVisualDiff.needsRepaint(base, base.copy(visibleTotal = 7)))
     }
+
+    @Test
+    fun `focusing blank dock slot repaints at most 2 slots and transitions blank plus highlight cleanly`() {
+        val total = 5
+        val painted = Array(total) { i ->
+            slotState(
+                index = i,
+                focused = 3,
+                slotKey = if (i < 4) "com.app.$i" else null,
+                visibleTotal = total,
+            )
+        }
+        // Step right from slot 3 (filled) -> slot 4 (blank '+'): strictly 2 slots repaint.
+        var mutations = 0
+        for (i in 0 until total) {
+            val next = slotState(
+                index = i,
+                focused = 4,
+                slotKey = if (i < 4) "com.app.$i" else null,
+                visibleTotal = total,
+            )
+            if (DockVisualDiff.needsRepaint(painted[i], next)) {
+                painted[i] = next
+                mutations++
+            }
+        }
+        assertEquals(2, mutations)
+        assertTrue(painted[4].isBlank)
+        assertEquals(MoveChoreography.SlotRole.FOCUSED, painted[4].role)
+        assertTrue(
+            DockBarMetrics.blankPlusColorForRole(painted[4].role) !=
+                DockBarMetrics.blankPlusColorForRole(MoveChoreography.SlotRole.NORMAL),
+        )
+    }
 }
