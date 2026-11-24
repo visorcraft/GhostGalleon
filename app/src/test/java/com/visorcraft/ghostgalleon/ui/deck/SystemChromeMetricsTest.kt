@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.settings.DockSlots
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +72,26 @@ class SystemChromeMetricsTest {
         )
         assertEquals(64, chrome.bottomMarginPx) // 32dp @ 2.0x
         assertEquals(80, chrome.buttonSizePx)   // 40dp @ 2.0x
+    }
+
+    @Test
+    fun `swap and settings icon tints exceed WCAG AA contrast across all built-in themes`() {
+        val scrimBg = SystemChromeMetrics.CHROME_SCRIM_RGB
+        val settingsContrast = ThemePack.contrastRatio(SystemChromeMetrics.settingsIconTint(), scrimBg)
+        assertTrue("settings tint contrast $settingsContrast < 4.5", settingsContrast >= ThemePack.MIN_TEXT_CONTRAST)
+
+        val accents = ThemePack.BUILTINS.map { it.accentColor } + listOf(
+            0xFF1A237E.toInt(),
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+        )
+        for (accent in accents) {
+            val swapTint = SystemChromeMetrics.swapIconTint(accent)
+            val ratio = ThemePack.contrastRatio(swapTint, scrimBg)
+            assertTrue(
+                "swap tint contrast $ratio < 4.5 for accent=${accent.toUInt().toString(16)}",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
     }
 }

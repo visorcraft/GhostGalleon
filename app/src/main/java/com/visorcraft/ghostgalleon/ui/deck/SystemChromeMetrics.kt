@@ -1,10 +1,13 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import kotlin.math.roundToInt
 
 /**
- * Pure, host-tested placement geometry for the bottom-edge system chrome
- * buttons (Swap at bottom-start, Settings at bottom-end) in [SystemChromeIcons].
+ * Pure, host-tested placement geometry and visual tokens for the bottom-edge
+ * system chrome buttons (Swap at bottom-start, Settings at bottom-end) in
+ * [SystemChromeIcons].
  *
  * Aligns both 40dp circular chrome buttons strictly to the live vertical
  * centerline of the floating [DockBar] pill across Sugar (~540dp) and wide
@@ -16,6 +19,24 @@ object SystemChromeMetrics {
     const val DOCK_BAR_PAD_V_DP: Int = 8
     const val MIN_HORIZONTAL_GAP_DP: Int = 8
     const val CHROME_ELEVATION_DP: Float = 4f
+    const val PRESS_SCALE: Float = 0.92f
+    const val PRESS_ANIM_MS: Long = 80L
+
+    /** Matches TileBackgrounds.chromeButton dark circular scrim base RGB. */
+    const val CHROME_SCRIM_RGB: Int = 0xFF16161C.toInt()
+    const val SWAP_ACCENT_BLEND: Float = 0.45f
+
+    /**
+     * Luminous accent-kissed glyph tint for the dual-screen Swap button,
+     * keeping high WCAG contrast (> 4.5:1) over the chrome scrim across all themes.
+     */
+    fun swapIconTint(accent: Int): Int {
+        val lifted = ThemePack.accentTextColor(accent, CHROME_SCRIM_RGB)
+        return MoveChoreography.blendRgb(UiDimens.ALPHA_PRIMARY, lifted, SWAP_ACCENT_BLEND)
+    }
+
+    /** Crisp white glyph tint for the Settings chrome button. */
+    fun settingsIconTint(): Int = UiDimens.ALPHA_PRIMARY
 
     data class Spec(
         val buttonSizePx: Int,
