@@ -17,6 +17,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -1749,6 +1750,8 @@ object CompanionPanel {
             val radius = 12 * host.resources.displayMetrics.density
             video = VideoView(host.context).apply {
                 tag = TAG_HERO_VIDEO
+                // Muted previews must not steal audio focus from user music or ambient audio (API 26+).
+                setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE)
                 clipToOutline = true
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(view: View, outline: Outline) {
@@ -1776,6 +1779,7 @@ object CompanionPanel {
             if (!bound.isAttachedToWindow) return@Runnable
             if (bound.getTag(R.id.media_bind_uri) != uri) return@Runnable
             runCatching {
+                bound.setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE)
                 bound.setVideoURI(Uri.parse(uri))
                 bound.setOnPreparedListener { mp: MediaPlayer ->
                     runCatching {

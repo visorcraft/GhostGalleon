@@ -18,6 +18,10 @@ import android.os.SystemClock
 import com.visorcraft.ghostgalleon.art.HttpSgdbTransport
 import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
+import com.visorcraft.ghostgalleon.audio.SoundCue
+import com.visorcraft.ghostgalleon.audio.SoundEngine
+import com.visorcraft.ghostgalleon.audio.SoundEngineConfig
+import com.visorcraft.ghostgalleon.audio.SoundRuntimeState
 import com.visorcraft.ghostgalleon.library.DrawerListCache
 import com.visorcraft.ghostgalleon.library.DrawerListKey
 import com.visorcraft.ghostgalleon.library.OpenSession
@@ -68,9 +72,12 @@ import com.visorcraft.ghostgalleon.settings.DataMigrator
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SettingsStore
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.CompanionActivity
+import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
+import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 import com.visorcraft.ghostgalleon.display.currentDisplayId
 import com.visorcraft.ghostgalleon.ui.DisplayRole
 import com.visorcraft.ghostgalleon.ui.DualPaintPolicy
@@ -316,6 +323,44 @@ class GhostGalleonApp : Application() {
 
     val artCache: com.visorcraft.ghostgalleon.art.ArtCache by lazy {
         com.visorcraft.ghostgalleon.art.ArtCache(File(filesDir, "art"))
+    }
+
+    /**
+     * App-scoped UI/system SFX runtime (`SoundPool`, off-UI synthesis/load, never steals
+     * audio focus). Survives `CompanionActivity` absorb/redirect/churn cleanly.
+     */
+    val soundEngine: SoundEngine by lazy {
+        SoundEngine(
+            context = this,
+            configProvider = {
+                val themeId = if (::settings.isInitialized) settings.themePackId else ThemePack.GHOST.id
+                SoundEngineConfig(themePackId = themeId)
+            },
+            runtimeStateProvider = {
+                SoundRuntimeState(
+                    activeAppActivityCount = activeAppActivityCount,
+                    hasKeepSession = isKeepSessionActive,
+                    screenOff = isDeviceScreenOff,
+                )
+            },
+        )
+    }
+
+    /** Play a UI/system SFX cue via [soundEngine]. Non-blocking and focus-safe. */
+    fun playSfx(
+        cue: SoundCue,
+        pan: Float = 0f,
+        repeatStreak: Int = 0,
+        pitchMul: Float = 1f,
+        volumeMul: Float = 1f,
+    ) {
+        soundEngine.play(
+            cue = cue,
+            pan = pan,
+            repeatStreak = repeatStreak,
+            pitchMul = pitchMul,
+            volumeMul = volumeMul,
+        )
     }
 
     // App-scoped owner of the SteamGridDB batch scrape: a multi-thousand-ROM
@@ -1178,6 +1223,31 @@ class GhostGalleonApp : Application() {
 
     private var sessionAwaitingReturn: Boolean = false
     private var liveDeckCount: Int = 0
+    // Tracked across BaseDeckActivity, SettingsActivity, and ControllerLabActivity
+    // (separate from liveDeckCount so Settings audio auditions work while backgrounding
+    // pauses audio only when every Ghost Galleon activity has stopped).
+    private val startedAppActivities = mutableSetOf<Activity>()
+
+    @Volatile
+    var activeAppActivityCount: Int = 0
+        private set
+
+    /** True while any Ghost Galleon activity (deck, Settings, or Controller Lab) is started. */
+    val isAnyAppActivityActive: Boolean
+        get() = activeAppActivityCount > 0
+
+    /** True while an external game/app session is open (e.g. KEEP Play HUD active). */
+    val isKeepSessionActive: Boolean
+        get() = openSession != null || sessionSurface != null
+
+    @Volatile
+    var isDeviceScreenOff: Boolean = false
+        private set
+
+    private fun isTrackedAppActivity(activity: Activity): Boolean =
+        activity is BaseDeckActivity ||
+            activity is SettingsActivity ||
+            activity is ControllerLabActivity
 
     @Volatile
     var romIndexReady: Boolean = false
@@ -2338,6 +2408,8 @@ class GhostGalleonApp : Application() {
         seedColdStartSelection()
         // PM query off the UI thread before decks paint.
         prewarmAppLibrary()
+        // Off-UI SFX synthesis/cache check & SoundPool warm-up (never blocks first paint).
+        soundEngine.warmUp()
         // 20k-title TSV + rematch + identity sidecar stay off the first paint.
         ROM_IO.execute {
             loadBundledArcadeTitles()
@@ -2356,9 +2428,23 @@ class GhostGalleonApp : Application() {
 
             override fun onActivityDestroyed(activity: Activity) {
                 if (activity is BaseDeckActivity) liveDeckActivities.remove(activity)
+                if (isTrackedAppActivity(activity) && startedAppActivities.remove(activity)) {
+                    activeAppActivityCount = startedAppActivities.size
+                    if (activeAppActivityCount == 0) {
+                        soundEngine.onAppBackgrounded()
+                    }
+                }
             }
 
             override fun onActivityStarted(activity: Activity) {
+                if (isTrackedAppActivity(activity)) {
+                    val wasBackgrounded = startedAppActivities.isEmpty()
+                    startedAppActivities.add(activity)
+                    activeAppActivityCount = startedAppActivities.size
+                    if (wasBackgrounded && activeAppActivityCount > 0) {
+                        soundEngine.onAppForegrounded()
+                    }
+                }
                 if (activity is BaseDeckActivity) {
                     liveDeckCount++
                     if (liveDeckCount == 1) {
@@ -2391,6 +2477,12 @@ class GhostGalleonApp : Application() {
                         sessionAwaitingReturn = true
                     }
                 }
+                if (isTrackedAppActivity(activity) && startedAppActivities.remove(activity)) {
+                    activeAppActivityCount = startedAppActivities.size
+                    if (activeAppActivityCount == 0) {
+                        soundEngine.onAppBackgrounded()
+                    }
+                }
             }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
         })
@@ -2403,8 +2495,15 @@ class GhostGalleonApp : Application() {
         val screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> onSessionDeviceSleep()
-                    Intent.ACTION_SCREEN_ON -> onSessionDeviceWake()
+                    Intent.ACTION_SCREEN_OFF -> {
+                        isDeviceScreenOff = true
+                        onSessionDeviceSleep()
+                        soundEngine.onScreenOff()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        isDeviceScreenOff = false
+                        onSessionDeviceWake()
+                    }
                 }
             }
         }
@@ -2464,8 +2563,12 @@ class GhostGalleonApp : Application() {
                 s.orientationMode != settings.orientationMode ||
                 s.userPinnedPrimaryId != settings.userPinnedPrimaryId
         val modeChanged = s.defaultMode != settings.defaultMode
+        val themeChanged = s.themePackId != settings.themePackId
         val drawerRelevant = drawerRelevantSettingsChanged(settings, s)
         settings = s
+        if (themeChanged) {
+            soundEngine.syncWithSettings()
+        }
         // Debounced async persist — every favorite/dock/launch used to
         // block the main thread on pretty-printed JSON IO.
         scheduleSettingsSave(s)
