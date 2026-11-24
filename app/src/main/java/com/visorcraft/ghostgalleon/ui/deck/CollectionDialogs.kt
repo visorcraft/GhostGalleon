@@ -9,6 +9,42 @@ import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.toast
 
+/** Pure, host-tested option-building and validation helpers for [CollectionDialogs]. */
+internal object CollectionDialogRows {
+
+    data class CollectionOption(
+        val name: String,
+        val memberCount: Int,
+        val alreadyContainsAll: Boolean,
+        val alreadyContainsSome: Boolean,
+    )
+
+    /**
+     * Build ordered existing collection options with live member counts and
+     * membership flags for [keys], matching [LibraryBrowse.presentCollectionRails].
+     */
+    fun buildAddOptions(
+        collections: Map<String, List<String>>,
+        keys: List<String>,
+    ): List<CollectionOption> {
+        val targetKeys = keys.distinct()
+        return LibraryBrowse.presentCollectionRails(collections).map { name ->
+            val members = CollectionsOps.members(collections, name)
+            val memberSet = members.toSet()
+            CollectionOption(
+                name = name,
+                memberCount = members.size,
+                alreadyContainsAll = targetKeys.isNotEmpty() && targetKeys.all { it in memberSet },
+                alreadyContainsSome = targetKeys.any { it in memberSet },
+            )
+        }
+    }
+
+    /** Trim and reject blank collection names. */
+    fun normalizeCollectionName(raw: String): String? =
+        raw.trim().takeIf { it.isNotEmpty() }
+}
+
 /** Shared “Add to collection” picker for Grid and Game decks. */
 object CollectionDialogs {
 
@@ -34,12 +70,39 @@ object CollectionDialogs {
             return
         }
         val live = app.settings
-        val names = LibraryBrowse.presentCollectionRails(live.collections).toMutableList()
-        names.add(0, context.getString(R.string.settings_new_collection))
+        val options = CollectionDialogRows.buildAddOptions(live.collections, keys)
+        val rows = buildList(options.size + 1) {
+            add(context.getString(R.string.settings_new_collection_row))
+            options.forEach { opt ->
+                val countLabel = context.resources.getQuantityString(
+                    R.plurals.count_items,
+                    opt.memberCount,
+                    opt.memberCount,
+                )
+                val base = context.getString(R.string.format_dot_pair, opt.name, countLabel)
+                add(
+                    if (opt.alreadyContainsAll) {
+                        context.getString(R.string.format_selected_check, base)
+                    } else {
+                        base
+                    },
+                )
+            }
+        }
+        val baseTitle = context.getString(R.string.action_add_to_collection)
+        val dialogTitle = if (keys.size > 1) {
+            context.getString(
+                R.string.format_dot_pair,
+                baseTitle,
+                context.resources.getQuantityString(R.plurals.count_items, keys.size, keys.size),
+            )
+        } else {
+            baseTitle
+        }
         DeckDialogs.chooseItem(
             context = context,
-            titleRes = R.string.action_add_to_collection,
-            items = names.toTypedArray(),
+            title = dialogTitle,
+            items = rows.toTypedArray(),
         ) { which ->
             if (which == 0) {
                 DeckDialogs.promptText(
@@ -47,9 +110,10 @@ object CollectionDialogs {
                     titleRes = R.string.settings_new_collection,
                     hintRes = R.string.settings_collection_name_hint,
                     positiveRes = R.string.action_create,
+                    requireNonBlank = true,
                 ) { rawName ->
-                    val name = rawName.trim()
-                    if (name.isEmpty()) return@promptText
+                    val name = CollectionDialogRows.normalizeCollectionName(rawName)
+                        ?: return@promptText
                     val current = app.settings.collections
                     var cols = CollectionsOps.createCollection(current, name)
                     cols = CollectionsOps.bulkAddToCollection(cols, name, keys)
@@ -58,13 +122,13 @@ object CollectionDialogs {
                     context.toast(R.string.format_added_to_named, name)
                 }
             } else {
-                val name = names.getOrNull(which) ?: return@chooseItem
+                val opt = options.getOrNull(which - 1) ?: return@chooseItem
                 val cols = CollectionsOps.bulkAddToCollection(
-                    app.settings.collections, name, keys,
+                    app.settings.collections, opt.name, keys,
                 )
-                commitCollection(app, cols, name)
+                commitCollection(app, cols, opt.name)
                 onDone?.invoke()
-                context.toast(R.string.format_added_to_named, name)
+                context.toast(R.string.format_added_to_named, opt.name)
             }
         }
     }
