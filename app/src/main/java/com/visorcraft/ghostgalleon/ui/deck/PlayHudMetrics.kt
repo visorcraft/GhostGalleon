@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.settings.ThemePack
 
 /**
@@ -23,6 +24,39 @@ object PlayHudMetrics {
 
     /** Corner radius (dp) for Save-Slot and Cinema thumbnail cells. */
     const val SLOT_CORNER_RADIUS_DP: Int = 10
+
+    /** Warm gold outline and star tint for a pinned Cinema save-state slot. */
+    const val SLOT_PINNED_GOLD: Int = 0xFFFFD54F.toInt()
+
+    /** Thumbnail cell edge (dp) for Save-Slot and Cinema strips. */
+    fun slotCellSizeDp(compact: Boolean): Int = if (compact) 40 else 48
+
+    data class SlotBorderSpec(
+        val strokeDp: Int,
+        val color: Int,
+    )
+
+    /** Pure border hierarchy for Save-Slot / Cinema cells: pinned gold > latest accent > subtle hairline. */
+    fun slotBorderSpec(
+        isPinned: Boolean,
+        isLatest: Boolean,
+        accentColor: Int,
+        hairlineColor: Int,
+    ): SlotBorderSpec = when {
+        isPinned -> SlotBorderSpec(strokeDp = 2, color = SLOT_PINNED_GOLD)
+        isLatest -> SlotBorderSpec(strokeDp = 2, color = accentColor)
+        else -> SlotBorderSpec(strokeDp = 1, color = hairlineColor)
+    }
+
+    /** Stable diff key for Cinema strip repainting, including pinned and latest captured slots. */
+    fun cinemaPaintKey(
+        frames: List<CinemaFrame>,
+        pinnedSlot: Int?,
+        lastSlot: Int?,
+    ): String {
+        val body = frames.joinToString(",") { "${it.slot}:${it.savedAtMs}:${it.thumbKey ?: ""}" }
+        return "$body|p=${pinnedSlot ?: -1}|l=${lastSlot ?: -1}"
+    }
 
     /** Live/paused indicator color (WCAG AA verified across all dark surfaces). */
     fun sessionStatusColor(isActive: Boolean): Int =

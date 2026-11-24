@@ -58,4 +58,33 @@ class PlayHudMetricsTest {
         assertTrue(compact.playerSp < standard.playerSp)
         assertTrue(compact.padHorizontalDp <= standard.padHorizontalDp)
     }
+
+    @Test
+    fun `slotBorderSpec prioritizes pinned gold over latest accent over resting hairline`() {
+        val accent = ThemePack.NEON.accentColor
+        val hairline = ThemePack.HAIRLINE_LIGHT
+
+        val pinned = PlayHudMetrics.slotBorderSpec(true, true, accent, hairline)
+        assertEquals(2, pinned.strokeDp)
+        assertEquals(PlayHudMetrics.SLOT_PINNED_GOLD, pinned.color)
+
+        val latest = PlayHudMetrics.slotBorderSpec(false, true, accent, hairline)
+        assertEquals(2, latest.strokeDp)
+        assertEquals(accent, latest.color)
+
+        val idle = PlayHudMetrics.slotBorderSpec(false, false, accent, hairline)
+        assertEquals(1, idle.strokeDp)
+        assertEquals(hairline, idle.color)
+    }
+
+    @Test
+    fun `cinemaPaintKey invalidates when pinned or latest slot changes`() {
+        val frames = listOf(com.visorcraft.ghostgalleon.rom.CinemaFrame(9, 1000L, "a.png"))
+        val k1 = PlayHudMetrics.cinemaPaintKey(frames, pinnedSlot = null, lastSlot = 9)
+        val k2 = PlayHudMetrics.cinemaPaintKey(frames, pinnedSlot = 9, lastSlot = 9)
+        val k3 = PlayHudMetrics.cinemaPaintKey(frames, pinnedSlot = 9, lastSlot = 10)
+        assertNotEquals(k1, k2)
+        assertNotEquals(k2, k3)
+        assertTrue(PlayHudMetrics.slotCellSizeDp(compact = true) < PlayHudMetrics.slotCellSizeDp(compact = false))
+    }
 }

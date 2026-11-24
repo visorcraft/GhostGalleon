@@ -4106,12 +4106,19 @@ object CompanionPanel {
                 visibility = View.GONE
                 contentDescription = activity.getString(R.string.play_hud_cinema)
                 isHorizontalScrollBarEnabled = false
+                isHorizontalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(16))
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                clipChildren = false
+                clipToPadding = false
                 setPadding(0, dp(6), 0, 0)
                 addView(
                     LinearLayout(activity).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER
                         isBaselineAligned = false
+                        clipChildren = false
+                        clipToPadding = false
                     },
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -4236,7 +4243,12 @@ object CompanionPanel {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             isBaselineAligned = false
+            clipChildren = false
+            clipToPadding = false
         }
+        val actionTouchH = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
+        val actionInsetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        var actionScrollRef: HorizontalScrollView? = null
         fun actionChip(
             labelRes: Int? = null,
             label: CharSequence? = null,
@@ -4254,32 +4266,63 @@ object CompanionPanel {
                 if (filled) ThemePack.onFillTextColor(settings.accentColor)
                 else UiDimens.ALPHA_PRIMARY,
             )
-            background = if (filled) {
-                TileBackgrounds.accentPill(activity, settings.accentColor)
+            val basePill = if (filled) {
+                TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18)
             } else {
                 TileBackgrounds.chipIdle(activity, cornerRadiusDp = 18)
             }
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = basePill,
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
             gravity = Gravity.CENTER
             setSingleLine()
-            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setPadding(dp(14), actionInsetV, dp(14), actionInsetV)
             this.visibility = visibility
             isEnabled = enabled
+            isClickable = enabled
+            isFocusable = enabled
             alpha = if (enabled) 1f else 0.4f
             if (onClick != null && enabled) setOnClickListener { onClick() }
+        }.also { tv ->
+            if (enabled) {
+                attachChipTactileFeedback(tv) {
+                    val sc = actionScrollRef ?: return@attachChipTactileFeedback
+                    val target = CompanionChromeErgonomics.horizontalScrollTarget(
+                        chipLeft = tv.left,
+                        chipRight = tv.right,
+                        viewportWidth = sc.width,
+                        endClearancePx = 0,
+                        contentWidth = actions.width,
+                        currentScrollX = sc.scrollX,
+                    )
+                    if (target != null) sc.smoothScrollTo(target, 0)
+                }
+            }
         }
         fun addChip(chip: View) {
             if (actions.childCount > 0 && chip.visibility != View.GONE) {
                 actions.addView(View(activity), LinearLayout.LayoutParams(dp(8), 1))
             }
-            actions.addView(chip)
+            actions.addView(
+                chip,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, actionTouchH),
+            )
         }
         fun chipScroll(tagActions: Boolean): HorizontalScrollView =
             HorizontalScrollView(activity).apply {
+                actionScrollRef = this
                 if (tagActions) tag = TAG_PLAY_HUD_ACTIONS
                 isFillViewport = true
                 isHorizontalScrollBarEnabled = false
+                isHorizontalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(18))
                 overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                setPadding(0, dp(if (compact) 8 else 12), 0, 0)
+                clipChildren = false
+                clipToPadding = false
+                setPadding(0, dp(if (compact) 4 else 8), 0, 0)
                 if (tagActions) {
                     visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
                 }
@@ -4426,14 +4469,30 @@ object CompanionPanel {
                     (activity as? MainActivity)?.restartCompanionPanel("return-from-keep-hud")
                 }
             })
-            addChip(
-                actionChip(
-                    labelRes = if (surface.key in settings.favorites) R.string.action_unfavorite
-                    else R.string.action_favorite,
-                ) {
-                    EntryActions.toggleFavorite(activity, surface.key)
-                },
+            val isHudFav = surface.key in settings.favorites
+            val hudFavLabel = activity.getString(
+                if (isHudFav) R.string.action_unfavorite else R.string.action_favorite,
             )
+            val hudFavChip = actionChip(label = hudFavLabel) {
+                EntryActions.toggleFavorite(activity, surface.key)
+            }
+            if (isHudFav) {
+                val star = activity.getString(R.string.glyph_favorite)
+                val display = CompanionChromeErgonomics.favoriteChipText(star, hudFavLabel, true)
+                hudFavChip.contentDescription = hudFavLabel
+                hudFavChip.isSelected = true
+                if (star.isNotBlank() && display.startsWith(star)) {
+                    hudFavChip.text = SpannableString(display).apply {
+                        setSpan(
+                            ForegroundColorSpan(FAVORITE_STAR_COLOR),
+                            0,
+                            star.length,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                        )
+                    }
+                }
+            }
+            addChip(hudFavChip)
             addChip(actionChip(labelRes = R.string.action_open_with) {
                 val rom = selectedRom(surface.key, roms, app) ?: return@actionChip
                 EntryActions.openWith(activity, rom) { playerId ->
@@ -4454,9 +4513,12 @@ object CompanionPanel {
                 }
                 fun addRaChip(chip: View) {
                     if (raChips.childCount > 0) {
-                        raChips.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+                        raChips.addView(View(activity), LinearLayout.LayoutParams(dp(8), 1))
                     }
-                    raChips.addView(chip)
+                    raChips.addView(
+                        chip,
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, actionTouchH),
+                    )
                 }
                 fun runRa(command: (RaCommandClient, Int) -> Unit) {
                     enqueueRaChipWork(hud, app, probe = false) { client, port ->
@@ -5260,7 +5322,7 @@ object CompanionPanel {
         compact: Boolean,
         onPick: (Int) -> Unit,
     ): View {
-        val cell = dp(if (compact) 36 else 44)
+        val cell = dp(PlayHudMetrics.slotCellSizeDp(compact))
         val statesDir = raStatesDir(surface)
         val pngNames = statesDir?.let { RaStateSlots.pngNamesIn(it) }.orEmpty()
         val thumbs = RaStateSlots.thumbsBySlot(pngNames)
@@ -5268,20 +5330,42 @@ object CompanionPanel {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             isBaselineAligned = false
+            clipChildren = false
+            clipToPadding = false
         }
-        for (slot in RaStateSlots.slotLabels(pngNames)) {
+        val labels = RaStateSlots.slotLabels(pngNames)
+        labels.forEachIndexed { idx, slot ->
             val thumbName = thumbs[slot]
             val bmp = if (statesDir != null && thumbName != null) {
                 decodeSlotThumb(File(statesDir, thumbName), cell)
             } else {
                 null
             }
-            row.addView(raSlotCell(activity, settings, slot, bmp, cell, dp, onPick))
+            row.addView(
+                framedSlotCell(
+                    context = activity,
+                    settings = settings,
+                    slot = slot,
+                    thumb = bmp,
+                    sizePx = cell,
+                    dp = dp,
+                    first = idx == 0,
+                    isPinned = false,
+                    isLatest = false,
+                    onTap = onPick,
+                    onLongTap = null,
+                ),
+            )
         }
         return HorizontalScrollView(activity).apply {
             tag = TAG_PLAY_HUD_SLOTS
             visibility = View.GONE
             isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            clipChildren = false
+            clipToPadding = false
             setPadding(0, dp(8), 0, 0)
             addView(
                 row,
@@ -5293,49 +5377,130 @@ object CompanionPanel {
         }
     }
 
-    private fun raSlotCell(
-        activity: AppCompatActivity,
+    private fun framedSlotCell(
+        context: Context,
         settings: Settings,
         slot: Int,
         thumb: Bitmap?,
         sizePx: Int,
         dp: (Int) -> Int,
-        onPick: (Int) -> Unit,
+        first: Boolean,
+        isPinned: Boolean,
+        isLatest: Boolean,
+        onTap: (Int) -> Unit,
+        onLongTap: ((Int) -> Unit)?,
     ): View {
-        val cell = FrameLayout(activity).apply {
+        val radiusPx = context.dpF(PlayHudMetrics.SLOT_CORNER_RADIUS_DP)
+        val border = PlayHudMetrics.slotBorderSpec(
+            isPinned = isPinned,
+            isLatest = isLatest,
+            accentColor = settings.accentColor,
+            hairlineColor = TileBackgrounds.hairlineDivider(context),
+        )
+        val cell = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
-                if (slot > RaStateSlots.SLOTS.first()) marginStart = dp(6)
+                if (!first) marginStart = dp(6)
             }
-            background = TileBackgrounds.chip(activity)
-            setOnClickListener { onPick(slot) }
+            background = GradientDrawable().apply {
+                setColor(TileBackgrounds.surfaceSunken(context))
+                cornerRadius = radiusPx
+            }
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+                }
+            }
+            foreground = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = radiusPx
+                setStroke(context.strokePx(border.strokeDp), border.color)
+            }
+            isClickable = true
+            isFocusable = true
+            contentDescription = slot.toString()
+            setOnClickListener { onTap(slot) }
+            if (onLongTap != null) {
+                setOnLongClickListener {
+                    onLongTap(slot)
+                    true
+                }
+            }
         }
+        attachChipTactileFeedback(cell)
         if (thumb != null) {
-            cell.addView(ImageView(activity).apply {
+            cell.addView(ImageView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setImageBitmap(thumb)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            })
+            cell.addView(TextView(context).apply {
+                text = slot.toString()
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTypeface(typeface, Typeface.BOLD)
+                fontFeatureSettings = "tnum"
+                includeFontPadding = false
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(0xB8000000.toInt())
+                    cornerRadius = context.dpF(6)
+                }
+                setPadding(dp(5), dp(1), dp(5), dp(1))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.END,
+            ).apply {
+                marginEnd = dp(3)
+                bottomMargin = dp(3)
+            })
+        } else {
+            cell.addView(TextView(context).apply {
+                text = slot.toString()
+                setTextColor(
+                    ThemePack.accentTextColor(
+                        settings.accentColor,
+                        TileBackgrounds.surfaceSunken(context),
+                    ),
+                )
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTypeface(typeface, Typeface.BOLD)
+                fontFeatureSettings = "tnum"
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             })
         }
-        cell.addView(TextView(activity).apply {
-            text = slot.toString()
-            setTextColor(
-                if (thumb != null) Color.WHITE
-                else ThemePack.accentTextColor(
-                    settings.accentColor,
-                    TileBackgrounds.chipIdleColor(activity),
-                ),
-            )
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            if (thumb != null) setBackgroundColor(0x66000000)
-        })
+        if (isPinned) {
+            cell.addView(TextView(context).apply {
+                setText(R.string.glyph_favorite)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                setTextColor(PlayHudMetrics.SLOT_PINNED_GOLD)
+                includeFontPadding = false
+                background = GradientDrawable().apply {
+                    setColor(0xB8000000.toInt())
+                    cornerRadius = context.dpF(6)
+                }
+                setPadding(dp(3), dp(1), dp(3), dp(1))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                marginEnd = dp(3)
+                topMargin = dp(3)
+            })
+        }
         return cell
     }
 
@@ -5354,9 +5519,6 @@ object CompanionPanel {
         )
     }
 
-    private fun cinemaPaintKey(frames: List<CinemaFrame>): String =
-        frames.joinToString(",") { "${it.slot}:${it.savedAtMs}:${it.thumbKey ?: ""}" }
-
     private fun paintPlayHudCinema(
         strip: ViewGroup,
         app: GhostGalleonApp,
@@ -5364,7 +5526,11 @@ object CompanionPanel {
         surface: SessionSurface,
     ) {
         val row = (strip.getChildAt(0) as? LinearLayout) ?: return
-        val key = cinemaPaintKey(app.cinemaFrames)
+        val key = PlayHudMetrics.cinemaPaintKey(
+            frames = app.cinemaFrames,
+            pinnedSlot = app.cinemaPinnedSlot,
+            lastSlot = app.cinemaLastSlot,
+        )
         if (strip.visibility == View.VISIBLE &&
             row.childCount == CinemaPolicy.BAND.count() &&
             (row.tag as? String) == key
@@ -5374,7 +5540,7 @@ object CompanionPanel {
         val density = strip.resources.displayMetrics.density
         val dp = { v: Int -> (v * density).toInt() }
         val compact = strip.rootView.height > 0 && strip.rootView.height < 500f * density
-        val cell = dp(if (compact) 36 else 44)
+        val cell = dp(PlayHudMetrics.slotCellSizeDp(compact))
         val statesDir = raStatesDir(surface)
         val settings = app.settings
         val port = settings.raNetworkCmdPort
@@ -5385,14 +5551,16 @@ object CompanionPanel {
             val thumbFile = cinemaThumbFile(statesDir, slot)
             val bmp = thumbFile?.let { decodeSlotThumb(it, cell) }
             row.addView(
-                cinemaSlotCell(
-                    activity,
-                    settings,
-                    slot,
-                    bmp,
-                    cell,
-                    dp,
+                framedSlotCell(
+                    context = activity,
+                    settings = settings,
+                    slot = slot,
+                    thumb = bmp,
+                    sizePx = cell,
+                    dp = dp,
                     first = slot == CinemaPolicy.BAND.first,
+                    isPinned = app.cinemaPinnedSlot == slot,
+                    isLatest = app.cinemaLastSlot == slot,
                     onTap = { picked ->
                         if (CinemaPolicy.inBand(picked)) {
                             app.enqueueRaUdp(
@@ -5406,65 +5574,16 @@ object CompanionPanel {
                             )
                         }
                     },
-                    onPin = { pinned ->
-                        if (CinemaPolicy.inBand(pinned)) app.cinemaPinnedSlot = pinned
+                    onLongTap = { pinned ->
+                        if (CinemaPolicy.inBand(pinned)) {
+                            app.cinemaPinnedSlot = pinned
+                            paintPlayHudCinema(strip, app, activity, surface)
+                        }
                     },
                 ),
             )
         }
         if (strip.visibility != View.VISIBLE) strip.visibility = View.VISIBLE
-    }
-
-    private fun cinemaSlotCell(
-        activity: Context,
-        settings: Settings,
-        slot: Int,
-        thumb: Bitmap?,
-        sizePx: Int,
-        dp: (Int) -> Int,
-        first: Boolean,
-        onTap: (Int) -> Unit,
-        onPin: (Int) -> Unit,
-    ): View {
-        val cell = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
-                if (!first) marginStart = dp(6)
-            }
-            background = TileBackgrounds.chip(activity)
-            setOnClickListener { onTap(slot) }
-            setOnLongClickListener {
-                onPin(slot)
-                true
-            }
-        }
-        if (thumb != null) {
-            cell.addView(ImageView(activity).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageBitmap(thumb)
-            })
-        }
-        cell.addView(TextView(activity).apply {
-            text = slot.toString()
-            setTextColor(
-                if (thumb != null) Color.WHITE
-                else ThemePack.accentTextColor(
-                    settings.accentColor,
-                    TileBackgrounds.chipIdleColor(activity),
-                ),
-            )
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            if (thumb != null) setBackgroundColor(0x66000000)
-        })
-        return cell
     }
 
     private fun cinemaThumbFile(statesDir: File?, slot: Int): File? {
