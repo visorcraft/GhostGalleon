@@ -118,4 +118,72 @@ class CompanionHeroMetricsTest {
             CompanionHeroMetrics.brandCaptionFitsBelowShip(420, tiny, density),
         )
     }
+
+    @Test
+    fun `logoSizeDp scales cleanly by panel tier and hides on ultra-compact panels`() {
+        val ultraCompact = CompanionHeroMetrics.logoSizeDp(CompanionHeroMetrics.forPanel(440f))
+        assertFalse(ultraCompact.visible)
+        assertEquals(0, ultraCompact.widthDp)
+        assertEquals(0, ultraCompact.heightDp)
+
+        val sugar = CompanionHeroMetrics.logoSizeDp(CompanionHeroMetrics.forPanel(540f))
+        assertTrue(sugar.visible)
+        assertEquals(140, sugar.widthDp)
+        assertEquals(34, sugar.heightDp)
+
+        val tall = CompanionHeroMetrics.logoSizeDp(CompanionHeroMetrics.forPanel(720f))
+        assertTrue(tall.visible)
+        assertEquals(200, tall.widthDp)
+        assertEquals(48, tall.heightDp)
+    }
+
+    @Test
+    fun `hero vertical stack budget fits inside panel height with banner logo RA and quick chips`() {
+        for (heightDp in listOf(420f, 540f, 680f, 900f)) {
+            val spec = CompanionHeroMetrics.forPanel(heightDp)
+            val stackDp = CompanionHeroMetrics.estimatedHeroStackDp(
+                spec = spec,
+                includeRaBar = true,
+                includeLogo = true,
+                hasResumeChip = false,
+                useBanner = true,
+                panelHeightDp = heightDp,
+            )
+            assertTrue(
+                "Stack ($stackDp dp) with banner+logo+RA+chips must fit inside ${heightDp}dp",
+                stackDp <= heightDp.toInt(),
+            )
+        }
+    }
+
+    @Test
+    fun `sublineMaxLines tightens with Resume chip on compact panels and Sugar stack fits 540dp`() {
+        val sugar = CompanionHeroMetrics.forPanel(540f)
+        assertEquals(2, CompanionHeroMetrics.sublineMaxLines(sugar, hasResumeChip = false))
+        assertEquals(1, CompanionHeroMetrics.sublineMaxLines(sugar, hasResumeChip = true))
+
+        val tall = CompanionHeroMetrics.forPanel(720f)
+        assertEquals(2, CompanionHeroMetrics.sublineMaxLines(tall, hasResumeChip = true))
+
+        val sugarWithResume = CompanionHeroMetrics.estimatedHeroStackDp(
+            spec = sugar,
+            includeRaBar = true,
+            includeLogo = true,
+            hasResumeChip = true,
+            useBanner = false,
+            panelHeightDp = 540f,
+        )
+        assertTrue(
+            "Sugar 540dp hero stack with Resume chip active ($sugarWithResume dp) must fit <= 540dp",
+            sugarWithResume <= 540,
+        )
+    }
+
+    @Test
+    fun `isSelectedPinned tracks live ROM presence in gridSlots`() {
+        val slots = listOf("com.app.a", null, "rom:snes:ct", null)
+        assertTrue(CompanionPanel.isSelectedPinned("rom:snes:ct", slots))
+        assertFalse(CompanionPanel.isSelectedPinned("rom:snes:sm", slots))
+        assertFalse(CompanionPanel.isSelectedPinned(null, slots))
+    }
 }

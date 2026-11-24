@@ -82,6 +82,33 @@ object CompanionHeroMetrics {
         return (panelHeightPx * spec.bannerHeightFraction).toInt().coerceAtLeast(0)
     }
 
+    /** Panel-scaled ROM wordmark/wheel logo box in dp (`0×0` hides logo on ultra-compact panels). */
+    data class LogoSizeDp(
+        val widthDp: Int,
+        val heightDp: Int,
+    ) {
+        val visible: Boolean get() = widthDp > 0 && heightDp > 0
+    }
+
+    /**
+     * Scale the ROM wordmark logo cleanly by panel tier:
+     * - Ultra-compact (`< 500dp`): hidden so title and art keep breathing room.
+     * - Medium (`500..599dp`, e.g. ~540dp Sugar): `140×34dp`.
+     * - Tall (`>= 600dp`): full `200×48dp`.
+     */
+    fun logoSizeDp(spec: Spec): LogoSizeDp = when {
+        !spec.showQuickChips -> LogoSizeDp(widthDp = 0, heightDp = 0)
+        !spec.showExtraMedia -> LogoSizeDp(widthDp = 140, heightDp = 34)
+        else -> LogoSizeDp(widthDp = 200, heightDp = 48)
+    }
+
+    /**
+     * Cap hero subline to a single line on compact/medium panels when the Resume
+     * chip is visible so quick-action pills never crowd [HintBar].
+     */
+    fun sublineMaxLines(spec: Spec, hasResumeChip: Boolean): Int =
+        if (hasResumeChip && !spec.showExtraMedia) 1 else 2
+
     // --- Empty-selection brand scene (clouds / sea / ship) -----------------
     // Full-panel 3:2 sky/water stack. Ship size scales with panel height
     // (any dual / single device) and is placed so the hull rests on the
@@ -200,17 +227,35 @@ object CompanionHeroMetrics {
 
     /**
      * Conservative vertical budget estimate (dp) for the companion hero stack
-     * (role bar + art + 2-line title + compact subline + RA line/meter + quick
-     * chips + hint bar) so short ~540dp Sugar panels never clip mid-glyph.
+     * (role bar + optional resume chip + art/banner + optional scaled logo +
+     * 2-line title + compact subline + RA line/meter + quick chips + hint bar)
+     * so short ~540dp Sugar panels never clip mid-glyph.
      */
-    fun estimatedHeroStackDp(spec: Spec, includeRaBar: Boolean = true): Int {
+    fun estimatedHeroStackDp(
+        spec: Spec,
+        includeRaBar: Boolean = true,
+        includeLogo: Boolean = false,
+        hasResumeChip: Boolean = false,
+        useBanner: Boolean = false,
+        panelHeightDp: Float = 0f,
+    ): Int {
         val roleBarAndTopPad = 56
-        val titleLinesDp = (spec.nameSp * 1.25f * spec.nameMaxLines).toInt() + spec.nameTopPadDp + 4
-        val sublineDp = 24
+        val resumeDp = if (hasResumeChip) 54 else 0
+        val mediaDp = if (useBanner && panelHeightDp > 0f && spec.bannerHeightFraction > 0f) {
+            (panelHeightDp * spec.bannerHeightFraction).toInt()
+        } else {
+            spec.artSizeDp
+        }
+        val logo = if (includeLogo) logoSizeDp(spec) else LogoSizeDp(0, 0)
+        val logoDp = if (logo.visible) logo.heightDp + 6 else 0
+        // `includeFontPadding = false` on hero title tightens vertical line metric cleanly.
+        val titleLinesDp = (spec.nameSp * 1.20f * spec.nameMaxLines).toInt() + spec.nameTopPadDp + 4
+        val subLines = sublineMaxLines(spec, hasResumeChip)
+        val sublineDp = if (subLines <= 1) 20 else 32
         val raDp = if (includeRaBar) 24 else 18
         val quickChipsDp = if (spec.showQuickChips) 44 else 0
         val hintBarDp = 36
-        return roleBarAndTopPad + spec.artSizeDp + titleLinesDp + sublineDp + raDp +
-            quickChipsDp + hintBarDp
+        return roleBarAndTopPad + resumeDp + mediaDp + logoDp + titleLinesDp +
+            sublineDp + raDp + quickChipsDp + hintBarDp
     }
 }

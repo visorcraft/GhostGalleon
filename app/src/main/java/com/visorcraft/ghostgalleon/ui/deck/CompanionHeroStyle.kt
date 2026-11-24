@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.library.RaProgress
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 
 /**
  * Pure visual craft policy for the dual-screen Companion Hero: cover art
@@ -18,6 +19,27 @@ object CompanionHeroStyle {
 
     /** Duration (ms) for cancelable in-place selection text/art settle transitions. */
     const val HERO_CROSSFADE_MS: Long = 115L
+
+    /** Duration (ms) for ambient panel background glow crossfade on console/app change. */
+    const val PANEL_GLOW_CROSSFADE_MS: Long = 160L
+
+    /** Base focal radial halo alpha before high-luminance damping. */
+    const val PANEL_GLOW_FOCAL_ALPHA: Int = 0x34
+
+    /** Base wide atmospheric glow alpha before high-luminance damping. */
+    const val PANEL_GLOW_AMBIENT_ALPHA: Int = 0x26
+
+    /** Duration (ms) for async wide HERO banner reveal fade-in. */
+    const val BANNER_REVEAL_MS: Long = 140L
+
+    /** Duration (ms) for off-UI animated WebP layer fade-in on the empty brand scene. */
+    const val BRAND_ANIM_FADE_MS: Long = 220L
+
+    /** Translucent dark scrim fill seating the empty brand scene's idle prompt pill. */
+    const val IDLE_PROMPT_SCRIM_COLOR: Int = 0x88000000.toInt()
+
+    /** Legible muted light foreground for the idle prompt pill over animated sea waves. */
+    const val IDLE_PROMPT_TEXT_COLOR: Int = 0xCCFFFFFF.toInt()
 
     /** Initial alpha when settling in-place hero text on selection change. */
     const val HERO_START_ALPHA: Float = 0.62f
@@ -57,19 +79,76 @@ object CompanionHeroStyle {
     fun artShadowColor(accentColor: Int): Int =
         (0xA6 shl 24) or (accentColor and 0x00FFFFFF)
 
-    /** Dual-stop focal/atmospheric glow alphas (inner halo, wide atmospheric bloom). */
+    /**
+     * Dual-stop focal/atmospheric glow colors (inner halo, wide atmospheric bloom).
+     * High-luminance accents (e.g. OLED `#E0E0E0` or bright platforms) dampen alpha
+     * so top chrome behind `StatusPill` never washes out.
+     */
     fun panelGlowColors(glowColor: Int): Pair<Int, Int> {
-        val rgb = glowColor and 0x00FFFFFF
-        return ((0x34 shl 24) or rgb) to ((0x26 shl 24) or rgb)
+        val highLum = ThemePack.isHighLuminanceAccent(glowColor)
+        val focalAlpha = if (highLum) (PANEL_GLOW_FOCAL_ALPHA * 0.60).toInt() else PANEL_GLOW_FOCAL_ALPHA
+        val ambientAlpha = if (highLum) (PANEL_GLOW_AMBIENT_ALPHA * 0.60).toInt() else PANEL_GLOW_AMBIENT_ALPHA
+        return ThemePack.withAlpha(glowColor, focalAlpha) to ThemePack.withAlpha(glowColor, ambientAlpha)
     }
+
+    /** Gate for smooth ambient panel-glow crossfades (`MotionPolicy` + prior background check). */
+    fun shouldCrossfadePanelGlow(
+        hasPreviousBackground: Boolean,
+        animatorsEnabled: Boolean,
+        attached: Boolean,
+    ): Boolean = hasPreviousBackground &&
+        MotionPolicy.shouldAnimate(PANEL_GLOW_CROSSFADE_MS, animatorsEnabled, attached)
 
     /** Inner padding (dp) framing transparent Android app icons inside the app hero pedestal. */
     fun appPedestalInsetDp(artSizeDp: Int): Int =
         (artSizeDp * 0.11f).toInt().coerceIn(12, 26)
 
-    /** Subtle radial pedestal bloom color behind an Android app icon (~18% alpha). */
+    /** Concentric corner radius (dp) for custom app icons clipped inside the hero pedestal. */
+    fun appPedestalInnerRadiusDp(artSizeDp: Int): Int =
+        ThemePack.nestedRadiusDp(
+            outerRadiusDp = ART_CORNER_RADIUS_DP,
+            insetDp = appPedestalInsetDp(artSizeDp),
+            minDp = 8,
+        )
+
+    /** Theme-harmonized base fill beneath the radial icon glow on the app hero pedestal. */
+    fun appPedestalBaseFill(tokens: ThemeTokens): Int =
+        ThemePack.withAlpha(ThemePack.cardFill(tokens), 0xB8)
+
+    /** Subtle radial pedestal bloom color behind an Android app icon (OLED luminance-damped). */
     fun appPedestalGlowColor(accentColor: Int): Int =
-        (0x2E shl 24) or (accentColor and 0x00FFFFFF)
+        ThemePack.accentGlowColor(accentColor, 0x2E)
+
+    /**
+     * Vertical top-to-bottom scrim stops inside wide HERO banners: crystal-clear
+     * upper half transitioning smoothly into a deep bottom edge so wide art melts
+     * cleanly into the title stack below.
+     */
+    fun bannerScrimColors(): IntArray = intArrayOf(
+        0x00000000,
+        0x00000000,
+        0x38000000,
+        0xC4000000.toInt(),
+    )
+
+    /**
+     * Pure Porter-Duff `SRC_OVER` alpha composite of translucent ARGB [foregroundArgb]
+     * over opaque [backgroundOpaqueRgb]. Host-tested for WCAG contrast audits.
+     */
+    fun compositeOver(foregroundArgb: Int, backgroundOpaqueRgb: Int): Int {
+        val alpha = ((foregroundArgb ushr 24) and 0xFF) / 255.0
+        val inv = 1.0 - alpha
+        val fr = (foregroundArgb shr 16) and 0xFF
+        val fg = (foregroundArgb shr 8) and 0xFF
+        val fb = foregroundArgb and 0xFF
+        val br = (backgroundOpaqueRgb shr 16) and 0xFF
+        val bg = (backgroundOpaqueRgb shr 8) and 0xFF
+        val bb = backgroundOpaqueRgb and 0xFF
+        val r = (fr * alpha + br * inv).toInt().coerceIn(0, 255)
+        val g = (fg * alpha + bg * inv).toInt().coerceIn(0, 255)
+        val b = (fb * alpha + bb * inv).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
 
     /**
      * Programmatic dusk-horizon gradient endpoints (sky horizon tint, sea top tint,

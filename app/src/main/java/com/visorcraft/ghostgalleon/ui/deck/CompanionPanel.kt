@@ -16,6 +16,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.TransitionDrawable
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
@@ -146,6 +147,7 @@ object CompanionPanel {
     private const val TAG_HERO_LOGO = "hero_logo"
     private const val TAG_HERO_QUICK_BAR = "hero_quick_bar"
     private const val TAG_HERO_QUICK_FAV = "hero_quick_fav"
+    private const val TAG_HERO_QUICK_PIN = "hero_quick_pin"
     private const val TAG_RESUME_CHIP = "resume_chip"
     /** Visible so PRIMARY TOP_STRIP paths can detect a hero panel in the tree. */
     const val TAG_PANEL_ROOT = "panel_root"
@@ -793,6 +795,53 @@ object CompanionPanel {
     internal fun isSelectedFavorite(selectedKey: String?, favorites: Set<String>): Boolean =
         selectedKey != null && selectedKey in favorites
 
+    /** True when the live [selectedKey] is already pinned in [gridSlots]. */
+    internal fun isSelectedPinned(selectedKey: String?, gridSlots: List<String?>): Boolean =
+        selectedKey != null && selectedKey in gridSlots
+
+    private fun stylePinQuickChip(
+        chip: TextView,
+        isPinned: Boolean,
+        accentColor: Int,
+    ) {
+        val context = chip.context
+        val idleSurface = TileBackgrounds.chipIdleColor(context)
+        val fillSurface = if (isPinned) {
+            CompanionChromeErgonomics.activeChipFill(idleSurface, accentColor)
+        } else {
+            idleSurface
+        }
+        val textAccent = ThemePack.accentTextColor(accentColor, fillSurface)
+        val expectedTextColor = if (isPinned) textAccent else Color.WHITE
+        if (chip.isSelected == isPinned &&
+            chip.currentTextColor == expectedTextColor &&
+            chip.background != null
+        ) {
+            return
+        }
+        chip.isSelected = isPinned
+        chip.setTextColor(expectedTextColor)
+        chip.setTypeface(chip.typeface, if (isPinned) Typeface.BOLD else Typeface.NORMAL)
+        val base = GradientDrawable().apply {
+            setColor(fillSurface)
+            cornerRadius = context.dpF(17)
+            if (isPinned) {
+                setStroke(context.strokePx(1), ThemePack.withAlpha(textAccent, 0x88))
+            } else {
+                setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+            }
+        }
+        chip.background = buildInteractivePillBackground(
+            context = context,
+            base = base,
+            accent = accentColor,
+            cornerRadiusDp = 17,
+        )
+        val insetV = (CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP * context.resources.displayMetrics.density).toInt()
+        val padH = (12 * context.resources.displayMetrics.density).toInt()
+        chip.setPadding(padH, insetV, padH, insetV)
+    }
+
     private fun styleFavoriteQuickChip(
         chip: TextView,
         isFavorite: Boolean,
@@ -910,6 +959,48 @@ object CompanionPanel {
         }
     }
 
+    /**
+     * Swap [target]'s ambient panel background in-place, crossfading smoothly
+     * via a single-level [TransitionDrawable] (unwrapping any prior transition)
+     * when animators are enabled and the panel is attached.
+     */
+    private fun applyPanelBackground(
+        target: View,
+        context: Context,
+        glowColor: Int,
+    ) {
+        val nextBg = panelBackground(context, glowColor)
+        val rawPrev = target.background
+        val prevBg = if (rawPrev is TransitionDrawable && rawPrev.numberOfLayers >= 2) {
+            rawPrev.getDrawable(rawPrev.numberOfLayers - 1)
+        } else {
+            rawPrev
+        }
+        if (prevBg === nextBg) {
+            nextBg.alpha = 255
+            if (rawPrev !== nextBg) target.background = nextBg
+            return
+        }
+        if (prevBg != null &&
+            CompanionHeroStyle.shouldCrossfadePanelGlow(
+                hasPreviousBackground = true,
+                animatorsEnabled = ValueAnimator.areAnimatorsEnabled(),
+                attached = target.isAttachedToWindow,
+            )
+        ) {
+            prevBg.alpha = 255
+            nextBg.alpha = 255
+            val transition = TransitionDrawable(arrayOf(prevBg, nextBg)).apply {
+                isCrossFadeEnabled = false
+            }
+            target.background = transition
+            transition.startTransition(CompanionHeroStyle.PANEL_GLOW_CROSSFADE_MS.toInt())
+        } else {
+            nextBg.alpha = 255
+            target.background = nextBg
+        }
+    }
+
     private val heroSettleInterpolator = DecelerateInterpolator()
 
     /**
@@ -950,9 +1041,12 @@ object CompanionPanel {
         elevationDp: Float,
     ) {
         val context = pedestal.context
+        val tokens = ThemePack.resolve(
+            (context.applicationContext as? GhostGalleonApp)?.settings ?: Settings.DEFAULT,
+        )
         val radiusPx = context.dpF(CompanionHeroStyle.ART_CORNER_RADIUS_DP)
         val base = GradientDrawable().apply {
-            setColor(0x14FFFFFF)
+            setColor(CompanionHeroStyle.appPedestalBaseFill(tokens))
             cornerRadius = radiusPx
         }
         val glow = GradientDrawable().apply {
@@ -1034,6 +1128,27 @@ object CompanionPanel {
         view.animate()
             .alpha(1f)
             .setDuration(CompanionHeroStyle.HERO_CROSSFADE_MS)
+            .setInterpolator(heroSettleInterpolator)
+            .start()
+    }
+
+    private fun animateBannerReveal(view: View) {
+        ensureHeroDetachReset(view)
+        view.animate().cancel()
+        val enabled = ValueAnimator.areAnimatorsEnabled()
+        if (!MotionPolicy.shouldAnimate(
+                CompanionHeroStyle.BANNER_REVEAL_MS,
+                enabled,
+                view.isAttachedToWindow,
+            )
+        ) {
+            view.alpha = 1f
+            return
+        }
+        view.alpha = 0f
+        view.animate()
+            .alpha(1f)
+            .setDuration(CompanionHeroStyle.BANNER_REVEAL_MS)
             .setInterpolator(heroSettleInterpolator)
             .start()
     }
@@ -1155,6 +1270,7 @@ object CompanionPanel {
             val romVideoHost: FrameLayout? = null,
             val romQuickBar: View? = null,
             val romQuickFav: TextView? = null,
+            val romQuickPin: TextView? = null,
             val appPedestal: FrameLayout? = null,
             val appIcon: ImageView? = null,
             val nameView: TextView? = null,
@@ -1321,8 +1437,13 @@ object CompanionPanel {
                     settings.artOverrides,
                     artPx,
                 )
-                animateHeroArtSettle(tileFrame)
-                bindHeroLogo(holder.romLogo, cache, rom)
+                animateHeroArtSettle(if (banner.visibility == View.VISIBLE) banner else tileFrame)
+                bindHeroLogo(
+                    holder.romLogo,
+                    cache,
+                    rom,
+                    CompanionHeroMetrics.logoSizeDp(heroSpec).widthDp,
+                )
             }
             name.setTag(R.id.hero_bound_id, rom.id)
             name.setTag(R.id.hero_art_gen, artGen)
@@ -1342,6 +1463,9 @@ object CompanionPanel {
                 settings.romProfiles,
                 settings.defaultPlayers[rom.platformId],
             )
+            val resumeVisible = holder.resumeChip?.visibility == View.VISIBLE
+            val desiredSubLines = CompanionHeroMetrics.sublineMaxLines(heroSpec, resumeVisible)
+            if (sub.maxLines != desiredSubLines) sub.maxLines = desiredSubLines
             // One compact subline (platform · play · player) — not three stacked rows.
             sub.text = context.resolveText(HeroDetail.compactSubline(
                 HeroDetail.platformLine(platform, rom.platformId),
@@ -1378,7 +1502,7 @@ object CompanionPanel {
                 bindScreenshot(holder.romShot, cache, rom)
                 bindHeroVideo(holder.romVideoHost, rom)
                 if (shouldRepaintAccent(holder.hasPanelAccent, holder.lastPanelAccent, platformAccent)) {
-                    holder.panelRoot.background = panelBackground(context, platformAccent)
+                    applyPanelBackground(holder.panelRoot, context, platformAccent)
                     holder.lastPanelAccent = platformAccent
                     holder.hasPanelAccent = true
                 }
@@ -1389,6 +1513,13 @@ object CompanionPanel {
                 styleFavoriteQuickChip(
                     chip = favChip,
                     isFavorite = isSelectedFavorite(romKey, settings.favorites),
+                    accentColor = settings.accentColor,
+                )
+            }
+            holder.romQuickPin?.let { pinChip ->
+                stylePinQuickChip(
+                    chip = pinChip,
+                    isPinned = isSelectedPinned(romKey, settings.gridSlots),
                     accentColor = settings.accentColor,
                 )
             }
@@ -1418,6 +1549,9 @@ object CompanionPanel {
                 icon, iconLoader(context),
                 appCtx.artCache,
                 settings, entry.packageName, targetPx,
+                cornerRadiusPx = context.dpF(
+                    CompanionHeroStyle.appPedestalInnerRadiusDp(appHeroSpec.artSizeDp),
+                ),
             )
             animateHeroArtSettle(icon)
             holder.appPedestal?.let { pedestal ->
@@ -1446,7 +1580,7 @@ object CompanionPanel {
             if (appSub != null) animateHeroTextSettle(appSub, dens)
         }
         if (shouldRepaintAccent(holder.hasPanelAccent, holder.lastPanelAccent, appGlow)) {
-            holder.panelRoot.background = panelBackground(context, appGlow)
+            applyPanelBackground(holder.panelRoot, context, appGlow)
             holder.lastPanelAccent = appGlow
             holder.hasPanelAccent = true
         }
@@ -1720,9 +1854,26 @@ object CompanionPanel {
                         return@post
                     }
                     stopAnimatedDrawable(image)
+                    val hadStaticDrawable = image.drawable != null
                     image.setImageDrawable(decoded)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         (decoded as? android.graphics.drawable.AnimatedImageDrawable)?.start()
+                    }
+                    image.animate().cancel()
+                    if (MotionPolicy.shouldAnimate(
+                            CompanionHeroStyle.BRAND_ANIM_FADE_MS,
+                            ValueAnimator.areAnimatorsEnabled(),
+                            image.isAttachedToWindow,
+                        )
+                    ) {
+                        image.alpha = if (hadStaticDrawable) CompanionHeroStyle.ART_START_ALPHA else 0f
+                        image.animate()
+                            .alpha(1f)
+                            .setDuration(CompanionHeroStyle.BRAND_ANIM_FADE_MS)
+                            .setInterpolator(heroSettleInterpolator)
+                            .start()
+                    } else {
+                        image.alpha = 1f
                     }
                 }
             }
@@ -1741,6 +1892,8 @@ object CompanionPanel {
 
             override fun onViewDetachedFromWindow(v: View) {
                 val iv = v as? ImageView ?: return
+                iv.animate().cancel()
+                iv.alpha = 1f
                 iv.setTag(R.id.media_bind_uri, null)
                 stopAnimatedDrawable(iv)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
@@ -1755,18 +1908,33 @@ object CompanionPanel {
 
     // Wide banner frame for HERO art: GONE until wide art arrives, ~40% of
     // the display height, rounded corners via an outline clip (CENTER_CROP
-    // keeps the corners true, unlike a scaled RoundedBitmapDrawable).
+    // keeps the corners true, unlike a scaled RoundedBitmapDrawable), plus a
+    // subtle bottom scrim blending the banner edge into the title stack below.
     private fun bannerFrame(context: Context): FrameLayout {
-        val radiusPx = 24 * context.resources.displayMetrics.density
+        val radiusPx = CompanionHeroStyle.ART_CORNER_RADIUS_DP * context.resources.displayMetrics.density
+        val outline = OutlineCache.roundedRect(radiusPx)
         val image = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             clipToOutline = true
-            outlineProvider = OutlineCache.roundedRect(radiusPx)
+            outlineProvider = outline
+        }
+        val scrim = View(context).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                CompanionHeroStyle.bannerScrimColors(),
+            )
+            clipToOutline = true
+            outlineProvider = outline
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         return FrameLayout(context).apply {
             tag = TAG_HERO_BANNER
             visibility = View.GONE
             addView(image, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            addView(scrim, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ))
@@ -1868,8 +2036,9 @@ object CompanionPanel {
         image: ImageView?,
         cache: ArtCache,
         rom: RomEntry,
+        maxWidthDp: Int = 200,
     ) {
-        if (image == null) return
+        if (image == null || maxWidthDp <= 0) return
         val uri = HeroDetail.logoUri(rom)
         if (uri == null) {
             image.visibility = View.GONE
@@ -1882,7 +2051,7 @@ object CompanionPanel {
         image.setTag(R.id.media_bind_uri, uri)
         ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
-        val targetPx = (200 * image.resources.displayMetrics.density).toInt()
+        val targetPx = (maxWidthDp * image.resources.displayMetrics.density).toInt().coerceAtLeast(1)
         cache.loadUri(
             image.context,
             key = "${rom.id}.logo",
@@ -2137,6 +2306,8 @@ object CompanionPanel {
         val context = bannerFrame.context
         val metrics = context.resources.displayMetrics
         val image = bannerFrame.children.filterIsInstance<ImageView>().first()
+        bannerFrame.animate().cancel()
+        bannerFrame.alpha = 1f
         bannerFrame.visibility = View.GONE
         ArtCache.dropDisplayed(image)
         image.setImageDrawable(null)
@@ -2156,6 +2327,7 @@ object CompanionPanel {
             metrics.widthPixels,
             ArtCache.HERO_SCRAPE_TARGET_WIDTH_PX,
         )
+        var syncHit = true
         cache.load(
             context, rom,
             maxDimension = heroMax,
@@ -2169,8 +2341,14 @@ object CompanionPanel {
                 ArtCache.showDisplayed(image, bitmap)
                 tileFrame.visibility = View.GONE
                 bannerFrame.visibility = View.VISIBLE
+                if (!syncHit) {
+                    animateBannerReveal(bannerFrame)
+                } else {
+                    bannerFrame.alpha = 1f
+                }
             }
         }
+        syncHit = false
     }
 
     /**
@@ -3016,16 +3194,25 @@ object CompanionPanel {
             bindRomHeroArt(
                 banner, artFrame, cache, selectedRom, settings.artOverrides, artPx,
             )
-            val logo = ImageView(context).apply {
-                tag = TAG_HERO_LOGO
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                visibility = View.GONE
+            val logoSize = CompanionHeroMetrics.logoSizeDp(heroSpec)
+            val logo: ImageView? = if (logoSize.visible) {
+                ImageView(context).apply {
+                    tag = TAG_HERO_LOGO
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    visibility = View.GONE
+                }.also { iv ->
+                    hero.addView(
+                        iv,
+                        LinearLayout.LayoutParams(dp(logoSize.widthDp), dp(logoSize.heightDp)).apply {
+                            topMargin = dp(6)
+                            gravity = Gravity.CENTER_HORIZONTAL
+                        },
+                    )
+                    bindHeroLogo(iv, cache, selectedRom, logoSize.widthDp)
+                }
+            } else {
+                null
             }
-            hero.addView(logo, LinearLayout.LayoutParams(dp(200), dp(48)).apply {
-                topMargin = dp(6)
-                gravity = Gravity.CENTER_HORIZONTAL
-            })
-            bindHeroLogo(logo, cache, selectedRom)
             // Title must fit above actions on short secondary panels.
             val romNameTv = TextView(context).apply {
                 tag = TAG_HERO_NAME
@@ -3035,6 +3222,7 @@ object CompanionPanel {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
+                includeFontPadding = false
                 gravity = Gravity.CENTER
                 maxLines = heroSpec.nameMaxLines
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -3073,7 +3261,10 @@ object CompanionPanel {
                 )
                 setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.CENTER
-                maxLines = 2
+                maxLines = CompanionHeroMetrics.sublineMaxLines(
+                    spec = heroSpec,
+                    hasResumeChip = resumeChipView != null,
+                )
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(heroSpec.nameSidePadDp), dp(4), dp(heroSpec.nameSidePadDp), 0)
             }
@@ -3194,6 +3385,7 @@ object CompanionPanel {
             // never leaves stale build-time closures behind.
             var romQuickBarView: View? = null
             var romQuickFavView: TextView? = null
+            var romQuickPinView: TextView? = null
             if (heroSpec.showQuickChips) {
                 val chipH = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
                 val insetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
@@ -3288,19 +3480,35 @@ object CompanionPanel {
                 )
                 romQuickFavView = favChip
                 romQuickBarView = quickScroll
-                addChip(context.getString(R.string.action_pin)) {
+                lateinit var pinChip: TextView
+                pinChip = addChip(
+                    label = context.getString(R.string.action_pin),
+                    chipTag = TAG_HERO_QUICK_PIN,
+                ) {
                     val rom = liveRom() ?: return@addChip
                     app.playSfx(SoundCue.CONFIRM)
                     val live = app.settings
+                    val romKey = SlotKey.rom(rom.id)
                     val filled = CollectionsOps.bulkFillSlots(
-                        live.gridSlots, listOf(SlotKey.rom(rom.id)))
+                        live.gridSlots, listOf(romKey))
                     app.updateSettings(live.copy(gridSlots = filled))
+                    stylePinQuickChip(
+                        chip = pinChip,
+                        isPinned = isSelectedPinned(romKey, filled),
+                        accentColor = live.accentColor,
+                    )
                     Toast.makeText(
                         activity,
                         R.string.deck_pinned_to_grid,
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
+                stylePinQuickChip(
+                    chip = pinChip,
+                    isPinned = isSelectedPinned(initialKey, settings.gridSlots),
+                    accentColor = settings.accentColor,
+                )
+                romQuickPinView = pinChip
                 addChip(context.getString(R.string.action_art)) {
                     val rom = liveRom() ?: return@addChip
                     app.playSfx(SoundCue.CONFIRM)
@@ -3382,6 +3590,7 @@ object CompanionPanel {
                 romVideoHost = romVideoHostView,
                 romQuickBar = romQuickBarView,
                 romQuickFav = romQuickFavView,
+                romQuickPin = romQuickPinView,
                 nameView = romNameTv,
                 subView = romSubTv,
                 lastPanelAccent = initialPanelAccent,
@@ -3409,7 +3618,11 @@ object CompanionPanel {
             CustomIcon.bind(
                 icon, iconLoader(context),
                 (activity.application as GhostGalleonApp).artCache,
-                settings, selectedEntry.packageName, artPx)
+                settings, selectedEntry.packageName, artPx,
+                cornerRadiusPx = context.dpF(
+                    CompanionHeroStyle.appPedestalInnerRadiusDp(heroSpec.artSizeDp),
+                ),
+            )
             pedestal.addView(
                 icon,
                 FrameLayout.LayoutParams(
@@ -3425,6 +3638,7 @@ object CompanionPanel {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
+                includeFontPadding = false
                 gravity = Gravity.CENTER
                 maxLines = heroSpec.nameMaxLines
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -3590,20 +3804,31 @@ object CompanionPanel {
             }
             if (CompanionHeroMetrics.brandCaptionFitsBelowShip(dm.heightPixels, shipLayout, density)) {
                 hero.gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
+                val idlePillBg = GradientDrawable().apply {
+                    setColor(CompanionHeroStyle.IDLE_PROMPT_SCRIM_COLOR)
+                    cornerRadius = context.dpF(18)
+                    setStroke(context.strokePx(1), palette.horizonLine)
+                }
                 hero.addView(
                     TextView(context).apply {
                         setText(R.string.deck_select_game_or_app)
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                        setTextColor(UiDimens.ALPHA_MUTED)
+                        setTextColor(CompanionHeroStyle.IDLE_PROMPT_TEXT_COLOR)
+                        background = idlePillBg
                         gravity = Gravity.CENTER
                         maxLines = 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
-                        setPadding(dp(24), 0, dp(24), dp(8))
+                        setPadding(dp(16), dp(6), dp(16), dp(6))
                     },
                     LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        gravity = Gravity.CENTER_HORIZONTAL
+                        marginStart = dp(20)
+                        marginEnd = dp(20)
+                        bottomMargin = dp(8)
+                    },
                 )
             }
             if (tokens.heroRain && rawAnimResId(context, "hero_rain_anim") != 0) {

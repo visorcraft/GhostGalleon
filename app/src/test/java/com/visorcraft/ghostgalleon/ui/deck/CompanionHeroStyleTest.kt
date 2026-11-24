@@ -141,4 +141,125 @@ class CompanionHeroStyleTest {
         assertFalse(ActivityEmbed.canAttemptAttach("com.bad pkg"))
         assertTrue(ActivityEmbed.VIEWPORT_CORNER_RADIUS_DP >= 12)
     }
+
+    @Test
+    fun `panelGlowColors dampens alpha for high-luminance accents and gates crossfade cleanly`() {
+        val (ghostFocal, ghostAmbient) = CompanionHeroStyle.panelGlowColors(ThemePack.GHOST.accentColor)
+        assertEquals(CompanionHeroStyle.PANEL_GLOW_FOCAL_ALPHA, (ghostFocal ushr 24) and 0xFF)
+        assertEquals(CompanionHeroStyle.PANEL_GLOW_AMBIENT_ALPHA, (ghostAmbient ushr 24) and 0xFF)
+
+        val (oledFocal, oledAmbient) = CompanionHeroStyle.panelGlowColors(ThemePack.OLED.accentColor)
+        assertTrue(
+            "OLED high-luminance focal alpha must dampen below default",
+            ((oledFocal ushr 24) and 0xFF) < CompanionHeroStyle.PANEL_GLOW_FOCAL_ALPHA,
+        )
+        assertTrue(
+            "OLED high-luminance ambient alpha must dampen below default",
+            ((oledAmbient ushr 24) and 0xFF) < CompanionHeroStyle.PANEL_GLOW_AMBIENT_ALPHA,
+        )
+        assertEquals(ThemePack.OLED.accentColor and 0x00FFFFFF, oledFocal and 0x00FFFFFF)
+
+        val (brightYellowFocal, _) = CompanionHeroStyle.panelGlowColors(0xFFFFEE58.toInt())
+        assertTrue(
+            "Bright yellow platform accent must dampen glow alpha",
+            ((brightYellowFocal ushr 24) and 0xFF) < CompanionHeroStyle.PANEL_GLOW_FOCAL_ALPHA,
+        )
+
+        assertTrue(
+            CompanionHeroStyle.shouldCrossfadePanelGlow(
+                hasPreviousBackground = true,
+                animatorsEnabled = true,
+                attached = true,
+            ),
+        )
+        assertFalse(
+            CompanionHeroStyle.shouldCrossfadePanelGlow(
+                hasPreviousBackground = false,
+                animatorsEnabled = true,
+                attached = true,
+            ),
+        )
+        assertFalse(
+            CompanionHeroStyle.shouldCrossfadePanelGlow(
+                hasPreviousBackground = true,
+                animatorsEnabled = false,
+                attached = true,
+            ),
+        )
+        assertFalse(
+            CompanionHeroStyle.shouldCrossfadePanelGlow(
+                hasPreviousBackground = true,
+                animatorsEnabled = true,
+                attached = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `appPedestalInnerRadiusDp stays concentric across 100 to 240dp and pedestal base harmonizes per theme`() {
+        for (artDp in listOf(100, 120, 132, 160, 200, 240)) {
+            val inset = CompanionHeroStyle.appPedestalInsetDp(artDp)
+            val inner = CompanionHeroStyle.appPedestalInnerRadiusDp(artDp)
+            assertTrue("inner radius ($inner) must be >= 8dp for art=$artDp", inner >= 8)
+            assertTrue(
+                "inner radius ($inner) must stay <= outer radius for art=$artDp",
+                inner <= CompanionHeroStyle.ART_CORNER_RADIUS_DP,
+            )
+            assertEquals(
+                maxOf(CompanionHeroStyle.ART_CORNER_RADIUS_DP - inset, 8),
+                inner,
+            )
+        }
+        for (pack in ThemePack.BUILTINS) {
+            val fill = CompanionHeroStyle.appPedestalBaseFill(pack)
+            assertEquals(0xB8, (fill ushr 24) and 0xFF)
+            assertEquals(ThemePack.cardFill(pack) and 0x00FFFFFF, fill and 0x00FFFFFF)
+        }
+    }
+
+    @Test
+    fun `bannerScrimColors transitions cleanly from transparent top to dark bottom`() {
+        val stops = CompanionHeroStyle.bannerScrimColors()
+        assertTrue(stops.size >= 3)
+        assertEquals(0, (stops.first() ushr 24) and 0xFF)
+        assertTrue(((stops.last() ushr 24) and 0xFF) >= 0xA0)
+        for (i in 1 until stops.size) {
+            assertTrue(
+                "Banner scrim alpha must be non-decreasing",
+                ((stops[i] ushr 24) and 0xFF) >= ((stops[i - 1] ushr 24) and 0xFF),
+            )
+        }
+    }
+
+    @Test
+    fun `idle prompt pill clears WCAG AA contrast composited over brand horizon sea across all themes`() {
+        for (pack in ThemePack.BUILTINS) {
+            val palette = CompanionHeroStyle.brandHorizonPalette(pack.panelLift, pack.accentColor)
+            val pillSurface = CompanionHeroStyle.compositeOver(
+                CompanionHeroStyle.IDLE_PROMPT_SCRIM_COLOR,
+                palette.seaTop,
+            )
+            val compositedText = CompanionHeroStyle.compositeOver(
+                CompanionHeroStyle.IDLE_PROMPT_TEXT_COLOR,
+                pillSurface,
+            )
+            val ratio = ThemePack.contrastRatio(compositedText, pillSurface)
+            assertTrue(
+                "Idle prompt contrast over ${pack.id} seaTop must be >= 4.5:1, was $ratio",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+        // Also verify legibility when bright animated wave crests pass behind the pill.
+        val brightWaveSurface = CompanionHeroStyle.compositeOver(
+            CompanionHeroStyle.IDLE_PROMPT_SCRIM_COLOR,
+            0xFF5A7A9A.toInt(),
+        )
+        val waveText = CompanionHeroStyle.compositeOver(
+            CompanionHeroStyle.IDLE_PROMPT_TEXT_COLOR,
+            brightWaveSurface,
+        )
+        assertTrue(
+            ThemePack.contrastRatio(waveText, brightWaveSurface) >= ThemePack.MIN_TEXT_CONTRAST,
+        )
+    }
 }
