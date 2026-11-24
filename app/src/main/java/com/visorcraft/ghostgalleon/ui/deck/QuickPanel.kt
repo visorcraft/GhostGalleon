@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -30,6 +29,7 @@ import com.visorcraft.ghostgalleon.ui.browseModeName
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 import com.visorcraft.ghostgalleon.ui.themeName
+import com.visorcraft.ghostgalleon.ui.toast
 
 /**
  * Pure, host-tested navigation and contrast style helpers for [QuickPanel].
@@ -379,19 +379,14 @@ class QuickPanel(
             tv.scaleY = scale
         }
         val focusedRow = rowViews.getOrNull(sel)?.parent as? View ?: return
-        val scroller = scrollHost ?: return
-        scroller.post {
-            val targetY = (focusedRow.top - (scroller.height - focusedRow.height) / 2)
-                .coerceAtLeast(0)
-            scroller.smoothScrollTo(0, targetY)
-        }
+        scrollHost?.smoothScrollToCenter(focusedRow)
     }
 
     private fun openSystem(action: String) {
         runCatching {
             activity.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.onFailure {
-            Toast.makeText(activity, R.string.deck_unavailable, Toast.LENGTH_SHORT).show()
+            activity.toast(R.string.deck_unavailable)
         }
         onClose()
     }
@@ -400,11 +395,7 @@ class QuickPanel(
         val keys = app.settings.lastLaunchedMs.keys.toList()
         val cont = LibraryBrowse.continueKey(keys, app.settings.lastLaunchedMs)
         if (cont == null) {
-            Toast.makeText(
-                activity,
-                R.string.browse_nothing_to_continue,
-                Toast.LENGTH_SHORT,
-            ).show()
+            activity.toast(R.string.browse_nothing_to_continue)
             return
         }
         val idx = app.settings.gridSlots.indexOf(cont)
@@ -426,7 +417,7 @@ class QuickPanel(
             java.util.concurrent.ThreadLocalRandom.current().nextInt(size)
         }
         if (key == null) {
-            Toast.makeText(activity, R.string.browse_library_empty, Toast.LENGTH_SHORT).show()
+            activity.toast(R.string.browse_library_empty)
             return
         }
         val idx = app.settings.gridSlots.indexOf(key)
@@ -446,7 +437,7 @@ class QuickPanel(
         state.setMode(com.visorcraft.ghostgalleon.state.UIMode.GAME)
         state.setLibraryBrowse(LibraryBrowse.railQuery(mode), force = true)
         if (selectKey != null) state.select(selectKey, force = true)
-        Toast.makeText(activity, toast, Toast.LENGTH_SHORT).show()
+        activity.toast(toast)
     }
 
     /**
@@ -470,10 +461,9 @@ class QuickPanel(
         val i = builtins.indexOfFirst { it.id == current }.let { if (it < 0) 0 else it }
         val next = builtins[(i + 1) % builtins.size]
         app.updateSettings(ThemePack.applyToSettings(app.settings, next))
-        Toast.makeText(
-            activity,
-            activity.getString(R.string.format_theme, activity.themeName(next.id, next.displayName)),
-            Toast.LENGTH_SHORT,
-        ).show()
+        activity.toast(
+            R.string.format_theme,
+            activity.themeName(next.id, next.displayName),
+        )
     }
 }
