@@ -248,6 +248,43 @@ internal object SettingsUiLogic {
     /** Sum of positive accumulated playtime durations across all tracked keys. */
     fun totalPlaytimeMs(playtimeByKey: Map<String, Long>): Long =
         playtimeByKey.values.sumOf { if (it > 0L) it else 0L }
+
+    /** Warm amber warning tint with high contrast on dark sunken cards. */
+    const val COLOR_WARNING_AMBER: Int = 0xFFFFB74D.toInt()
+
+    /** Normalized used fraction `[0f..1f]` computed from free and total bytes. */
+    fun freeToUsedFraction(freeBytes: Long, totalBytes: Long): Float {
+        if (totalBytes <= 0L) return 0f
+        val safeFree = freeBytes.coerceIn(0L, totalBytes)
+        return ((totalBytes - safeFree).toDouble() / totalBytes.toDouble())
+            .toFloat()
+            .coerceIn(0f, 1f)
+    }
+
+    /** Normalized battery charge fraction `[0f..1f]`. */
+    fun batteryFraction(percent: Int?): Float =
+        if (percent == null) 0f else (percent / 100f).coerceIn(0f, 1f)
+
+    /**
+     * Semantic meter bar color: uses [accent] in healthy range, warm amber in
+     * warning range, and [UiDimens.COLOR_DESTRUCTIVE] when critical.
+     */
+    fun meterToneColor(fraction: Float, accent: Int, lowIsWarn: Boolean = false): Int {
+        val f = fraction.coerceIn(0f, 1f)
+        return if (lowIsWarn) {
+            when {
+                f <= 0.12f -> UiDimens.COLOR_DESTRUCTIVE
+                f <= 0.25f -> COLOR_WARNING_AMBER
+                else -> accent
+            }
+        } else {
+            when {
+                f >= 0.92f -> UiDimens.COLOR_DESTRUCTIVE
+                f >= 0.80f -> COLOR_WARNING_AMBER
+                else -> accent
+            }
+        }
+    }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -4197,6 +4234,7 @@ class SettingsActivity : AppCompatActivity() {
                 deviceProfileName(effectiveProfile.id),
             ),
         ))
+        addDivider(systemCardExtra)
         systemCardExtra.addView(statRow(
             getString(R.string.settings_topology),
             getString(
@@ -4212,18 +4250,184 @@ class SettingsActivity : AppCompatActivity() {
             ),
         ))
         val readings = SystemInfoCollector.collect(this)
+
+        fun meterTile(
+            title: String,
+            valueText: String,
+            fraction: Float,
+            hasReading: Boolean,
+            lowIsWarn: Boolean = false,
+        ): LinearLayout {
+            val barColor = if (hasReading) {
+                SettingsUiLogic.meterToneColor(fraction, accent, lowIsWarn)
+            } else {
+                UiDimens.ALPHA_SUBTLE
+            }
+            val valueColor = if (!hasReading) {
+                UiDimens.ALPHA_MUTED
+            } else if (barColor == accent) {
+                accentOnSunken
+            } else {
+                barColor
+            }
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
+                setPadding(dp(10), dp(8), dp(10), dp(9))
+                val top = LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        TextView(this@SettingsActivity).apply {
+                            text = title
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                            setTextColor(UiDimens.ALPHA_MUTED)
+                            setTypeface(typeface, Typeface.BOLD)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginEnd = dp(6)
+                        },
+                    )
+                    addView(
+                        TextView(this@SettingsActivity).apply {
+                            text = valueText
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                            setTextColor(valueColor)
+                            setTypeface(typeface, Typeface.BOLD)
+                            useTabularNumerals()
+                            maxLines = 1
+                        },
+                    )
+                }
+                addView(
+                    top,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+                val bar = DeterminateProgressBarView(this@SettingsActivity, themeTokens, barColor).apply {
+                    setFraction(if (hasReading) fraction else 0f)
+                }
+                addView(
+                    bar,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)).apply {
+                        topMargin = dp(6)
+                    },
+                )
+            }
+        }
+
+        val ramFrac = SettingsUiLogic.freeToUsedFraction(readings.ramAvailBytes, readings.ramTotalBytes)
+        val ramPct = (ramFrac * 100f).toInt()
+        val intFrac = SettingsUiLogic.freeToUsedFraction(readings.internalFreeBytes, readings.internalTotalBytes)
+        val intPct = (intFrac * 100f).toInt()
+        val batPct = readings.batteryPercent
+        val batFrac = SettingsUiLogic.batteryFraction(batPct)
+        val secTotal = readings.secondaryTotalBytes
+        val secFree = readings.secondaryFreeBytes
+        val hasSec = secTotal != null && secFree != null && secTotal > 0L
+        val secFrac = if (hasSec) SettingsUiLogic.freeToUsedFraction(secFree!!, secTotal!!) else 0f
+        val secPct = (secFrac * 100f).toInt()
+
+        fun meterPairRow(left: View, right: View) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(
+                right,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(8)
+                },
+            )
+        }
+
+        val metersBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+            addView(
+                meterPairRow(
+                    meterTile(
+                        title = getString(R.string.system_ram),
+                        valueText = if (readings.ramTotalBytes > 0L) {
+                            getString(R.string.format_percent, ramPct)
+                        } else {
+                            getString(R.string.label_unavailable)
+                        },
+                        fraction = ramFrac,
+                        hasReading = readings.ramTotalBytes > 0L,
+                    ),
+                    meterTile(
+                        title = getString(R.string.system_internal_storage),
+                        valueText = if (readings.internalTotalBytes > 0L) {
+                            getString(R.string.format_percent, intPct)
+                        } else {
+                            getString(R.string.label_unavailable)
+                        },
+                        fraction = intFrac,
+                        hasReading = readings.internalTotalBytes > 0L,
+                    ),
+                ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(8) },
+            )
+            addView(
+                meterPairRow(
+                    meterTile(
+                        title = getString(R.string.system_battery),
+                        valueText = if (batPct != null) {
+                            getString(R.string.system_battery_percent, batPct)
+                        } else {
+                            getString(R.string.label_unavailable)
+                        },
+                        fraction = batFrac,
+                        hasReading = batPct != null,
+                        lowIsWarn = true,
+                    ),
+                    meterTile(
+                        title = getString(R.string.system_microsd),
+                        valueText = if (hasSec) {
+                            getString(R.string.format_percent, secPct)
+                        } else {
+                            getString(R.string.system_not_present)
+                        },
+                        fraction = secFrac,
+                        hasReading = hasSec,
+                    ),
+                ),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        systemCard.addView(
+            metersBlock,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
         SystemInfoFormat.rows(readings).forEach { (label, value) ->
+            addDivider(systemCard)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(4), dp(10), dp(4))
+                setPadding(dp(10), dp(7), dp(10), dp(7))
             }
-            row.addView(rowLabel(resolveText(label)), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(rowLabel(resolveText(label)).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            }, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
             row.addView(TextView(this).apply {
                 text = resolveText(value)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
+                useTabularNumerals()
                 gravity = Gravity.END
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
@@ -4232,10 +4436,7 @@ class SettingsActivity : AppCompatActivity() {
             ))
             systemCard.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                topMargin = dp(4)
-                bottomMargin = dp(4)
-            })
+            ))
         }
         val refreshSys = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -4246,21 +4447,54 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addActionRow(systemCard, refreshSys, heightDp = 56)
 
-        // Dual-black recovery guidance + in-app companion restart (no App Info).
+        // Dual-black recovery guidance callout + in-app companion restart (no App Info).
         addDivider(systemCard)
-        systemCard.addView(TextView(this).apply {
-            setText(R.string.settings_dual_recovery_title)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTextColor(UiDimens.ALPHA_SECONDARY)
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(dp(10), dp(12), dp(10), dp(4))
-        })
-        systemCard.addView(TextView(this).apply {
-            setText(R.string.settings_dual_recovery_body)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(UiDimens.ALPHA_MUTED)
-            setPadding(dp(10), 0, dp(10), dp(8))
-        })
+        val recoveryCallout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
+            setPadding(dp(10), dp(10), dp(12), dp(10))
+            addView(
+                View(this@SettingsActivity).apply {
+                    background = TileBackgrounds.activeAccentBar(
+                        this@SettingsActivity,
+                        UiDimens.COLOR_DESTRUCTIVE,
+                        cornerRadiusDp = 2,
+                    )
+                },
+                LinearLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    marginEnd = dp(10)
+                },
+            )
+            val texts = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@SettingsActivity).apply {
+                    setText(R.string.settings_dual_recovery_title)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    setTypeface(typeface, Typeface.BOLD)
+                })
+                addView(TextView(this@SettingsActivity).apply {
+                    setText(R.string.settings_dual_recovery_body)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setLineSpacing(dpF(2), 1f)
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }
+            addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        systemCard.addView(
+            recoveryCallout,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(10)
+                bottomMargin = dp(6)
+            },
+        )
         val restartCompanion = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -4292,7 +4526,18 @@ class SettingsActivity : AppCompatActivity() {
         toggle(systemCard, getString(R.string.settings_detect_black_companion), s.detectBlackCompanion) {
             app.updateSettings(app.settings.copy(detectBlackCompanion = it))
         }
-        addSection(SettingsPage.SYSTEM, getString(R.string.settings_page_system), systemCard)
+        val systemBadge = getString(
+            R.string.format_dot_pair,
+            displayMode,
+            deviceProfileName(effectiveProfile.id),
+        )
+        addSection(
+            page = SettingsPage.SYSTEM,
+            title = getString(R.string.settings_page_system),
+            card = systemCard,
+            badgeText = systemBadge,
+            badgeActive = topo.mode == SurfaceMode.DUAL,
+        )
         pageBodies.getValue(SettingsPage.ABOUT).addView(
             AboutPage.build(this, accent),
             LinearLayout.LayoutParams(

@@ -202,4 +202,33 @@ class SettingsUiLogicTest {
             SettingsUiLogic.totalPlaytimeMs(mapOf("a" to 60_000L, "b" to 30_000L, "bad" to -50L)),
         )
     }
+
+    @Test
+    fun `system resource meter fractions and semantic tones clamp and meet contrast`() {
+        assertEquals(0f, SettingsUiLogic.freeToUsedFraction(100L, 0L), 0.0001f)
+        assertEquals(0.25f, SettingsUiLogic.freeToUsedFraction(750L, 1000L), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.freeToUsedFraction(-10L, 1000L), 0.0001f)
+        assertEquals(0f, SettingsUiLogic.freeToUsedFraction(2000L, 1000L), 0.0001f)
+
+        assertEquals(0f, SettingsUiLogic.batteryFraction(null), 0.0001f)
+        assertEquals(0.55f, SettingsUiLogic.batteryFraction(55), 0.0001f)
+        assertEquals(1f, SettingsUiLogic.batteryFraction(150), 0.0001f)
+
+        val accent = ThemePack.GHOST.accentColor
+        assertEquals(accent, SettingsUiLogic.meterToneColor(0.5f, accent, lowIsWarn = false))
+        assertEquals(SettingsUiLogic.COLOR_WARNING_AMBER, SettingsUiLogic.meterToneColor(0.85f, accent, lowIsWarn = false))
+        assertEquals(com.visorcraft.ghostgalleon.ui.UiDimens.COLOR_DESTRUCTIVE, SettingsUiLogic.meterToneColor(0.95f, accent, lowIsWarn = false))
+
+        assertEquals(accent, SettingsUiLogic.meterToneColor(0.6f, accent, lowIsWarn = true))
+        assertEquals(SettingsUiLogic.COLOR_WARNING_AMBER, SettingsUiLogic.meterToneColor(0.20f, accent, lowIsWarn = true))
+        assertEquals(com.visorcraft.ghostgalleon.ui.UiDimens.COLOR_DESTRUCTIVE, SettingsUiLogic.meterToneColor(0.10f, accent, lowIsWarn = true))
+
+        for (tokens in ThemePack.BUILTINS) {
+            val sunken = ThemePack.surfaceSunken(tokens)
+            assertTrue(
+                "Warning amber contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(SettingsUiLogic.COLOR_WARNING_AMBER, sunken) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }
