@@ -151,4 +151,27 @@ object PlayHudMetrics {
             0xFFFFFFFF.toInt()
         }
     }
+
+    /** Normalize a touch coordinate into 0..1 launch-display trackpad space. */
+    fun normalizeTrackpadPoint(x: Float, y: Float, width: Int, height: Int): Pair<Float, Float> {
+        if (width <= 0 || height <= 0) return 0.5f to 0.5f
+        return (x / width.toFloat()).coerceIn(0f, 1f) to (y / height.toFloat()).coerceIn(0f, 1f)
+    }
+
+    /** Minimum height (dp) for Second-Seat touch cluster buttons (always >= 44dp). */
+    fun seatButtonMinHeightDp(compact: Boolean): Int = if (compact) 44 else 50
+
+    /** Press/idle `(fillColor, strokeColor)` pair for Second-Seat cluster buttons. */
+    fun seatButtonStyle(
+        pressed: Boolean,
+        accentColor: Int,
+        idleSurface: Int,
+        hairlineColor: Int,
+    ): Pair<Int, Int> = if (pressed) {
+        val fill = CompanionChromeErgonomics.activeChipFill(idleSurface, accentColor)
+        val stroke = ThemePack.accentTextColor(accentColor, fill)
+        fill to stroke
+    } else {
+        idleSurface to hairlineColor
+    }
 }

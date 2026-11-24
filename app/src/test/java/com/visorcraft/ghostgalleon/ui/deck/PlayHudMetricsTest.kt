@@ -117,4 +117,46 @@ class PlayHudMetricsTest {
             )
         }
     }
+
+    @Test
+    fun `normalizeTrackpadPoint clamps coordinates and defaults to center on zero bounds`() {
+        assertEquals(0.5f to 0.5f, PlayHudMetrics.normalizeTrackpadPoint(10f, 20f, 0, 100))
+        assertEquals(0.5f to 0.5f, PlayHudMetrics.normalizeTrackpadPoint(10f, 20f, 100, 0))
+        assertEquals(0f to 1f, PlayHudMetrics.normalizeTrackpadPoint(-25f, 300f, 200, 100))
+        val (nx, ny) = PlayHudMetrics.normalizeTrackpadPoint(50f, 75f, 200, 100)
+        assertEquals(0.25f, nx, 0.001f)
+        assertEquals(0.75f, ny, 0.001f)
+    }
+
+    @Test
+    fun `seatButtonStyle distinguishes pressed state and keeps 44dp minimum touch height`() {
+        assertTrue(PlayHudMetrics.seatButtonMinHeightDp(compact = true) >= 44)
+        assertTrue(
+            PlayHudMetrics.seatButtonMinHeightDp(compact = false) >
+                PlayHudMetrics.seatButtonMinHeightDp(compact = true),
+        )
+        for (pack in ThemePack.BUILTINS) {
+            val hairline = ThemePack.hairlineDivider(pack)
+            val (idleFill, idleStroke) = PlayHudMetrics.seatButtonStyle(
+                pressed = false,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                hairlineColor = hairline,
+            )
+            val (downFill, downStroke) = PlayHudMetrics.seatButtonStyle(
+                pressed = true,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                hairlineColor = hairline,
+            )
+            assertEquals(pack.chipIdle, idleFill)
+            assertEquals(hairline, idleStroke)
+            assertNotEquals(idleFill, downFill)
+            assertNotEquals(idleStroke, downStroke)
+            assertTrue(
+                "Seat button pressed text contrast on ${pack.id} must be >= 4.5",
+                ThemePack.contrastRatio(0xFFFFFFFF.toInt(), downFill) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

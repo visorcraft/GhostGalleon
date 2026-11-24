@@ -533,19 +533,32 @@ object CompanionPanel {
             visibility = View.GONE
             contentDescription = activity.getString(R.string.play_hud_helper)
         }
+        val backInsetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val backHelperBtn = TextView(activity).apply {
+            setText(R.string.play_hud_back_to_hud)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
+            gravity = Gravity.CENTER
+            setSingleLine()
+            setPadding(dp(16), backInsetV, dp(16), backInsetV)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { setHelperActive(app, false) }
+        }
+        attachChipTactileFeedback(backHelperBtn)
         body.addView(
-            TextView(activity).apply {
-                setText(R.string.play_hud_back_to_hud)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                background = TileBackgrounds.accentPill(activity, settings.accentColor)
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                setOnClickListener { setHelperActive(app, false) }
-            },
+            backHelperBtn,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(8) },
+                dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP),
+            ).apply { topMargin = dp(4) },
         )
         body.addView(
             FrameLayout(activity).apply {
@@ -574,19 +587,32 @@ object CompanionPanel {
             visibility = View.GONE
             contentDescription = activity.getString(R.string.play_hud_seat)
         }
+        val seatBackInsetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val backSeatBtn = TextView(activity).apply {
+            setText(R.string.play_hud_back_to_hud)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
+            gravity = Gravity.CENTER
+            setSingleLine()
+            setPadding(dp(16), seatBackInsetV, dp(16), seatBackInsetV)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { setSeatActive(app, false) }
+        }
+        attachChipTactileFeedback(backSeatBtn)
         body.addView(
-            TextView(activity).apply {
-                setText(R.string.play_hud_back_to_hud)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                background = TileBackgrounds.accentPill(activity, settings.accentColor)
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                setOnClickListener { setSeatActive(app, false) }
-            },
+            backSeatBtn,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(8) },
+                dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP),
+            ).apply { topMargin = dp(4) },
         )
         body.addView(
             TextView(activity).apply {
@@ -606,27 +632,78 @@ object CompanionPanel {
             tag = TAG_PLAY_HUD_SEAT_CLUSTER
             columnCount = 5
             visibility = View.GONE
+            clipChildren = false
+            clipToPadding = false
             setPadding(0, dp(8), 0, 0)
         }
+        val seatIdle = TileBackgrounds.chipIdleColor(activity)
+        val seatHairline = TileBackgrounds.hairlineDivider(activity)
+        val seatStrokeIdle = activity.strokePx(1)
+        val seatStrokeActive = activity.strokePx(2)
+        val seatMinH = dp(PlayHudMetrics.seatButtonMinHeightDp(compact))
         val anchors = SecondSeatPolicy.anchorsOrDefault(settings.raSeatAnchors)
         for (anchor in anchors) {
+            val bg = GradientDrawable().apply {
+                cornerRadius = activity.dpF(12)
+                setColor(seatIdle)
+                setStroke(seatStrokeIdle, seatHairline)
+            }
+            val labelText = anchor.id.uppercase()
             val cell = TextView(activity).apply {
-                text = anchor.id.uppercase()
+                text = labelText
+                contentDescription = labelText
                 gravity = Gravity.CENTER
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 13f else 15f)
+                setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
-                background = TileBackgrounds.chip(activity)
-                setPadding(dp(8), dp(12), dp(8), dp(12))
-                minimumHeight = dp(if (compact) 40 else 48)
+                background = bg
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                minimumHeight = seatMinH
+                fun applyPressedVisual(down: Boolean) {
+                    val (fill, stroke) = PlayHudMetrics.seatButtonStyle(
+                        pressed = down,
+                        accentColor = settings.accentColor,
+                        idleSurface = seatIdle,
+                        hairlineColor = seatHairline,
+                    )
+                    bg.setColor(fill)
+                    bg.setStroke(if (down) seatStrokeActive else seatStrokeIdle, stroke)
+                    val targetScale = if (down) CompanionChromeErgonomics.CHIP_PRESS_SCALE else 1f
+                    animate().cancel()
+                    if (ValueAnimator.areAnimatorsEnabled()) {
+                        animate()
+                            .scaleX(targetScale)
+                            .scaleY(targetScale)
+                            .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
+                            .start()
+                    } else {
+                        scaleX = targetScale
+                        scaleY = targetScale
+                    }
+                }
                 setOnTouchListener { _, event ->
                     when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> app.injectSeat(anchor.id, true)
+                        MotionEvent.ACTION_DOWN -> {
+                            applyPressedVisual(true)
+                            app.injectSeat(anchor.id, true)
+                        }
                         MotionEvent.ACTION_UP,
                         MotionEvent.ACTION_CANCEL,
-                        -> app.injectSeat(anchor.id, false)
+                        -> {
+                            applyPressedVisual(false)
+                            app.injectSeat(anchor.id, false)
+                        }
                     }
                     true
                 }
+                addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(v: View) {}
+                    override fun onViewDetachedFromWindow(v: View) {
+                        v.animate().cancel()
+                        v.scaleX = 1f
+                        v.scaleY = 1f
+                    }
+                })
             }
             cluster.addView(
                 cell,
@@ -4455,20 +4532,22 @@ object CompanionPanel {
                     ),
                 )
             }
-            val trackpad = View(activity).apply {
+            val trackpad = CockpitTrackpadView(activity, settings.accentColor).apply {
                 tag = TAG_PLAY_HUD_TRACKPAD
                 setTag(R.id.cockpit_pad_point, padPoint)
                 minimumHeight = dp(if (compact) 96 else 160)
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(12).toFloat()
-                    setColor(0x22FFFFFF)
-                    setStroke(dp(1), 0x44FFFFFF)
-                }
                 setOnTouchListener { v, event ->
-                    val w = v.width.coerceAtLeast(1).toFloat()
-                    val h = v.height.coerceAtLeast(1).toFloat()
-                    padPoint[0] = (event.x / w).coerceIn(0f, 1f)
-                    padPoint[1] = (event.y / h).coerceIn(0f, 1f)
+                    val (nx, ny) = PlayHudMetrics.normalizeTrackpadPoint(
+                        event.x,
+                        event.y,
+                        v.width,
+                        v.height,
+                    )
+                    padPoint[0] = nx
+                    padPoint[1] = ny
+                    val active = event.actionMasked == MotionEvent.ACTION_DOWN ||
+                        event.actionMasked == MotionEvent.ACTION_MOVE
+                    updatePointer(nx, ny, active)
                     if (mayPointer) {
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN,
