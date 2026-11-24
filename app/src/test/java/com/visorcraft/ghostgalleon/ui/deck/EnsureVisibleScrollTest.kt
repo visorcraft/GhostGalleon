@@ -52,4 +52,19 @@ class EnsureVisibleScrollTest {
         // Viewport scrolled 1000px down; item fully inside it: no jump.
         assertEquals(0, EnsureVisibleScroll.delta(1100, 1200, 1000, 1500))
     }
+
+    @Test
+    fun `degenerate viewport returns zero delta and centeredScrollY clamps to content bounds`() {
+        assertEquals(0, EnsureVisibleScroll.delta(100, 200, 500, 500))
+        assertEquals(0, EnsureVisibleScroll.delta(100, 200, 600, 400))
+
+        // Short content never scrolls.
+        assertEquals(0, EnsureVisibleScroll.centeredScrollY(100, 180, viewportHeight = 400, contentHeight = 350))
+        // Middle item centers cleanly: top 400..500 inside 300px viewport -> ideal = 400 - 100 = 300.
+        assertEquals(300, EnsureVisibleScroll.centeredScrollY(400, 500, viewportHeight = 300, contentHeight = 900))
+        // Last item clamps to maxScroll (900 - 300 = 600).
+        assertEquals(600, EnsureVisibleScroll.centeredScrollY(820, 900, viewportHeight = 300, contentHeight = 900))
+        // First item clamps to 0.
+        assertEquals(0, EnsureVisibleScroll.centeredScrollY(0, 80, viewportHeight = 300, contentHeight = 900))
+    }
 }

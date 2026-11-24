@@ -53,4 +53,25 @@ class DockMoveStateTest {
     fun `swap inactive returns null`() {
         assertNull(DockMoveState().swap(0, 1))
     }
+
+    @Test
+    fun `start guards empty slots and clamps out-of-range indices cleanly`() {
+        val emptyState = DockMoveState()
+        emptyState.start(0, emptyList())
+        assertFalse(emptyState.active)
+
+        val state = DockMoveState()
+        val slots = DockSlots.compact(listOf("a", "b"))
+        state.start(99, slots)
+        assertTrue(state.active)
+        assertEquals(slots.lastIndex, state.index)
+
+        // Dropping an item onto a trailing blank compacts cleanly and focuses the moved key.
+        val dropState = DockMoveState()
+        dropState.start(0, slots)
+        val drop = dropState.drop(tapSlot = 3)
+        requireNotNull(drop)
+        assertEquals(listOf("b", "a"), DockSlots.filled(drop.compacted))
+        assertEquals(1, drop.focusIndex)
+    }
 }

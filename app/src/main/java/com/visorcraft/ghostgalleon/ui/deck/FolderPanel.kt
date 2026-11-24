@@ -704,8 +704,13 @@ class FolderPanel(
             val focusedRow = cells.getOrNull(activeCell)?.parent as? View ?: return
             val scroller = scrollHost ?: return
             scroller.post {
-                val targetY = (focusedRow.top - (scroller.height - focusedRow.height) / 2)
-                    .coerceAtLeast(0)
+                val contentH = gridHost?.height ?: 0
+                val targetY = EnsureVisibleScroll.centeredScrollY(
+                    itemTop = focusedRow.top,
+                    itemBottom = focusedRow.bottom,
+                    viewportHeight = scroller.height,
+                    contentHeight = contentH,
+                )
                 scroller.smoothScrollTo(0, targetY)
             }
         }

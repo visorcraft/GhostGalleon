@@ -48,4 +48,21 @@ class GridNavigationTest {
         assertEquals(11, slotNav.move(8, Action.NAV_DOWN))
         assertEquals(0, slotNav.move(2, Action.NAV_UP))
     }
+
+    @Test
+    fun `degenerate counts, columns, rows, and stale indices stay safely clamped`() {
+        val zero = GridNavigation(itemCount = 0, columns = 0, visibleRows = 0)
+        assertEquals(0, zero.move(-5, Action.NAV_RIGHT))
+        assertEquals(0, zero.pageOf(3))
+        assertEquals(1, zero.pageCount())
+
+        val normal = GridNavigation(itemCount = 24, columns = 5, visibleRows = 2)
+        // Stale negative or overflow index clamps before stepping.
+        assertEquals(1, normal.move(-10, Action.NAV_RIGHT))
+        assertEquals(22, normal.move(999, Action.NAV_LEFT))
+        assertEquals(3, normal.pageCount())
+        assertEquals(0, normal.pageOf(0))
+        assertEquals(1, normal.pageOf(10))
+        assertEquals(2, normal.pageOf(23))
+    }
 }

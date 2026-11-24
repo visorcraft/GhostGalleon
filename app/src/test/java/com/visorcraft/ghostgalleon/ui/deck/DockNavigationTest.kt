@@ -72,4 +72,24 @@ class DockNavigationTest {
         assertEquals(2, nav.move(2, Action.NAV_DOWN))
         assertEquals(2, nav.move(2, Action.CONFIRM))
     }
+
+    @Test
+    fun `ragged last row and zero-count edges behave cleanly`() {
+        // 12 items in 5 columns -> row 0 [0..4], row 1 [5..9], row 2 [10, 11].
+        val ragged = DockNavigation(dockCount = 5, gridCount = 12, columns = 5)
+        assertFalse(ragged.isLastRow(7))
+        assertFalse(ragged.isLastRow(9))
+        assertTrue(ragged.isLastRow(10))
+        assertTrue(ragged.isLastRow(11))
+        // Exiting dock col 0 returns slot 10 (first item of ragged last row), col 4 clamps to 11.
+        assertEquals(10, ragged.exitToGrid(0))
+        assertEquals(11, ragged.exitToGrid(1))
+        assertEquals(11, ragged.exitToGrid(4))
+
+        // Zero dock count / negative indices never throw or go negative.
+        val zeroDock = DockNavigation(dockCount = 0, gridCount = 10, columns = 0)
+        assertEquals(0, zeroDock.enterFromGrid(-3))
+        assertEquals(0, zeroDock.move(-1, Action.NAV_LEFT))
+        assertEquals(9, zeroDock.exitToGrid(-2))
+    }
 }

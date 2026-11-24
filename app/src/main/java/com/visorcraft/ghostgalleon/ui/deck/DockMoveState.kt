@@ -15,7 +15,11 @@ class DockMoveState {
     val active: Boolean get() = index != null
 
     fun start(slot: Int, slots: List<String?>) {
-        index = slot
+        if (slots.isEmpty()) {
+            clear()
+            return
+        }
+        index = slot.coerceIn(0, slots.lastIndex)
         working = slots.toMutableList()
     }
 
