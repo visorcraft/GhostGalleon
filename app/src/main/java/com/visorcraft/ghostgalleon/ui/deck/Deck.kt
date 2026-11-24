@@ -4,8 +4,21 @@ import android.app.Activity
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Outline
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
+import android.text.TextUtils
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.R
@@ -20,7 +33,10 @@ import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.state.DeckState
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
+import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 interface Deck {
     fun primaryView(context: Context): View
@@ -291,6 +307,12 @@ private fun pickSgdbImagesThenStart(
     }
 }
 
+private data class DecodedThumb(
+    val bitmap: Bitmap?,
+    val origWidth: Int,
+    val origHeight: Int,
+)
+
 private fun pickImageKind(
     activity: AppCompatActivity,
     titleRes: Int,
@@ -301,22 +323,31 @@ private fun pickImageKind(
         onPicked(urls.firstOrNull())
         return
     }
+    val kind = ArtPickerFormatter.previewKindForTitleRes(titleRes)
+    val spec = ArtPickerFormatter.previewSpec(kind)
+    val decodeDim = ArtPickerFormatter.decodeTargetPx(
+        kind = kind,
+        density = activity.resources.displayMetrics.density,
+    )
     ART_SEARCH_EXECUTOR.execute {
         val transport = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
         val shown = urls.take(12)
         val thumbs = shown.map { url ->
-            val bmp = runCatching {
-                val bytes = transport.download(url) ?: return@runCatching null
-                decodeThumb(bytes, 144)
-            }.getOrNull()
-            url to bmp
+            val decoded = runCatching {
+                val bytes = transport.download(url) ?: return@runCatching DecodedThumb(null, 0, 0)
+                decodeThumb(bytes, decodeDim, preserveAlpha = spec.preserveAlpha)
+            }.getOrDefault(DecodedThumb(null, 0, 0))
+            url to decoded
         }
         activity.runOnUiThread {
-            if (activity.isFinishing) return@runOnUiThread
+            if (activity.isFinishing) {
+                thumbs.forEach { (_, d) -> d.bitmap?.takeIf { !it.isRecycled }?.recycle() }
+                return@runOnUiThread
+            }
             val density = activity.resources.displayMetrics.density
             fun dp(v: Int) = (v * density).toInt()
-            val col = android.widget.LinearLayout(activity).apply {
-                orientation = android.widget.LinearLayout.VERTICAL
+            val col = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), dp(8), dp(12), dp(8))
             }
             val builder = DeckDialogs.builder(activity)
@@ -329,46 +360,138 @@ private fun pickImageKind(
             val accent = (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
                 ?.settings?.accentColor
                 ?: com.visorcraft.ghostgalleon.settings.ThemePack.GHOST.accentColor
-            thumbs.forEachIndexed { i, (url, bmp) ->
-                val row = android.widget.LinearLayout(activity).apply {
-                    orientation = android.widget.LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                    setPadding(dp(8), dp(6), dp(8), dp(6))
+            val thumbViews = mutableListOf<ImageView>()
+            val thumbRadiusPx = activity.dpF(spec.cornerRadiusDp)
+            thumbs.forEachIndexed { i, (url, decoded) ->
+                val titleUi = ArtPickerFormatter.candidateTitleText(
+                    indexOneBased = i + 1,
+                    totalCount = thumbs.size,
+                    url = url,
+                )
+                val sublineUi = ArtPickerFormatter.candidateSublineText(
+                    origWidth = decoded.origWidth,
+                    origHeight = decoded.origHeight,
+                    url = url,
+                )
+                val idleCardBg = GradientDrawable().apply {
+                    setColor(TileBackgrounds.surfaceSunken(activity))
+                    cornerRadius = activity.dpF(12)
+                    setStroke(activity.strokePx(1), TileBackgrounds.hairlineDivider(activity))
+                }
+                val row = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(10), dp(8), dp(12), dp(8))
                     isClickable = true
                     isFocusable = true
+                    contentDescription = activity.resolveText(
+                        ArtPickerFormatter.candidateAccessibilityText(titleUi, sublineUi),
+                    )
                     background = TileBackgrounds.focusableRow(
                         context = activity,
                         accent = accent,
-                        cornerRadiusDp = 10,
+                        idleBackground = idleCardBg,
+                        cornerRadiusDp = 12,
                     )
                     setOnClickListener {
                         dialog.dismiss()
                         onPicked(url)
                     }
                 }
-                val thumb = android.widget.ImageView(activity).apply {
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                    if (bmp != null) setImageBitmap(bmp)
-                    else setBackgroundColor(TileBackgrounds.surfaceSunken(activity))
+                val thumbFrame = FrameLayout(activity).apply {
+                    background = GradientDrawable().apply {
+                        setColor(TileBackgrounds.surfaceColor(activity))
+                        cornerRadius = thumbRadiusPx
+                        setStroke(activity.strokePx(1), TileBackgrounds.hairlineDivider(activity))
+                    }
+                    clipToOutline = true
+                    outlineProvider = object : ViewOutlineProvider() {
+                        override fun getOutline(view: View, outline: Outline) {
+                            outline.setRoundRect(0, 0, view.width, view.height, thumbRadiusPx)
+                        }
+                    }
                 }
-                row.addView(thumb, android.widget.LinearLayout.LayoutParams(dp(72), dp(40)))
-                row.addView(
-                    android.widget.TextView(activity).apply {
-                        text = (i + 1).toString() + ". " + url.substringAfterLast('/').take(36)
-                        setTextColor(0xFFFFFFFF.toInt())
-                        setPadding(dp(10), 0, 0, 0)
-                    },
-                    android.widget.LinearLayout.LayoutParams(
-                        0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f,
+                val thumb = ImageView(activity).apply {
+                    scaleType = if (spec.fitCenter) {
+                        ImageView.ScaleType.FIT_CENTER
+                    } else {
+                        ImageView.ScaleType.CENTER_CROP
+                    }
+                    if (spec.fitCenter) {
+                        val logoPad = dp(4)
+                        setPadding(logoPad, logoPad, logoPad, logoPad)
+                    }
+                    decoded.bitmap?.takeIf { !it.isRecycled }?.let { setImageBitmap(it) }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                thumbViews.add(thumb)
+                thumbFrame.addView(
+                    thumb,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
                     ),
                 )
-                col.addView(row)
+                row.addView(thumbFrame, LinearLayout.LayoutParams(dp(spec.widthDp), dp(spec.heightDp)))
+
+                val textCol = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), 0, 0, 0)
+                }
+                textCol.addView(
+                    TextView(activity).apply {
+                        text = activity.resolveText(titleUi)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        setTextColor(UiDimens.ALPHA_PRIMARY)
+                        typeface = Typeface.DEFAULT_BOLD
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        includeFontPadding = false
+                    },
+                )
+                if (sublineUi != null) {
+                    textCol.addView(
+                        TextView(activity).apply {
+                            text = activity.resolveText(sublineUi)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                            setTextColor(UiDimens.ALPHA_MUTED)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                            includeFontPadding = false
+                        },
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply { topMargin = dp(3) },
+                    )
+                }
+                row.addView(
+                    textCol,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                col.addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        if (i > 0) topMargin = dp(6)
+                    },
+                )
             }
             val scroll = OverlayPrimitives.MaxHeightScrollView(
                 activity,
                 OverlayPrimitives.maxModalHeight(activity, 0.56f),
             ).apply {
+                isVerticalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(16))
                 addView(col)
+            }
+            dialog.setOnDismissListener {
+                thumbViews.forEach { it.setImageDrawable(null) }
+                thumbs.forEach { (_, decoded) ->
+                    decoded.bitmap?.takeIf { !it.isRecycled }?.recycle()
+                }
             }
             dialog.setView(scroll)
             dialog.show()
@@ -377,21 +500,27 @@ private fun pickImageKind(
     }
 }
 
-private fun decodeThumb(bytes: ByteArray, maxDimension: Int): android.graphics.Bitmap? {
+private fun decodeThumb(
+    bytes: ByteArray,
+    maxDimension: Int,
+    preserveAlpha: Boolean = false,
+): DecodedThumb {
     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-    var sample = 1
-    while (bounds.outWidth / (sample * 2) >= maxDimension &&
-        bounds.outHeight / (sample * 2) >= maxDimension
-    ) {
-        sample *= 2
-    }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return DecodedThumb(null, 0, 0)
+    val sample = DeckWallpaper.computeSampleSize(
+        outWidth = bounds.outWidth,
+        outHeight = bounds.outHeight,
+        targetWidth = maxDimension,
+        targetHeight = maxDimension,
+        maxTextureDim = maxDimension.coerceAtLeast(128) * 2,
+    )
     val opts = android.graphics.BitmapFactory.Options().apply {
         inSampleSize = sample
-        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        inPreferredConfig = if (preserveAlpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
     }
-    return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    return DecodedThumb(bmp, bounds.outWidth, bounds.outHeight)
 }
 
 private val ART_SEARCH_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()
