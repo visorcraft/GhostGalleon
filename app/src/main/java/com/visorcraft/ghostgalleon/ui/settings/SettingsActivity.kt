@@ -3872,6 +3872,27 @@ class SettingsActivity : AppCompatActivity() {
             )
             refreshSettingsUi()
         }
+        val liveTopo = app.displayConfig
+        val displayTopoPreview = DisplayTopologyPreviewView(
+            context = this,
+            tokens = themeTokens,
+            accent = accent,
+            state = SettingsPreviewLogic.topologyDiagramState(
+                surfaceMode = liveTopo.mode,
+                primaryId = liveTopo.primaryDisplayId,
+                companionId = liveTopo.companionDisplayId,
+                launchId = liveTopo.launchDisplayId,
+            ),
+        )
+        displayCard.addView(
+            displayTopoPreview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(4)
+                bottomMargin = dp(8)
+            },
+        )
         val resetDisplayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -4530,12 +4551,28 @@ class SettingsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)),
             )
             val shown = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors)
+            val xFields = mutableMapOf<String, EditText>()
+            val yFields = mutableMapOf<String, EditText>()
             val seatPreview = SecondSeatPreviewView(
                 context = this,
                 tokens = themeTokens,
                 accent = accent,
                 initialAnchors = shown,
-            )
+            ).apply {
+                onAnchorDragged = { id, nx, ny, committed ->
+                    val fx = String.format(java.util.Locale.US, "%.2f", nx)
+                    val fy = String.format(java.util.Locale.US, "%.2f", ny)
+                    xFields[id]?.let { field ->
+                        if (field.text?.toString() != fx) field.setText(fx)
+                    }
+                    yFields[id]?.let { field ->
+                        if (field.text?.toString() != fy) field.setText(fy)
+                    }
+                    if (committed) {
+                        commitSeatAnchor(id, nx, ny)
+                    }
+                }
+            }
             seatLayoutHost.addView(
                 seatPreview,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)).apply {
@@ -4632,18 +4669,22 @@ class SettingsActivity : AppCompatActivity() {
                             )
                         }
                     }
+                val xField = coordField(anchor.id, anchor.nx) { nx ->
+                    commitSeatAnchor(anchor.id, nx, null)
+                }
+                val yField = coordField(anchor.id, anchor.ny) { ny ->
+                    commitSeatAnchor(anchor.id, null, ny)
+                }
+                xFields[anchor.id] = xField
+                yFields[anchor.id] = yField
                 row.addView(
-                    coordField(anchor.id, anchor.nx) { nx ->
-                        commitSeatAnchor(anchor.id, nx, null)
-                    },
+                    xField,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                         marginStart = dp(8)
                     },
                 )
                 row.addView(
-                    coordField(anchor.id, anchor.ny) { ny ->
-                        commitSeatAnchor(anchor.id, null, ny)
-                    },
+                    yField,
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                         marginStart = dp(8)
                     },
@@ -4769,8 +4810,26 @@ class SettingsActivity : AppCompatActivity() {
         val masterDependentViews = mutableListOf<View>()
         val sfxDependentViews = mutableListOf<View>()
         val ambientDependentViews = mutableListOf<View>()
+        val audioPreview = AudioSoundscapePreviewView(
+            context = this,
+            tokens = themeTokens,
+            accent = accent,
+            initialPack = SoundPackId.fromId(liveSoundPack).resolve(themeTokens.id),
+            initialSfxVol = liveSfxVolume,
+            initialAmbientVol = liveAmbientVolume,
+            initialSoundEnabled = liveSoundEnabled,
+            initialAmbientEnabled = liveAmbientEnabled,
+        )
 
         fun refreshAudioBadges() {
+            val resolvedPack = SoundPackId.fromId(liveSoundPack).resolve(themeTokens.id)
+            audioPreview.update(
+                nextPack = resolvedPack,
+                nextSfxVol = liveSfxVolume,
+                nextAmbientVol = liveAmbientVolume,
+                nextSoundEnabled = liveSoundEnabled,
+                nextAmbientEnabled = liveAmbientEnabled,
+            )
             val packPlayable = SoundPackId.fromId(liveSoundPack).isPlayable
             val masterAlpha = SettingsUiLogic.audioSubControlAlpha(
                 masterOn = liveSoundEnabled,
@@ -4819,6 +4878,7 @@ class SettingsActivity : AppCompatActivity() {
             refreshAudioBadges()
             if (on) {
                 app.soundEngine.audition(SoundCue.CONFIRM)
+                audioPreview.pulseAudition(SoundCue.CONFIRM)
             }
         }
         val audioLocale = resources.configuration.locales[0]
@@ -4848,8 +4908,18 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(soundPack = pack.id), notify = false)
             refreshAudioBadges()
             app.soundEngine.previewPack(pack)
+            audioPreview.pulseAudition(SoundCue.CONFIRM)
         }
         masterDependentViews.add(soundPackRow)
+        audioSfxCard.addView(
+            audioPreview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(4)
+                bottomMargin = dp(8)
+            },
+        )
         val (sfxVolLabel, sfxVolSeek) = seek(
             card = audioSfxCard,
             label = getString(R.string.settings_audio_sfx_volume),
@@ -4958,6 +5028,7 @@ class SettingsActivity : AppCompatActivity() {
                     })
                     setOnClickListener {
                         app.soundEngine.audition(cue)
+                        audioPreview.pulseAudition(cue)
                         activeRimAnim?.cancel()
                         animate().cancel()
                         if (UiDimens.areAnimationsEnabled(this@SettingsActivity)) {
@@ -5989,6 +6060,26 @@ class SettingsActivity : AppCompatActivity() {
                     ?: getString(R.string.glyph_dash),
             ),
         ))
+        val systemTopoPreview = DisplayTopologyPreviewView(
+            context = this,
+            tokens = themeTokens,
+            accent = accent,
+            state = SettingsPreviewLogic.topologyDiagramState(
+                surfaceMode = topo.mode,
+                primaryId = topo.primaryDisplayId,
+                companionId = topo.companionDisplayId,
+                launchId = topo.launchDisplayId,
+            ),
+        )
+        systemCardExtra.addView(
+            systemTopoPreview,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+                topMargin = dp(4)
+                bottomMargin = dp(8)
+            },
+        )
 
         val readingsHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

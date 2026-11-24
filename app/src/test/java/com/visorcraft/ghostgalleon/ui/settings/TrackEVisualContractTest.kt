@@ -158,6 +158,13 @@ class TrackEVisualContractTest {
                 "Settings focusStroke on sunken failed WCAG 1.4.11 on ${tokens.id}",
                 ThemePack.contrastRatio(palette.focusStroke, sunken) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
             )
+
+            val previewStroke = SettingsPreviewLogic.previewFocusStroke(accent, tokens)
+            assertTrue(
+                "Preview focusStroke on elevated failed WCAG 1.4.11 on ${tokens.id}",
+                ThemePack.contrastRatio(previewStroke, ThemePack.surfaceElevated(tokens)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
         }
         assertTrue(
             "Settings minimum touch comfort must be >= 44dp",

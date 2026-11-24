@@ -1,11 +1,16 @@
 package com.visorcraft.ghostgalleon.ui.settings
 
+import com.visorcraft.ghostgalleon.audio.SoundPackId
+import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -176,5 +181,165 @@ class SettingsPreviewLogicTest {
         assertTrue(SecondSeatPreviewLogic.isDpadAnchor("left"))
         assertFalse(SecondSeatPreviewLogic.isDpadAnchor("a"))
         assertFalse(SecondSeatPreviewLogic.isDpadAnchor("start"))
+    }
+
+    @Test
+    fun `scaledBarHeightPx and previewFocusStroke scale with fontScale and meet WCAG 1_4_11`() {
+        val small = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = 0.85f, density = 2f)
+        val normal = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = 1.0f, density = 2f)
+        val large = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = 1.25f, density = 2f)
+        val clampedHigh = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = 2.0f, density = 2f)
+        val clampedLow = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = 0.2f, density = 2f)
+        val nanScale = SettingsPreviewLogic.scaledBarHeightPx(5f, fontScale = Float.NaN, density = 2f)
+
+        assertTrue(small < normal && normal < large)
+        assertEquals(large, clampedHigh, 0.001f)
+        assertEquals(small, clampedLow, 0.001f)
+        assertEquals(normal, nanScale, 0.001f)
+
+        for (tokens in ThemePack.BUILTINS) {
+            val stroke = SettingsPreviewLogic.previewFocusStroke(tokens.accentColor, tokens)
+            assertTrue(
+                "previewFocusStroke contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(stroke, ThemePack.cardFill(tokens)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            assertTrue(
+                "previewFocusStroke contrast on elevated too low on ${tokens.id}",
+                ThemePack.contrastRatio(stroke, ThemePack.surfaceElevated(tokens)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+        }
+    }
+
+    @Test
+    fun `flankingCardScale and clampedLabelReservePx balance dense grids and carousel preview`() {
+        val sMin = SettingsPreviewLogic.flankingCardScale(0.52f)
+        val sMax = SettingsPreviewLogic.flankingCardScale(0.98f)
+        assertTrue("flankingCardScale out of depth band: $sMin", sMin in 0.72f..0.80f)
+        assertTrue("flankingCardScale out of depth band: $sMax", sMax in 0.72f..0.80f)
+        assertTrue("flanking scale should deepen slightly as center card grows", sMin >= sMax)
+        assertTrue(SettingsPreviewLogic.flankingCardScale(Float.NaN) in 0.72f..0.80f)
+
+        // Hidden labels reserve zero height.
+        assertEquals(0f, SettingsPreviewLogic.clampedLabelReservePx(cellH = 40f, showLabels = false, density = 2f), 0.001f)
+        // Tall cell caps at 7dp.
+        assertEquals(14f, SettingsPreviewLogic.clampedLabelReservePx(cellH = 120f, showLabels = true, density = 2f), 0.001f)
+        // Compact 8-column cell caps proportionally at 22% of cellH.
+        assertEquals(6.6f, SettingsPreviewLogic.clampedLabelReservePx(cellH = 30f, showLabels = true, density = 2f), 0.01f)
+    }
+
+    @Test
+    fun `audioSpectrumProfile bounds values, zeroes when muted or off, and differs per pack`() {
+        // Muted or OFF flattens cleanly to all zeros.
+        val muted = SettingsPreviewLogic.audioSpectrumProfile(SoundPackId.GHOST, sfxVol = 80, ambientVol = 50, enabled = false)
+        assertEquals(16, muted.size)
+        assertTrue(muted.all { it == 0f })
+
+        val offPack = SettingsPreviewLogic.audioSpectrumProfile(SoundPackId.OFF, sfxVol = 80, ambientVol = 50, enabled = true)
+        assertTrue(offPack.all { it == 0f })
+
+        assertEquals(0f, SettingsPreviewLogic.audioAmbientFloor(SoundPackId.GHOST, 50, soundEnabled = false, ambientEnabled = true), 0.001f)
+        assertEquals(0f, SettingsPreviewLogic.audioAmbientFloor(SoundPackId.GHOST, 50, soundEnabled = true, ambientEnabled = false), 0.001f)
+        assertEquals(0.5f, SettingsPreviewLogic.audioAmbientFloor(SoundPackId.GHOST, 50, soundEnabled = true, ambientEnabled = true), 0.001f)
+
+        // Distinct acoustic envelopes across all 4 concrete packs, bounded within [0..1].
+        val profiles = SoundPackId.CONCRETE_PACKS.associateWith { pack ->
+            SettingsPreviewLogic.audioSpectrumProfile(pack, sfxVol = 85, ambientVol = 25, enabled = true, barCount = 16)
+        }
+        for ((pack, bars) in profiles) {
+            assertEquals(16, bars.size)
+            assertTrue("$pack must have non-zero energy", bars.any { it > 0.2f })
+            assertTrue("$pack bars out of [0..1]", bars.all { it in 0f..1f })
+        }
+        val keys = SoundPackId.CONCRETE_PACKS
+        for (i in keys.indices) {
+            for (j in i + 1 until keys.size) {
+                val a = profiles.getValue(keys[i])
+                val b = profiles.getValue(keys[j])
+                assertFalse(
+                    "Packs ${keys[i]} and ${keys[j]} must have distinct spectrum envelopes",
+                    a.contentEquals(b),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `SecondSeatPreviewLogic hit-tests nearest anchor, detects collisions, and clamps coordinates`() {
+        assertEquals(0f, SecondSeatPreviewLogic.clampNormalizedCoord(-0.4f), 0.001f)
+        assertEquals(1f, SecondSeatPreviewLogic.clampNormalizedCoord(1.8f), 0.001f)
+        assertEquals(0.5f, SecondSeatPreviewLogic.clampNormalizedCoord(Float.NaN), 0.001f)
+        assertEquals(0.42f, SecondSeatPreviewLogic.clampNormalizedCoord(0.42f), 0.001f)
+
+        val dots = SecondSeatPreviewLogic.layoutDots(
+            anchors = listOf(SeatAnchor("a", 0.2f, 0.5f), SeatAnchor("b", 0.8f, 0.5f)),
+            widthPx = 220f,
+            heightPx = 120f,
+            padPx = 10f,
+        )
+        // Touch near 'a' (x = 10 + 0.2 * 200 = 50, y = 60).
+        val hitA = SecondSeatPreviewLogic.findNearestAnchor(dots, touchX = 56f, touchY = 64f, maxRadiusPx = 28f)
+        assertEquals("a", hitA?.id)
+        // Touch far away returns null.
+        assertNull(SecondSeatPreviewLogic.findNearestAnchor(dots, touchX = 110f, touchY = 60f, maxRadiusPx = 20f))
+
+        // Default anchors have zero collisions; overlapping pair triggers warning set for both IDs.
+        assertTrue(SecondSeatPreviewLogic.overlappingAnchorIds(SecondSeatPolicy.DEFAULT_ANCHORS).isEmpty())
+        val colliding = SecondSeatPreviewLogic.overlappingAnchorIds(
+            listOf(
+                SeatAnchor("a", 0.50f, 0.50f),
+                SeatAnchor("b", 0.53f, 0.52f),
+                SeatAnchor("x", 0.10f, 0.10f),
+            ),
+        )
+        assertEquals(setOf("a", "b"), colliding)
+    }
+
+    @Test
+    fun `topologyDiagramState models arbitrary display IDs cleanly for DUAL and SINGLE modes`() {
+        // Sugar-style non-zero primary (primary=1, companion=0, launch=0).
+        val sugar = SettingsPreviewLogic.topologyDiagramState(
+            surfaceMode = SurfaceMode.DUAL,
+            primaryId = 1,
+            companionId = 0,
+            launchId = 0,
+        )
+        assertTrue(sugar.isDual)
+        assertEquals(2, sugar.panels.size)
+        assertEquals("#0", sugar.panels[0].badgeText)
+        assertTrue(sugar.panels[0].isCompanion)
+        assertTrue(sugar.panels[0].isLaunchTarget)
+        assertFalse(sugar.panels[0].isInteractive)
+        assertEquals("#1", sugar.panels[1].badgeText)
+        assertTrue(sugar.panels[1].isInteractive)
+        assertFalse(sugar.panels[1].isCompanion)
+
+        // Arbitrary display IDs (zero hardcoded 0/1 assumptions).
+        val customDual = SettingsPreviewLogic.topologyDiagramState(
+            surfaceMode = SurfaceMode.DUAL,
+            primaryId = 7,
+            companionId = 4,
+            launchId = 4,
+        )
+        assertTrue(customDual.isDual)
+        assertEquals(4, customDual.panels[0].displayId)
+        assertEquals("#4", customDual.panels[0].badgeText)
+        assertEquals(7, customDual.panels[1].displayId)
+        assertEquals("#7", customDual.panels[1].badgeText)
+        assertNotEquals(customDual.panels[0].displayId, customDual.panels[1].displayId)
+
+        // Single-screen Odin 2 Portal TOP_STRIP mode.
+        val single = SettingsPreviewLogic.topologyDiagramState(
+            surfaceMode = SurfaceMode.SINGLE,
+            primaryId = 3,
+            companionId = null,
+            launchId = 3,
+        )
+        assertFalse(single.isDual)
+        assertEquals(1, single.panels.size)
+        assertEquals("#3", single.panels[0].badgeText)
+        assertTrue(single.panels[0].isInteractive)
+        assertTrue(single.panels[0].isLaunchTarget)
     }
 }
