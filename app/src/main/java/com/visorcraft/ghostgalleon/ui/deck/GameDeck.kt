@@ -6,11 +6,13 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.TransitionDrawable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextUtils
@@ -495,6 +497,9 @@ class GameDeck(
     /** Cached atmospheric backdrop for active platform filters (no alloc on NAV). */
     private var cachedTintKey: String? = null
     private var cachedTintBg: Drawable? = null
+    /** Applied root backdrop & wallpaper URI for crossfade + dynamic reconciliation. */
+    private var appliedBackdropKey: String? = null
+    private var appliedWallpaperUri: String? = null
     private data class LetterChipHandle(
         val letter: Char,
         val count: Int,
@@ -770,46 +775,75 @@ class GameDeck(
     private fun platformBackdrop(context: Context, platformId: String): Drawable {
         val dm = context.resources.displayMetrics
         val key = "$platformId|${dm.widthPixels}x${dm.heightPixels}"
-        cachedTintBg?.takeIf { cachedTintKey == key }?.let { return it }
-        val accent = PlatformLook.accentColor(platformId)
-        val liftBand = (0xFF shl 24) or
-            ((((accent shr 16) and 0xFF) * 22 / 100) shl 16) or
-            ((((accent shr 8) and 0xFF) * 22 / 100) shl 8) or
-            ((accent and 0xFF) * 22 / 100)
-        val vertical = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Color.BLACK, liftBand, Color.BLACK),
-        )
-        val radial = GradientDrawable().apply {
-            gradientType = GradientDrawable.RADIAL_GRADIENT
-            colors = intArrayOf(
-                (accent and 0x00FFFFFF) or (0x3D shl 24),
-                Color.TRANSPARENT,
+        val template = cachedTintBg?.takeIf { cachedTintKey == key } ?: run {
+            val accent = PlatformLook.accentColor(platformId)
+            val liftBand = BackdropTransitionLogic.platformLiftBandColor(accent)
+            val vertical = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.BLACK, liftBand, Color.BLACK),
             )
-            setGradientCenter(0.5f, 0.48f)
-            gradientRadius = maxOf(dm.widthPixels, dm.heightPixels) * 0.72f
+            val radial = GradientDrawable().apply {
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                colors = intArrayOf(
+                    BackdropTransitionLogic.platformRadialGlowColor(accent),
+                    Color.TRANSPARENT,
+                )
+                setGradientCenter(0.5f, 0.48f)
+                gradientRadius = maxOf(dm.widthPixels, dm.heightPixels) * 0.72f
+            }
+            LayerDrawable(arrayOf(vertical, radial)).also {
+                cachedTintKey = key
+                cachedTintBg = it
+            }
         }
-        return LayerDrawable(arrayOf(vertical, radial)).also {
-            cachedTintKey = key
-            cachedTintBg = it
-        }
+        return template.constantState?.newDrawable(context.resources)?.mutate() ?: template
     }
 
     private fun applyRootWallpaper(root: FrameLayout) {
         val platformFilter = state.libraryBrowse.platformId
             ?.takeIf { PlatformLook.hasFilter(it) }
-        if (platformFilter != null) {
-            root.background = platformBackdrop(root.context, platformFilter)
-        } else {
-            root.setBackgroundColor(Color.BLACK)
+        val nextKey = BackdropTransitionLogic.backdropKey(platformFilter)
+        if (nextKey != appliedBackdropKey) {
+            val nextDrawable: Drawable = if (platformFilter != null) {
+                platformBackdrop(root.context, platformFilter)
+            } else {
+                ColorDrawable(Color.BLACK)
+            }
+            val currentBg = root.background
+            if (currentBg != null &&
+                BackdropTransitionLogic.shouldCrossfadeBackdrop(
+                    previousKey = appliedBackdropKey,
+                    nextKey = nextKey,
+                    attachedToWindow = root.isAttachedToWindow,
+                )
+            ) {
+                val prevClean = (currentBg as? TransitionDrawable)?.getDrawable(1) ?: currentBg
+                val transition = TransitionDrawable(arrayOf(prevClean, nextDrawable)).apply {
+                    isCrossFadeEnabled = true
+                }
+                root.background = transition
+                transition.startTransition(BackdropTransitionLogic.BACKDROP_CROSSFADE_MS)
+            } else {
+                root.background = nextDrawable
+            }
+            appliedBackdropKey = nextKey
         }
-        // Unified SAF wallpaper + top/bottom vignette scrim (shared with GridDeck).
-        if (root.findViewWithTag<View>(TAG_GAME_WALLPAPER) == null) {
-            val uri = settings.wallpaperUri
-            if (!uri.isNullOrBlank()) {
+        // Reconcile unified SAF wallpaper + vignette scrim cleanly across in-place chrome updates.
+        val desiredUri = BackdropTransitionLogic.normalizeUri(settings.wallpaperUri)
+        when (BackdropTransitionLogic.wallpaperAction(appliedWallpaperUri, desiredUri)) {
+            BackdropTransitionLogic.WallpaperAction.KEEP -> Unit
+            BackdropTransitionLogic.WallpaperAction.REMOVE -> {
+                root.findViewWithTag<View>(TAG_GAME_WALLPAPER)?.let { root.removeView(it) }
+                appliedWallpaperUri = null
+            }
+            BackdropTransitionLogic.WallpaperAction.ATTACH,
+            BackdropTransitionLogic.WallpaperAction.REPLACE,
+            -> {
+                root.findViewWithTag<View>(TAG_GAME_WALLPAPER)?.let { root.removeView(it) }
+                val uri = desiredUri ?: return
                 val wallpaperView = ImageView(root.context).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    alpha = 0.35f
+                    alpha = BackdropTransitionLogic.WALLPAPER_ALPHA
                 }
                 val scrimView = View(root.context).apply {
                     background = DeckWallpaper.scrimDrawable()
@@ -840,7 +874,13 @@ class GameDeck(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     ),
                 )
-                DeckWallpaper.loadAsync(root.context, uri, wallpaperView)
+                DeckWallpaper.loadAsync(
+                    context = root.context,
+                    uriString = uri,
+                    target = wallpaperView,
+                    targetAlpha = BackdropTransitionLogic.WALLPAPER_ALPHA,
+                )
+                appliedWallpaperUri = uri
             }
         }
     }
@@ -1527,6 +1567,8 @@ class GameDeck(
             setBackgroundColor(Color.BLACK)
         }
         rootView = root
+        appliedBackdropKey = null
+        appliedWallpaperUri = null
         applyRootWallpaper(root)
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
