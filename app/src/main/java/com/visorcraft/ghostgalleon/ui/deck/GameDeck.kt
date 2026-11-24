@@ -8,7 +8,11 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -488,8 +492,15 @@ class GameDeck(
     /** Cached atmospheric backdrop for active platform filters (no alloc on NAV). */
     private var cachedTintKey: String? = null
     private var cachedTintBg: Drawable? = null
+    private data class LetterChipHandle(
+        val letter: Char,
+        val count: Int,
+        val rawLabel: String,
+        val view: TextView,
+    )
+
     /** Letter-jump chips (A–Z / #) when ALPHA/UNPLAYED; repainted on selection. */
-    private var letterChipViews: List<Pair<Char, TextView>> = emptyList()
+    private var letterChipViews: List<LetterChipHandle> = emptyList()
     /** Horizontal scrollers for auto-centering active browse and letter chips. */
     private var browseScrollView: android.widget.HorizontalScrollView? = null
     private var letterScrollView: android.widget.HorizontalScrollView? = null
@@ -858,7 +869,7 @@ class GameDeck(
 
     private fun centerActiveLetterChip(letter: Char?, smooth: Boolean) {
         if (letter == null) return
-        val active = letterChipViews.firstOrNull { (ch, _) -> ch == letter }?.second ?: return
+        val active = letterChipViews.firstOrNull { it.letter == letter }?.view ?: return
         scrollHorizontalToCenter(letterScrollView, active, smooth = smooth)
     }
 
@@ -1546,19 +1557,66 @@ class GameDeck(
 
     private var paintedLetter: Char? = null
 
-    private fun paintLetterChip(tv: TextView, selected: Boolean) {
+    private fun styledLetterLabel(
+        rawLabel: String,
+        letter: Char,
+        selected: Boolean,
+    ): CharSequence {
+        val range = LetterJumpMetrics.countSuffixRange(rawLabel, letter) ?: return rawLabel
+        return SpannableString(rawLabel).apply {
+            setSpan(
+                RelativeSizeSpan(LetterJumpMetrics.COUNT_RELATIVE_SIZE),
+                range.first,
+                range.last + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            setSpan(
+                ForegroundColorSpan(
+                    LetterJumpMetrics.countTextColor(selected, settings.accentColor),
+                ),
+                range.first,
+                range.last + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+    }
+
+    private fun paintLetterChip(
+        handle: LetterChipHandle,
+        selected: Boolean,
+        animate: Boolean = false,
+    ) {
+        val tv = handle.view
+        tv.text = styledLetterLabel(handle.rawLabel, handle.letter, selected)
         tv.setTextColor(
             if (selected) ThemePack.onFillTextColor(settings.accentColor)
             else UiDimens.ALPHA_PRIMARY,
         )
         tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         tv.isSelected = selected
+        tv.contentDescription = tv.context.resolveText(
+            LetterJumpMetrics.letterChipAccessibilityText(handle.letter, handle.count, selected),
+        )
         TileBackgrounds.applyChipState(
             view = tv,
             selected = selected,
             accent = settings.accentColor,
-            cornerRadiusDp = 12,
+            cornerRadiusDp = LetterJumpMetrics.CHIP_CORNER_RADIUS_DP,
         )
+        tv.animate().cancel()
+        if (selected && animate && tv.isLaidOut) {
+            tv.scaleX = LetterJumpMetrics.ACTIVE_PULSE_SCALE
+            tv.scaleY = LetterJumpMetrics.ACTIVE_PULSE_SCALE
+            tv.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(LetterJumpMetrics.ACTIVE_PULSE_MS)
+                .setInterpolator(FOCUS_INTERPOLATOR)
+                .start()
+        } else {
+            tv.scaleX = 1f
+            tv.scaleY = 1f
+        }
     }
 
     private fun paintLetterJumpSelection() {
@@ -1567,9 +1625,9 @@ class GameDeck(
             ?.label
             ?.let { LibraryBrowse.letterBucket(it) }
         if (selectedLetter == paintedLetter) return
-        letterChipViews.forEach { (letter, tv) ->
-            if (letter != selectedLetter && letter != paintedLetter) return@forEach
-            paintLetterChip(tv, letter == selectedLetter)
+        letterChipViews.forEach { handle ->
+            if (handle.letter != selectedLetter && handle.letter != paintedLetter) return@forEach
+            paintLetterChip(handle, selected = handle.letter == selectedLetter, animate = true)
         }
         paintedLetter = selectedLetter
         centerActiveLetterChip(selectedLetter, smooth = true)
@@ -1692,7 +1750,9 @@ class GameDeck(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(0), dp(12), dp(6))
         }
-        val chips = mutableListOf<Pair<Char, TextView>>()
+        val chips = mutableListOf<LetterChipHandle>()
+        val minW = dp(LetterJumpMetrics.CHIP_MIN_WIDTH_DP)
+        val minH = dp(LetterJumpMetrics.CHIP_MIN_HEIGHT_DP)
         letterCounts.forEachIndexed { i, (letter, count) ->
             if (i > 0) {
                 row.addView(View(context), LinearLayout.LayoutParams(dp(4), 1))
@@ -1702,16 +1762,12 @@ class GameDeck(
                 LibraryBrowse.labeledChip(dynamicText(letter.toString()), count),
             )
             val chip = TextView(context).apply {
-                text = chipLabel
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                paintLetterChip(this, on)
                 gravity = Gravity.CENTER
+                minWidth = minW
+                minHeight = minH
+                includeFontPadding = false
                 setPadding(dp(10), dp(5), dp(10), dp(5))
-                contentDescription = context.getString(
-                    R.string.format_jump_to_letter,
-                    letter.toString(),
-                    count,
-                )
                 setOnClickListener {
                     val idx = LibraryBrowse.firstIndexForLetter(labels, letter)
                     val key = entries.getOrNull(idx)?.key ?: return@setOnClickListener
@@ -1719,7 +1775,9 @@ class GameDeck(
                     Toast.makeText(activity, chipLabel, Toast.LENGTH_SHORT).show()
                 }
             }
-            chips.add(letter to chip)
+            val handle = LetterChipHandle(letter, count, chipLabel, chip)
+            paintLetterChip(handle, selected = on, animate = false)
+            chips.add(handle)
             row.addView(chip)
         }
         letterChipViews = chips
