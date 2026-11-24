@@ -5,12 +5,14 @@ import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.InputType
+import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -19,6 +21,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -55,6 +59,7 @@ import com.visorcraft.ghostgalleon.settings.SettingsJump
 import com.visorcraft.ghostgalleon.settings.SettingsStore
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.settings.label
 import com.visorcraft.ghostgalleon.ui.deck.DeckWallpaper
 import com.visorcraft.ghostgalleon.state.UIMode
@@ -63,15 +68,71 @@ import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.deviceProfileName
 import com.visorcraft.ghostgalleon.ui.applyThemeFontScale
 import com.visorcraft.ghostgalleon.ui.hideStatusBar
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.themeName
 import java.io.File
 import java.text.NumberFormat
+
+/**
+ * Pure, host-tested layout and contrast decisions shared by Settings, About,
+ * and Controller Lab.
+ */
+internal object SettingsUiLogic {
+
+    /**
+     * Stack the row label above segmented controls whenever there are 3+
+     * options or the viewport is narrow so long localized labels never squish.
+     */
+    fun shouldStackSegmented(optionCount: Int, isWide: Boolean): Boolean =
+        optionCount >= 3 || !isWide
+
+    /**
+     * WCAG AA (`>= 4.5:1`) foreground text color on a filled [accent] pill.
+     * Prefers [ThemePack.onFillTextColor] when it meets 4.5:1, else picks
+     * whichever of black or white provides higher contrast.
+     */
+    fun accessibleOnAccent(accent: Int): Int {
+        val preferred = ThemePack.onFillTextColor(accent)
+        if (ThemePack.contrastRatio(preferred, accent) >= ThemePack.MIN_TEXT_CONTRAST) {
+            return preferred
+        }
+        val white = UiDimens.ALPHA_PRIMARY
+        val black = 0xFF000000.toInt()
+        return if (ThemePack.contrastRatio(black, accent) >= ThemePack.contrastRatio(white, accent)) {
+            black
+        } else {
+            white
+        }
+    }
+
+    /**
+     * Crisp focus ring color around an already accent-filled pill. Uses white
+     * on colored accents (Ghost, Teal, Neon) and a cool slate ring on light
+     * accents (OLED `#E0E0E0`) so focus stays distinct from both the filled
+     * pill and the dark card behind it.
+     */
+    fun activePillFocusRing(accent: Int): Int =
+        if (ThemePack.contrastRatio(UiDimens.ALPHA_PRIMARY, accent) >= 2.0) {
+            UiDimens.ALPHA_PRIMARY
+        } else {
+            0xFF707A8A.toInt()
+        }
+
+    fun accentOnSurface(accent: Int, tokens: ThemeTokens): Int =
+        ThemePack.accentTextColor(accent, ThemePack.cardFill(tokens))
+
+    fun accentOnSunken(accent: Int, tokens: ThemeTokens): Int =
+        ThemePack.accentTextColor(accent, ThemePack.surfaceSunken(tokens))
+
+    fun isSecondSeatLayoutVisible(secondSeatEnabled: Boolean): Boolean = secondSeatEnabled
+}
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -140,13 +201,13 @@ class SettingsActivity : AppCompatActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             addView(rowLabel(label), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(this@SettingsActivity).apply {
                 text = value
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(0xCCFFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.END
             })
         }
@@ -302,13 +363,21 @@ class SettingsActivity : AppCompatActivity() {
             addView(rowLabel(label).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
+                ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(this@SettingsActivity).apply {
                 text = chip
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(accent)
-                background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+                setTextColor(accentOnCard)
+                setTypeface(typeface, Typeface.BOLD)
+                isFocusable = true
+                background = TileBackgrounds.focusableRow(
+                    context = this@SettingsActivity,
+                    accent = accent,
+                    idleBackground = TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14),
+                    cornerRadiusDp = 14,
+                    strokeDp = 2,
+                )
                 val hp = dp(12); val vp = dp(6)
                 setPadding(hp, vp, hp, vp)
                 setOnClickListener { onChip() }
@@ -318,7 +387,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun modalEmpty(text: String): View = TextView(this).apply {
         this.text = text
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        setTextColor(0x66FFFFFF)
+        setTextColor(UiDimens.ALPHA_SUBTLE)
         gravity = Gravity.CENTER
         val v = dp(16)
         setPadding(0, v, 0, v)
@@ -1103,24 +1172,34 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshFolderRows() {
         val rows = folderRows ?: return
         rows.removeAllViews()
-        app.settings.romTreeUris.forEach { uriString ->
+        app.settings.romTreeUris.forEachIndexed { index, uriString ->
+            if (index > 0) addDivider(rows)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), 0, dp(10), 0)
             }
             row.addView(rowLabel(resolveText(TreeLabels.label(uriString))), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this).apply {
                 setText(R.string.action_remove)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(accent)
-                background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+                setTextColor(UiDimens.COLOR_DESTRUCTIVE)
+                setTypeface(typeface, Typeface.BOLD)
+                isFocusable = true
+                background = TileBackgrounds.focusableRow(
+                    context = this@SettingsActivity,
+                    accent = accent,
+                    idleBackground = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14),
+                    cornerRadiusDp = 14,
+                    strokeDp = 2,
+                )
                 val hp = dp(12); val vp = dp(6)
                 setPadding(hp, vp, hp, vp)
                 setOnClickListener { removeRomFolder(uriString) }
             })
             rows.addView(row, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(60)))
         }
     }
 
@@ -1155,6 +1234,11 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private val accent get() = app.settings.accentColor
+    private val themeTokens get() = ThemePack.resolve(app.settings)
+    private val accentOnCard get() = SettingsUiLogic.accentOnSurface(accent, themeTokens)
+    private val accentOnSunken get() = SettingsUiLogic.accentOnSunken(accent, themeTokens)
+    private val onAccentFill get() = SettingsUiLogic.accessibleOnAccent(accent)
+    private val activeFocusRing get() = SettingsUiLogic.activePillFocusRing(accent)
 
     /** Rebuild the settings tree without an activity recreate. */
     private fun refreshSettingsUi() {
@@ -1220,29 +1304,56 @@ class SettingsActivity : AppCompatActivity() {
     private fun sectionHeader(text: String): TextView = TextView(this).apply {
         this.text = text.uppercase(resources.configuration.locales[0])
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        setTextColor(withAlpha(accent, 0xCC))
+        setTextColor(accentOnCard)
+        setTypeface(typeface, Typeface.BOLD)
         letterSpacing = 0.15f
     }
+
     private fun sectionCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = TileBackgrounds.card(this@SettingsActivity)
-        val pad = dp(20)
-        setPadding(pad, pad, pad, pad)
+        setPadding(dp(14), dp(10), dp(14), dp(10))
+    }
+
+    private fun addDivider(card: LinearLayout) {
+        card.addView(
+            View(this).apply { setBackgroundColor(TileBackgrounds.hairlineDivider(this@SettingsActivity)) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, strokePx(1)).apply {
+                marginStart = dp(10)
+                marginEnd = dp(10)
+            },
+        )
+    }
+
+    private fun addDividerIfNeeded(card: LinearLayout) {
+        if (card.childCount > 0) addDivider(card)
+    }
+
+    private fun styleFocusableRow(row: View) {
+        row.isFocusable = true
+        row.setPadding(dp(10), dp(6), dp(10), dp(6))
+        row.background = TileBackgrounds.focusableRow(
+            context = this,
+            accent = accent,
+            cornerRadiusDp = 12,
+            strokeDp = 2,
+        )
     }
 
     private fun rowLabel(text: String): TextView = TextView(this).apply {
         this.text = text
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        setTextColor(Color.WHITE)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setTextColor(UiDimens.ALPHA_PRIMARY)
     }
 
-    /** A 64dp control row: label left, control right. */
+    /** A focusable control row: label left, control right. */
     private fun controlRow(label: String, control: View): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             addView(rowLabel(label), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(12) })
             addView(control)
         }
 
@@ -1253,31 +1364,46 @@ class SettingsActivity : AppCompatActivity() {
             trackTintList = ColorStateList(
                 states, intArrayOf(withAlpha(accent, 0x66), offTint))
             isChecked = checked
+            isFocusable = false
             setOnCheckedChangeListener { _, isOn -> onChange(isOn) }
+        }
+
+    private fun switchRow(label: String, sw: Switch): LinearLayout =
+        controlRow(label, sw).apply {
+            styleFocusableRow(this)
+            setOnClickListener { if (sw.isEnabled) sw.toggle() }
         }
 
     private fun pillDrawable(fill: Int, radiusDp: Int, stroke: Int = 0): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
             cornerRadius = dpF(radiusDp)
-            if (stroke != 0) setStroke(dp(1), stroke)
+            if (stroke != 0) setStroke(strokePx(1), stroke)
         }
 
+    private fun swatchDrawable(color: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+        setStroke(strokePx(1), 0x66FFFFFF)
+        val size = dp(10)
+        setBounds(0, 0, size, size)
+    }
+
     /**
-     * Segmented pill control (Default mode / Grid scrolling / chrome preset).
-     * Optional [bindSelected] receives a setter so hosts can rebind selection
-     * when external state changes without a full recreate.
-     * [onSelect] is last so trailing-lambda call sites keep working.
+     * Segmented pill control (Default mode / Grid scrolling / chrome preset / Theme).
+     * Uses sunken theme track, WCAG-safe [onAccentFill] text, gamepad focus rings,
+     * and optional circular accent swatch dots.
      */
     private fun segmented(
         options: List<Pair<String, String>>, // value -> pill text
         current: String,
+        swatchColors: Map<String, Int> = emptyMap(),
         bindSelected: ((setSelected: (String) -> Unit) -> Unit)? = null,
         onSelect: (String) -> Unit,
     ): View {
         val track = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = pillDrawable(0xFF1C1C22.toInt(), 20, 0x26FFFFFF)
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 20)
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
         val pills = mutableMapOf<String, TextView>()
@@ -1286,11 +1412,22 @@ class SettingsActivity : AppCompatActivity() {
         fun restyle() {
             pills.forEach { (value, pill) ->
                 if (value == selected) {
-                    pill.background = pillDrawable(accent, 17)
-                    pill.setTextColor(Color.BLACK)
+                    pill.background = TileBackgrounds.focusableRow(
+                        context = this@SettingsActivity,
+                        accent = activeFocusRing,
+                        idleBackground = pillDrawable(accent, 17),
+                        cornerRadiusDp = 17,
+                        strokeDp = 2,
+                    )
+                    pill.setTextColor(onAccentFill)
                 } else {
-                    pill.background = null
-                    pill.setTextColor(Color.WHITE)
+                    pill.background = TileBackgrounds.focusableRow(
+                        context = this@SettingsActivity,
+                        accent = accent,
+                        cornerRadiusDp = 17,
+                        strokeDp = 2,
+                    )
+                    pill.setTextColor(UiDimens.ALPHA_PRIMARY)
                 }
             }
         }
@@ -1299,11 +1436,16 @@ class SettingsActivity : AppCompatActivity() {
             val pill = TextView(this).apply {
                 this.text = text
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                letterSpacing = 0.1f
+                typeface = Typeface.DEFAULT_BOLD
+                letterSpacing = 0.06f
                 gravity = Gravity.CENTER
+                maxLines = 1
                 isFocusable = true
                 setPadding(dp(14), 0, dp(14), 0)
+                swatchColors[value]?.let { color ->
+                    setCompoundDrawablesRelative(swatchDrawable(color), null, null, null)
+                    compoundDrawablePadding = dp(6)
+                }
                 setOnClickListener {
                     if (selected != value) {
                         selected = value
@@ -1314,7 +1456,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             pills[value] = pill
             track.addView(pill, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)))
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
         }
         restyle()
         bindSelected?.invoke { value ->
@@ -1326,21 +1468,92 @@ class SettingsActivity : AppCompatActivity() {
         return track
     }
 
-    /** Two-pill segmented control for the default mode. */
-    private fun modeSegmented(current: UIMode): View = segmented(
-        listOf(
-            UIMode.GRID.name to getString(R.string.label_grid),
-            UIMode.GAME.name to getString(R.string.label_game),
-        ),
-        current.name,
-    ) { app.updateSettings(app.settings.copy(defaultMode = UIMode.valueOf(it))) }
+    /**
+     * Locale-safe adaptive segmented row: stacks label above a horizontally
+     * scrollable sunken track for 3+ options or narrow panels so German,
+     * Spanish, French, and Thai labels never clip or crush the label.
+     */
+    private fun segmentedRow(
+        card: LinearLayout,
+        label: String,
+        options: List<Pair<String, String>>,
+        current: String,
+        swatchColors: Map<String, Int> = emptyMap(),
+        bindSelected: ((setSelected: (String) -> Unit) -> Unit)? = null,
+        onSelect: (String) -> Unit,
+    ) {
+        addDividerIfNeeded(card)
+        val control = segmented(options, current, swatchColors, bindSelected, onSelect)
+        val scroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
+            addView(control)
+        }
+        if (SettingsUiLogic.shouldStackSegmented(options.size, isWideSettings())) {
+            val stacked = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                addView(
+                    rowLabel(label),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { bottomMargin = dp(8) },
+                )
+                addView(
+                    scroller,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            card.addView(
+                stacked,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        } else {
+            val inline = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(60)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                addView(
+                    rowLabel(label),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginEnd = dp(12)
+                    },
+                )
+                addView(
+                    scroller,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            card.addView(
+                inline,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+    }
 
-    /** Bound-key chip: card-surface pill, accent text. */
+    /** Bound-key chip: sunken theme pill, WCAG-lifted accent text. */
     private fun keyChip(bound: String): TextView = TextView(this).apply {
         text = bound
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        setTextColor(accent)
-        background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+        setTextColor(accentOnSunken)
+        setTypeface(typeface, Typeface.BOLD)
+        background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
         setPadding(dp(12), dp(6), dp(12), dp(6))
     }
 
@@ -1367,16 +1580,26 @@ class SettingsActivity : AppCompatActivity() {
     private fun paintNav() {
         navItems.forEach { (page, view) ->
             val selected = page == currentPage
-            view.setTextColor(if (selected) Color.BLACK else Color.WHITE)
+            view.setTextColor(if (selected) onAccentFill else UiDimens.ALPHA_PRIMARY)
             view.background = if (selected) {
-                pillDrawable(accent, 14)
+                TileBackgrounds.focusableRow(
+                    context = this,
+                    accent = activeFocusRing,
+                    idleBackground = pillDrawable(accent, 14),
+                    cornerRadiusDp = 14,
+                    strokeDp = 2,
+                )
             } else {
-                null
+                TileBackgrounds.focusableRow(
+                    context = this,
+                    accent = accent,
+                    cornerRadiusDp = 14,
+                    strokeDp = 2,
+                )
             }
             view.setTypeface(
                 null,
-                if (selected) android.graphics.Typeface.BOLD
-                else android.graphics.Typeface.NORMAL,
+                if (selected) Typeface.BOLD else Typeface.NORMAL,
             )
         }
     }
@@ -1384,11 +1607,8 @@ class SettingsActivity : AppCompatActivity() {
     private fun buildNavBlade(): View {
         val blade = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = GradientDrawable().apply {
-                setColor(0xFF121218.toInt())
-                cornerRadius = dpF(20)
-            }
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 20)
         }
         val items = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1397,7 +1617,7 @@ class SettingsActivity : AppCompatActivity() {
             val item = TextView(this).apply {
                 setText(page.titleRes)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(Color.WHITE)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16), dp(14), dp(16), dp(14))
                 isFocusable = true
@@ -1430,12 +1650,14 @@ class SettingsActivity : AppCompatActivity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = GradientDrawable().apply {
-                setColor(0xFF1C1C22.toInt())
-                cornerRadius = dpF(18)
-                setStroke(dp(1), 0x33FFFFFF)
-            }
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = TileBackgrounds.focusableRow(
+                context = this@SettingsActivity,
+                accent = accent,
+                idleBackground = TileBackgrounds.card(this@SettingsActivity),
+                cornerRadiusDp = 18,
+                strokeDp = 2,
+            )
+            setPadding(dp(16), dp(12), dp(14), dp(12))
             isFocusable = true
             setOnClickListener { showPagePicker() }
             setOnLongClickListener {
@@ -1446,15 +1668,19 @@ class SettingsActivity : AppCompatActivity() {
         val label = TextView(this).apply {
             setText(currentPage.titleRes)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(Color.WHITE)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            setTypeface(typeface, Typeface.BOLD)
         }
         pageDropdownLabel = label
         row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(TextView(this).apply {
-            setText(R.string.glyph_dropdown)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setTextColor(accent)
-        })
+        row.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.ic_dropdown)
+                imageTintList = ColorStateList.valueOf(accentOnCard)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            },
+            LinearLayout.LayoutParams(dp(22), dp(22)),
+        )
         return row
     }
 
@@ -1556,25 +1782,46 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(TextView(this).apply {
-            setText(R.string.glyph_back)
-            scaleX = if (resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
-                -1f
-            } else {
-                1f
-            }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            contentDescription = getString(R.string.action_back)
-            setOnClickListener { finish() }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        header.addView(TextView(this).apply {
-            setText(R.string.settings_title)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-            setTextColor(Color.WHITE)
-            setPadding(dp(16), 0, 0, 0)
-        })
+        header.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.ic_back)
+                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                val pad = dp(10)
+                setPadding(pad, pad, pad, pad)
+                background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+                contentDescription = getString(R.string.action_back)
+                isFocusable = true
+                setOnClickListener { finish() }
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
+        header.addView(
+            TextView(this).apply {
+                setText(R.string.settings_title)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(dp(12), 0, dp(12), 0)
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        header.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.ic_search)
+                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_PRIMARY)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                val pad = dp(10)
+                setPadding(pad, pad, pad, pad)
+                background = TileBackgrounds.chromeButton(this@SettingsActivity, accent)
+                contentDescription = getString(R.string.settings_search_hint)
+                isFocusable = true
+                setOnClickListener { showSettingsSearch() }
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
         shell.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1582,7 +1829,7 @@ class SettingsActivity : AppCompatActivity() {
         shell.addView(View(this).apply {
             setBackgroundColor(accent)
         }, LinearLayout.LayoutParams(dp(40), dp(2)).apply {
-            marginStart = dp(64)
+            marginStart = dp(56)
             topMargin = dp(6)
             bottomMargin = dp(12)
         })
@@ -1595,9 +1842,21 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         fun toggle(card: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-            card.addView(controlRow(label, accentSwitch(checked, onChange)),
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+            addDividerIfNeeded(card)
+            val sw = accentSwitch(checked, onChange)
+            card.addView(
+                switchRow(label, sw),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
+            )
+        }
+
+        fun addActionRow(card: LinearLayout, row: LinearLayout, heightDp: Int = 60) {
+            addDividerIfNeeded(card)
+            styleFocusableRow(row)
+            card.addView(
+                row,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(heightDp)),
+            )
         }
 
         fun seek(
@@ -1609,33 +1868,52 @@ class SettingsActivity : AppCompatActivity() {
             format: (Int) -> String = { formatNumber(it) },
             onChange: (Int) -> Unit,
         ) {
+            addDividerIfNeeded(card)
             val labelRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(6), dp(10), 0)
             }
             labelRow.addView(rowLabel(label), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val valueView = TextView(this).apply {
                 text = format(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                setTextColor(accent)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTextColor(accentOnCard)
+                setTypeface(typeface, Typeface.BOLD)
             }
             labelRow.addView(valueView)
             card.addView(labelRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
             card.addView(SeekBar(this).apply {
                 progressTintList = ColorStateList.valueOf(accent)
                 thumbTintList = ColorStateList.valueOf(accent)
                 progressBackgroundTintList = ColorStateList.valueOf(offTint)
-                minimumHeight = dp(32)
+                background = TileBackgrounds.focusableRow(
+                    context = this@SettingsActivity,
+                    accent = accent,
+                    cornerRadiusDp = 12,
+                )
+                minimumHeight = dp(40)
+                setPadding(dp(14), dp(6), dp(14), dp(8))
                 this.max = max - min
                 progress = value - min
+                var trackingTouch = false
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
-                        if (fromUser) valueView.text = format(p + min)
+                        if (fromUser) {
+                            valueView.text = format(p + min)
+                            // Gamepad D-pad left/right adjusts SeekBar without touch events.
+                            if (!trackingTouch) onChange(p + min)
+                        }
                     }
-                    override fun onStartTrackingTouch(sb: SeekBar) = Unit
-                    override fun onStopTrackingTouch(sb: SeekBar) = onChange(sb.progress + min)
+                    override fun onStartTrackingTouch(sb: SeekBar) {
+                        trackingTouch = true
+                    }
+                    override fun onStopTrackingTouch(sb: SeekBar) {
+                        trackingTouch = false
+                        onChange(sb.progress + min)
+                    }
                 })
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1647,31 +1925,36 @@ class SettingsActivity : AppCompatActivity() {
         toggle(displayCard, getString(R.string.settings_show_hints), s.showHints) {
             app.updateSettings(app.settings.copy(showHints = it))
         }
-        displayCard.addView(controlRow(
-            getString(R.string.settings_default_mode),
-            modeSegmented(s.defaultMode),
-        ),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        segmentedRow(
+            card = displayCard,
+            label = getString(R.string.settings_default_mode),
+            options = listOf(
+                UIMode.GRID.name to getString(R.string.label_grid),
+                UIMode.GAME.name to getString(R.string.label_game),
+            ),
+            current = s.defaultMode.name,
+        ) { app.updateSettings(app.settings.copy(defaultMode = UIMode.valueOf(it))) }
 
         val themeOptions = ThemePack.BUILTINS.map {
             it.id to themeName(it.id).uppercase(resources.configuration.locales[0])
         }
+        val themeSwatches = ThemePack.BUILTINS.associate { it.id to it.accentColor }
         val themeCurrent = ThemePack.resolve(s).id.let { id ->
             if (ThemePack.BUILTINS.any { it.id == id }) id else ThemePack.GHOST.id
         }
-        displayCard.addView(controlRow(
-            getString(R.string.settings_theme),
-            segmented(themeOptions, themeCurrent) { packId ->
-                val tokens = ThemePack.byId(packId)
-                applyThemeAndRefresh(ThemePack.applyToSettings(app.settings, tokens))
-            },
-        ), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        segmentedRow(
+            card = displayCard,
+            label = getString(R.string.settings_theme),
+            options = themeOptions,
+            current = themeCurrent,
+            swatchColors = themeSwatches,
+        ) { packId ->
+            val tokens = ThemePack.byId(packId)
+            applyThemeAndRefresh(ThemePack.applyToSettings(app.settings, tokens))
+        }
         val themeImportRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { themeJsonPicker.launch(arrayOf("application/json", "text/*", "*/*")) }
             setOnLongClickListener {
                 if (app.settings.themeCustomJson != null) {
@@ -1696,28 +1979,28 @@ class SettingsActivity : AppCompatActivity() {
                 R.string.label_saf
             })
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(if (s.themeCustomJson != null) accent else 0x66FFFFFF.toInt())
+            setTextColor(if (s.themeCustomJson != null) accentOnCard else UiDimens.ALPHA_SUBTLE)
         })
-        displayCard.addView(themeImportRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(displayCard, themeImportRow)
         val profileOptions = listOf(
             "auto" to getString(R.string.label_auto),
             "onex-sugar" to getString(R.string.label_sugar),
             "generic-dual" to getString(R.string.label_dual),
             "single" to getString(R.string.label_single),
         )
-        displayCard.addView(controlRow(
-            getString(R.string.settings_device_profile),
-            segmented(profileOptions, s.deviceProfileId) { id ->
-                app.updateSettings(app.settings.copy(
-                    deviceProfileId = id,
-                    userPinnedPrimaryId = null,
-                ))
-                app.refreshDisplayConfig()
-                refreshSettingsUi()
-            },
-        ), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        segmentedRow(
+            card = displayCard,
+            label = getString(R.string.settings_device_profile),
+            options = profileOptions,
+            current = s.deviceProfileId,
+        ) { id ->
+            app.updateSettings(app.settings.copy(
+                deviceProfileId = id,
+                userPinnedPrimaryId = null,
+            ))
+            app.refreshDisplayConfig()
+            refreshSettingsUi()
+        }
         val interactiveOptions = listOf(
             "auto" to getString(R.string.label_auto),
             "default" to getString(R.string.label_default),
@@ -1727,41 +2010,42 @@ class SettingsActivity : AppCompatActivity() {
             s.interactiveDisplayMode.startsWith("id:") -> "auto"
             else -> s.interactiveDisplayMode
         }
-        displayCard.addView(controlRow(
-            getString(R.string.settings_interactive_display),
-            segmented(interactiveOptions, interactiveCurrent) { mode ->
-                app.updateSettings(app.settings.copy(
-                    interactiveDisplayMode = mode,
-                    userPinnedPrimaryId = null,
-                ))
-                app.refreshDisplayConfig()
-                refreshSettingsUi()
-            },
-        ), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        segmentedRow(
+            card = displayCard,
+            label = getString(R.string.settings_interactive_display),
+            options = interactiveOptions,
+            current = interactiveCurrent,
+        ) { mode ->
+            app.updateSettings(app.settings.copy(
+                interactiveDisplayMode = mode,
+                userPinnedPrimaryId = null,
+            ))
+            app.refreshDisplayConfig()
+            refreshSettingsUi()
+        }
         val orientOptions = listOf(
             "auto" to getString(R.string.label_auto),
             "sensor_landscape" to getString(R.string.label_sensor),
             "lock_landscape" to getString(R.string.label_lock),
         )
-        displayCard.addView(controlRow(
-            getString(R.string.settings_orientation),
-            segmented(orientOptions, s.orientationMode) { mode ->
-                app.updateSettings(
-                    app.settings.copy(
-                        orientationMode = mode,
-                        angleLock = mode == "lock_landscape",
-                        gyroEnabled = mode != "lock_landscape",
-                    ),
-                )
-                refreshSettingsUi()
-            },
-        ), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        segmentedRow(
+            card = displayCard,
+            label = getString(R.string.settings_orientation),
+            options = orientOptions,
+            current = s.orientationMode,
+        ) { mode ->
+            app.updateSettings(
+                app.settings.copy(
+                    orientationMode = mode,
+                    angleLock = mode == "lock_landscape",
+                    gyroEnabled = mode != "lock_landscape",
+                ),
+            )
+            refreshSettingsUi()
+        }
         val resetDisplayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 app.updateSettings(app.settings.copy(
                     userPinnedPrimaryId = null,
@@ -1779,8 +2063,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         resetDisplayRow.addView(rowLabel(getString(R.string.settings_reset_display_roles)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        displayCard.addView(resetDisplayRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(displayCard, resetDisplayRow)
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_section_display), displayCard)
 
         if (app.displayConfig.mode != SurfaceMode.SINGLE) {
@@ -1837,47 +2120,45 @@ class SettingsActivity : AppCompatActivity() {
                 View.GONE
             }
         }
-        chromeCard.addView(controlRow(
-            getString(R.string.settings_chrome_preset),
-            segmented(
-                presetOptions,
-                chromePresetId(chrome),
-                bindSelected = { set -> rebindChromePreset = set },
-            ) { id ->
-                when (id) {
-                    com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_FULL -> {
-                        val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL
-                        val prev = app.settings.browseChrome
-                        app.updateSettings(
-                            app.settings.copy(browseChrome = next),
-                            chromeOnly = next.allowsInPlaceChromeUpdate(prev),
-                        )
-                        rebindChromeUi(next)
-                    }
-                    com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_MINIMAL -> {
-                        val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL
-                        val prev = app.settings.browseChrome
-                        app.updateSettings(
-                            app.settings.copy(browseChrome = next),
-                            chromeOnly = next.allowsInPlaceChromeUpdate(prev),
-                        )
-                        rebindChromeUi(next)
-                    }
-                    else -> {
-                        // Custom is sticky when flags already differ; selecting
-                        // Custom while Minimal/Full is a no-op on flags (user
-                        // toggles power rails below to leave preset).
-                        rebindChromePreset?.invoke(chromePresetId(app.settings.browseChrome))
-                    }
+        segmentedRow(
+            card = chromeCard,
+            label = getString(R.string.settings_chrome_preset),
+            options = presetOptions,
+            current = chromePresetId(chrome),
+            bindSelected = { set -> rebindChromePreset = set },
+        ) { id ->
+            when (id) {
+                com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_FULL -> {
+                    val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL
+                    val prev = app.settings.browseChrome
+                    app.updateSettings(
+                        app.settings.copy(browseChrome = next),
+                        chromeOnly = next.allowsInPlaceChromeUpdate(prev),
+                    )
+                    rebindChromeUi(next)
                 }
-            },
-        ), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+                com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_MINIMAL -> {
+                    val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL
+                    val prev = app.settings.browseChrome
+                    app.updateSettings(
+                        app.settings.copy(browseChrome = next),
+                        chromeOnly = next.allowsInPlaceChromeUpdate(prev),
+                    )
+                    rebindChromeUi(next)
+                }
+                else -> {
+                    // Custom is sticky when flags already differ; selecting
+                    // Custom while Minimal/Full is a no-op on flags (user
+                    // toggles power rails below to leave preset).
+                    rebindChromePreset?.invoke(chromePresetId(app.settings.browseChrome))
+                }
+            }
+        }
         chromeCard.addView(TextView(this).apply {
             setText(R.string.settings_chrome_custom_hint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x66FFFFFF.toInt())
-            setPadding(0, 0, 0, dp(4))
+            setTextColor(UiDimens.ALPHA_SUBTLE)
+            setPadding(dp(10), 0, dp(10), dp(6))
         })
         // Core always-visible toggles + power rails: keep Switch refs so
         // Minimal/Full rebind isChecked without a full Settings recreate.
@@ -1888,6 +2169,7 @@ class SettingsActivity : AppCompatActivity() {
             set: (com.visorcraft.ghostgalleon.settings.BrowseChrome, Boolean) ->
                 com.visorcraft.ghostgalleon.settings.BrowseChrome,
         ) {
+            addDividerIfNeeded(host)
             val sw = accentSwitch(get(chrome)) { on ->
                 if (suppressChromeSwitchCallbacks) return@accentSwitch
                 val prev = app.settings.browseChrome
@@ -1905,9 +2187,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             host.addView(
-                controlRow(label, sw),
+                switchRow(label, sw),
                 LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(64),
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(60),
                 ),
             )
             chromeSwitchRebinds.add { c ->
@@ -1936,7 +2218,6 @@ class SettingsActivity : AppCompatActivity() {
         val expander = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 powerHost.visibility =
                     if (powerHost.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -1947,10 +2228,10 @@ class SettingsActivity : AppCompatActivity() {
         expander.addView(TextView(this).apply {
             text = getString(R.string.settings_chrome_expand)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
+            setTypeface(typeface, Typeface.BOLD)
         })
-        chromeCard.addView(expander, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        addActionRow(chromeCard, expander, heightDp = 56)
         chromeFlag(
             powerHost, getString(R.string.settings_installed_rail),
             get = { it.installedRail }, set = { c, v -> c.copy(installedRail = v) },
@@ -2030,20 +2311,17 @@ class SettingsActivity : AppCompatActivity() {
             CompanionRole.PERF_HUD.name to getString(R.string.label_perf),
             CompanionRole.PINNED_APP.name to getString(R.string.label_pin),
         )
-        companionCard.addView(
-            controlRow(
-                getString(R.string.settings_companion_role),
-                segmented(roleOptions, s.companionRole) { next ->
-                    app.updateSettings(app.settings.copy(companionRole = next))
-                },
-            ),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
-        )
+        segmentedRow(
+            card = companionCard,
+            label = getString(R.string.settings_companion_role),
+            options = roleOptions,
+            current = s.companionRole,
+        ) { next ->
+            app.updateSettings(app.settings.copy(companionRole = next))
+        }
         val pinRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showPinnedCompanionPicker() }
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(companionPinnedPackage = null))
@@ -2059,32 +2337,31 @@ class SettingsActivity : AppCompatActivity() {
                 appLabel(pkg)
             } ?: getString(R.string.settings_no_pin)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.END
         }, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f))
-        companionCard.addView(pinRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(companionCard, pinRow)
         companionCard.addView(TextView(this).apply {
             setText(R.string.settings_pin_help)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x66FFFFFF.toInt())
-            setPadding(0, 0, 0, dp(4))
+            setTextColor(UiDimens.ALPHA_SUBTLE)
+            setPadding(dp(10), 0, dp(10), dp(6))
         })
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_companion_section), companionCard)
 
         val gridCard = sectionCard()
-        gridCard.addView(controlRow(getString(R.string.settings_grid_scrolling), segmented(
-            listOf(
+        segmentedRow(
+            card = gridCard,
+            label = getString(R.string.settings_grid_scrolling),
+            options = listOf(
                 "vertical" to getString(R.string.label_vertical),
                 "horizontal" to getString(R.string.label_horizontal),
             ),
-            s.gridDirection,
-        ) { app.updateSettings(app.settings.copy(gridDirection = it)) }),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+            current = s.gridDirection,
+        ) { app.updateSettings(app.settings.copy(gridDirection = it)) }
         seek(gridCard, getString(R.string.settings_grid_columns), s.gridColumns, 3, 8) {
             app.updateSettings(app.settings.copy(gridColumns = it))
         }
@@ -2103,16 +2380,15 @@ class SettingsActivity : AppCompatActivity() {
         val wallpaperRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { wallpaperPicker.launch(arrayOf("image/*")) }
         }
         wallpaperRow.addView(rowLabel(getString(R.string.settings_grid_wallpaper)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val valueView = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
         }
         wallpaperValue = valueView
         wallpaperRow.addView(valueView, LinearLayout.LayoutParams(
@@ -2121,8 +2397,15 @@ class SettingsActivity : AppCompatActivity() {
         val clearView = TextView(this).apply {
             setText(R.string.action_clear)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(Color.WHITE)
-            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            isFocusable = true
+            background = TileBackgrounds.focusableRow(
+                context = this@SettingsActivity,
+                accent = accent,
+                idleBackground = TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14),
+                cornerRadiusDp = 14,
+                strokeDp = 2,
+            )
             val hp = dp(12); val vp = dp(6)
             setPadding(hp, vp, hp, vp)
             setOnClickListener {
@@ -2134,49 +2417,43 @@ class SettingsActivity : AppCompatActivity() {
         wallpaperClear = clearView
         wallpaperRow.addView(clearView)
         refreshWallpaperRow()
-        gridCard.addView(wallpaperRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(gridCard, wallpaperRow)
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_grid_section), gridCard)
 
         val appsCard = sectionCard()
         val hiddenRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showHiddenAppsDialog() }
         }
         hiddenRow.addView(rowLabel(getString(R.string.settings_hidden_apps)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         hiddenValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         }
         hiddenRow.addView(hiddenValue)
-        appsCard.addView(hiddenRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(appsCard, hiddenRow)
         val dockRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showDockDialog() }
         }
         dockRow.addView(rowLabel(getString(R.string.label_dock)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         dockValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.END
         }
         dockRow.addView(dockValue, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
-        appsCard.addView(dockRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(appsCard, dockRow)
         val packageYieldRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showPackageYieldDialog() }
         }
         packageYieldRow.addView(
@@ -2185,17 +2462,13 @@ class SettingsActivity : AppCompatActivity() {
         )
         packageYieldValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         }
         packageYieldRow.addView(packageYieldValue)
-        appsCard.addView(
-            packageYieldRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
-        )
+        addActionRow(appsCard, packageYieldRow)
         val helperRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showPlayHostHelperPicker() }
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(playHostHelperPackage = null))
@@ -2209,19 +2482,16 @@ class SettingsActivity : AppCompatActivity() {
         )
         playHostHelperValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.END
         }
         helperRow.addView(
             playHostHelperValue,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
         )
-        appsCard.addView(
-            helperRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
-        )
+        addActionRow(appsCard, helperRow)
         refreshAppsRows()
         addSection(SettingsPage.APPS, getString(R.string.settings_page_apps), appsCard)
 
@@ -2236,25 +2506,35 @@ class SettingsActivity : AppCompatActivity() {
         controlsCard.addView(TextView(this).apply {
             setText(R.string.settings_input_assist_open_system)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x66FFFFFF.toInt())
-            setPadding(0, 0, 0, dp(4))
+            setTextColor(UiDimens.ALPHA_SUBTLE)
+            setPadding(dp(10), 0, dp(10), dp(6))
         })
         toggle(controlsCard, getString(R.string.settings_winlator_cockpit), s.winlatorCockpit) {
             app.updateSettings(app.settings.copy(winlatorCockpit = it))
         }
-        toggle(controlsCard, getString(R.string.settings_second_seat), s.raSecondSeat) {
-            app.updateSettings(app.settings.copy(raSecondSeat = it))
-        }
         // empty stored list = DEFAULT_ANCHORS (SNES-like lower-right 40%).
         val seatLayoutHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            visibility = if (SettingsUiLogic.isSecondSeatLayoutVisible(s.raSecondSeat)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        }
+        toggle(controlsCard, getString(R.string.settings_second_seat), s.raSecondSeat) { on ->
+            app.updateSettings(app.settings.copy(raSecondSeat = on))
+            seatLayoutHost.visibility = if (SettingsUiLogic.isSecondSeatLayoutVisible(on)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
         }
         fun bindSeatLayout() {
             seatLayoutHost.removeAllViews()
+            addDivider(seatLayoutHost)
             val resetRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                isFocusable = true
                 setOnClickListener {
                     app.updateSettings(
                         app.settings.copy(raSeatAnchors = emptyList()),
@@ -2270,34 +2550,87 @@ class SettingsActivity : AppCompatActivity() {
             resetRow.addView(TextView(this).apply {
                 setText(R.string.action_clear)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(accent)
+                setTextColor(accentOnCard)
+                setTypeface(typeface, Typeface.BOLD)
             })
+            styleFocusableRow(resetRow)
             seatLayoutHost.addView(
                 resetRow,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)),
+            )
+            val colHeader = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(4), dp(10), dp(6))
+            }
+            colHeader.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
+            colHeader.addView(
+                TextView(this).apply {
+                    setText(R.string.label_horizontal)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setTypeface(typeface, Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(8)
+                },
+            )
+            colHeader.addView(
+                TextView(this).apply {
+                    setText(R.string.label_vertical)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setTypeface(typeface, Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(8)
+                },
+            )
+            seatLayoutHost.addView(
+                colHeader,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
             )
             val shown = SecondSeatPolicy.anchorsOrDefault(app.settings.raSeatAnchors)
             for (anchor in shown) {
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(10), dp(4), dp(10), dp(4))
                 }
                 row.addView(
                     TextView(this).apply {
                         text = anchor.id
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                        setTextColor(Color.WHITE)
+                        setTextColor(UiDimens.ALPHA_PRIMARY)
+                        setTypeface(typeface, Typeface.BOLD)
                     },
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
                 )
                 fun coordField(value: Float, write: (Float) -> Unit): EditText =
                     EditText(this).apply {
-                        setText(value.toString())
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                        setTextColor(Color.WHITE)
+                        isSingleLine = true
                         inputType = InputType.TYPE_CLASS_NUMBER or
                             InputType.TYPE_NUMBER_FLAG_DECIMAL
-                        isSingleLine = true
+                        setText(value.toString())
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        setTextColor(UiDimens.ALPHA_PRIMARY)
+                        gravity = Gravity.CENTER
+                        background = TileBackgrounds.focusableRow(
+                            context = this@SettingsActivity,
+                            accent = accent,
+                            idleBackground = TileBackgrounds.sunkenField(
+                                this@SettingsActivity,
+                                cornerRadiusDp = 10,
+                            ),
+                            cornerRadiusDp = 10,
+                            strokeDp = 2,
+                        )
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
                         onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
                             if (hasFocus) return@OnFocusChangeListener
                             val parsed = text?.toString()?.toFloatOrNull()?.coerceIn(0f, 1f)
@@ -2309,20 +2642,24 @@ class SettingsActivity : AppCompatActivity() {
                     coordField(anchor.nx) { nx ->
                         commitSeatAnchor(anchor.id, nx, null)
                     },
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dp(8)
+                    },
                 )
                 row.addView(
                     coordField(anchor.ny) { ny ->
                         commitSeatAnchor(anchor.id, null, ny)
                     },
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dp(8)
+                    },
                 )
                 seatLayoutHost.addView(
                     row,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
+                    ).apply { bottomMargin = dp(4) },
                 )
             }
         }
@@ -2337,7 +2674,6 @@ class SettingsActivity : AppCompatActivity() {
         val labRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 startActivity(Intent(this@SettingsActivity, ControllerLabActivity::class.java))
             }
@@ -2347,10 +2683,10 @@ class SettingsActivity : AppCompatActivity() {
         labRow.addView(TextView(this).apply {
             setText(R.string.action_open)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
+            setTypeface(typeface, Typeface.BOLD)
         })
-        controlsCard.addView(labRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(controlsCard, labRow)
         seek(
             controlsCard,
             getString(R.string.settings_stick_deadzone),
@@ -2369,29 +2705,16 @@ class SettingsActivity : AppCompatActivity() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                isFocusable = true
             }
             row.addView(rowLabel(resolveText(action.label())), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val chip = keyChip(bound)
             row.addView(chip)
-            row.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
-                if (captureTarget != action) {
-                    row.background = if (hasFocus) {
-                        GradientDrawable().apply {
-                            cornerRadius = dpF(16)
-                            setStroke(dp(2), accent)
-                        }
-                    } else {
-                        null
-                    }
-                }
-            }
             row.setOnClickListener {
                 captureTarget = action
                 captureLabel = chip
                 chip.setText(R.string.settings_press_button)
-                chip.setTextColor(Color.BLACK)
+                chip.setTextColor(onAccentFill)
                 chip.background = pillDrawable(accent, 14)
                 capturePulse?.cancel()
                 capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.35f).apply {
@@ -2401,8 +2724,7 @@ class SettingsActivity : AppCompatActivity() {
                     start()
                 }
             }
-            controlsCard.addView(row, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+            addActionRow(controlsCard, row)
         }
         addSection(SettingsPage.CONTROLS, getString(R.string.settings_page_controls), controlsCard)
 
@@ -2418,7 +2740,6 @@ class SettingsActivity : AppCompatActivity() {
         val addRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { romFolderPicker.launch(null) }
         }
         addRow.addView(rowLabel(getString(R.string.settings_add_rom_folder)), LinearLayout.LayoutParams(
@@ -2426,28 +2747,25 @@ class SettingsActivity : AppCompatActivity() {
         addRow.addView(TextView(this).apply {
             setText(R.string.glyph_add)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setTextColor(accent)
+            setTextColor(accentOnSunken)
             gravity = Gravity.CENTER
-            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
         }, LinearLayout.LayoutParams(dp(40), dp(40)))
-        libraryCard.addView(addRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, addRow)
         val hiddenRomsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showHiddenRomsDialog() }
         }
         hiddenRomsRow.addView(rowLabel(getString(R.string.settings_hidden_roms)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         hiddenRomsValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
             text = formatNumber(app.settings.hiddenRomIds.size)
         }
         hiddenRomsRow.addView(hiddenRomsValue)
-        libraryCard.addView(hiddenRomsRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, hiddenRomsRow)
         val rescanLabel = rowLabel(getString(R.string.settings_rescan_library))
         fun startRescan(force: Boolean) {
             if (scanning) return
@@ -2499,7 +2817,6 @@ class SettingsActivity : AppCompatActivity() {
         val rescanRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { startRescan(force = false) }
             setOnLongClickListener {
                 startRescan(force = true)
@@ -2511,14 +2828,12 @@ class SettingsActivity : AppCompatActivity() {
         rescanRow.addView(TextView(this).apply {
             setText(R.string.settings_hold_full)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(0x66FFFFFF.toInt())
+            setTextColor(UiDimens.ALPHA_SUBTLE)
         })
-        libraryCard.addView(rescanRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, rescanRow)
         val pinFavsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 val keys = app.settings.favorites.toList()
                 if (keys.isEmpty()) {
@@ -2542,12 +2857,10 @@ class SettingsActivity : AppCompatActivity() {
             rowLabel(getString(R.string.settings_pin_favorites)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        libraryCard.addView(pinFavsRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, pinFavsRow)
         val collectionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showCollectionsDialog() }
         }
         collectionsRow.addView(rowLabel(getString(R.string.label_collections)), LinearLayout.LayoutParams(
@@ -2555,14 +2868,12 @@ class SettingsActivity : AppCompatActivity() {
         collectionsRow.addView(TextView(this).apply {
             text = formatNumber(app.settings.collections.size)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        libraryCard.addView(collectionsRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, collectionsRow)
         val playersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showDefaultPlayersDialog() }
         }
         playersRow.addView(rowLabel(getString(R.string.settings_default_players)), LinearLayout.LayoutParams(
@@ -2578,10 +2889,9 @@ class SettingsActivity : AppCompatActivity() {
                 )
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        libraryCard.addView(playersRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, playersRow)
         var raHandoffSaveRow: View? = null
         var raHandoffSaveSwitch: Switch? = null
         fun refreshRaHandoffSaveEnabled() {
@@ -2606,14 +2916,15 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(raHandoffSave = on))
         }
         raHandoffSaveSwitch = handoffSwitch
-        val handoffRow = controlRow(
+        addDividerIfNeeded(libraryCard)
+        val handoffRow = switchRow(
             getString(R.string.settings_ra_handoff_save),
             handoffSwitch,
         )
         raHandoffSaveRow = handoffRow
         libraryCard.addView(
             handoffRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
         )
         refreshRaHandoffSaveEnabled()
         toggle(libraryCard, getString(R.string.settings_ra_cinema), s.raCinemaEnabled) { on ->
@@ -2639,14 +2950,15 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(warmResumeLoad = on))
         }
         warmLoadSwitch = warmLoadToggle
-        val warmLoadControl = controlRow(
+        addDividerIfNeeded(libraryCard)
+        val warmLoadControl = switchRow(
             getString(R.string.settings_warm_resume_load),
             warmLoadToggle,
         )
         warmLoadRow = warmLoadControl
         libraryCard.addView(
             warmLoadControl,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)),
         )
         refreshWarmLoadEnabled()
         toggle(libraryCard, getString(R.string.settings_save_ferry), s.saveFerryEnabled) { on ->
@@ -2662,7 +2974,6 @@ class SettingsActivity : AppCompatActivity() {
         val lensPackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 lensPackLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
             }
@@ -2684,16 +2995,12 @@ class SettingsActivity : AppCompatActivity() {
                 getString(R.string.action_open)
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        libraryCard.addView(
-            lensPackRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)),
-        )
+        addActionRow(libraryCard, lensPackRow)
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showRaUsernameDialog() }
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(raUsername = null))
@@ -2708,14 +3015,12 @@ class SettingsActivity : AppCompatActivity() {
         raUserRow.addView(TextView(this).apply {
             raUserValue = this
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        artCard.addView(raUserRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, raUserRow)
         val raKeyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showRaApiKeyDialog() }
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(raApiKey = null))
@@ -2730,16 +3035,14 @@ class SettingsActivity : AppCompatActivity() {
         raKeyRow.addView(TextView(this).apply {
             raKeyValue = this
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        artCard.addView(raKeyRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, raKeyRow)
         refreshRaRows()
         if (BuildConfig.DEBUG) {
             val raSampleRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                isFocusable = true
                 setOnClickListener { loadRaSampleForSelection() }
             }
             raSampleRow.addView(rowLabel(getString(R.string.settings_load_ra_sample)), LinearLayout.LayoutParams(
@@ -2747,15 +3050,13 @@ class SettingsActivity : AppCompatActivity() {
             raSampleRow.addView(TextView(this).apply {
                 setText(R.string.settings_demo)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(0x66FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SUBTLE)
             })
-            artCard.addView(raSampleRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+            addActionRow(artCard, raSampleRow)
         }
         val keyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showSgdbKeyDialog() }
             setOnLongClickListener {
                 app.updateSettings(app.settings.copy(sgdbApiKey = null))
@@ -2769,16 +3070,14 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val keyValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         }
         sgdbKeyValue = keyValue
         keyRow.addView(keyValue)
-        artCard.addView(keyRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, keyRow)
         val datRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 arcadeDatPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "*/*"))
             }
@@ -2804,14 +3103,12 @@ class SettingsActivity : AppCompatActivity() {
                 else -> getString(R.string.action_none)
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        artCard.addView(datRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, datRow)
         val downloadRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { onScrapeRowClicked() }
         }
         val downloadLabel = rowLabel(getString(R.string.settings_download_artwork))
@@ -2820,13 +3117,12 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val downloadValue = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         }
         scrapeValue = downloadValue
         downloadRow.addView(downloadValue)
         scrapeRow = downloadRow
-        artCard.addView(downloadRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, downloadRow)
         toggle(
             artCard,
             getString(R.string.settings_scrape_wifi_only),
@@ -2851,47 +3147,38 @@ class SettingsActivity : AppCompatActivity() {
         val exportRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { exportLauncher.launch(getString(R.string.file_settings_export)) }
         }
         exportRow.addView(rowLabel(getString(R.string.settings_export)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        artCard.addView(exportRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, exportRow)
         val importRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { importLauncher.launch(arrayOf("application/json")) }
         }
         importRow.addView(rowLabel(getString(R.string.settings_import)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        artCard.addView(importRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, importRow)
         val exportArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { exportArtLauncher.launch(getString(R.string.file_art_export)) }
         }
         exportArtRow.addView(rowLabel(getString(R.string.settings_export_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        artCard.addView(exportArtRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, exportArtRow)
         val importArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { importArtLauncher.launch(arrayOf("application/zip", "*/*")) }
         }
         importArtRow.addView(rowLabel(getString(R.string.settings_import_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        artCard.addView(importArtRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, importArtRow)
         val packRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 platformPackLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
             }
@@ -2919,15 +3206,13 @@ class SettingsActivity : AppCompatActivity() {
                 getString(R.string.action_none)
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        artCard.addView(packRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, packRow)
         val bundledCount = listBundledPackAssets().size
         val examplePackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { showBundledPackCatalog() }
         }
         examplePackRow.addView(rowLabel(getString(R.string.settings_bundled_packs)), LinearLayout.LayoutParams(
@@ -2939,14 +3224,12 @@ class SettingsActivity : AppCompatActivity() {
                 getString(R.string.action_none)
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(accent)
+            setTextColor(accentOnCard)
         })
-        artCard.addView(examplePackRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(artCard, examplePackRow)
         val setupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 app.updateSettings(app.settings.copy(
                     setupDismissed = false,
@@ -2958,12 +3241,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         setupRow.addView(rowLabel(getString(R.string.settings_reset_setup)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        libraryCard.addView(setupRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, setupRow)
         val chromeDiscoverRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 app.updateSettings(app.settings.copy(chromeDiscoverDismissed = false))
                 Toast.makeText(
@@ -2977,8 +3258,7 @@ class SettingsActivity : AppCompatActivity() {
             rowLabel(getString(R.string.settings_reset_chrome_discover)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        libraryCard.addView(chromeDiscoverRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        addActionRow(libraryCard, chromeDiscoverRow)
         addSection(SettingsPage.LIBRARY, getString(R.string.settings_page_library), libraryCard)
         addSection(SettingsPage.ART_DATA, getString(R.string.settings_page_art), artCard)
 
@@ -3069,55 +3349,54 @@ class SettingsActivity : AppCompatActivity() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(4), 0, dp(4))
+                setPadding(dp(10), dp(4), dp(10), dp(4))
             }
             row.addView(rowLabel(resolveText(label)), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this).apply {
                 text = resolveText(value)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(0xCCFFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.END
                 maxLines = 2
-                ellipsize = android.text.TextUtils.TruncateAt.END
+                ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f,
             ))
             systemCard.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
-                topMargin = dp(6)
-                bottomMargin = dp(6)
+                topMargin = dp(4)
+                bottomMargin = dp(4)
             })
         }
         val refreshSys = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener { refreshSettingsUi() }
         }
         refreshSys.addView(rowLabel(getString(R.string.settings_refresh_readings)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        systemCard.addView(refreshSys, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        addActionRow(systemCard, refreshSys, heightDp = 56)
 
         // Dual-black recovery guidance + in-app companion restart (no App Info).
+        addDivider(systemCard)
         systemCard.addView(TextView(this).apply {
             setText(R.string.settings_dual_recovery_title)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTextColor(0xCCFFFFFF.toInt())
-            setPadding(0, dp(12), 0, dp(4))
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(10), dp(12), dp(10), dp(4))
         })
         systemCard.addView(TextView(this).apply {
             setText(R.string.settings_dual_recovery_body)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(0x99FFFFFF.toInt())
-            setPadding(0, 0, 0, dp(8))
+            setTextColor(UiDimens.ALPHA_MUTED)
+            setPadding(dp(10), 0, dp(10), dp(8))
         })
         val restartCompanion = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
             setOnClickListener {
                 val main = app.liveDeckActivities()
                     .filterIsInstance<com.visorcraft.ghostgalleon.ui.MainActivity>()
@@ -3142,8 +3421,7 @@ class SettingsActivity : AppCompatActivity() {
             rowLabel(getString(R.string.settings_restart_companion)),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        systemCard.addView(restartCompanion, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        addActionRow(systemCard, restartCompanion, heightDp = 56)
         toggle(systemCard, getString(R.string.settings_detect_black_companion), s.detectBlackCompanion) {
             app.updateSettings(app.settings.copy(detectBlackCompanion = it))
         }
@@ -3194,8 +3472,8 @@ class SettingsActivity : AppCompatActivity() {
         captureLabel?.apply {
             alpha = 1f
             text = getString(R.string.format_keycode, keyCode)
-            setTextColor(accent)
-            background = pillDrawable(0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
+            setTextColor(accentOnSunken)
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
         }
         captureTarget = null
         captureLabel = null

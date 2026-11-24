@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -12,19 +11,27 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.StringRes
 import com.visorcraft.ghostgalleon.BuildConfig
+import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
+import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 /**
- * About page: hero card with the dynamic version, feature
+ * About page: hero card with the dynamic version, equal-height feature
  * cards, project link, and the Licenses / Credits dialogs backed by the
  * bundled raw texts (license_ghost_galleon, licenses_third_party,
  * acknowledgments, runtime_components). Self-contained - SettingsActivity
@@ -63,20 +70,16 @@ object AboutPage {
         Credit(R.string.about_runtime_emulators, "", R.string.about_various),
     )
 
-    private fun dp(context: Context, value: Int): Int =
-        com.visorcraft.ghostgalleon.ui.UiDimens.dp(context, value)
-
-    private fun dpF(context: Context, value: Int): Float =
-        com.visorcraft.ghostgalleon.ui.UiDimens.dpF(context, value)
-
-    private fun withAlpha(color: Int, alpha: Int): Int =
-        (color and 0x00FFFFFF) or (alpha shl 24)
+    private fun resolveTokens(context: Context): ThemeTokens {
+        val app = context.applicationContext
+        return if (app is GhostGalleonApp) ThemePack.resolve(app.settings) else ThemePack.GHOST
+    }
 
     private fun pill(context: Context, fill: Int, radiusDp: Int, stroke: Int = 0) =
         GradientDrawable().apply {
             setColor(fill)
-            cornerRadius = dpF(context, radiusDp)
-            if (stroke != 0) setStroke(dp(context, 1), stroke)
+            cornerRadius = context.dpF(radiusDp)
+            if (stroke != 0) setStroke(context.strokePx(1), stroke)
         }
 
     private fun text(
@@ -88,12 +91,13 @@ object AboutPage {
         if (bold) setTypeface(typeface, Typeface.BOLD)
     }
 
-    private fun header(context: Context, accent: Int, value: String): TextView =
+    private fun header(context: Context, accentText: Int, value: String): TextView =
         text(
             context,
             value.uppercase(context.resources.configuration.locales[0]),
             13f,
-            withAlpha(accent, 0xCC),
+            accentText,
+            bold = true,
         ).apply {
             letterSpacing = 0.15f
         }
@@ -101,43 +105,71 @@ object AboutPage {
     private fun card(context: Context): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         background = TileBackgrounds.card(context)
-        val pad = dp(context, 20)
+        val pad = context.dp(20)
         setPadding(pad, pad, pad, pad)
     }
 
     private fun chip(
-        context: Context, value: String, sp: Float = 13f,
-        textColor: Int, fill: Int, stroke: Int = 0,
+        context: Context,
+        value: String,
+        sp: Float = 13f,
+        textColor: Int,
+        fill: Int,
+        stroke: Int = 0,
+        focusable: Boolean = false,
+        focusAccent: Int = 0,
     ): TextView = text(context, value, sp, textColor, bold = true).apply {
-        background = pill(context, fill, 14, stroke)
-        setPadding(dp(context, 12), dp(context, 6), dp(context, 12), dp(context, 6))
+        val idle = pill(context, fill, 14, stroke)
+        background = if (focusable && focusAccent != 0) {
+            TileBackgrounds.focusableRow(
+                context = context,
+                accent = focusAccent,
+                idleBackground = idle,
+                cornerRadiusDp = 14,
+                strokeDp = 2,
+            )
+        } else {
+            idle
+        }
+        isFocusable = focusable
+        setPadding(context.dp(12), context.dp(6), context.dp(12), context.dp(6))
     }
 
     /** Full About page body (sections stacked vertically). */
     fun build(context: Context, accent: Int): View {
+        val tokens = resolveTokens(context)
+        val cardSurface = ThemePack.cardFill(tokens)
+        val sunkenSurface = ThemePack.surfaceSunken(tokens)
+        val hairline = ThemePack.hairlineDivider(tokens)
+        val accentOnBlack = ThemePack.accentTextColor(accent, 0xFF000000.toInt())
+        val accentOnCard = ThemePack.accentTextColor(accent, cardSurface)
+        val accentOnSunken = ThemePack.accentTextColor(accent, sunkenSurface)
+        val onAccent = SettingsUiLogic.accessibleOnAccent(accent)
+        val activeFocusRing = SettingsUiLogic.activePillFocusRing(accent)
+
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
 
         fun addSection(title: String?, sectionCard: View, topMarginDp: Int = 0) {
             if (title != null) {
-                root.addView(header(context, accent, title), LinearLayout.LayoutParams(
+                root.addView(header(context, accentOnBlack, title), LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply {
-                    topMargin = dp(context, 24)
-                    bottomMargin = dp(context, 10)
+                    topMargin = context.dp(24)
+                    bottomMargin = context.dp(10)
                 })
             }
             root.addView(sectionCard, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
-                if (topMarginDp > 0) topMargin = dp(context, topMarginDp)
+                if (topMarginDp > 0) topMargin = context.dp(topMarginDp)
             })
         }
 
-        // Hero card: icon, name, tagline, version/license/platform pills.
+        // Hero card: icon, name, tagline, horizontally-scrollable version/license/platform pills.
         val hero = card(context)
         val heroRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -145,59 +177,98 @@ object AboutPage {
         }
         heroRow.addView(ImageView(context).apply {
             setImageResource(R.mipmap.ic_launcher)
-        }, LinearLayout.LayoutParams(dp(context, 96), dp(context, 96)))
+        }, LinearLayout.LayoutParams(context.dp(96), context.dp(96)))
         val heroText = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(context, 20), 0, 0, 0)
+            setPadding(context.dp(20), 0, 0, 0)
         }
         heroText.addView(text(
             context,
             context.getString(R.string.app_name),
             26f,
-            Color.WHITE,
+            UiDimens.ALPHA_PRIMARY,
             bold = true,
         ))
-        heroText.addView(text(context,
+        heroText.addView(text(
+            context,
             context.getString(R.string.about_subtitle),
-            14f, accent).apply {
-            setPadding(0, dp(context, 4), 0, 0)
+            14f,
+            accentOnCard,
+        ).apply {
+            setPadding(0, context.dp(4), 0, 0)
         })
-        heroText.addView(text(context,
+        heroText.addView(text(
+            context,
             context.getString(R.string.about_description),
-            13f, 0xB3FFFFFF.toInt()).apply {
-            setPadding(0, dp(context, 4), 0, dp(context, 10))
+            13f,
+            UiDimens.ALPHA_SECONDARY,
+        ).apply {
+            setPadding(0, context.dp(4), 0, context.dp(10))
         })
         val pillsRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
         }
         val versionChip = chip(
-            context,
-            context.getString(R.string.about_version, BuildConfig.VERSION_NAME),
-            textColor = accent, fill = 0xFF121218.toInt(), stroke = accent)
+            context = context,
+            value = context.getString(R.string.about_version, BuildConfig.VERSION_NAME),
+            textColor = accentOnSunken,
+            fill = sunkenSurface,
+            stroke = accentOnSunken,
+        )
         pillsRow.addView(versionChip)
-        pillsRow.addView(chip(context, context.getString(R.string.license_gpl_v3),
-            textColor = Color.WHITE, fill = 0xFF121218.toInt(),
-            stroke = 0x26FFFFFF), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = dp(context, 8) })
-        pillsRow.addView(chip(context, context.getString(R.string.about_android_api, 34),
-            textColor = Color.WHITE, fill = 0xFF121218.toInt(),
-            stroke = 0x26FFFFFF), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = dp(context, 8) })
-        heroText.addView(pillsRow)
-        heroText.addView(text(context, BuildConfig.GIT_SHA, 12f,
-            0x66FFFFFF).apply {
-            setPadding(0, dp(context, 8), 0, 0)
+        pillsRow.addView(
+            chip(
+                context = context,
+                value = context.getString(R.string.license_gpl_v3),
+                textColor = UiDimens.ALPHA_PRIMARY,
+                fill = sunkenSurface,
+                stroke = hairline,
+            ),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
+        )
+        pillsRow.addView(
+            chip(
+                context = context,
+                value = context.getString(R.string.about_android_api, 34),
+                textColor = UiDimens.ALPHA_PRIMARY,
+                fill = sunkenSurface,
+                stroke = hairline,
+            ),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
+        )
+        val pillsScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(context.dp(12))
+            addView(pillsRow)
+        }
+        heroText.addView(
+            pillsScroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        heroText.addView(text(
+            context,
+            BuildConfig.GIT_SHA,
+            12f,
+            UiDimens.ALPHA_SUBTLE,
+        ).apply {
+            setPadding(0, context.dp(UiDimens.SPACE_SM), 0, 0)
         })
         heroRow.addView(heroText, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         hero.addView(heroRow)
         addSection(null, hero, topMarginDp = 24)
 
-        // What's inside: feature cards in a 2-column arrangement.
+        // What's inside: equal-height 2-column feature cards across all locales.
         data class Feature(@StringRes val titleRes: Int, @StringRes val bodyRes: Int)
         val features = listOf(
             Feature(R.string.about_grid_mode, R.string.about_grid_mode_body),
@@ -211,6 +282,7 @@ object AboutPage {
         features.chunked(2).forEachIndexed { rowIndex, pair ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
+                isBaselineAligned = false
             }
             pair.forEachIndexed { colIndex, feature ->
                 val cell = card(context)
@@ -218,24 +290,28 @@ object AboutPage {
                     context,
                     context.getString(feature.titleRes),
                     15f,
-                    Color.WHITE,
+                    UiDimens.ALPHA_PRIMARY,
                     bold = true,
                 ))
-                cell.addView(text(context, context.getString(feature.bodyRes), 13f,
-                    0x99FFFFFF.toInt()).apply {
-                    setPadding(0, dp(context, 6), 0, 0)
+                cell.addView(text(
+                    context,
+                    context.getString(feature.bodyRes),
+                    13f,
+                    UiDimens.ALPHA_MUTED,
+                ).apply {
+                    setPadding(0, context.dp(6), 0, 0)
                 })
                 row.addView(cell, LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f,
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f,
                 ).apply {
-                    if (colIndex > 0) marginStart = dp(context, 12)
+                    if (colIndex > 0) marginStart = context.dp(UiDimens.SPACE_MD)
                 })
             }
             grid.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
-                if (rowIndex > 0) topMargin = dp(context, 12)
+                if (rowIndex > 0) topMargin = context.dp(UiDimens.SPACE_MD)
             })
         }
         val featuresCard = LinearLayout(context).apply {
@@ -244,7 +320,7 @@ object AboutPage {
         }
         addSection(context.getString(R.string.about_whats_inside), featuresCard)
 
-        // Project card: summary + repo link + Visit pill.
+        // Project card: summary + repo link + focusable Visit pill.
         val project = card(context)
         val projectRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -252,65 +328,108 @@ object AboutPage {
         }
         projectRow.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_brand_ship)
-        }, LinearLayout.LayoutParams(dp(context, 56), dp(context, 56)))
+        }, LinearLayout.LayoutParams(context.dp(56), context.dp(56)))
         val projectText = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(context, 16), 0, dp(context, 16), 0)
+            setPadding(context.dp(UiDimens.SPACE_LG), 0, context.dp(UiDimens.SPACE_LG), 0)
         }
-        projectText.addView(text(context,
+        projectText.addView(text(
+            context,
             context.getString(R.string.about_project_body),
-            15f, Color.WHITE, bold = true))
-        projectText.addView(text(context, context.getString(R.string.project_url_label),
-            13f, accent).apply {
-            setPadding(0, dp(context, 4), 0, 0)
+            15f,
+            UiDimens.ALPHA_PRIMARY,
+            bold = true,
+        ))
+        projectText.addView(text(
+            context,
+            context.getString(R.string.project_url_label),
+            13f,
+            accentOnCard,
+        ).apply {
+            setPadding(0, context.dp(UiDimens.SPACE_XS), 0, 0)
         })
         projectRow.addView(projectText, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        projectRow.addView(chip(
-            context,
-            context.getString(R.string.about_visit),
-            textColor = Color.BLACK,
-            fill = accent).apply {
-            setOnClickListener {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL)))
-            }
-        })
+        projectRow.addView(
+            chip(
+                context = context,
+                value = context.getString(R.string.about_visit),
+                textColor = onAccent,
+                fill = accent,
+                focusable = true,
+                focusAccent = activeFocusRing,
+            ).apply {
+                setOnClickListener {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL)))
+                }
+            },
+        )
         project.addView(projectRow)
         addSection(null, project, topMarginDp = 16)
 
-        // Licenses & Credits card: entry points to the two dialogs.
+        // Licenses & Credits card: gamepad-focusable entry points to the two dialogs.
         val legal = card(context)
-        legal.addView(text(context, context.getString(R.string.about_legal_title), 17f,
-            Color.WHITE, bold = true))
-        legal.addView(text(context,
+        legal.addView(text(
+            context,
+            context.getString(R.string.about_legal_title),
+            17f,
+            UiDimens.ALPHA_PRIMARY,
+            bold = true,
+        ))
+        legal.addView(text(
+            context,
             context.getString(R.string.about_legal_body),
-            13f, 0x99FFFFFF.toInt()).apply {
-            setPadding(0, dp(context, 6), 0, dp(context, 12))
+            13f,
+            UiDimens.ALPHA_MUTED,
+        ).apply {
+            setPadding(0, context.dp(6), 0, context.dp(UiDimens.SPACE_MD))
         })
         val buttons = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        buttons.addView(chip(context, context.getString(R.string.about_licenses), textColor = accent,
-            fill = 0xFF121218.toInt(), stroke = 0x26FFFFFF).apply {
-            setOnClickListener { showLicensesDialog(context, accent) }
-        })
-        buttons.addView(chip(context, context.getString(R.string.about_credits), textColor = accent,
-            fill = 0xFF121218.toInt(), stroke = 0x26FFFFFF).apply {
-            setOnClickListener { showCreditsDialog(context, accent) }
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = dp(context, 16) })
+        buttons.addView(
+            chip(
+                context = context,
+                value = context.getString(R.string.about_licenses),
+                textColor = accentOnSunken,
+                fill = sunkenSurface,
+                stroke = hairline,
+                focusable = true,
+                focusAccent = accent,
+            ).apply {
+                setOnClickListener { showLicensesDialog(context, accent) }
+            },
+        )
+        buttons.addView(
+            chip(
+                context = context,
+                value = context.getString(R.string.about_credits),
+                textColor = accentOnSunken,
+                fill = sunkenSurface,
+                stroke = hairline,
+                focusable = true,
+                focusAccent = accent,
+            ).apply {
+                setOnClickListener { showCreditsDialog(context, accent) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = context.dp(UiDimens.SPACE_LG) },
+        )
         legal.addView(buttons)
         addSection(null, legal, topMarginDp = 16)
 
         // Footer.
-        root.addView(text(context,
+        root.addView(text(
+            context,
             context.getString(R.string.about_built_with),
-            12f, 0x66FFFFFF).apply {
+            12f,
+            UiDimens.ALPHA_SUBTLE,
+        ).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(context, 24), 0, dp(context, 8))
+            setPadding(0, context.dp(24), 0, context.dp(UiDimens.SPACE_SM))
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -323,8 +442,14 @@ object AboutPage {
         context.resources.openRawResource(resId).bufferedReader().use { it.readText() }
     }.getOrDefault(context.getString(R.string.about_text_unavailable))
 
-    /** Licenses dialog: four tabs over the bundled texts, plus Copy. */
+    /** Licenses dialog: four gamepad-focusable tabs over the bundled texts, plus Copy. */
     fun showLicensesDialog(context: Context, accent: Int) {
+        val tokens = resolveTokens(context)
+        val idleFill = tokens.chipIdle
+        val hairline = ThemePack.hairlineDivider(tokens)
+        val onAccent = SettingsUiLogic.accessibleOnAccent(accent)
+        val activeFocusRing = SettingsUiLogic.activePillFocusRing(accent)
+
         val tabs = listOf(
             R.string.about_ghost_license to R.raw.license_ghost_galleon,
             R.string.about_third_party to R.raw.licenses_third_party,
@@ -335,29 +460,42 @@ object AboutPage {
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            val pad = dp(context, 20)
-            setPadding(pad, dp(context, 8), pad, 0)
+            val pad = context.dp(20)
+            setPadding(pad, context.dp(UiDimens.SPACE_SM), pad, 0)
         }
 
         val tabViews = mutableListOf<TextView>()
         val tabRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            setPadding(0, context.dp(2), 0, context.dp(2))
         }
         val body = text(context, "", 12f, 0xE6FFFFFF.toInt()).apply {
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
-            setPadding(0, dp(context, 16), 0, dp(context, 8))
+            setPadding(0, context.dp(UiDimens.SPACE_LG), 0, context.dp(UiDimens.SPACE_SM))
         }
 
         fun restyle() {
             tabs.forEachIndexed { index, _ ->
                 val pillView = tabViews[index]
                 if (index == selected) {
-                    pillView.background = pill(context, accent, 14)
-                    pillView.setTextColor(Color.BLACK)
+                    pillView.background = TileBackgrounds.focusableRow(
+                        context = context,
+                        accent = activeFocusRing,
+                        idleBackground = pill(context, accent, 14),
+                        cornerRadiusDp = 14,
+                        strokeDp = 2,
+                    )
+                    pillView.setTextColor(onAccent)
                 } else {
-                    pillView.background = pill(context, 0xFF1C1C22.toInt(), 14, 0x26FFFFFF)
-                    pillView.setTextColor(Color.WHITE)
+                    pillView.background = TileBackgrounds.focusableRow(
+                        context = context,
+                        accent = accent,
+                        idleBackground = pill(context, idleFill, 14, hairline),
+                        cornerRadiusDp = 14,
+                        strokeDp = 2,
+                    )
+                    pillView.setTextColor(UiDimens.ALPHA_PRIMARY)
                 }
             }
             body.text = loadRaw(context, tabs[selected].second)
@@ -368,10 +506,16 @@ object AboutPage {
                 context,
                 context.getString(label),
                 12f,
-                Color.WHITE,
+                UiDimens.ALPHA_PRIMARY,
                 bold = true,
             ).apply {
-                setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
+                isFocusable = true
+                setPadding(
+                    context.dp(UiDimens.SPACE_MD),
+                    context.dp(UiDimens.SPACE_SM),
+                    context.dp(UiDimens.SPACE_MD),
+                    context.dp(UiDimens.SPACE_SM),
+                )
                 setOnClickListener {
                     if (selected != index) {
                         selected = index
@@ -383,11 +527,13 @@ object AboutPage {
             tabRow.addView(pillView, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { marginEnd = dp(context, 8) })
+            ).apply { marginEnd = context.dp(UiDimens.SPACE_SM) })
         }
         // Tabs can overflow the dialog width on narrow panels; scroll them.
-        content.addView(android.widget.HorizontalScrollView(context).apply {
+        content.addView(HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(context.dp(12))
             addView(tabRow)
         })
         content.addView(
@@ -428,10 +574,12 @@ object AboutPage {
 
     /** Credits dialog: runtime components + bundled library table. */
     fun showCreditsDialog(context: Context, accent: Int) {
+        val tokens = resolveTokens(context)
+        val accentOnCard = ThemePack.accentTextColor(accent, ThemePack.cardFill(tokens))
         val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            val pad = dp(context, 20)
-            setPadding(pad, dp(context, 8), pad, dp(context, 8))
+            val pad = context.dp(20)
+            setPadding(pad, context.dp(UiDimens.SPACE_SM), pad, context.dp(UiDimens.SPACE_SM))
         }
 
         fun creditRow(credit: Credit) {
@@ -446,38 +594,54 @@ object AboutPage {
                 context,
                 context.getString(credit.nameRes),
                 14f,
-                Color.WHITE,
+                UiDimens.ALPHA_PRIMARY,
                 bold = true,
             ))
             if (credit.version.isNotEmpty()) {
-                left.addView(text(context, credit.version, 12f, 0x66FFFFFF))
+                left.addView(text(context, credit.version, 12f, UiDimens.ALPHA_SUBTLE))
             }
             row.addView(left, LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            row.addView(text(context, context.getString(credit.licenseRes), 12f, accent))
+            row.addView(text(context, context.getString(credit.licenseRes), 12f, accentOnCard))
             list.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(context, 14) })
+            ).apply { bottomMargin = context.dp(14) })
         }
 
-        list.addView(text(context, context.getString(R.string.about_runtime_components), 15f,
-            Color.WHITE, bold = true))
-        list.addView(text(context,
+        list.addView(text(
+            context,
+            context.getString(R.string.about_runtime_components),
+            15f,
+            UiDimens.ALPHA_PRIMARY,
+            bold = true,
+        ))
+        list.addView(text(
+            context,
             context.getString(R.string.about_runtime_components_body),
-            12f, 0x99FFFFFF.toInt()).apply {
-            setPadding(0, dp(context, 4), 0, dp(context, 12))
+            12f,
+            UiDimens.ALPHA_MUTED,
+        ).apply {
+            setPadding(0, context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_MD))
         })
         runtimeComponents.forEach(::creditRow)
 
-        list.addView(text(context, context.getString(R.string.about_bundled_libraries), 15f,
-            Color.WHITE, bold = true).apply {
-            setPadding(0, dp(context, 10), 0, 0)
+        list.addView(text(
+            context,
+            context.getString(R.string.about_bundled_libraries),
+            15f,
+            UiDimens.ALPHA_PRIMARY,
+            bold = true,
+        ).apply {
+            setPadding(0, context.dp(10), 0, 0)
         })
-        list.addView(text(context,
+        list.addView(text(
+            context,
             context.getString(R.string.about_bundled_libraries_body),
-            12f, 0x99FFFFFF.toInt()).apply {
-            setPadding(0, dp(context, 4), 0, dp(context, 12))
+            12f,
+            UiDimens.ALPHA_MUTED,
+        ).apply {
+            setPadding(0, context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_MD))
         })
         bundledLibraries.forEach(::creditRow)
 
