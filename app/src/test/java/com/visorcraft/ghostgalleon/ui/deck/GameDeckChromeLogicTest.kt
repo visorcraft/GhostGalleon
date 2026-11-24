@@ -6,7 +6,9 @@ import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class GameDeckChromeLogicTest {
@@ -227,5 +229,125 @@ class GameDeckChromeLogicTest {
         assertTrue("Sugar track width out of bounds: $sugarTrack", sugarTrack in 72..148)
         assertTrue("Odin track width out of bounds: $odinTrack", odinTrack in 72..148)
         assertTrue("Widescreen track should be at least as wide as compact", odinTrack >= sugarTrack)
+    }
+
+    @Test
+    fun `shouldUseDiffUtil enforces combined size cap cleanly including large libraries`() {
+        assertTrue(GameDeckChromeLogic.shouldUseDiffUtil(0, 0))
+        assertTrue(GameDeckChromeLogic.shouldUseDiffUtil(256, 256))
+        assertTrue(GameDeckChromeLogic.shouldUseDiffUtil(512, 0))
+        assertFalse(GameDeckChromeLogic.shouldUseDiffUtil(256, 257))
+        assertFalse(GameDeckChromeLogic.shouldUseDiffUtil(513, 0))
+        assertFalse(GameDeckChromeLogic.shouldUseDiffUtil(6_000, 6_000))
+        assertFalse(GameDeckChromeLogic.shouldUseDiffUtil(20_000, 20_000))
+        // Overflow guard on extreme inputs.
+        assertFalse(GameDeckChromeLogic.shouldUseDiffUtil(Int.MAX_VALUE, Int.MAX_VALUE))
+        assertTrue(GameDeckChromeLogic.shouldUseDiffUtil(-10, 100))
+    }
+
+    @Test
+    fun `visibleSelectionNotifyRange bounds selection payloads around visible window`() {
+        assertNull(GameDeckChromeLogic.visibleSelectionNotifyRange(0, 4, itemCount = 0))
+        assertNull(GameDeckChromeLogic.visibleSelectionNotifyRange(-1, -1, itemCount = 20_000))
+        assertNull(GameDeckChromeLogic.visibleSelectionNotifyRange(0, -1, itemCount = 20_000))
+        assertNull(GameDeckChromeLogic.visibleSelectionNotifyRange(5, 3, itemCount = 20_000))
+        // Completely stale pre-shrink window does not produce an invalid range.
+        assertNull(GameDeckChromeLogic.visibleSelectionNotifyRange(80, 85, itemCount = 10))
+
+        // Start edge clamps at 0.
+        assertEquals(
+            0..6,
+            GameDeckChromeLogic.visibleSelectionNotifyRange(firstVisible = 0, lastVisible = 4, itemCount = 20_000),
+        )
+        // Middle of a 20k library notifies only the visible window +/- 2 pad (9 items, not 20k).
+        val mid = GameDeckChromeLogic.visibleSelectionNotifyRange(
+            firstVisible = 5_000,
+            lastVisible = 5_004,
+            itemCount = 20_000,
+        )
+        assertEquals(4_998..5_006, mid)
+        // End edge clamps at itemCount - 1.
+        assertEquals(
+            19_994..19_999,
+            GameDeckChromeLogic.visibleSelectionNotifyRange(
+                firstVisible = 19_996,
+                lastVisible = 19_999,
+                itemCount = 20_000,
+            ),
+        )
+        // Tiny list clamps cleanly at both ends.
+        assertEquals(
+            0..1,
+            GameDeckChromeLogic.visibleSelectionNotifyRange(firstVisible = 0, lastVisible = 1, itemCount = 2),
+        )
+        // Partially overlapping shrunk list clamps upper edge safely.
+        assertEquals(
+            1..9,
+            GameDeckChromeLogic.visibleSelectionNotifyRange(firstVisible = 3, lastVisible = 12, itemCount = 10),
+        )
+    }
+
+    @Test
+    fun `letterJumpStructureKey skips scanning on non-letter modes and matches LibraryBrowse on ALPHA and UNPLAYED`() {
+        val sample = listOf(
+            "  3D Pinball" to 0,
+            "1942" to 1,
+            "Advance Wars" to 2,
+            "alttp" to 3,
+            "Chrono Trigger" to 4,
+            "Zelda" to 5,
+            "   " to 6,
+            "!Special" to 7,
+        )
+        for (mode in LibraryBrowse.Mode.values()) {
+            if (mode == LibraryBrowse.Mode.ALPHA || mode == LibraryBrowse.Mode.UNPLAYED) {
+                assertTrue(GameDeckChromeLogic.supportsLetterJump(mode))
+                val actual = GameDeckChromeLogic.letterJumpStructureKey(mode, sample) { it.first }
+                val expected = LibraryBrowse.letterJumpStructureKey(mode, sample.map { it.first })
+                assertEquals("Parity mismatch for $mode", expected, actual)
+                assertEquals("A:2,C:1,Z:1,#:4", actual)
+            } else {
+                assertFalse(GameDeckChromeLogic.supportsLetterJump(mode))
+                val actual = GameDeckChromeLogic.letterJumpStructureKey(mode, sample) {
+                    fail("Must not scan labels for non-letter mode $mode")
+                    it.first
+                }
+                assertEquals("", actual)
+            }
+        }
+        assertEquals("", GameDeckChromeLogic.letterJumpStructureKey(LibraryBrowse.Mode.ALPHA, emptyList<String>()) { it })
+    }
+
+    @Test
+    fun `letterJumpBuckets and firstIndexForLetter match LibraryBrowse without copying labels`() {
+        val items = listOf(
+            "1942",
+            "Advance Wars",
+            "alttp",
+            "Chrono Trigger",
+            "Zelda",
+            "!Bonus",
+        )
+        val buckets = GameDeckChromeLogic.letterJumpBuckets(items) { it }
+        val expectedCounts = LibraryBrowse.presentLetterCounts(items)
+        assertEquals(expectedCounts, buckets.map { it.letter to it.count })
+        assertEquals(
+            listOf(
+                GameDeckChromeLogic.LetterJumpBucket('A', 2, 1),
+                GameDeckChromeLogic.LetterJumpBucket('C', 1, 3),
+                GameDeckChromeLogic.LetterJumpBucket('Z', 1, 4),
+                GameDeckChromeLogic.LetterJumpBucket('#', 2, 0),
+            ),
+            buckets,
+        )
+        for (bucket in buckets) {
+            assertEquals(
+                LibraryBrowse.firstIndexForLetter(items, bucket.letter),
+                GameDeckChromeLogic.firstIndexForLetter(items, bucket.letter) { it },
+            )
+            assertEquals(bucket.firstIndex, GameDeckChromeLogic.firstIndexForLetter(items, bucket.letter) { it })
+        }
+        assertEquals(-1, GameDeckChromeLogic.firstIndexForLetter(items, 'M') { it })
+        assertTrue(GameDeckChromeLogic.letterJumpBuckets(emptyList<String>()) { it }.isEmpty())
     }
 }

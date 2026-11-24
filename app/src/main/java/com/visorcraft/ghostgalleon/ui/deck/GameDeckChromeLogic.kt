@@ -33,6 +33,16 @@ object GameDeckChromeLogic {
     /** Minimum entries required before showing the carousel position indicator. */
     const val MIN_RAIL_COUNT_FOR_INDICATOR: Int = 2
 
+    /**
+     * Upper bound on combined old + new carousel item counts for synchronous Myers
+     * DiffUtil calculation on the UI thread. Above this cap, browse dataset
+     * replacement swaps directly to avoid multi-hundred-ms stalls on 6k–20k ROMs.
+     */
+    const val MAX_SYNC_DIFF_ITEMS: Int = 512
+
+    /** Extra cards padded on each side of the visible carousel window during selection diffing. */
+    const val VISIBLE_SELECTION_PAD: Int = 2
+
     enum class EmptyVisualKind {
         SEARCH_OR_FILTER,
         FAVORITES,
@@ -178,4 +188,114 @@ object GameDeckChromeLogic {
     /** Responsive rail progress track width (dp) for compact and widescreen panels. */
     fun railTrackWidthDp(screenWidthDp: Int): Int =
         (screenWidthDp.coerceAtLeast(1) * 0.20f).toInt().coerceIn(72, 148)
+
+    /** True when [oldSize] + [newSize] is small enough for synchronous Myers DiffUtil. */
+    fun shouldUseDiffUtil(oldSize: Int, newSize: Int): Boolean {
+        val safeOld = oldSize.coerceAtLeast(0).toLong()
+        val safeNew = newSize.coerceAtLeast(0).toLong()
+        return safeOld + safeNew <= MAX_SYNC_DIFF_ITEMS.toLong()
+    }
+
+    /**
+     * Clamped adapter range around the currently visible carousel window
+     * (`[firstVisible - pad, lastVisible + pad]`) for selection payload refreshes.
+     * Returns null when the adapter is empty, layout has not run (`NO_POSITION`),
+     * or the visible window does not overlap `[0, itemCount - 1]`.
+     */
+    fun visibleSelectionNotifyRange(
+        firstVisible: Int,
+        lastVisible: Int,
+        itemCount: Int,
+        pad: Int = VISIBLE_SELECTION_PAD,
+    ): IntRange? {
+        if (itemCount <= 0 || firstVisible < 0 || lastVisible < 0 || firstVisible > lastVisible) {
+            return null
+        }
+        val safePad = pad.coerceAtLeast(0)
+        val start = (firstVisible - safePad).coerceAtLeast(0)
+        val end = (lastVisible + safePad).coerceAtMost(itemCount - 1)
+        return if (start <= end) start..end else null
+    }
+
+    /** True when [mode] displays the A–Z / '#' letter-jump strip. */
+    fun supportsLetterJump(mode: LibraryBrowse.Mode): Boolean =
+        mode == LibraryBrowse.Mode.ALPHA || mode == LibraryBrowse.Mode.UNPLAYED
+
+    /** One populated bucket in the A–Z / '#' letter-jump strip with its first item index. */
+    data class LetterJumpBucket(
+        val letter: Char,
+        val count: Int,
+        val firstIndex: Int,
+    )
+
+    /**
+     * Single-pass zero-copy letter-jump bucket summary over [items] (A–Z then '#').
+     * Computes counts and first indices directly without allocating a `List<String>`.
+     */
+    inline fun <T> letterJumpBuckets(
+        items: List<T>,
+        labelOf: (T) -> String,
+    ): List<LetterJumpBucket> {
+        if (items.isEmpty()) return emptyList()
+        val counts = IntArray(27)
+        val firstIndices = IntArray(27) { -1 }
+        for (i in items.indices) {
+            val b = LibraryBrowse.letterBucket(labelOf(items[i]))
+            val slot = if (b == '#') 26 else b - 'A'
+            if (counts[slot] == 0) firstIndices[slot] = i
+            counts[slot]++
+        }
+        val out = ArrayList<LetterJumpBucket>(27)
+        for (i in 0 until 26) {
+            val n = counts[i]
+            if (n > 0) out.add(LetterJumpBucket(('A' + i), n, firstIndices[i]))
+        }
+        if (counts[26] > 0) out.add(LetterJumpBucket('#', counts[26], firstIndices[26]))
+        return out
+    }
+
+    /**
+     * Mode-gated, zero-copy equivalent of [LibraryBrowse.letterJumpStructureKey].
+     * Returns `""` immediately without touching [items] or invoking [labelOf]
+     * when [mode] has no letter-jump strip.
+     */
+    inline fun <T> letterJumpStructureKey(
+        mode: LibraryBrowse.Mode,
+        items: List<T>,
+        labelOf: (T) -> String,
+    ): String {
+        if (!supportsLetterJump(mode) || items.isEmpty()) return ""
+        val counts = IntArray(27)
+        for (i in items.indices) {
+            val b = LibraryBrowse.letterBucket(labelOf(items[i]))
+            val slot = if (b == '#') 26 else b - 'A'
+            counts[slot]++
+        }
+        val sb = StringBuilder(128)
+        for (i in 0 until 26) {
+            val n = counts[i]
+            if (n > 0) {
+                if (sb.isNotEmpty()) sb.append(',')
+                sb.append(('A' + i)).append(':').append(n)
+            }
+        }
+        if (counts[26] > 0) {
+            if (sb.isNotEmpty()) sb.append(',')
+            sb.append('#').append(':').append(counts[26])
+        }
+        return sb.toString()
+    }
+
+    /** Zero-copy first index in [items] whose [LibraryBrowse.letterBucket] matches [letter]. */
+    inline fun <T> firstIndexForLetter(
+        items: List<T>,
+        letter: Char,
+        labelOf: (T) -> String,
+    ): Int {
+        val bucket = letter.uppercaseChar().let { c -> if (c in 'A'..'Z') c else '#' }
+        for (i in items.indices) {
+            if (LibraryBrowse.letterBucket(labelOf(items[i])) == bucket) return i
+        }
+        return -1
+    }
 }
