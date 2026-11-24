@@ -34,6 +34,33 @@ object PlayHudMetrics {
     /** Artwork edge (dp) for Play HUD header in compact vs standard panels. */
     fun playHudArtDp(compact: Boolean): Int = if (compact) 68 else 96
 
+    data class HeaderSpec(
+        val artDp: Int,
+        val titleSp: Float,
+        val playerSp: Float,
+        val padHorizontalDp: Int,
+        val padVerticalDp: Int,
+    )
+
+    /** Pure typography and spacing tokens for the Play HUD header card. */
+    fun headerSpec(compact: Boolean): HeaderSpec = if (compact) {
+        HeaderSpec(
+            artDp = playHudArtDp(compact = true),
+            titleSp = 20f,
+            playerSp = 12f,
+            padHorizontalDp = 14,
+            padVerticalDp = 10,
+        )
+    } else {
+        HeaderSpec(
+            artDp = playHudArtDp(compact = false),
+            titleSp = 26f,
+            playerSp = 14f,
+            padHorizontalDp = 16,
+            padVerticalDp = 12,
+        )
+    }
+
     /** Subtle hairline border for the sunken session timer pill tinted by session state. */
     fun sessionPillBorderColor(isActive: Boolean): Int =
         (0x48 shl 24) or (sessionStatusColor(isActive) and 0x00FFFFFF)

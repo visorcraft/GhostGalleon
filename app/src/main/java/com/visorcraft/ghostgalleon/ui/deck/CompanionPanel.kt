@@ -3953,66 +3953,59 @@ object CompanionPanel {
     ): View {
         val app = activity.application as GhostGalleonApp
         val cardSurface = TileBackgrounds.surfaceColor(activity)
+        val hdr = PlayHudMetrics.headerSpec(compact)
         val hud = LinearLayout(activity).apply {
             tag = TAG_PLAY_HUD
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             background = TileBackgrounds.card(activity)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            clipChildren = false
+            clipToPadding = false
+            setPadding(
+                dp(hdr.padHorizontalDp),
+                dp(hdr.padVerticalDp),
+                dp(hdr.padHorizontalDp),
+                dp(hdr.padVerticalDp),
+            )
         }
         hud.addView(TextView(activity).apply {
             setText(R.string.label_now_playing)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.accentTextColor(settings.accentColor, cardSurface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
+            includeFontPadding = false
         })
-        val artPx = dp(if (compact) 64 else 96)
-        val hudRom = selectedRom(surface.key, roms, app)
-        if (hudRom != null) {
-            hud.addView(
-                ArtTile.view(
-                    activity,
-                    app.artCache,
-                    hudRom,
-                    targetPx = artPx,
-                    artOverrides = settings.artOverrides,
-                ).apply { tag = TAG_PLAY_HUD_ART },
-                LinearLayout.LayoutParams(artPx, artPx).apply {
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    topMargin = dp(8)
-                    bottomMargin = dp(8)
-                },
-            )
-        } else {
-            val icon = ImageView(activity).apply { tag = TAG_PLAY_HUD_ART }
-            CustomIcon.bind(
-                icon,
-                iconLoader(activity),
-                app.artCache,
-                settings,
-                surface.packageName.ifBlank { surface.key },
-                artPx,
-            )
-            hud.addView(
-                icon,
-                LinearLayout.LayoutParams(artPx, artPx).apply {
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    topMargin = dp(8)
-                    bottomMargin = dp(8)
-                },
-            )
-        }
+        val artPx = dp(hdr.artDp)
+        hud.addView(
+            buildFramedSessionArt(
+                activity = activity,
+                app = app,
+                roms = roms,
+                settings = settings,
+                slotKey = surface.key,
+                fallbackPackage = surface.packageName,
+                artPx = artPx,
+                viewTag = TAG_PLAY_HUD_ART,
+            ),
+            LinearLayout.LayoutParams(artPx, artPx).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+                bottomMargin = dp(8)
+            },
+        )
         val label = resumeLabel(surface.key, library, roms, settings, app)
         hud.addView(TextView(activity).apply {
             tag = TAG_PLAY_HUD_TITLE
             text = label
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, hdr.titleSp)
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             maxLines = if (compact) 1 else 2
             ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
         })
         val playerName = Platforms.ALL.flatMap { it.players }
             .firstOrNull { it.id == surface.playerId }
@@ -4021,50 +4014,72 @@ object CompanionPanel {
         hud.addView(TextView(activity).apply {
             text = playerName
             visibility = if (playerName.isEmpty()) View.GONE else View.VISIBLE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 14f)
-            setTextColor(0xBBFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, hdr.playerSp)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
             gravity = Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-        })
+            includeFontPadding = false
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(2) })
         val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
-        hud.addView(TextView(activity).apply {
-            tag = TAG_PLAY_HUD_CLOCK
-            text = activity.getString(
-                if (session.isActive) R.string.format_session else R.string.format_session_paused,
-                activity.resolveText(SessionMath.formatPlaytime(elapsed)),
-            )
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 16f)
-            setTextColor(0x99FFFFFF.toInt())
-            gravity = Gravity.CENTER
-        })
-        hud.addView(TextView(activity).apply {
-            tag = TAG_PLAY_HUD_OWNER
-            visibility = View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 14f)
-            setTextColor(0xBBFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
-        })
         hud.addView(
             TextView(activity).apply {
-                tag = TAG_PLAY_HUD_POSTURE
-                setText(R.string.posture_use_both_screens)
-                visibility = View.GONE
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                background = TileBackgrounds.accentPill(activity, settings.accentColor)
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                gravity = Gravity.CENTER
-                isFocusable = true
-                setOnClickListener { confirmPostureYield(activity, app) }
+                tag = TAG_PLAY_HUD_CLOCK
+                text = activity.getString(
+                    if (session.isActive) R.string.format_session else R.string.format_session_paused,
+                    activity.resolveText(SessionMath.formatPlaytime(elapsed)),
+                )
+                applySessionTimerPillStyle(this, session.isActive, compact, dp)
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(8)
+                topMargin = dp(6)
+            },
+        )
+        hud.addView(TextView(activity).apply {
+            tag = TAG_PLAY_HUD_OWNER
+            visibility = View.GONE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+            setTextColor(UiDimens.ALPHA_MUTED)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+        })
+        val postureInsetV = dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP)
+        val postureBtn = TextView(activity).apply {
+            tag = TAG_PLAY_HUD_POSTURE
+            setText(R.string.posture_use_both_screens)
+            visibility = View.GONE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.onFillTextColor(settings.accentColor))
+            background = buildInteractivePillBackground(
+                context = activity,
+                base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
+                accent = settings.accentColor,
+                cornerRadiusDp = 18,
+            )
+            setPadding(dp(16), postureInsetV, dp(16), postureInsetV)
+            gravity = Gravity.CENTER
+            setSingleLine()
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { confirmPostureYield(activity, app) }
+        }
+        attachChipTactileFeedback(postureBtn)
+        hud.addView(
+            postureBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP),
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(4)
             },
         )
         // Opt-in RAM lens under the clock. Tick controls visibility; GONE until match.

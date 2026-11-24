@@ -48,4 +48,14 @@ class PlayHudMetricsTest {
         assertTrue(PlayHudMetrics.playHudArtDp(compact = true) < PlayHudMetrics.playHudArtDp(compact = false))
         assertEquals(0x48, (PlayHudMetrics.sessionPillBorderColor(true) ushr 24) and 0xFF)
     }
+
+    @Test
+    fun `headerSpec scales Play HUD typography and padding cleanly from compact to standard`() {
+        val compact = PlayHudMetrics.headerSpec(compact = true)
+        val standard = PlayHudMetrics.headerSpec(compact = false)
+        assertTrue(compact.artDp < standard.artDp)
+        assertTrue(compact.titleSp < standard.titleSp)
+        assertTrue(compact.playerSp < standard.playerSp)
+        assertTrue(compact.padHorizontalDp <= standard.padHorizontalDp)
+    }
 }
