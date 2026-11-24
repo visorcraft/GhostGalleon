@@ -143,20 +143,29 @@ internal fun launchSlotKey(
                 resolveLaunchDisplayId = { surfaceFor(it).launchDisplayId },
             )
             if (template != null && app != null) {
+                OverlayAudioLogic.launchCueFor(targetKind, succeeded = true)?.let { app.playSfx(it) }
                 app.noteLaunchReason(reason, key)
                 app.noteLaunch(key)
                 app.beginSession(surfaceFor(template))
+            } else {
+                OverlayAudioLogic.launchCueFor(targetKind, succeeded = false)
+                    ?.let { app?.playSfx(it) }
             }
         } else {
+            OverlayAudioLogic.launchCueFor(targetKind, succeeded = false)
+                ?.let { app?.playSfx(it) }
             Toast.makeText(activity, R.string.deck_rom_missing, Toast.LENGTH_SHORT).show()
         }
         return
     }
     val launchIntent = activity.packageManager.getLaunchIntentForPackage(key)
     if (launchIntent == null) {
+        OverlayAudioLogic.launchCueFor(targetKind, succeeded = false)
+            ?.let { app?.playSfx(it) }
         Toast.makeText(activity, R.string.deck_unavailable, Toast.LENGTH_SHORT).show()
         return
     }
+    OverlayAudioLogic.launchCueFor(targetKind, succeeded = true)?.let { app?.playSfx(it) }
     val pkgYield = app?.settings?.packageYield?.get(key) == true
     val launchId = app?.displayConfig?.launchDisplayId
     launchOnOtherDisplay(activity, state, launchIntent, launchId)

@@ -18,6 +18,7 @@ import android.widget.TextView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.art.ArtTile
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.library.SessionMath
 import com.visorcraft.ghostgalleon.rom.PlatformTile
@@ -234,6 +235,10 @@ object SessionSwitcherView {
     fun overlay(root: View): SwitcherOverlay? =
         root.findViewWithTag(TAG)
 
+    private fun playSfx(context: Context, cue: SoundCue) {
+        (context.applicationContext as? GhostGalleonApp)?.playSfx(cue)
+    }
+
     class SwitcherOverlay(
         context: Context,
         val entries: List<SessionRingEntry>,
@@ -265,7 +270,11 @@ object SessionSwitcherView {
 
         internal fun applyNavAction(action: Action) {
             if (entries.isEmpty()) return
-            selection = SessionSwitcherNav.move(selection, entries.size, action)
+            val next = SessionSwitcherNav.move(selection, entries.size, action)
+            if (next != selection) {
+                selection = next
+                playSfx(context, SoundCue.NAV_TICK)
+            }
             paint(animateFocus = true)
         }
 
@@ -274,7 +283,10 @@ object SessionSwitcherView {
         }
 
         fun removeSelected() {
-            entries.getOrNull(selection)?.let { onRemove(it.key) }
+            entries.getOrNull(selection)?.let {
+                playSfx(context, SoundCue.DESTRUCTIVE)
+                onRemove(it.key)
+            }
         }
 
         private fun rowDrawable(visual: SessionSwitcherNav.RowVisual): Drawable {
@@ -583,6 +595,7 @@ object SessionSwitcherView {
             isClickable = true
             setOnClickListener { onPick(entry) }
             setOnLongClickListener {
+                playSfx(context, SoundCue.DESTRUCTIVE)
                 onRemove(entry.key)
                 true
             }
@@ -730,7 +743,10 @@ object SessionSwitcherView {
                 background = removeBg
                 setPadding(context.dp(10), context.dp(6), context.dp(10), context.dp(6))
                 isClickable = true
-                setOnClickListener { onRemove(entry.key) }
+                setOnClickListener {
+                    playSfx(context, SoundCue.DESTRUCTIVE)
+                    onRemove(entry.key)
+                }
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,

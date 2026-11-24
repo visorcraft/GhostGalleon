@@ -10,6 +10,7 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.PlayStats
@@ -190,6 +191,7 @@ object EntryActions {
         app.updateSettings(
             live.copy(favorites = result.favorites, collections = result.collections),
         )
+        app.playSfx(OverlayAudioLogic.favoriteCueFor(result.added))
         activity.toast(
             if (result.added) R.string.deck_added_favorite
             else R.string.deck_removed_favorite,
@@ -204,11 +206,12 @@ object EntryActions {
         val platform = Platforms.byId(rom.platformId) ?: return
         val pm = activity.packageManager
         val installed = PlayerResolver.installedPlayers(platform) { pm.isInstalled(it) }
+        val app = activity.application as GhostGalleonApp
         if (installed.isEmpty()) {
+            app.playSfx(SoundCue.ERROR_DENY)
             activity.toast(R.string.deck_no_players_installed)
             return
         }
-        val app = activity.application as GhostGalleonApp
         val preferred = EntryActionChoices.preferredPlayerId(
             romId = rom.id,
             platformId = rom.platformId,
@@ -226,6 +229,7 @@ object EntryActions {
             context = activity,
             titleRes = R.string.action_open_with,
             items = labels,
+            emitPickSound = false,
         ) { which ->
             val player = installed.getOrNull(which) ?: return@chooseItem
             app.updateSettings(

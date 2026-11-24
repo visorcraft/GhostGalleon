@@ -30,6 +30,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.LinearLayout
 import com.visorcraft.ghostgalleon.GhostGalleonApp
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.display.CompanionHeroStyle
 import com.visorcraft.ghostgalleon.display.LayoutMetricsResolver
 import com.visorcraft.ghostgalleon.display.currentDisplayId
@@ -61,6 +62,7 @@ import com.visorcraft.ghostgalleon.ui.deck.CompanionPanel
 import com.visorcraft.ghostgalleon.ui.deck.Deck
 import com.visorcraft.ghostgalleon.ui.deck.GameDeck
 import com.visorcraft.ghostgalleon.ui.deck.GridDeck
+import com.visorcraft.ghostgalleon.ui.deck.OverlayAudioLogic
 import com.visorcraft.ghostgalleon.ui.deck.QuickPanel
 import com.visorcraft.ghostgalleon.ui.deck.SessionSwitcherView
 import com.visorcraft.ghostgalleon.ui.deck.launchOnOtherDisplay
@@ -686,6 +688,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             autoShowKeyboard = false,
             heightFraction = 0.88f,
             prebuiltItems = cached,
+            emitPickConfirmSound = false,
             onPick = { key ->
                 closeAppDrawer()
                 launchSlotKey(this, deckState, app.romEntries, key)
@@ -922,7 +925,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
             return
         }
         if (quickPanel != null) {
-            closeQuickPanel()
+            closeQuickPanel(playCloseSound = true)
             return
         }
         if (!::currentDeck.isInitialized) return
@@ -937,19 +940,23 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        app.playSfx(SoundCue.MODAL_OPEN)
     }
 
-    fun closeQuickPanel() {
+    fun closeQuickPanel(playCloseSound: Boolean = false) {
         val panel = quickPanel ?: return
         findViewById<ViewGroup>(android.R.id.content)?.removeView(panel.view)
         quickPanel = null
+        if (playCloseSound) {
+            app.playSfx(SoundCue.MODAL_CLOSE)
+        }
     }
 
     /** Feed an action into this activity's open quick panel (cross-display). */
     fun routeQuickPanelAction(action: Action): Boolean {
         val panel = quickPanel ?: return false
         if (action == Action.OPEN_QUICK_PANEL) {
-            closeQuickPanel()
+            closeQuickPanel(playCloseSound = true)
             return true
         }
         panel.handleAction(action)
@@ -1002,6 +1009,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     ),
                     chromeOnly = false,
                 )
+                app.playSfx(OverlayAudioLogic.setupDismissCue(completed = true))
                 dismissSetup()
             },
             onDismiss = {
@@ -1015,6 +1023,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     },
                     notify = false,
                 )
+                app.playSfx(OverlayAudioLogic.setupDismissCue(completed = false))
                 dismissSetup()
             },
         )
@@ -1033,6 +1042,9 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     private fun refreshSetupOverlay() {
         val snap = setupSnapshot()
         if (!SetupNeeds.shouldShow(snap)) {
+            if (setupOverlay != null) {
+                app.playSfx(OverlayAudioLogic.setupDismissCue(completed = true))
+            }
             dismissSetup()
             return
         }
@@ -1155,6 +1167,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     },
                     notify = false,
                 )
+                app.playSfx(OverlayAudioLogic.setupDismissCue(completed = false))
                 dismissSetup()
                 host?.runOnUiThread { host.dismissSetupPublic() }
             }
@@ -1171,7 +1184,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         // Quick Panel on this or the other display (global input).
         if (quickPanel != null) {
             if (action == Action.OPEN_QUICK_PANEL) {
-                closeQuickPanel()
+                closeQuickPanel(playCloseSound = true)
                 return true
             }
             quickPanel!!.handleAction(action)
@@ -1380,13 +1393,24 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 val main = this as? MainActivity
                     ?: app.liveDeckActivities().filterIsInstance<MainActivity>()
                         .firstOrNull()
-                if (DualPaintPolicy.allowCompanionRestartDuringSwap(
-                        dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
-                        policy = app.sessionSurface?.policy,
-                        greedy = app.sessionSurface?.greedy == true,
-                    ) && main != null
-                ) {
-                    main.restartCompanionPanel(
+                val canRestartCompanion = DualPaintPolicy.allowCompanionRestartDuringSwap(
+                    dualMode = app.displayConfig.mode == SurfaceMode.DUAL,
+                    policy = app.sessionSurface?.policy,
+                    greedy = app.sessionSurface?.greedy == true,
+                ) && main != null
+                val refusedByYield = !canRestartCompanion && DualPaintPolicy.sessionOwnsCompanionDisplay(
+                    app.sessionSurface?.policy,
+                    app.sessionSurface?.greedy == true,
+                )
+                app.playSfx(
+                    OverlayAudioLogic.swapCueFor(
+                        swapped = swapped,
+                        companionRestarted = canRestartCompanion,
+                        refusedByYield = refusedByYield,
+                    ),
+                )
+                if (canRestartCompanion) {
+                    main!!.restartCompanionPanel(
                         if (swapped) "swap-recover" else "swap-recover-fallback",
                     )
                     if (!swapped) {
@@ -1396,11 +1420,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                } else if (DualPaintPolicy.sessionOwnsCompanionDisplay(
-                        app.sessionSurface?.policy,
-                        app.sessionSurface?.greedy == true,
-                    )
-                ) {
+                } else if (refusedByYield) {
                     Toast.makeText(
                         this,
                         R.string.session_yields_both_screens,
@@ -1437,6 +1457,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         Action.TOGGLE_MODE -> {
             if (repeatCount == 0) {
                 haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                app.playSfx(SoundCue.MODE_TOGGLE)
                 deckState.toggleMode()
                 app.updateSettings(app.settings.copy(defaultMode = deckState.mode))
             }
@@ -1444,6 +1465,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
         Action.OPEN_SETTINGS -> {
             if (repeatCount == 0) {
+                app.playSfx(SoundCue.MODAL_OPEN)
                 // Settings opens on the display NOT hosting the interactive
                 // deck, so the deck stays fully visible and interactive.
                 launchOnOtherDisplay(
@@ -1543,6 +1565,7 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
             surface?.greedy == true,
         )
     ) {
+        app.playSfx(SoundCue.ERROR_DENY)
         Toast.makeText(
             activity,
             R.string.session_yields_both_screens,
@@ -1569,7 +1592,7 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
         app.releaseHost()
         app.liveDeckActivities().forEach { it.applyPlayHostFocusLock() }
     }
-    fun attach() {
+    fun attach(initial: Boolean = false) {
         SessionSwitcherView.attach(
             host,
             app.settings.sessionRing,
@@ -1583,10 +1606,12 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                 )
                 when (plan.result) {
                     SwitchToResult.NO_OP -> {
+                        app.playSfx(SoundCue.MODAL_CLOSE)
                         SessionSwitcherView.detach(host)
                         releaseSwitcherHost()
                     }
                     SwitchToResult.REFUSE_YIELD -> {
+                        app.playSfx(SoundCue.ERROR_DENY)
                         Toast.makeText(
                             activity,
                             R.string.session_yields_both_screens,
@@ -1654,15 +1679,19 @@ internal fun openSessionSwitcher(activity: AppCompatActivity) {
                     ),
                     notify = false,
                 )
-                attach()
+                attach(initial = false)
             },
             onClose = {
+                app.playSfx(SoundCue.MODAL_CLOSE)
                 SessionSwitcherView.detach(host)
                 releaseSwitcherHost()
             },
         )
+        if (initial) {
+            app.playSfx(SoundCue.MODAL_OPEN)
+        }
     }
-    attach()
+    attach(initial = true)
 }
 
 /** Apply the active theme's fontScale to this activity's configuration. */

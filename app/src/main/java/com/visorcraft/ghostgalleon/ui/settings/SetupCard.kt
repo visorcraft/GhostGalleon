@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.library.SetupNeeds
 import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.PlayerResolver
@@ -187,6 +188,7 @@ class SetupCard(
     private data class ActionSpec(
         val label: String,
         val role: SetupCardNav.ButtonRole,
+        val isActionCue: Boolean = true,
         val onClick: () -> Unit,
     )
 
@@ -198,14 +200,27 @@ class SetupCard(
 
     val view: View by lazy { buildView() }
 
+    private fun playSfx(cue: SoundCue) {
+        (activity.applicationContext as? GhostGalleonApp)?.playSfx(cue)
+    }
+
     fun handleAction(action: Action): Boolean {
         // Ensure views/specs exist before routing gamepad input.
         view
+        val prev = selection
         val result = SetupCardNav.step(selection, specs.size, action)
         selection = result.selection
         when (result.outcome) {
-            SetupCardNav.Outcome.MOVED -> paintButtons(scrollToFocused = true, animateFocus = true)
-            SetupCardNav.Outcome.CONFIRM -> specs.getOrNull(selection)?.onClick?.invoke()
+            SetupCardNav.Outcome.MOVED -> {
+                if (selection != prev) playSfx(SoundCue.NAV_TICK)
+                paintButtons(scrollToFocused = true, animateFocus = true)
+            }
+            SetupCardNav.Outcome.CONFIRM -> {
+                specs.getOrNull(selection)?.let { spec ->
+                    if (spec.isActionCue) playSfx(SoundCue.CONFIRM)
+                    spec.onClick()
+                }
+            }
             SetupCardNav.Outcome.DISMISS -> onDismiss()
             SetupCardNav.Outcome.NONE -> Unit
         }
@@ -490,6 +505,7 @@ class SetupCard(
                 ActionSpec(
                     label = context.getString(R.string.setup_enable_companion_chrome),
                     role = SetupCardNav.ButtonRole.PRIMARY,
+                    isActionCue = false,
                     onClick = onEnableCompanionChrome,
                 ),
             )
@@ -497,6 +513,7 @@ class SetupCard(
                 ActionSpec(
                     label = context.getString(R.string.action_skip_for_now),
                     role = SetupCardNav.ButtonRole.SECONDARY,
+                    isActionCue = false,
                     onClick = onDismiss,
                 ),
             )
@@ -531,6 +548,7 @@ class SetupCard(
                 ActionSpec(
                     label = context.getString(R.string.setup_enable_companion_chrome),
                     role = SetupCardNav.ButtonRole.SECONDARY,
+                    isActionCue = false,
                     onClick = onEnableCompanionChrome,
                 ),
             )
@@ -545,6 +563,7 @@ class SetupCard(
                 ActionSpec(
                     label = context.getString(R.string.action_skip_for_now),
                     role = SetupCardNav.ButtonRole.SECONDARY,
+                    isActionCue = false,
                     onClick = onDismiss,
                 ),
             )
@@ -567,6 +586,7 @@ class SetupCard(
                 setOnClickListener {
                     selection = index
                     paintButtons(scrollToFocused = false, animateFocus = false)
+                    if (spec.isActionCue) playSfx(SoundCue.CONFIRM)
                     spec.onClick()
                 }
             }

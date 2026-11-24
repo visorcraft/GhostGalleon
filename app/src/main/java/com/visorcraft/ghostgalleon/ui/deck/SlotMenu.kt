@@ -18,6 +18,7 @@ import android.widget.TextView
 import androidx.annotation.DrawableRes
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
@@ -322,9 +323,17 @@ class SlotMenu(
         )
     }
 
+    private fun playCue(cue: SoundCue?) {
+        if (cue == null) return
+        (context.applicationContext as? GhostGalleonApp)?.playSfx(cue)
+    }
+
     val view: View by lazy {
         themeTokens = resolveTokens()
-        val overlay = OverlayPrimitives.modalBackdrop(context) { onChoice(Choice.CANCEL) }
+        val overlay = OverlayPrimitives.modalBackdrop(context) {
+            playCue(SoundCue.BACK)
+            onChoice(Choice.CANCEL)
+        }
         OverlayPrimitives.bindModalPaneTitle(
             overlay,
             OverlayPrimitives.resolvePaneTitle(title, context.getString(R.string.label_select)),
@@ -443,6 +452,7 @@ class SlotMenu(
                             ) {
                                 performHaptic(this, HapticFeedbackConstants.VIRTUAL_KEY)
                             }
+                            playCue(OverlayAudioLogic.slotMenuConfirmCue(row))
                             onChoice(row.choice)
                         }
                     }
@@ -560,6 +570,7 @@ class SlotMenu(
                 Gravity.CENTER,
             ),
         )
+        playCue(SoundCue.MODAL_OPEN)
         overlay
     }
 
@@ -616,20 +627,31 @@ class SlotMenu(
 
     fun handleAction(action: Action): Boolean {
         if (actionRows.isEmpty()) {
-            if (action == Action.BACK) onChoice(Choice.CANCEL)
+            if (action == Action.BACK) {
+                playCue(SoundCue.BACK)
+                onChoice(Choice.CANCEL)
+            }
             return true
         }
         when (action) {
             Action.NAV_UP, Action.NAV_DOWN, Action.PAGE_PREV, Action.PAGE_NEXT -> {
-                selection = SlotMenuNav.move(selection, actionRows.size, action)
+                val next = SlotMenuNav.move(selection, actionRows.size, action)
+                if (next != selection) {
+                    playCue(OverlayAudioLogic.slotMenuNavCue(action))
+                }
+                selection = next
                 paintRows()
             }
             Action.CONFIRM -> {
                 val rowIndex = actionRowIndices.getOrNull(selection) ?: return true
                 val item = rows[rowIndex] as? Row.Item ?: return true
+                playCue(OverlayAudioLogic.slotMenuConfirmCue(item))
                 onChoice(item.choice)
             }
-            Action.BACK -> onChoice(Choice.CANCEL)
+            Action.BACK -> {
+                playCue(SoundCue.BACK)
+                onChoice(Choice.CANCEL)
+            }
             else -> {}
         }
         return true

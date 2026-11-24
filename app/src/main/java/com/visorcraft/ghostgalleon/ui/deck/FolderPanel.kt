@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.core.view.ViewCompat
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
@@ -187,7 +188,10 @@ class FolderPanel(
         thumbSizePx = layoutSpec.thumbSizePx
         val cardWidth = layoutSpec.cardWidthPx
 
-        val overlay = OverlayPrimitives.modalBackdrop(context, onClose).apply {
+        val overlay = OverlayPrimitives.modalBackdrop(context) {
+            playSfx(SoundCue.MODAL_CLOSE)
+            onClose()
+        }.apply {
             addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) = Unit
                 override fun onViewDetachedFromWindow(v: View) {
@@ -331,6 +335,7 @@ class FolderPanel(
                 setOnClickListener {
                     nav = nav.copy(mirrorFocused = true)
                     paintSelection()
+                    playSfx(SoundCue.CONFIRM)
                     onMirrorToCollection.invoke()
                 }
             }
@@ -363,6 +368,7 @@ class FolderPanel(
                 Gravity.CENTER,
             ),
         )
+        playSfx(SoundCue.MODAL_OPEN)
         overlay
     }
 
@@ -732,6 +738,7 @@ class FolderPanel(
         if (memberKeys.isEmpty() || nav.mirrorFocused) return
         val idx = GridWrapNav.clampIndex(nav.selectedCell, memberKeys.size)
         val key = memberKeys[idx].first
+        playSfx(SoundCue.DESTRUCTIVE)
         remove(key)
         memberKeys.removeAt(idx)
         nav = FolderPanelNav.afterRemoval(nav, memberKeys.size)
@@ -764,18 +771,25 @@ class FolderPanel(
             Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
             Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 if (memberKeys.isNotEmpty()) {
-                    nav = FolderPanelNav.step(
+                    val prev = nav
+                    val next = FolderPanelNav.step(
                         state = nav,
                         memberCount = memberKeys.size,
                         columns = activeColumns,
                         hasMirror = hasMirror,
                         action = action,
                     )
+                    nav = next
+                    if (next != prev) {
+                        val ev = OverlayAudioLogic.folderPanelNavEvent(next, activeColumns)
+                        playSfx(ev.cue, pan = ev.pan)
+                    }
                     paintSelection()
                 }
             }
             Action.CONFIRM -> {
                 if (nav.mirrorFocused && hasMirror) {
+                    playSfx(SoundCue.CONFIRM)
                     onMirrorToCollection?.invoke()
                 } else if (memberKeys.isNotEmpty()) {
                     val idx = GridWrapNav.clampIndex(nav.selectedCell, memberKeys.size)
@@ -783,10 +797,17 @@ class FolderPanel(
                 }
             }
             Action.TOGGLE_MODE -> removeSelected()
-            Action.BACK -> onClose()
+            Action.BACK -> {
+                playSfx(SoundCue.MODAL_CLOSE)
+                onClose()
+            }
             else -> {}
         }
         return true
+    }
+
+    private fun playSfx(cue: SoundCue, pan: Float = 0f) {
+        (context.applicationContext as? GhostGalleonApp)?.playSfx(cue, pan = pan)
     }
 
     private fun resolveTokens(context: Context): ThemeTokens {

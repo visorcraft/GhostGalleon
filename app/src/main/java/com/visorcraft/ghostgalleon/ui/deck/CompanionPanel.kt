@@ -54,6 +54,7 @@ import androidx.core.view.children
 import kotlin.math.abs
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.art.ArtTile
@@ -1385,6 +1386,7 @@ object CompanionPanel {
         fun commitDismissOnce() {
             if (dismissCommitted) return
             dismissCommitted = true
+            app.playSfx(SoundCue.MODAL_CLOSE)
             app.dismissResumeChip()
         }
         val touchSlopPx = (8 * view.resources.displayMetrics.density).coerceAtLeast(4f)
@@ -2385,6 +2387,9 @@ object CompanionPanel {
                 panelWidthDp = panelWidthDp,
                 dp = toDp,
             ) { role ->
+                if (role != preferredRole) {
+                    app.playSfx(SoundCue.FILTER_SELECT)
+                }
                 app.updateSettings(settings.copy(companionRole = role.name))
             },
             LinearLayout.LayoutParams(
@@ -2920,6 +2925,7 @@ object CompanionPanel {
                 )
                 addChip(context.getString(R.string.action_pin)) {
                     val rom = liveRom() ?: return@addChip
+                    app.playSfx(SoundCue.CONFIRM)
                     val live = app.settings
                     val filled = CollectionsOps.bulkFillSlots(
                         live.gridSlots, listOf(SlotKey.rom(rom.id)))
@@ -2932,6 +2938,7 @@ object CompanionPanel {
                 }
                 addChip(context.getString(R.string.action_art)) {
                     val rom = liveRom() ?: return@addChip
+                    app.playSfx(SoundCue.CONFIRM)
                     (activity as? com.visorcraft.ghostgalleon.ui.BaseDeckActivity)
                         ?.requestCustomIcon { uri ->
                             val live = app.settings
@@ -2947,16 +2954,19 @@ object CompanionPanel {
                     val openPlatform = Platforms.byId(rom.platformId)
                     val players = openPlatform?.players.orEmpty()
                     if (players.isEmpty()) {
+                        app.playSfx(SoundCue.ERROR_DENY)
                         Toast.makeText(
                             activity,
                             R.string.deck_no_players,
                             Toast.LENGTH_SHORT,
                         ).show()
                     } else {
+                        app.playSfx(SoundCue.MODAL_OPEN)
                         DeckDialogs.chooseItem(
                             context = activity,
                             titleRes = R.string.action_open_with,
                             items = players.map { it.displayName }.toTypedArray(),
+                            emitPickSound = false,
                         ) { which ->
                             val p = players[which]
                             val live = app.settings

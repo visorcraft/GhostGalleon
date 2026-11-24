@@ -19,6 +19,8 @@ import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.library.HiddenRoms
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
 import com.visorcraft.ghostgalleon.rom.LaunchReason
@@ -212,20 +214,42 @@ class QuickPanel(
 
     val view: View by lazy { build() }
 
+    private fun appOrNull(): GhostGalleonApp? =
+        activity.application as? GhostGalleonApp
+
+    private fun closeWithAudio() {
+        appOrNull()?.playSfx(SoundCue.MODAL_CLOSE)
+        onClose()
+    }
+
+    private fun activateCell(cell: Cell) {
+        OverlayAudioLogic.quickPanelActionCue(cell.role, cell.glyph)?.let {
+            appOrNull()?.playSfx(it)
+        }
+        cell.onClick()
+    }
+
     fun handleAction(action: Action): Boolean {
         ensureBuilt()
         if (cells.isEmpty()) {
-            if (action == Action.BACK || action == Action.OPEN_QUICK_PANEL) onClose()
+            if (action == Action.BACK || action == Action.OPEN_QUICK_PANEL) closeWithAudio()
             return true
         }
         when (action) {
             Action.NAV_LEFT, Action.NAV_RIGHT, Action.NAV_UP, Action.NAV_DOWN,
             Action.PAGE_PREV, Action.PAGE_NEXT -> {
-                selection = QuickPanelNav.move(selection, cells.size, columns, action)
+                val next = QuickPanelNav.move(selection, cells.size, columns, action)
+                if (next != selection) {
+                    appOrNull()?.playSfx(
+                        cue = SoundCue.NAV_TICK,
+                        pan = OverlayAudioLogic.quickPanelTilePan(next, columns),
+                    )
+                }
+                selection = next
                 paint()
             }
-            Action.CONFIRM -> cells.getOrNull(selection)?.onClick?.invoke()
-            Action.BACK, Action.OPEN_QUICK_PANEL -> onClose()
+            Action.CONFIRM -> cells.getOrNull(selection)?.let(::activateCell)
+            Action.BACK, Action.OPEN_QUICK_PANEL -> closeWithAudio()
             else -> {}
         }
         return true
@@ -333,11 +357,11 @@ class QuickPanel(
                 label = context.getString(R.string.action_close),
                 role = QuickPanelNav.TileRole.CLOSE,
                 glyph = QuickPanelNav.TileGlyph.ICON_CLOSE,
-            ) { onClose() },
+            ) { closeWithAudio() },
         )
         cells = core
 
-        val root = OverlayPrimitives.modalBackdrop(context, onClose)
+        val root = OverlayPrimitives.modalBackdrop(context) { closeWithAudio() }
         OverlayPrimitives.bindModalPaneTitle(root, context.getString(R.string.deck_quick_panel))
         val cardWidth = OverlayPrimitives.responsiveCardWidth(
             context = context,
@@ -410,7 +434,7 @@ class QuickPanel(
                     setOnClickListener {
                         selection = index
                         paint(animateFocus = false, scrollToFocused = false)
-                        cell.onClick()
+                        activateCell(cell)
                     }
                 }
                 val iconRes = QuickPanelNav.iconResFor(cell.glyph)
@@ -613,6 +637,7 @@ class QuickPanel(
         val keys = app.settings.lastLaunchedMs.keys.toList()
         val cont = LibraryBrowse.continueKey(keys, app.settings.lastLaunchedMs)
         if (cont == null) {
+            app.playSfx(SoundCue.ERROR_DENY)
             activity.toast(R.string.browse_nothing_to_continue)
             return
         }
@@ -635,6 +660,7 @@ class QuickPanel(
             java.util.concurrent.ThreadLocalRandom.current().nextInt(size)
         }
         if (key == null) {
+            app.playSfx(SoundCue.ERROR_DENY)
             activity.toast(R.string.browse_library_empty)
             return
         }
@@ -677,6 +703,12 @@ class QuickPanel(
         val current = ThemePack.resolve(app.settings).id
         val next = QuickPanelNav.nextBuiltinTheme(current)
         app.updateSettings(ThemePack.applyToSettings(app.settings, next))
+        if (SoundPackId.fromId(app.settings.soundPack) == SoundPackId.AUTO) {
+            app.soundEngine.syncWithSettings()
+            app.soundEngine.previewPack(SoundPackId.AUTO)
+        } else {
+            app.playSfx(SoundCue.CONFIRM)
+        }
         themeTokens = next
         accent = next.accentColor
         sheetContainer?.background = TileBackgrounds.card(activity)

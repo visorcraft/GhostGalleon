@@ -24,8 +24,10 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
+import com.visorcraft.ghostgalleon.ui.deck.OverlayAudioLogic
 import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.SlotMenuNav
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
@@ -307,6 +309,7 @@ object DeckDialogs {
         @StringRes positiveRes: Int = R.string.action_save,
         @StringRes negativeRes: Int = R.string.action_cancel,
         requireNonBlank: Boolean = false,
+        emitSubmitSound: Boolean = true,
         onSubmit: (String) -> Unit,
     ): AlertDialog = promptText(
         context = context,
@@ -317,6 +320,7 @@ object DeckDialogs {
         positiveRes = positiveRes,
         negativeRes = negativeRes,
         requireNonBlank = requireNonBlank,
+        emitSubmitSound = emitSubmitSound,
         onSubmit = onSubmit,
     )
 
@@ -330,6 +334,7 @@ object DeckDialogs {
         @StringRes positiveRes: Int = R.string.action_save,
         @StringRes negativeRes: Int = R.string.action_cancel,
         requireNonBlank: Boolean = false,
+        emitSubmitSound: Boolean = true,
         onSubmit: (String) -> Unit,
     ): AlertDialog {
         val (container, input) = createInput(
@@ -342,10 +347,12 @@ object DeckDialogs {
             .setTitle(title)
             .setView(container)
             .setPositiveButton(positiveRes, null)
-            .setNegativeButton(negativeRes, null)
+            .setNegativeButton(negativeRes) { _, _ -> playCue(context, SoundCue.BACK) }
+            .setOnCancelListener { playCue(context, SoundCue.BACK) }
         val dialog = show(b, context)
 
         fun nudgeInvalidInput() {
+            playCue(context, SoundCue.ERROR_DENY)
             if (!ValueAnimator.areAnimatorsEnabled() || !input.isAttachedToWindow) return
             val dx = context.dpF(6)
             input.animate().cancel()
@@ -378,6 +385,7 @@ object DeckDialogs {
                 nudgeInvalidInput()
                 return
             }
+            if (emitSubmitSound) playCue(context, SoundCue.CONFIRM)
             dialog.dismiss()
             onSubmit(raw)
         }
@@ -422,6 +430,7 @@ object DeckDialogs {
         @StringRes neutralRes: Int? = null,
         onNeutral: (() -> Unit)? = null,
         @StringRes negativeRes: Int? = R.string.action_cancel,
+        emitPickSound: Boolean = true,
         onPick: (Int) -> Unit,
     ): AlertDialog = chooseItem(
         context = context,
@@ -430,6 +439,7 @@ object DeckDialogs {
         neutralRes = neutralRes,
         onNeutral = onNeutral,
         negativeRes = negativeRes,
+        emitPickSound = emitPickSound,
         onPick = onPick,
     )
 
@@ -441,16 +451,24 @@ object DeckDialogs {
         @StringRes neutralRes: Int? = null,
         onNeutral: (() -> Unit)? = null,
         @StringRes negativeRes: Int? = R.string.action_cancel,
+        emitPickSound: Boolean = true,
         onPick: (Int) -> Unit,
     ): AlertDialog {
         val b = builder(context)
             .setTitle(title)
-            .setItems(items) { _, which -> onPick(which) }
+            .setItems(items) { _, which ->
+                if (emitPickSound) playCue(context, SoundCue.CONFIRM)
+                onPick(which)
+            }
+            .setOnCancelListener { playCue(context, SoundCue.BACK) }
         if (neutralRes != null && onNeutral != null) {
-            b.setNeutralButton(neutralRes) { _, _ -> onNeutral() }
+            b.setNeutralButton(neutralRes) { _, _ ->
+                playCue(context, SoundCue.CONFIRM)
+                onNeutral()
+            }
         }
         if (negativeRes != null) {
-            b.setNegativeButton(negativeRes, null)
+            b.setNegativeButton(negativeRes) { _, _ -> playCue(context, SoundCue.BACK) }
         }
         return show(b, context)
     }
@@ -468,9 +486,13 @@ object DeckDialogs {
         val b = builder(context)
             .setTitle(titleRes)
             .setMessage(message)
-            .setPositiveButton(positiveRes) { _, _ -> onConfirm() }
+            .setPositiveButton(positiveRes) { _, _ ->
+                playCue(context, OverlayAudioLogic.dialogConfirmCue(destructive))
+                onConfirm()
+            }
+            .setOnCancelListener { playCue(context, SoundCue.BACK) }
         if (negativeRes != null) {
-            b.setNegativeButton(negativeRes, null)
+            b.setNegativeButton(negativeRes) { _, _ -> playCue(context, SoundCue.BACK) }
         }
         return show(b, context, destructivePositive = destructive)
     }
@@ -508,11 +530,18 @@ object DeckDialogs {
         val b = builder(context)
             .setTitle(titleRes)
             .setView(view)
+            .setOnCancelListener { playCue(context, SoundCue.BACK) }
         if (positiveRes != null && onPositive != null) {
-            b.setPositiveButton(positiveRes) { _, _ -> onPositive() }
+            b.setPositiveButton(positiveRes) { _, _ ->
+                playCue(context, OverlayAudioLogic.dialogConfirmCue(destructivePositive))
+                onPositive()
+            }
         }
         if (negativeRes != null) {
-            b.setNegativeButton(negativeRes) { _, _ -> onNegative?.invoke() }
+            b.setNegativeButton(negativeRes) { _, _ ->
+                playCue(context, SoundCue.BACK)
+                onNegative?.invoke()
+            }
         }
         return show(b, context, destructivePositive = destructivePositive)
     }
@@ -554,6 +583,10 @@ object DeckDialogs {
             addState(intArrayOf(android.R.attr.state_selected), focused)
             addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
         }
+    }
+
+    private fun playCue(context: Context, cue: SoundCue) {
+        (context.applicationContext as? GhostGalleonApp)?.playSfx(cue)
     }
 
     private fun resolveTokens(context: Context): ThemeTokens {

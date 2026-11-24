@@ -20,6 +20,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.display.DisplayTopology
 import com.visorcraft.ghostgalleon.display.LayoutMetricsResolver
 import com.visorcraft.ghostgalleon.display.SurfaceMode
@@ -77,7 +78,9 @@ internal fun attachSystemChromeOverlay(
             R.drawable.ic_swap,
             swapLabel,
         ) {
-            if (app != null && !app.swapInteractiveDisplay()) {
+            val swapped = app?.swapInteractiveDisplay() == true
+            app?.playSfx(OverlayAudioLogic.swapCueFor(swapped = swapped))
+            if (app != null && !swapped) {
                 Toast.makeText(
                     context,
                     context.getString(R.string.deck_only_one_display),
@@ -106,6 +109,7 @@ internal fun attachSystemChromeOverlay(
         R.drawable.ic_settings,
         settingsLabel,
     ) {
+        app?.playSfx(SoundCue.MODAL_OPEN)
         launchOnOtherDisplay(
             activity,
             state,

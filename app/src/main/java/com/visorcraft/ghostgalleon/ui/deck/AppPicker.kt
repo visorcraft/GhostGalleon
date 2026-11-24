@@ -33,6 +33,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.library.AppEntry
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.Platforms
@@ -146,6 +147,8 @@ class AppPicker(
     private val heightFraction: Float = 0.62f,
     // Prebuilt empty-query list (all-apps drawer cache). Null → build now.
     private val prebuiltItems: List<PickerItem>? = null,
+    // Set false when onPick launches directly (Deck.launchSlotKey emits LAUNCH_*).
+    private val emitPickConfirmSound: Boolean = true,
     private val onPick: (String) -> Unit,
     private val onHide: (String) -> Unit,
     private val onClose: () -> Unit,
@@ -186,6 +189,7 @@ class AppPicker(
     }
 
     private fun clearSearch() {
+        app.playSfx(SoundCue.FILTER_SELECT)
         searchInput?.setText("")
         cancelPendingSearch()
         applySearch("")
@@ -235,6 +239,7 @@ class AppPicker(
         val matchBadgeColor = AppPickerMatch.badgeHighlightColor(accentColor, tokens)
 
         val overlay = OverlayPrimitives.modalBackdrop(context) {
+            app.playSfx(SoundCue.MODAL_CLOSE)
             cancelPendingSearch()
             onClose()
         }.apply {
@@ -573,6 +578,7 @@ class AppPicker(
             list.isFocusableInTouchMode = true
             list.post { list.requestFocus() }
         }
+        app.playSfx(SoundCue.MODAL_OPEN)
         overlay
     }
 
@@ -585,6 +591,7 @@ class AppPicker(
             Action.PAGE_NEXT -> moveHighlight(5)
             Action.CONFIRM -> confirmHighlighted()
             Action.BACK -> {
+                app.playSfx(SoundCue.MODAL_CLOSE)
                 cancelPendingSearch()
                 onClose()
             }
@@ -596,10 +603,12 @@ class AppPicker(
     private fun confirmHighlighted() {
         when (val item = items.getOrNull(highlight)) {
             is PickerItem.App -> {
+                if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
                 cancelPendingSearch()
                 onPick(item.entry.packageName)
             }
             is PickerItem.Rom -> {
+                if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
                 cancelPendingSearch()
                 onPick(SlotKey.rom(item.entry.id))
             }
@@ -619,6 +628,8 @@ class AppPicker(
     // in both directions, and only the previous + next positions are notified.
     private fun moveHighlight(delta: Int) {
         val move = AppPickerHighlight.move(items, highlight, delta)
+        val ev = OverlayAudioLogic.appPickerMoveEvent(move.changedPositions.size)
+        app.playSfx(ev.cue, pan = ev.pan)
         if (move.changedPositions.isEmpty()) return
         highlight = move.current
         move.changedPositions.forEach { pos ->
@@ -962,6 +973,7 @@ class AppPicker(
                     bindRowText(holder, item)
                     row.setOnClickListener {
                         performPickHaptic(row)
+                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
                         cancelPendingSearch()
                         onPick(item.entry.packageName)
                     }
@@ -991,6 +1003,7 @@ class AppPicker(
                     bindRowText(holder, item)
                     row.setOnClickListener {
                         performPickHaptic(row)
+                        if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
                         cancelPendingSearch()
                         onPick(SlotKey.rom(item.entry.id))
                     }

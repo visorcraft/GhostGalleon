@@ -42,6 +42,7 @@ import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
 import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.audio.SoundPackId
+import com.visorcraft.ghostgalleon.ui.deck.OverlayAudioLogic
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import com.visorcraft.ghostgalleon.library.RetroAchievements
@@ -2225,8 +2226,23 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectPage(page: SettingsPage) {
+    private fun selectPage(
+        page: SettingsPage,
+        userInitiated: Boolean = false,
+        explicitDirection: Int? = null,
+    ) {
+        val prevPage = currentPage
         currentPage = page
+        if (userInitiated) {
+            val pages = SettingsPage.entries
+            OverlayAudioLogic.settingsPageSwitchEvent(
+                fromIndex = pages.indexOf(prevPage),
+                toIndex = pages.indexOf(page),
+                explicitDirection = explicitDirection,
+            )?.let { ev ->
+                app.playSfx(ev.cue, pan = ev.pan)
+            }
+        }
         val host = pageHost ?: return
         host.removeAllViews()
         val body = pageBodies[page] ?: return
@@ -2311,7 +2327,7 @@ class SettingsActivity : AppCompatActivity() {
                 setPaddingRelative(dp(8), dp(10), dp(12), dp(10))
                 isFocusable = true
                 contentDescription = getString(page.titleRes)
-                setOnClickListener { selectPage(page) }
+                setOnClickListener { selectPage(page, userInitiated = true) }
                 addView(indicator, LinearLayout.LayoutParams(dp(3), dp(22)))
                 addView(
                     icon,
@@ -2401,15 +2417,18 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showSettingsSearch() {
+        app.playSfx(SoundCue.MODAL_OPEN)
         val jumps = settingsSearchIndex()
         DeckDialogs.promptText(
             context = this,
             titleRes = R.string.settings_search_hint,
             hintRes = R.string.settings_search_hint,
             positiveRes = R.string.action_search,
+            emitSubmitSound = false,
         ) { query ->
             val hits = SettingsCatalog.matches(query, jumps)
             if (hits.isEmpty()) {
+                app.playSfx(SoundCue.ERROR_DENY)
                 Toast.makeText(this, R.string.browse_no_matches_short, Toast.LENGTH_SHORT)
                     .show()
                 return@promptText
@@ -2418,10 +2437,12 @@ class SettingsActivity : AppCompatActivity() {
                 jumpToSettingsPage(hits[0].pageId)
                 return@promptText
             }
+            app.playSfx(SoundCue.MODAL_OPEN)
             DeckDialogs.chooseItem(
                 context = this,
                 titleRes = R.string.settings_search_hint,
                 items = hits.map { it.label }.toTypedArray(),
+                emitPickSound = false,
             ) { which ->
                 jumpToSettingsPage(hits[which].pageId)
             }
@@ -2429,7 +2450,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun jumpToSettingsPage(pageId: String) {
-        SettingsPage.entries.firstOrNull { it.name == pageId }?.let { selectPage(it) }
+        SettingsPage.entries.firstOrNull { it.name == pageId }
+            ?.let { selectPage(it, userInitiated = true) }
     }
 
     private fun settingsSearchIndex(): List<SettingsJump> = listOf(
@@ -2454,13 +2476,15 @@ class SettingsActivity : AppCompatActivity() {
     )
 
     private fun showPagePicker() {
+        app.playSfx(SoundCue.MODAL_OPEN)
         val labels = SettingsPage.entries.map { getString(it.titleRes) }.toTypedArray()
         DeckDialogs.chooseItem(
             context = this,
             titleRes = R.string.settings_page_picker,
             items = labels,
+            emitPickSound = false,
         ) { which ->
-            selectPage(SettingsPage.entries[which])
+            selectPage(SettingsPage.entries[which], userInitiated = true)
         }
     }
 
@@ -5104,7 +5128,7 @@ class SettingsActivity : AppCompatActivity() {
         val nextPage = pages[nextIndex]
         if (nextPage == currentPage) return
         val wasInNav = navItems.values.any { it.container.hasFocus() }
-        selectPage(nextPage)
+        selectPage(nextPage, userInitiated = true, explicitDirection = delta)
         if (wasInNav) {
             navItems[nextPage]?.container?.requestFocus()
         } else {
