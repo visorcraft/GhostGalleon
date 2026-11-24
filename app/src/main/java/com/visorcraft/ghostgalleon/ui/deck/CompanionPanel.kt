@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -31,6 +32,7 @@ import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
@@ -86,6 +88,7 @@ import com.visorcraft.ghostgalleon.rom.SelectionStrip
 import com.visorcraft.ghostgalleon.rom.SessionSurface
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
+import com.visorcraft.ghostgalleon.settings.RomNames
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.SlotKey
@@ -99,9 +102,12 @@ import com.visorcraft.ghostgalleon.ui.HostSurface
 import com.visorcraft.ghostgalleon.ui.HostSurfacePolicy
 import com.visorcraft.ghostgalleon.ui.MainActivity
 import com.visorcraft.ghostgalleon.ui.PlayHostPolicy
+import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.openSessionSwitcher
 import com.visorcraft.ghostgalleon.ui.companionRoleName
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 import java.io.File
 
@@ -120,6 +126,8 @@ object CompanionPanel {
     private const val TAG_HERO_VIDEO_HOST = "hero_video_host"
     private const val TAG_HERO_BANNER = "hero_banner"
     private const val TAG_HERO_LOGO = "hero_logo"
+    private const val TAG_HERO_QUICK_BAR = "hero_quick_bar"
+    private const val TAG_HERO_QUICK_FAV = "hero_quick_fav"
     private const val TAG_RESUME_CHIP = "resume_chip"
     /** Visible so PRIMARY TOP_STRIP paths can detect a hero panel in the tree. */
     const val TAG_PANEL_ROOT = "panel_root"
@@ -131,6 +139,9 @@ object CompanionPanel {
     private const val TAG_ROLE_CHIPS = "role_chips"
     private const val TAG_STRIP_ART_HOST = "strip_art_host"
     private const val TAG_STRIP_DETAIL = "strip_detail"
+    private const val TAG_STRIP_FAV = "strip_fav"
+    /** High-contrast warm gold for favorite star indicator on OLED dark surfaces. */
+    private const val FAVORITE_STAR_COLOR = 0xFFFFD54F.toInt()
     private const val TAG_PERF_HUD_ROOT = "perf_hud_root"
     private const val TAG_PERF_VALUE_PREFIX = "perf_value_"
     private const val TAG_PLAY_HUD = "play_hud"
@@ -664,6 +675,45 @@ object CompanionPanel {
         generation: Int,
     ): Boolean = boundId == romId && boundGeneration == generation
 
+    /** Pure host-tested label resource for the companion quick-action favorite chip. */
+    internal fun favoriteChipLabelRes(selectedKey: String?, favorites: Set<String>): Int =
+        if (selectedKey != null && selectedKey in favorites) {
+            R.string.action_unfavorite
+        } else {
+            R.string.action_favorite
+        }
+
+    /** True when the live [selectedKey] is currently in [favorites]. */
+    internal fun isSelectedFavorite(selectedKey: String?, favorites: Set<String>): Boolean =
+        selectedKey != null && selectedKey in favorites
+
+    private fun styleFavoriteQuickChip(
+        chip: TextView,
+        isFavorite: Boolean,
+        accentColor: Int,
+    ) {
+        val context = chip.context
+        val label = context.getString(
+            if (isFavorite) R.string.action_unfavorite else R.string.action_favorite,
+        )
+        if (chip.text?.toString() != label) {
+            chip.text = label
+            chip.contentDescription = label
+        }
+        val surface = TileBackgrounds.chipIdleColor(context)
+        val textAccent = ThemePack.accentTextColor(accentColor, surface)
+        chip.setTextColor(if (isFavorite) textAccent else Color.WHITE)
+        val bg = (chip.background as? GradientDrawable)?.mutate() as? GradientDrawable
+            ?: TileBackgrounds.chipIdle(context, cornerRadiusDp = 17).also { chip.background = it }
+        bg.setColor(surface)
+        bg.cornerRadius = context.dpF(17)
+        if (isFavorite) {
+            bg.setStroke(context.strokePx(1), (textAccent and 0x00FFFFFF) or (0x88 shl 24))
+        } else {
+            bg.setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+        }
+    }
+
     // Layered depth background: a vertical gradient lifting to #FF202028 in
     // the center band, plus a huge soft radial glow behind the hero icon
     // tinted with the glow color at ~18% alpha.
@@ -926,6 +976,17 @@ object CompanionPanel {
                     panelBackground(context, PlatformLook.accentColor(rom.platformId))
                 appCtx.requestRaProgress(rom.id, rom.name)
             }
+            val romKey = SlotKey.rom(rom.id)
+            view.findViewWithTag<TextView>(TAG_HERO_QUICK_FAV)?.let { favChip ->
+                styleFavoriteQuickChip(
+                    chip = favChip,
+                    isFavorite = isSelectedFavorite(romKey, settings.favorites),
+                    accentColor = settings.accentColor,
+                )
+            }
+            view.findViewWithTag<View>(TAG_HERO_QUICK_BAR)?.let { bar ->
+                if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
+            }
             return true
         }
         val entry = state.selectedKey?.let { library.byPackage(settings)[it] }
@@ -942,7 +1003,9 @@ object CompanionPanel {
         // mismatch -> full rebuild.
         val icon = heroIcon as? ImageView ?: return false
         if (name == null) return false
-        val targetPx = (240 * context.resources.displayMetrics.density).toInt()
+        val dens = context.resources.displayMetrics.density
+        val hDp = context.resources.displayMetrics.heightPixels / dens
+        val targetPx = (CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens).toInt()
         val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
         if (name.getTag(R.id.hero_bound_id) != entry.packageName) {
             CustomIcon.bind(
@@ -979,7 +1042,8 @@ object CompanionPanel {
         settings: Settings,
         app: GhostGalleonApp? = null,
     ): String = when {
-        SlotKey.isRom(key) -> selectedRom(key, roms, app)?.name ?: key
+        SlotKey.isRom(key) ->
+            selectedRom(key, roms, app)?.let { RomNames.display(it, settings.romNames) } ?: key
         else -> library.byPackage(settings)[key]?.label ?: key
     }
 
@@ -1399,7 +1463,28 @@ object CompanionPanel {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        texts.addView(TextView(context).apply {
+        val titleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
+        }
+        titleRow.addView(TextView(context).apply {
+            tag = TAG_STRIP_FAV
+            setText(R.string.glyph_favorite)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(FAVORITE_STAR_COLOR)
+            includeFontPadding = false
+            visibility = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+            contentDescription = context.getString(R.string.action_favorite)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginEnd = dp(6) })
+        titleRow.addView(TextView(context).apply {
             tag = TAG_HERO_NAME
             val stripRom = if (model.isRom) selectedRom(state.selectedKey, roms, app) else null
             setTag(R.id.hero_bound_id, stripRom?.id ?: state.selectedKey)
@@ -1412,8 +1497,13 @@ object CompanionPanel {
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTypeface(typeface, Typeface.BOLD)
         }, LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f,
+        ))
+        texts.addView(titleRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
@@ -1445,7 +1535,12 @@ object CompanionPanel {
             text = model.raLine?.let(context::resolveText).orEmpty()
             visibility = if (model.raLine != null) View.VISIBLE else View.GONE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xBB shl 24))
+            setTextColor(
+                ThemePack.accentTextColor(
+                    settings.accentColor,
+                    TileBackgrounds.surfaceColor(context),
+                ),
+            )
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(
@@ -1456,10 +1551,36 @@ object CompanionPanel {
         row.addView(texts, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f,
         ))
+        // Host compact StatusPill in the top-right of TOP_STRIP on single-screen
+        // devices so it never overlaps the deck chrome below.
+        if (settings.browseChrome.deckStatusPill) {
+            row.addView(
+                StatusPill.build(context, compact = true),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = Gravity.TOP
+                    marginStart = dp(10)
+                },
+            )
+        }
         root.addView(row, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
+        // Subtle 1dp bottom hairline separating TOP_STRIP from the deck below.
+        root.addView(
+            View(context).apply {
+                setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(1),
+                Gravity.BOTTOM,
+            ),
+        )
 
         // Kick live RA for ROM selection (same as full hero).
         if (model.isRom) {
@@ -1484,8 +1605,10 @@ object CompanionPanel {
                 settings.romProfiles,
                 settings.defaultPlayers[rom.platformId],
             )
+            val displayName = RomNames.display(rom, settings.romNames)
+            val displayRom = if (displayName == rom.name) rom else rom.copy(name = displayName)
             return SelectionStrip.forRom(
-                rom = rom,
+                rom = displayRom,
                 preferredPlayerId = preferred,
                 installed = pmInstalled,
                 playMeta = romMetaLine(settings, SlotKey.rom(rom.id)),
@@ -1515,10 +1638,17 @@ object CompanionPanel {
                 tag = TAG_HERO_ICON
             }
             host.addView(tile, FrameLayout.LayoutParams(artSize, artSize))
-            // Prefer grid art when available; platform tile stays as placeholder.
+            // Prefer grid art when available; 12dp rounded outline matches PlatformTile.
+            val radiusPx = context.dpF(12)
             val image = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 visibility = View.GONE
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+                    }
+                }
             }
             host.addView(image, FrameLayout.LayoutParams(artSize, artSize))
             val romId = rom.id
@@ -1580,6 +1710,14 @@ object CompanionPanel {
         detail.visibility = if (model.detail != null) View.VISIBLE else View.GONE
         ra.text = model.raLine?.let(context::resolveText).orEmpty()
         ra.visibility = if (model.raLine != null) View.VISIBLE else View.GONE
+        view.findViewWithTag<View>(TAG_STRIP_FAV)?.let { fav ->
+            val nextVis = if (isSelectedFavorite(state.selectedKey, settings.favorites)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+            if (fav.visibility != nextVis) fav.visibility = nextVis
+        }
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
             context,
             model.platformId?.let { PlatformLook.accentColor(it) } ?: settings.accentColor,
@@ -1619,6 +1757,7 @@ object CompanionPanel {
         // so the title is never clipped by actions/hints (see CompanionHeroMetrics).
         val dm = context.resources.displayMetrics
         val panelHeightDp = dm.heightPixels / density
+        val panelWidthDp = dm.widthPixels / density
         val heroSpec = CompanionHeroMetrics.forPanel(panelHeightDp)
         val artPx = dp(heroSpec.artSizeDp)
 
@@ -1664,12 +1803,26 @@ object CompanionPanel {
             ),
         )
         val toDp: (Int) -> Int = { v -> dp(v) }
-        content.addView(roleChipRow(context, settings, preferredRole, toDp) { role ->
-            app.updateSettings(settings.copy(companionRole = role.name))
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(8) })
+        val showsStatusPillOverlay = settings.browseChrome.deckStatusPill &&
+            effectiveRole != CompanionRole.PERF_HUD &&
+            !(effectiveRole == CompanionRole.PINNED_APP &&
+                !CompanionRoleResolve.pinConflictsWithSession(pinPkg, app.sessionSurface))
+        content.addView(
+            roleChipRow(
+                context = context,
+                settings = settings,
+                current = preferredRole,
+                hasStatusPill = showsStatusPillOverlay,
+                panelWidthDp = panelWidthDp,
+                dp = toDp,
+            ) { role ->
+                app.updateSettings(settings.copy(companionRole = role.name))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) },
+        )
 
         val surface = app.sessionSurface
         val hostId = activity.currentDisplayId()
@@ -1834,8 +1987,7 @@ object CompanionPanel {
             )
             val cont = candidates.firstOrNull() ?: return@run
             val contName = resumeLabel(cont, library, roms, settings, app)
-            // Filled accent pill + white text (dark card + black text was
-            // unreadable on the secondary OLED).
+            // Filled accent pill + WCAG-safe contrast text (legible on OLED #E0E0E0).
             hero.addView(TextView(context).apply {
                 tag = TAG_RESUME_CHIP
                 text = context.getString(R.string.format_resume, contName)
@@ -1843,8 +1995,9 @@ object CompanionPanel {
                     R.string.format_resume_accessibility,
                     contName,
                 )
-                setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(14).toFloat())
-                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
                 background = TileBackgrounds.accentPill(context, settings.accentColor)
                 setPadding(dp(18), dp(10), dp(18), dp(10))
                 gravity = Gravity.CENTER
@@ -1914,8 +2067,9 @@ object CompanionPanel {
                 tag = TAG_HERO_NAME
                 setTag(R.id.hero_bound_id, selectedRom.id)
                 setTag(R.id.hero_art_gen, cache.artGeneration(selectedRom.id))
-                text = selectedRom.name
+                text = RomNames.display(selectedRom, settings.romNames)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
+                setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
                 maxLines = heroSpec.nameMaxLines
@@ -1997,7 +2151,11 @@ object CompanionPanel {
                 visibility = if (raLine != null) View.VISIBLE else View.GONE
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTextColor(
-                    (settings.accentColor and 0x00FFFFFF) or (0xBB shl 24))
+                    ThemePack.accentTextColor(
+                        settings.accentColor,
+                        TileBackgrounds.surfaceColor(context),
+                    ),
+                )
                 gravity = Gravity.CENTER
                 maxLines = 1
                 setPadding(0, dp(2), 0, 0)
@@ -2046,105 +2204,144 @@ object CompanionPanel {
                 })
                 bindHeroVideo(videoHost, selectedRom)
             }
-            // Hero quick actions — same dark rounded idle chips as Hero/Now/
-            // Perf/Pin (not solid accent bricks). Fixed height + baseline off
-            // so glyphs paint on the Sugar secondary panel.
+            // Hero quick actions — scrollable centered pill strip so localized
+            // labels never clip on the ~540dp Sugar panel. Every click resolves
+            // live state.selectedKey / app.settings so in-place updateSelection
+            // never leaves stale build-time closures behind.
             if (heroSpec.showQuickChips) {
                 val chipH = dp(34)
                 val quick = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER
                     isBaselineAligned = false
-                    setPadding(0, dp(8), 0, dp(2))
+                    setPadding(dp(4), dp(8), dp(4), dp(2))
                 }
-                fun quickChip(label: String, onClick: () -> Unit): TextView =
-                    TextView(context).apply {
-                        text = label
-                        contentDescription = label
-                        setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(12).toFloat())
-                        setTextColor(Color.WHITE)
-                        background = TileBackgrounds.chip(context)
-                        gravity = Gravity.CENTER
-                        setPadding(dp(12), 0, dp(12), 0)
-                        includeFontPadding = true
-                        setSingleLine()
-                        isClickable = true
-                        isFocusable = true
-                        setOnClickListener { onClick() }
-                    }
-                fun addChip(label: String, onClick: () -> Unit) {
+                fun liveRom(): RomEntry? = selectedRom(state.selectedKey, app.romEntries, app)
+                fun quickChip(
+                    label: String,
+                    chipTag: Any? = null,
+                    onClick: () -> Unit,
+                ): TextView = TextView(context).apply {
+                    tag = chipTag
+                    text = label
+                    contentDescription = label
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(Color.WHITE)
+                    background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 17)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), 0, dp(12), 0)
+                    includeFontPadding = true
+                    setSingleLine()
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { onClick() }
+                }
+                fun addChip(
+                    label: String,
+                    chipTag: Any? = null,
+                    onClick: () -> Unit,
+                ): TextView {
                     if (quick.childCount > 0) {
                         quick.addView(
                             View(context),
                             LinearLayout.LayoutParams(dp(6), chipH),
                         )
                     }
+                    val tv = quickChip(label, chipTag, onClick)
                     quick.addView(
-                        quickChip(label, onClick),
+                        tv,
                         LinearLayout.LayoutParams(
                             ViewGroup.LayoutParams.WRAP_CONTENT,
                             chipH,
                         ),
                     )
+                    return tv
                 }
-                val romKey = SlotKey.rom(selectedRom.id)
-                addChip(
-                    context.getString(
-                        if (romKey in settings.favorites) R.string.action_unfavorite
-                        else R.string.action_favorite,
-                    ),
+                val initialKey = SlotKey.rom(selectedRom.id)
+                val favChip = addChip(
+                    label = context.getString(favoriteChipLabelRes(initialKey, settings.favorites)),
+                    chipTag = TAG_HERO_QUICK_FAV,
                 ) {
-                    EntryActions.toggleFavorite(activity, romKey)
+                    val rom = liveRom() ?: return@addChip
+                    EntryActions.toggleFavorite(activity, SlotKey.rom(rom.id))
                 }
+                styleFavoriteQuickChip(
+                    chip = favChip,
+                    isFavorite = isSelectedFavorite(initialKey, settings.favorites),
+                    accentColor = settings.accentColor,
+                )
                 addChip(context.getString(R.string.action_pin)) {
+                    val rom = liveRom() ?: return@addChip
+                    val live = app.settings
                     val filled = CollectionsOps.bulkFillSlots(
-                        settings.gridSlots, listOf(romKey))
-                    app.updateSettings(settings.copy(gridSlots = filled))
-                    android.widget.Toast.makeText(
+                        live.gridSlots, listOf(SlotKey.rom(rom.id)))
+                    app.updateSettings(live.copy(gridSlots = filled))
+                    Toast.makeText(
                         activity,
                         R.string.deck_pinned_to_grid,
-                        android.widget.Toast.LENGTH_SHORT,
+                        Toast.LENGTH_SHORT,
                     ).show()
                 }
                 addChip(context.getString(R.string.action_art)) {
+                    val rom = liveRom() ?: return@addChip
                     (activity as? com.visorcraft.ghostgalleon.ui.BaseDeckActivity)
                         ?.requestCustomIcon { uri ->
-                            app.artCache.invalidate(selectedRom.id)
-                            app.updateSettings(settings.copy(
-                                artOverrides = settings.artOverrides +
-                                    (selectedRom.id to uri.toString())))
+                            val live = app.settings
+                            app.artCache.invalidate(rom.id)
+                            app.updateSettings(live.copy(
+                                artOverrides = live.artOverrides +
+                                    (rom.id to uri.toString())))
                         }
                 }
                 addChip(context.getString(R.string.action_open_with)) {
-                    val openPlatform = Platforms.byId(selectedRom.platformId)
+                    val rom = liveRom() ?: return@addChip
+                    val romKey = SlotKey.rom(rom.id)
+                    val openPlatform = Platforms.byId(rom.platformId)
                     val players = openPlatform?.players.orEmpty()
                     if (players.isEmpty()) {
-                        android.widget.Toast.makeText(
+                        Toast.makeText(
                             activity,
                             R.string.deck_no_players,
-                            android.widget.Toast.LENGTH_SHORT,
+                            Toast.LENGTH_SHORT,
                         ).show()
                     } else {
-                        android.app.AlertDialog.Builder(activity)
+                        AlertDialog.Builder(activity)
                             .setTitle(R.string.action_open_with)
                             .setItems(players.map { it.displayName }.toTypedArray()) { _, which ->
                                 val p = players[which]
+                                val live = app.settings
                                 app.updateSettings(
-                                    settings.copy(
-                                        defaultPlayers = settings.defaultPlayers +
-                                            (selectedRom.platformId to p.id),
+                                    live.copy(
+                                        defaultPlayers = live.defaultPlayers +
+                                            (rom.platformId to p.id),
                                     ),
                                     notify = false,
                                 )
                                 launchSlotKey(
-                                    activity, state, roms, romKey, playerId = p.id)
+                                    activity, state, app.romEntries, romKey, playerId = p.id)
                             }
                             .setNegativeButton(R.string.action_cancel, null)
                             .show()
                     }
                 }
+                val quickScroll = HorizontalScrollView(context).apply {
+                    tag = TAG_HERO_QUICK_BAR
+                    isFillViewport = true
+                    isHorizontalScrollBarEnabled = false
+                    isHorizontalFadingEdgeEnabled = true
+                    setFadingEdgeLength(dp(16))
+                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    addView(
+                        quick,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            Gravity.CENTER_HORIZONTAL,
+                        ),
+                    )
+                }
                 hero.addView(
-                    quick,
+                    quickScroll,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2164,6 +2361,7 @@ object CompanionPanel {
                 setTag(R.id.hero_bound_id, selectedEntry.packageName)
                 text = selectedEntry.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, heroSpec.nameSp)
+                setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
                 maxLines = heroSpec.nameMaxLines
@@ -2299,39 +2497,80 @@ object CompanionPanel {
         context: Context,
         settings: Settings,
         current: CompanionRole,
+        hasStatusPill: Boolean,
+        panelWidthDp: Float,
         dp: (Int) -> Int,
         onPick: (CompanionRole) -> Unit,
     ): View {
+        val endClearanceDp = CompanionHeroMetrics.roleBarEndClearanceDp(
+            hasStatusPill = hasStatusPill,
+            panelWidthDp = panelWidthDp,
+        )
         val row = LinearLayout(context).apply {
+            tag = TAG_ROLE_CHIPS
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            gravity = if (endClearanceDp > 0) {
+                Gravity.START or Gravity.CENTER_VERTICAL
+            } else {
+                Gravity.CENTER
+            }
+            isBaselineAligned = false
         }
-        row.isBaselineAligned = false
-        fun chip(role: CompanionRole, labelRes: Int) {
-            row.addView(TextView(context).apply {
+        val roles = listOf(
+            CompanionRole.HERO to R.string.role_hero,
+            CompanionRole.NOW_PLAYING to R.string.label_now,
+            CompanionRole.PERF_HUD to R.string.label_perf,
+            CompanionRole.PINNED_APP to R.string.label_pin,
+        )
+        roles.forEachIndexed { index, (role, labelRes) ->
+            val selected = current == role
+            val tv = TextView(context).apply {
                 setText(labelRes)
-                setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(12).toFloat())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTypeface(typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(
-                    if (current == role) ThemePack.onFillTextColor(settings.accentColor)
-                    else Color.WHITE,
+                    if (selected) ThemePack.onFillTextColor(settings.accentColor)
+                    else UiDimens.ALPHA_PRIMARY,
                 )
-                setBackgroundColor(
-                    if (current == role) settings.accentColor
-                    else TileBackgrounds.chipIdleColor(context))
+                TileBackgrounds.applyChipState(
+                    view = this,
+                    selected = selected,
+                    accent = settings.accentColor,
+                    cornerRadiusDp = 16,
+                )
                 gravity = Gravity.CENTER
-                setPadding(dp(10), 0, dp(10), 0)
+                setPadding(dp(12), 0, dp(12), 0)
                 setSingleLine()
+                isClickable = true
+                isFocusable = true
                 setOnClickListener { onPick(role) }
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(32),
-            ).apply { marginEnd = dp(6) })
+            }
+            row.addView(
+                tv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    dp(32),
+                ).apply {
+                    if (index < roles.lastIndex) marginEnd = dp(6)
+                },
+            )
         }
-        chip(CompanionRole.HERO, R.string.role_hero)
-        chip(CompanionRole.NOW_PLAYING, R.string.label_now)
-        chip(CompanionRole.PERF_HUD, R.string.label_perf)
-        chip(CompanionRole.PINNED_APP, R.string.label_pin)
-        return row
+        return HorizontalScrollView(context).apply {
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            if (endClearanceDp > 0) setPadding(0, 0, dp(endClearanceDp), 0)
+            addView(
+                row,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    if (endClearanceDp > 0) Gravity.START else Gravity.CENTER_HORIZONTAL,
+                ),
+            )
+        }
     }
 
     private fun buildPerfHud(
@@ -2339,51 +2578,108 @@ object CompanionPanel {
         settings: Settings,
         dp: (Int) -> Int,
     ): View {
+        val surface = TileBackgrounds.surfaceColor(context)
         val col = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(8), dp(16), dp(8), dp(16))
+            setPadding(dp(4), dp(8), dp(4), dp(12))
             tag = TAG_PERF_HUD_ROOT
         }
         col.addView(TextView(context).apply {
             setText(R.string.label_perf_hud)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
         col.addView(TextView(context).apply {
             setText(R.string.deck_perf_live_hint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            setTextColor(0x66FFFFFF.toInt())
+            setTextColor(UiDimens.ALPHA_MUTED)
             gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
+            setPadding(0, dp(4), 0, dp(10))
         })
+        val grid = GridLayout(context).apply {
+            columnCount = 2
+            useDefaultMargins = false
+        }
+        val scroll = ScrollView(context).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(
+                grid,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        col.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ),
+        )
         fun ensureRows() {
-            // Build static label/value shells once; ticks only mutate values.
-            if (col.childCount > 2) return
+            // Build static 2-column metric cards once; ticks only mutate value TextViews.
+            if (grid.childCount > 0) return
             val readings = SystemInfoCollector.collect(context)
-            SystemInfoFormat.rows(readings).forEachIndexed { index, (label, value) ->
-                col.addView(TextView(context).apply {
+            val rows = SystemInfoFormat.rows(readings)
+            rows.forEachIndexed { index, (label, value) ->
+                val card = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = TileBackgrounds.card(context)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }
+                card.addView(TextView(context).apply {
                     text = context.resolveText(label)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(0x88FFFFFF.toInt())
-                    setPadding(0, dp(10), 0, 0)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    includeFontPadding = false
                 })
-                col.addView(TextView(context).apply {
+                card.addView(TextView(context).apply {
                     tag = TAG_PERF_VALUE_PREFIX + index
                     text = context.resolveText(value)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                    setTextColor(Color.WHITE)
-                })
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    fontFeatureSettings = "tnum"
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(4) })
+                val span = CompanionHeroMetrics.perfCardColumnSpan(index, rows.size)
+                grid.addView(
+                    card,
+                    GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        columnSpec = if (span == 2) {
+                            GridLayout.spec(0, 2, 1f)
+                        } else {
+                            GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        }
+                        setMargins(dp(4), dp(4), dp(4), dp(4))
+                    },
+                )
             }
         }
         fun paintValues() {
             ensureRows()
             val readings = SystemInfoCollector.collect(context)
             SystemInfoFormat.rows(readings).forEachIndexed { index, (_, value) ->
-                col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
-                    ?.text = context.resolveText(value)
+                val tv = col.findViewWithTag<TextView>(TAG_PERF_VALUE_PREFIX + index)
+                    ?: return@forEachIndexed
+                val next = context.resolveText(value)
+                if (tv.text?.toString() != next) tv.text = next
             }
         }
         paintValues()
@@ -2419,6 +2715,7 @@ object CompanionPanel {
         installed: Boolean,
         dp: (Int) -> Int,
     ): View {
+        val surface = TileBackgrounds.surfaceColor(activity)
         val col = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -2426,8 +2723,9 @@ object CompanionPanel {
         }
         col.addView(TextView(activity).apply {
             setText(R.string.label_pinned_app)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
@@ -2599,6 +2897,7 @@ object CompanionPanel {
         compact: Boolean,
     ): View {
         val app = activity.application as GhostGalleonApp
+        val surface = TileBackgrounds.surfaceColor(activity)
         val nowPlaying = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -2608,19 +2907,23 @@ object CompanionPanel {
         nowPlaying.addView(TextView(activity).apply {
             setText(R.string.label_now_playing)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
         val label = when {
             SlotKey.isRom(session.key) ->
-                selectedRom(session.key, roms, app)?.name ?: session.key
+                selectedRom(session.key, roms, app)
+                    ?.let { RomNames.display(it, settings.romNames) }
+                    ?: session.key
             else -> library.byPackage(settings)[session.key]?.label
                 ?: session.key
         }
         nowPlaying.addView(TextView(activity).apply {
             text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 22f else 28f)
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             maxLines = if (compact) 1 else 2
@@ -2644,20 +2947,28 @@ object CompanionPanel {
         actions.addView(TextView(activity).apply {
             setText(R.string.action_swap)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.onFillTextColor(settings.accentColor))
             background = TileBackgrounds.accentPill(activity, settings.accentColor)
+            gravity = Gravity.CENTER
             setPadding(dp(16), dp(8), dp(16), dp(8))
+            isClickable = true
+            isFocusable = true
             setOnClickListener {
                 (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
                     ?.swapInteractiveDisplay()
             }
         })
-        actions.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+        actions.addView(View(activity), LinearLayout.LayoutParams(dp(10), 1))
         actions.addView(TextView(activity).apply {
             setText(R.string.action_end_session)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(Color.WHITE)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            background = TileBackgrounds.chipIdle(activity, cornerRadiusDp = 20)
+            gravity = Gravity.CENTER
             setPadding(dp(16), dp(8), dp(16), dp(8))
+            isClickable = true
+            isFocusable = true
             setOnClickListener { app.clearOpenSession() }
         })
         nowPlaying.addView(actions)
@@ -2675,6 +2986,7 @@ object CompanionPanel {
         compact: Boolean,
     ): View {
         val app = activity.application as GhostGalleonApp
+        val cardSurface = TileBackgrounds.surfaceColor(activity)
         val hud = LinearLayout(activity).apply {
             tag = TAG_PLAY_HUD
             orientation = LinearLayout.VERTICAL
@@ -2685,7 +2997,8 @@ object CompanionPanel {
         hud.addView(TextView(activity).apply {
             setText(R.string.label_now_playing)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor((settings.accentColor and 0x00FFFFFF) or (0xCC shl 24))
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemePack.accentTextColor(settings.accentColor, cardSurface))
             letterSpacing = 0.12f
             gravity = Gravity.CENTER
         })
@@ -2854,8 +3167,14 @@ object CompanionPanel {
                             TextView(activity).apply {
                                 tag = TAG_PLAY_HUD_THEATER_LETTER
                                 gravity = Gravity.CENTER
-                                setTextColor(settings.accentColor)
+                                setTextColor(
+                                    ThemePack.accentTextColor(
+                                        settings.accentColor,
+                                        TileBackgrounds.chipIdleColor(activity),
+                                    ),
+                                )
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                                setTypeface(typeface, Typeface.BOLD)
                             },
                             FrameLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2893,7 +3212,9 @@ object CompanionPanel {
                                 tag = TAG_PLAY_HUD_THEATER_TICKER
                                 visibility = View.GONE
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-                                setTextColor(settings.accentColor)
+                                setTextColor(
+                                    ThemePack.accentTextColor(settings.accentColor, cardSurface),
+                                )
                                 maxLines = 1
                                 ellipsize = android.text.TextUtils.TruncateAt.END
                             },
@@ -2947,13 +3268,19 @@ object CompanionPanel {
             tag = chipTag
             if (labelRes != null) setText(labelRes) else text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, if (filled) Typeface.BOLD else Typeface.NORMAL)
             setTextColor(
-                if (filled) ThemePack.onFillTextColor(settings.accentColor) else Color.WHITE,
+                if (filled) ThemePack.onFillTextColor(settings.accentColor)
+                else UiDimens.ALPHA_PRIMARY,
             )
-            if (filled) {
-                background = TileBackgrounds.accentPill(activity, settings.accentColor)
+            background = if (filled) {
+                TileBackgrounds.accentPill(activity, settings.accentColor)
+            } else {
+                TileBackgrounds.chipIdle(activity, cornerRadiusDp = 18)
             }
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            gravity = Gravity.CENTER
+            setSingleLine()
+            setPadding(dp(14), dp(8), dp(14), dp(8))
             this.visibility = visibility
             isEnabled = enabled
             alpha = if (enabled) 1f else 0.4f
@@ -2961,7 +3288,7 @@ object CompanionPanel {
         }
         fun addChip(chip: View) {
             if (actions.childCount > 0 && chip.visibility != View.GONE) {
-                actions.addView(View(activity), LinearLayout.LayoutParams(dp(12), 1))
+                actions.addView(View(activity), LinearLayout.LayoutParams(dp(8), 1))
             }
             actions.addView(chip)
         }
@@ -4013,7 +4340,13 @@ object CompanionPanel {
         }
         cell.addView(TextView(activity).apply {
             text = slot.toString()
-            setTextColor(if (thumb != null) Color.WHITE else settings.accentColor)
+            setTextColor(
+                if (thumb != null) Color.WHITE
+                else ThemePack.accentTextColor(
+                    settings.accentColor,
+                    TileBackgrounds.chipIdleColor(activity),
+                ),
+            )
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
             layoutParams = FrameLayout.LayoutParams(
@@ -4135,7 +4468,13 @@ object CompanionPanel {
         }
         cell.addView(TextView(activity).apply {
             text = slot.toString()
-            setTextColor(if (thumb != null) Color.WHITE else settings.accentColor)
+            setTextColor(
+                if (thumb != null) Color.WHITE
+                else ThemePack.accentTextColor(
+                    settings.accentColor,
+                    TileBackgrounds.chipIdleColor(activity),
+                ),
+            )
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
             layoutParams = FrameLayout.LayoutParams(

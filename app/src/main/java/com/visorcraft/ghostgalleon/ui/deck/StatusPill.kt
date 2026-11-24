@@ -18,6 +18,7 @@ import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.resolveText
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 /**
  * Compact battery + clock chrome for immersive decks (system status bar is
@@ -33,10 +34,29 @@ object StatusPill {
     const val TAG_BATTERY = "status_battery"
     const val TAG_BATTERY_BOLT = "status_battery_bolt"
     const val TAG_BATTERY_ICON = "status_battery_icon"
+    const val TAG_DIVIDER = "status_divider"
     const val TAG_CLOCK = "status_clock"
+
+    /** Pure white tint/text color (JVM-test-safe constant). */
+    const val NORMAL_COLOR = 0xFFFFFFFF.toInt()
+
+    /** Soft emerald tint for charging vector bolt; high contrast on dark pill. */
+    const val CHARGING_BOLT = 0xFF69F0AE.toInt()
 
     /** Warning red for plugged-in net drain; readable on OLED black. */
     const val NET_DRAIN_BOLT = 0xFFFF5252.toInt()
+
+    /** Unplugged battery percent threshold for low-battery warning tint. */
+    const val LOW_BATTERY_PERCENT = 15
+
+    /** Unplugged battery percent threshold for critical red tint. */
+    const val CRITICAL_BATTERY_PERCENT = 10
+
+    /** Warm amber tint for unplugged 11–15% battery. */
+    const val LOW_BATTERY_WARN = 0xFFFFB74D.toInt()
+
+    /** Warning red tint for unplugged <= 10% battery. */
+    const val LOW_BATTERY_CRITICAL = 0xFFFF5252.toInt()
 
     internal const val PLUGGED_POLL_MS = 1_500L
 
@@ -53,23 +73,49 @@ object StatusPill {
         return text(R.string.system_battery_percent, pct)
     }
 
+    /** True when battery is unplugged and at or below [LOW_BATTERY_PERCENT]. */
+    fun isLowBattery(percent: Int, glyph: StatusBattery.Glyph): Boolean =
+        glyph == StatusBattery.Glyph.BATTERY && percent in 0..LOW_BATTERY_PERCENT
+
+    /** Battery text color: amber at 11..15% unplugged, red at <= 10% unplugged, white otherwise. */
+    fun batteryTextColor(percent: Int, glyph: StatusBattery.Glyph): Int = when {
+        glyph != StatusBattery.Glyph.BATTERY -> NORMAL_COLOR
+        percent in 0..CRITICAL_BATTERY_PERCENT -> LOW_BATTERY_CRITICAL
+        percent in 0..LOW_BATTERY_PERCENT -> LOW_BATTERY_WARN
+        else -> NORMAL_COLOR
+    }
+
+    /** Vector icon tint matching battery / charging / net-drain state. */
+    fun batteryIconTint(percent: Int, glyph: StatusBattery.Glyph): Int = when (glyph) {
+        StatusBattery.Glyph.BATTERY -> batteryTextColor(percent, glyph)
+        StatusBattery.Glyph.CHARGING -> CHARGING_BOLT
+        StatusBattery.Glyph.NET_DRAIN -> NET_DRAIN_BOLT
+    }
+
+    /** Vector drawable resource for all three battery states (zero Unicode emoji fallback). */
+    fun batteryIconRes(glyph: StatusBattery.Glyph): Int = when (glyph) {
+        StatusBattery.Glyph.BATTERY -> R.drawable.ic_status_battery
+        StatusBattery.Glyph.CHARGING, StatusBattery.Glyph.NET_DRAIN -> R.drawable.ic_status_bolt
+    }
+
     /**
-     * Build a horizontal pill (battery + live [TextClock]). [compact] uses
-     * smaller type for overlay on the interactive deck.
+     * Build a horizontal pill (battery + divider + live [TextClock]). [compact]
+     * uses smaller type for overlay on the interactive deck / TOP_STRIP.
      */
     fun build(context: Context, compact: Boolean = true): View {
         val textSp = if (compact) 13f else 20f
-        val padH = if (compact) 12 else 20
+        val padH = if (compact) 12 else 18
         val padV = if (compact) 4 else 8
-        val gap = if (compact) 8 else 12
+        val gap = if (compact) 6 else 10
         val iconDp = if (compact) 16 else 20
-        val glyphPad = if (compact) 2 else 4
+        val glyphPad = if (compact) 3 else 5
+        val dividerH = if (compact) 12 else 18
 
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             isBaselineAligned = false
-            background = TileBackgrounds.pill(context)
+            background = TileBackgrounds.statusPill(context)
             setPadding(context.dp(padH), context.dp(padV), context.dp(padH), context.dp(padV))
             tag = TAG
             contentDescription = context.getString(R.string.deck_status)
@@ -80,18 +126,9 @@ object StatusPill {
             visibility = View.GONE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
             setTextColor(Color.WHITE)
+            fontFeatureSettings = "tnum"
             includeFontPadding = false
             setPadding(0, 0, context.dp(glyphPad), 0)
-        }
-        val bolt = TextView(context).apply {
-            tag = TAG_BATTERY_BOLT
-            visibility = View.GONE
-            text = context.getString(R.string.glyph_bolt)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
-            setTextColor(Color.WHITE)
-            includeFontPadding = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setPadding(0, 0, context.dp(gap), 0)
         }
         val icon = ImageView(context).apply {
             tag = TAG_BATTERY_ICON
@@ -101,19 +138,31 @@ object StatusPill {
             scaleType = ImageView.ScaleType.FIT_CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             val size = context.dp(iconDp)
-            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+            layoutParams = LinearLayout.LayoutParams(size, size)
+        }
+        val divider = View(context).apply {
+            tag = TAG_DIVIDER
+            visibility = View.GONE
+            setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            layoutParams = LinearLayout.LayoutParams(
+                context.strokePx(1),
+                context.dp(dividerH),
+            ).apply {
+                marginStart = context.dp(gap)
                 marginEnd = context.dp(gap)
             }
         }
         pill.addView(batteryView)
-        pill.addView(bolt)
         pill.addView(icon)
+        pill.addView(divider)
         pill.addView(TextClock(context).apply {
             val locale = context.resources.configuration.locales[0]
             format12Hour = android.text.format.DateFormat.getBestDateTimePattern(locale, "hm")
             format24Hour = android.text.format.DateFormat.getBestDateTimePattern(locale, "Hm")
             tag = TAG_CLOCK
             contentDescription = context.getString(R.string.deck_clock)
+            fontFeatureSettings = "tnum"
             includeFontPadding = false
             setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
             setTextColor(Color.WHITE)
@@ -222,13 +271,13 @@ object StatusPill {
 
     internal fun applyBattery(pill: View, snapshot: BatterySnapshot) {
         val tv = pill.findViewWithTag<View>(TAG_BATTERY) as? TextView ?: return
-        val bolt = pill.findViewWithTag<View>(TAG_BATTERY_BOLT) as? TextView
         val icon = pill.findViewWithTag<View>(TAG_BATTERY_ICON) as? ImageView
+        val divider = pill.findViewWithTag<View>(TAG_DIVIDER)
         val ctx = pill.context
         val label = formatBatteryLabel(snapshot.percent) ?: run {
             tv.visibility = View.GONE
-            bolt?.visibility = View.GONE
             icon?.visibility = View.GONE
+            divider?.visibility = View.GONE
             pill.setTag(R.id.status_chrome, null)
             return
         }
@@ -247,6 +296,7 @@ object StatusPill {
         }
         val resolved = ctx.resolveText(label)
         tv.text = resolved
+        tv.setTextColor(batteryTextColor(snapshot.percent, snapshot.glyph))
         tv.contentDescription = when (snapshot.glyph) {
             StatusBattery.Glyph.CHARGING ->
                 ctx.getString(R.string.format_battery_charging_accessibility, snapshot.percent)
@@ -256,38 +306,22 @@ object StatusPill {
                 ctx.getString(R.string.format_battery_accessibility, resolved)
         }
         tv.visibility = View.VISIBLE
-        when (snapshot.glyph) {
-            StatusBattery.Glyph.BATTERY -> {
-                bolt?.visibility = View.GONE
-                if (icon != null) {
-                    if (prev?.glyph != StatusBattery.Glyph.BATTERY) {
-                        icon.isActivated = false
-                        icon.setImageResource(R.drawable.ic_status_battery)
-                        icon.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
-                    }
-                    if (icon.drawable?.level != snapshot.bars) {
-                        icon.setImageLevel(snapshot.bars)
-                    }
-                    icon.visibility = View.VISIBLE
-                }
+        divider?.visibility = View.VISIBLE
+        if (icon != null) {
+            if (prev?.glyph != snapshot.glyph) {
+                icon.isActivated = snapshot.glyph == StatusBattery.Glyph.NET_DRAIN
+                icon.setImageResource(batteryIconRes(snapshot.glyph))
             }
-            StatusBattery.Glyph.CHARGING -> {
-                icon?.visibility = View.GONE
-                icon?.isActivated = false
-                bolt?.setTextColor(Color.WHITE)
-                bolt?.visibility = View.VISIBLE
+            if (snapshot.glyph == StatusBattery.Glyph.BATTERY &&
+                icon.drawable?.level != snapshot.bars
+            ) {
+                icon.setImageLevel(snapshot.bars)
             }
-            StatusBattery.Glyph.NET_DRAIN -> {
-                bolt?.visibility = View.GONE
-                if (icon != null && prev?.glyph != StatusBattery.Glyph.NET_DRAIN) {
-                    icon.isActivated = true
-                    icon.setImageResource(R.drawable.ic_status_bolt)
-                    icon.setColorFilter(NET_DRAIN_BOLT, PorterDuff.Mode.SRC_IN)
-                    icon.visibility = View.VISIBLE
-                } else {
-                    icon?.visibility = View.VISIBLE
-                }
-            }
+            icon.setColorFilter(
+                batteryIconTint(snapshot.percent, snapshot.glyph),
+                PorterDuff.Mode.SRC_IN,
+            )
+            icon.visibility = View.VISIBLE
         }
         pill.setTag(
             R.id.status_chrome,

@@ -127,4 +127,72 @@ class StatusPillTest {
         )
         assertEquals(StatusBattery.Glyph.CHARGING, snap.glyph)
     }
+
+    @Test
+    fun `all three battery states map to vector drawables with distinct tints`() {
+        assertEquals(
+            R.drawable.ic_status_battery,
+            StatusPill.batteryIconRes(StatusBattery.Glyph.BATTERY),
+        )
+        assertEquals(
+            R.drawable.ic_status_bolt,
+            StatusPill.batteryIconRes(StatusBattery.Glyph.CHARGING),
+        )
+        assertEquals(
+            R.drawable.ic_status_bolt,
+            StatusPill.batteryIconRes(StatusBattery.Glyph.NET_DRAIN),
+        )
+        assertEquals(
+            StatusPill.CHARGING_BOLT,
+            StatusPill.batteryIconTint(50, StatusBattery.Glyph.CHARGING),
+        )
+        assertEquals(
+            StatusPill.NET_DRAIN_BOLT,
+            StatusPill.batteryIconTint(50, StatusBattery.Glyph.NET_DRAIN),
+        )
+    }
+
+    @Test
+    fun `unplugged low battery tints amber at 11 to 15 and red at 10 or below`() {
+        assertFalse(StatusPill.isLowBattery(16, StatusBattery.Glyph.BATTERY))
+        assertEquals(
+            StatusPill.NORMAL_COLOR,
+            StatusPill.batteryTextColor(16, StatusBattery.Glyph.BATTERY),
+        )
+        assertEquals(
+            StatusPill.NORMAL_COLOR,
+            StatusPill.batteryIconTint(16, StatusBattery.Glyph.BATTERY),
+        )
+
+        assertTrue(StatusPill.isLowBattery(15, StatusBattery.Glyph.BATTERY))
+        assertEquals(
+            StatusPill.LOW_BATTERY_WARN,
+            StatusPill.batteryTextColor(15, StatusBattery.Glyph.BATTERY),
+        )
+        assertEquals(
+            StatusPill.LOW_BATTERY_WARN,
+            StatusPill.batteryIconTint(11, StatusBattery.Glyph.BATTERY),
+        )
+
+        assertTrue(StatusPill.isLowBattery(10, StatusBattery.Glyph.BATTERY))
+        assertEquals(
+            StatusPill.LOW_BATTERY_CRITICAL,
+            StatusPill.batteryTextColor(10, StatusBattery.Glyph.BATTERY),
+        )
+        assertEquals(
+            StatusPill.LOW_BATTERY_CRITICAL,
+            StatusPill.batteryIconTint(5, StatusBattery.Glyph.BATTERY),
+        )
+
+        // Plugged states never show unplugged low-battery tint on text.
+        assertFalse(StatusPill.isLowBattery(5, StatusBattery.Glyph.CHARGING))
+        assertEquals(
+            StatusPill.NORMAL_COLOR,
+            StatusPill.batteryTextColor(5, StatusBattery.Glyph.CHARGING),
+        )
+        assertEquals(
+            StatusPill.CHARGING_BOLT,
+            StatusPill.batteryIconTint(5, StatusBattery.Glyph.CHARGING),
+        )
+    }
 }

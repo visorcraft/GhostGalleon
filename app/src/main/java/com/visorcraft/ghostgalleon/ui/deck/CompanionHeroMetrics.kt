@@ -141,4 +141,28 @@ object CompanionHeroMetrics {
             .toInt()
             .coerceAtLeast(0)
     }
+
+    // --- Role bar clearance & PERF_HUD card grid ----------------------------
+
+    /** Width (dp) at or above which centered role chips clear the top-end StatusPill. */
+    const val ROLE_BAR_WIDE_PANEL_DP = 680f
+
+    /** End clearance (dp) inside content padding on narrow panels hosting large StatusPill. */
+    const val ROLE_BAR_STATUS_CLEARANCE_DP = 148
+
+    /**
+     * Right-side padding (dp) on [CompanionPanel]'s role chip row so chips never
+     * collide with the top-end large [StatusPill] on narrow companion panels
+     * (e.g. Sugar ~540dp). Zero when StatusPill is hidden or panel is wide.
+     */
+    fun roleBarEndClearanceDp(hasStatusPill: Boolean, panelWidthDp: Float): Int =
+        if (hasStatusPill && panelWidthDp < ROLE_BAR_WIDE_PANEL_DP) {
+            ROLE_BAR_STATUS_CLEARANCE_DP
+        } else {
+            0
+        }
+
+    /** Column span for item [index] in a 2-column PERF_HUD metric card grid. */
+    fun perfCardColumnSpan(index: Int, totalCount: Int): Int =
+        if (totalCount > 0 && totalCount % 2 == 1 && index == totalCount - 1) 2 else 1
 }

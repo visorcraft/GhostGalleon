@@ -1,6 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.BrowseChrome
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -91,6 +93,26 @@ class CompanionChromeInPlaceTest {
                 previous = BrowseChrome.MINIMAL.copy(resumeChip = true),
                 next = BrowseChrome.MINIMAL,
             ),
+        )
+    }
+
+    @Test
+    fun `favorite quick chip resolves live selected key instead of build-time key`() {
+        val favs = setOf("rom:snes:chrono")
+        assertTrue(CompanionPanel.isSelectedFavorite("rom:snes:chrono", favs))
+        assertEquals(
+            R.string.action_unfavorite,
+            CompanionPanel.favoriteChipLabelRes("rom:snes:chrono", favs),
+        )
+        assertFalse(CompanionPanel.isSelectedFavorite("rom:gba:metroid", favs))
+        assertEquals(
+            R.string.action_favorite,
+            CompanionPanel.favoriteChipLabelRes("rom:gba:metroid", favs),
+        )
+        assertFalse(CompanionPanel.isSelectedFavorite(null, favs))
+        assertEquals(
+            R.string.action_favorite,
+            CompanionPanel.favoriteChipLabelRes(null, favs),
         )
     }
 }

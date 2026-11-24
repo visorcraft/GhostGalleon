@@ -74,6 +74,7 @@ class GridDeck(
     private val library: AppLibrary,
     private val iconLoader: AppIconLoader,
     private val roms: List<RomEntry>,
+    private val showStatusPill: Boolean = true,
 ) : Deck {
 
     // Rendered slot count: the stored list padded up to complete rows.
@@ -543,8 +544,8 @@ class GridDeck(
         content.addView(bar.build(context, pageDots = null, reserveChromeInset = hostChromeIcons))
         root.addView(content, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // Optional clock/battery overlay (Settings → Display & Grid → chrome).
-        if (settings.browseChrome.deckStatusPill) {
+        // Optional clock/battery overlay (omitted when single-screen TOP_STRIP hosts it).
+        if (showStatusPill && settings.browseChrome.deckStatusPill) {
             root.addView(
                 StatusPill.build(context, compact = true),
                 StatusPill.overlayLayoutParams(context),

@@ -74,6 +74,7 @@ class GameDeck(
     private val library: AppLibrary,
     private val iconLoader: AppIconLoader,
     private val roms: List<RomEntry>,
+    private val showStatusPill: Boolean = true,
 ) : Deck {
 
     // One carousel entry: a curated-grid app (key = package name) or a
@@ -604,7 +605,7 @@ class GameDeck(
             return false
         }
         val root = rootView ?: return false
-        val wantsPill = live.browseChrome.deckStatusPill
+        val wantsPill = showStatusPill && live.browseChrome.deckStatusPill
         val hasPill = root.findViewWithTag<View>(
             com.visorcraft.ghostgalleon.ui.deck.StatusPill.TAG,
         ) != null
@@ -1027,8 +1028,8 @@ class GameDeck(
         content.addView(bar.build(context, pageDots = null, reserveChromeInset = hostChromeIcons))
         root.addView(content, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // Compact clock/battery overlay (system status bar is hidden).
-        if (settings.browseChrome.deckStatusPill) {
+        // Compact clock/battery overlay (omitted when single-screen TOP_STRIP hosts it).
+        if (showStatusPill && settings.browseChrome.deckStatusPill) {
             root.addView(
                 StatusPill.build(context, compact = true),
                 StatusPill.overlayLayoutParams(context),
@@ -1246,7 +1247,9 @@ class GameDeck(
     // Browse chip row: All / Recent / Favorites + platform filters + search.
     private fun buildBrowseBar(context: Context, dp: (Int) -> Int): View {
         val endPad = dp(
-            GameDeckChromeLogic.browseBarEndPadDp(settings.browseChrome.deckStatusPill),
+            GameDeckChromeLogic.browseBarEndPadDp(
+                showStatusPill && settings.browseChrome.deckStatusPill,
+            ),
         )
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL

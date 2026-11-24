@@ -661,11 +661,32 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     private lateinit var currentDeck: Deck
 
-    protected open fun deckForMode(): Deck = when (deckState.mode) {
-        UIMode.GRID -> GridDeck(
-            this, deckState, settings, appLibrary, appIconLoader, app.romEntries)
-        UIMode.GAME -> GameDeck(
-            this, deckState, settings, appLibrary, appIconLoader, app.romEntries)
+    private fun usesTopStrip(): Boolean {
+        val topo = app.displayConfig
+        if (topo.mode != SurfaceMode.SINGLE) return false
+        val dm = resources.displayMetrics
+        val metrics = LayoutMetricsResolver.fromWindow(
+            windowWidthPx = dm.widthPixels,
+            windowHeightPx = dm.heightPixels,
+            densityDpi = dm.densityDpi,
+            topologyMode = topo.mode,
+            isCompanionRole = false,
+        )
+        return metrics.companionHeroStyle == CompanionHeroStyle.TOP_STRIP
+    }
+
+    protected open fun deckForMode(): Deck {
+        val showStatusPill = !usesTopStrip()
+        return when (deckState.mode) {
+            UIMode.GRID -> GridDeck(
+                this, deckState, settings, appLibrary, appIconLoader, app.romEntries,
+                showStatusPill = showStatusPill,
+            )
+            UIMode.GAME -> GameDeck(
+                this, deckState, settings, appLibrary, appIconLoader, app.romEntries,
+                showStatusPill = showStatusPill,
+            )
+        }
     }
 
     // SAF tree picker for first-run setup (same grant model as Settings).
@@ -785,21 +806,10 @@ abstract class BaseDeckActivity : AppCompatActivity() {
      */
     private fun primaryContentWithOptionalHeroStrip(): View {
         val deckView = currentDeck.primaryView(this)
-        val dm = resources.displayMetrics
-        val topo = app.displayConfig
-        val metrics = LayoutMetricsResolver.fromWindow(
-            windowWidthPx = dm.widthPixels,
-            windowHeightPx = dm.heightPixels,
-            densityDpi = dm.densityDpi,
-            topologyMode = topo.mode,
-            isCompanionRole = false,
-        )
-        if (metrics.companionHeroStyle != CompanionHeroStyle.TOP_STRIP ||
-            topo.mode != SurfaceMode.SINGLE
-        ) {
+        if (!usesTopStrip()) {
             return deckView
         }
-        val density = dm.density
+        val density = resources.displayMetrics.density
         // Compact strip: art + 3 text lines; never the full dual CompanionPanel
         // (whose banner alone is heightPixels*2/5 and would clip name/play).
         val stripHeight = (

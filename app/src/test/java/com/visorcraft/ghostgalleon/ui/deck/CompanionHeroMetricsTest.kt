@@ -84,4 +84,25 @@ class CompanionHeroMetricsTest {
         assertEquals(0, CompanionHeroMetrics.brandShipTopMarginPx(0, 480))
         assertEquals(0, CompanionHeroMetrics.brandShipTopMarginPx(1080, 0))
     }
+
+    @Test
+    fun `roleBarEndClearanceDp reserves room only on narrow panels with StatusPill`() {
+        assertEquals(0, CompanionHeroMetrics.roleBarEndClearanceDp(hasStatusPill = false, panelWidthDp = 540f))
+        assertEquals(
+            CompanionHeroMetrics.ROLE_BAR_STATUS_CLEARANCE_DP,
+            CompanionHeroMetrics.roleBarEndClearanceDp(hasStatusPill = true, panelWidthDp = 540f),
+        )
+        assertEquals(0, CompanionHeroMetrics.roleBarEndClearanceDp(hasStatusPill = true, panelWidthDp = 800f))
+    }
+
+    @Test
+    fun `perfCardColumnSpan spans full row for odd trailing card only`() {
+        for (i in 0 until 6) {
+            assertEquals(1, CompanionHeroMetrics.perfCardColumnSpan(i, 6))
+        }
+        for (i in 0 until 6) {
+            assertEquals(1, CompanionHeroMetrics.perfCardColumnSpan(i, 7))
+        }
+        assertEquals(2, CompanionHeroMetrics.perfCardColumnSpan(6, 7))
+    }
 }
