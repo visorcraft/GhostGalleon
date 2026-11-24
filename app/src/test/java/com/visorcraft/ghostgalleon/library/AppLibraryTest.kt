@@ -124,4 +124,53 @@ class AppLibraryTest {
         val labels = library.visible(s).map { it.label }
         assertEquals(listOf("Alpha", "Middle", "Zeta"), labels)
     }
+
+    @Test
+    fun `PackageManagerAppsSource resolveInstallTimes uses single batch query and skips per-package IPC`() {
+        val pkgs = (1..150).map { "com.example.app$it" }
+        var batchCalls = 0
+        var singleCalls = 0
+        val times = PackageManagerAppsSource.resolveInstallTimes(
+            packageNames = pkgs,
+            fetchBatch = {
+                batchCalls++
+                pkgs.associateWith { it.hashCode().toLong() and 0xFFFFFFL }
+            },
+            fetchSingle = {
+                singleCalls++
+                999L
+            },
+        )
+        assertEquals(1, batchCalls)
+        assertEquals(0, singleCalls)
+        assertEquals(150, times.size)
+        assertEquals(pkgs.first().hashCode().toLong() and 0xFFFFFFL, times[pkgs.first()])
+    }
+
+    @Test
+    fun `PackageManagerAppsSource resolveInstallTimes falls back gracefully when batch query fails`() {
+        val pkgs = listOf("com.app.a", "com.app.b", "com.app.missing")
+        var batchCalls = 0
+        var singleCalls = 0
+        val times = PackageManagerAppsSource.resolveInstallTimes(
+            packageNames = pkgs,
+            fetchBatch = {
+                batchCalls++
+                throw RuntimeException("Simulated TransactionTooLargeException")
+            },
+            fetchSingle = { pkg ->
+                singleCalls++
+                when (pkg) {
+                    "com.app.a" -> 1_000L
+                    "com.app.b" -> 2_000L
+                    else -> throw RuntimeException("NameNotFound")
+                }
+            },
+        )
+        assertEquals(1, batchCalls)
+        assertEquals(3, singleCalls)
+        assertEquals(1_000L, times["com.app.a"])
+        assertEquals(2_000L, times["com.app.b"])
+        assertEquals(0L, times["com.app.missing"])
+    }
 }

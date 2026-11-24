@@ -42,36 +42,45 @@ object RetroAchievements {
     fun parseProgress(json: String?): RaProgress {
         if (json.isNullOrBlank()) return RaProgress()
         return try {
-            val root = JSONObject(json)
-            val o = when {
-                root.has("Game") && root.optJSONObject("Game") != null ->
-                    root.getJSONObject("Game")
-                root.has("game") && root.optJSONObject("game") != null ->
-                    root.getJSONObject("game")
-                else -> root
-            }
-            val awarded = firstInt(o, "NumAwardedToUser", "NumAwarded", "awarded", "NumAwardedHardcore")
-            val possible = firstInt(o, "NumAchievements", "NumPossibleAchievements", "possible", "achievements")
-            val title = firstString(o, "Title", "title", "GameTitle")
-            val id = firstInt(o, "ID", "GameID", "id").takeIf { it > 0 }
-            val score = firstInt(o, "Score", "UserScore", "score").takeIf { it > 0 }
-            val hardcore = when {
-                o.has("HardcoreMode") -> o.optInt("HardcoreMode", 0) != 0 ||
-                    o.optBoolean("HardcoreMode", false)
-                o.has("hardcore") -> o.optBoolean("hardcore", false)
-                else -> false
-            }
-            RaProgress(
-                gameId = id,
-                title = title,
-                numAwarded = awarded.coerceAtLeast(0),
-                numPossible = possible.coerceAtLeast(0),
-                userScore = score,
-                hardcore = hardcore,
-            )
+            parseProgress(JSONObject(json))
         } catch (_: Exception) {
             RaProgress()
         }
+    }
+
+    /**
+     * Parse an already-parsed [JSONObject] directly without re-stringifying and
+     * re-parsing. Accepts the same shapes as [parseProgress] (String overload).
+     */
+    fun parseProgress(root: JSONObject): RaProgress = try {
+        val o = when {
+            root.has("Game") && root.optJSONObject("Game") != null ->
+                root.getJSONObject("Game")
+            root.has("game") && root.optJSONObject("game") != null ->
+                root.getJSONObject("game")
+            else -> root
+        }
+        val awarded = firstInt(o, "NumAwardedToUser", "NumAwarded", "awarded", "NumAwardedHardcore")
+        val possible = firstInt(o, "NumAchievements", "NumPossibleAchievements", "possible", "achievements")
+        val title = firstString(o, "Title", "title", "GameTitle")
+        val id = firstInt(o, "ID", "GameID", "id").takeIf { it > 0 }
+        val score = firstInt(o, "Score", "UserScore", "score").takeIf { it > 0 }
+        val hardcore = when {
+            o.has("HardcoreMode") -> o.optInt("HardcoreMode", 0) != 0 ||
+                o.optBoolean("HardcoreMode", false)
+            o.has("hardcore") -> o.optBoolean("hardcore", false)
+            else -> false
+        }
+        RaProgress(
+            gameId = id,
+            title = title,
+            numAwarded = awarded.coerceAtLeast(0),
+            numPossible = possible.coerceAtLeast(0),
+            userScore = score,
+            hardcore = hardcore,
+        )
+    } catch (_: Exception) {
+        RaProgress()
     }
 
     /** Format a short hero line, or null when empty / no credentials path. */

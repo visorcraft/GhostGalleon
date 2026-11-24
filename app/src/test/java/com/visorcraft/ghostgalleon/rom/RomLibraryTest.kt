@@ -380,4 +380,230 @@ class RomLibraryTest {
         assertEquals(meta, newFp[cardTree])
         assertEquals(listOf("snes:snes/smw.smc"), success.entries.map { it.id })
     }
+
+    @Test
+    fun `streaming codec omits null optional keys handles escapes and stays legacy-compatible`() {
+        val f = tmp.root.resolve("streaming/rom_library.json")
+        val tricky = listOf(
+            RomEntry(
+                id = "snes:snes/Quote \"Slash\" \\ Back\\nLine.smc",
+                name = "Quote \"Slash\" \\ Back\nLine\t— Ōkami® 🎮",
+                platformId = "snes",
+                uri = "content://com.android.externalstorage.documents/tree/7F7E%3Aroms/document/snes%2Fa.smc",
+                path = "/storage/7F7E-2949/roms/snes/a.smc",
+                artUri = null,
+                visibleInUi = true,
+                description = "Line 1\r\nLine 2\t\"quoted\" \\u0020 \u0007bell",
+                screenshotUri = null,
+                logoUri = null,
+                videoUri = null,
+                year = "1994",
+                genre = "Action / RPG",
+                developer = "Square",
+                rating = "9.8",
+            ),
+            RomEntry(
+                id = "switch:switch/Hades II [0100A00019DE0000][v0].nsp",
+                name = "Hades II [0100A00019DE0000][v0]",
+                platformId = "switch",
+                uri = "content://doc/base",
+                path = null,
+                visibleInUi = true,
+            ),
+            RomEntry(
+                id = "switch:switch/Hades II [0100A00019DE0800][v196608].nsp",
+                name = "Hades II [0100A00019DE0800][v196608]",
+                platformId = "switch",
+                uri = "content://doc/upd",
+                path = null,
+                visibleInUi = false,
+            ),
+        )
+        val lib = RomLibrary(f)
+        lib.save(tricky)
+        val raw = f.readText()
+        // Null optional fields and default visibleInUi=true must be omitted.
+        assertFalse(raw.contains(":null"))
+        assertFalse(raw.contains("\"visibleInUi\":true"))
+        assertTrue(raw.contains("\"visibleInUi\":false"))
+        // Streaming read round-trips identically (including control chars, unicode, emoji, quotes).
+        assertEquals(tricky, lib.load())
+        // Also parseable by org.json DOM parseEntries (used by SettingsBundle).
+        assertEquals(tricky, RomLibrary.parseEntries(org.json.JSONArray(raw)))
+        assertEquals(tricky, RomLibrary.parseEntries(RomLibrary.entriesToJson(tricky)))
+
+        // Legacy DOM-written file with explicit nulls, escaped slashes (\/), \uXXXX escapes,
+        // pretty-print whitespace, and unknown extra keys still loads bit-for-bit.
+        val legacyFile = tmp.newFile("legacy_rom_library.json")
+        legacyFile.writeText(
+            """
+            [
+              {
+                "id": "snes:snes\/zelda.smc",
+                "name": "Zelda \u2014 Link\u0027s Awakening",
+                "platformId": "snes",
+                "uri": "content:\/\/doc\/1",
+                "path": null,
+                "artUri": null,
+                "visibleInUi": true,
+                "description": null,
+                "screenshotUri": null,
+                "logoUri": null,
+                "videoUri": null,
+                "year": "1993",
+                "genre": null,
+                "developer": "Nintendo",
+                "rating": null,
+                "unknownNested": {"a": [1, 2, true, false, null], "b": -3.14e2}
+              }
+            ]
+            """.trimIndent(),
+        )
+        val legacyLoaded = RomLibrary(legacyFile).load()
+        assertEquals(1, legacyLoaded.size)
+        assertEquals("snes:snes/zelda.smc", legacyLoaded[0].id)
+        assertEquals("Zelda — Link's Awakening", legacyLoaded[0].name)
+        assertEquals("content://doc/1", legacyLoaded[0].uri)
+        assertEquals(null, legacyLoaded[0].path)
+        assertEquals("1993", legacyLoaded[0].year)
+        assertEquals("Nintendo", legacyLoaded[0].developer)
+        assertTrue(legacyLoaded[0].visibleInUi)
+
+        // Truncated / trailing-garbage files fail soft to emptyList.
+        val truncated = tmp.newFile("truncated.json")
+        truncated.writeText("""[{"id":"a","name":"b","platformId":"snes","uri":"u"""")
+        assertEquals(emptyList<RomEntry>(), RomLibrary(truncated).load())
+
+        val trailing = tmp.newFile("trailing.json")
+        trailing.writeText("""[] garbage""")
+        assertEquals(emptyList<RomEntry>(), RomLibrary(trailing).load())
+    }
+
+    @Test
+    fun `10000 ROM streaming round-trip shrinks file size by at least 25 percent and loads under 80ms`() {
+        val platforms = listOf("snes", "nes", "gba", "nds", "3ds", "ps1", "psp", "n64", "genesis", "gc")
+        val entries = ArrayList<RomEntry>(10_000)
+        // Include 60 Switch entries (20 games × base + update + DLC) + 9,940 retro ROMs.
+        for (g in 0 until 20) {
+            val hex = String.format("%012X", 0x010015100000L + g)
+            entries.add(
+                RomEntry(
+                    id = "switch:switch/Game $g [${hex}000][v0].nsp",
+                    name = "Game $g [${hex}000][v0]",
+                    platformId = "switch",
+                    uri = "content://doc/switch/g${g}_base",
+                    path = "/storage/7F7E-2949/roms/switch/Game $g [${hex}000][v0].nsp",
+                    visibleInUi = true,
+                ),
+            )
+            entries.add(
+                RomEntry(
+                    id = "switch:switch/Game $g [${hex}800][v65536].nsp",
+                    name = "Game $g [${hex}800][v65536]",
+                    platformId = "switch",
+                    uri = "content://doc/switch/g${g}_upd",
+                    path = "/storage/7F7E-2949/roms/switch/Game $g [${hex}800][v65536].nsp",
+                    visibleInUi = false,
+                ),
+            )
+            entries.add(
+                RomEntry(
+                    id = "switch:switch/Game $g [DLC][${hex}001][v0].nsp",
+                    name = "Game $g [DLC][${hex}001][v0]",
+                    platformId = "switch",
+                    uri = "content://doc/switch/g${g}_dlc",
+                    path = "/storage/7F7E-2949/roms/switch/Game $g [DLC][${hex}001][v0].nsp",
+                    visibleInUi = false,
+                ),
+            )
+        }
+        for (i in 0 until 9_940) {
+            val plat = platforms[i % platforms.size]
+            entries.add(
+                RomEntry(
+                    id = "$plat:$plat/Title_$i.rom",
+                    name = "Title $i",
+                    platformId = plat,
+                    uri = "content://com.android.externalstorage.documents/tree/7F7E%3Aroms/document/$plat%2FTitle_$i.rom",
+                    path = "/storage/7F7E-2949/roms/$plat/Title_$i.rom",
+                    artUri = if (i % 3 == 0) "content://doc/art/$i.png" else null,
+                    year = if (i % 2 == 0) "${1985 + (i % 35)}" else null,
+                    genre = if (i % 2 == 0) "Action / Adventure" else null,
+                ),
+            )
+        }
+
+        // Legacy DOM size with all 10 explicit null keys per entry.
+        val legacyFile = tmp.newFile("legacy_10k.json")
+        legacyFile.bufferedWriter().use { w ->
+            w.write("[")
+            for (i in entries.indices) {
+                if (i > 0) w.write(",")
+                val e = entries[i]
+                w.write(
+                    org.json.JSONObject()
+                        .put("id", e.id)
+                        .put("name", e.name)
+                        .put("platformId", e.platformId)
+                        .put("uri", e.uri)
+                        .put("path", e.path ?: org.json.JSONObject.NULL)
+                        .put("artUri", e.artUri ?: org.json.JSONObject.NULL)
+                        .put("visibleInUi", e.visibleInUi)
+                        .put("description", e.description ?: org.json.JSONObject.NULL)
+                        .put("screenshotUri", e.screenshotUri ?: org.json.JSONObject.NULL)
+                        .put("logoUri", e.logoUri ?: org.json.JSONObject.NULL)
+                        .put("videoUri", e.videoUri ?: org.json.JSONObject.NULL)
+                        .put("year", e.year ?: org.json.JSONObject.NULL)
+                        .put("genre", e.genre ?: org.json.JSONObject.NULL)
+                        .put("developer", e.developer ?: org.json.JSONObject.NULL)
+                        .put("rating", e.rating ?: org.json.JSONObject.NULL)
+                        .toString(),
+                )
+            }
+            w.write("]")
+        }
+
+        val streamFile = tmp.root.resolve("stream_10k/rom_library.json")
+        val lib = RomLibrary(streamFile)
+
+        // Warm up JIT + verify round-trip exactness.
+        lib.save(entries)
+        val firstLoaded = lib.load()
+        assertEquals(entries, firstLoaded)
+
+        // File size savings check (>= 25% smaller than legacy null-bloated format).
+        val legacyBytes = legacyFile.length()
+        val streamBytes = streamFile.length()
+        val reductionPct = (1.0 - streamBytes.toDouble() / legacyBytes.toDouble()) * 100.0
+        assertTrue(
+            "expected >= 25% smaller file (legacy=${legacyBytes}B, stream=${streamBytes}B, saved=${"%.1f".format(reductionPct)}%)",
+            reductionPct >= 25.0,
+        )
+
+        // Legacy file also loads identically via streaming reader!
+        assertEquals(entries, RomLibrary(legacyFile).load())
+
+        // Benchmark steady-state save + load of 10,000 ROMs (including Switch dedupe).
+        var bestSaveNs = Long.MAX_VALUE
+        var bestLoadNs = Long.MAX_VALUE
+        repeat(5) {
+            val t0 = System.nanoTime()
+            lib.save(entries)
+            val saveDt = System.nanoTime() - t0
+            if (saveDt < bestSaveNs) bestSaveNs = saveDt
+
+            val t1 = System.nanoTime()
+            val loaded = lib.load()
+            val loadDt = System.nanoTime() - t1
+            assertEquals(10_000, loaded.size)
+            if (loadDt < bestLoadNs) bestLoadNs = loadDt
+        }
+        val saveMs = bestSaveNs / 1_000_000.0
+        val loadMs = bestLoadNs / 1_000_000.0
+        println(
+            "RomLibraryTest (10,000 ROMs): legacy=${legacyBytes / 1024}KiB -> stream=${streamBytes / 1024}KiB " +
+                "(-${"%.1f".format(reductionPct)}%), save=${"%.2f".format(saveMs)}ms, load+dedupe=${"%.2f".format(loadMs)}ms",
+        )
+        assertTrue("10k RomLibrary.load() too slow: ${"%.2f".format(loadMs)}ms", loadMs < 80.0)
+    }
 }

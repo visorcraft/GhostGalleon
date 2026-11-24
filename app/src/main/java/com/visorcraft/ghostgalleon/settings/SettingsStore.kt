@@ -12,14 +12,16 @@ import java.io.File
 
 class SettingsStore(private val file: File) {
 
-    fun load(): Settings {
+    private val ioLock = Any()
+
+    fun load(): Settings = synchronized(ioLock) {
         if (!file.exists()) return Settings.DEFAULT
         return try {
             val o = JSONObject(file.readText())
             val s = parse(o)
             // Persist migrations immediately: any file older than the
             // current schema is re-saved with the new stamp.
-            if (o.optInt("schemaVersion", 1) < CURRENT_SCHEMA) save(s)
+            if (o.optInt("schemaVersion", 1) < CURRENT_SCHEMA) saveLocked(s)
             s
         } catch (e: Exception) {
             Settings.DEFAULT
@@ -27,6 +29,12 @@ class SettingsStore(private val file: File) {
     }
 
     fun save(s: Settings) {
+        synchronized(ioLock) {
+            saveLocked(s)
+        }
+    }
+
+    private fun saveLocked(s: Settings) {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
         // Compact JSON (no pretty indent): settings save on every launch/

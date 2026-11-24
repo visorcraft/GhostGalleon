@@ -182,4 +182,23 @@ class SwitchDedupeTest {
         )
         assertEquals(null, SwitchDedupe.titleIdKey("Mario Kart 8 Deluxe"))
     }
+
+    @Test
+    fun `apply returns input list unchanged when no switch entries or already deduped`() {
+        val nonSwitch = List(2_000) { i ->
+            RomEntry(
+                id = "snes:snes/game_$i.smc",
+                name = "Game $i",
+                platformId = "snes",
+                uri = "content://x/$i",
+                path = null,
+            )
+        }
+        // Fast path: returns exact same list instance with zero copy when no Switch ROMs exist.
+        assertTrue(SwitchDedupe.apply(nonSwitch) === nonSwitch)
+
+        // Second apply on an already-deduped library returns exact same list instance (0 copy on boot).
+        val dedupedOnce = SwitchDedupe.apply(cardFilenames.map(::entry))
+        assertTrue(SwitchDedupe.apply(dedupedOnce) === dedupedOnce)
+    }
 }

@@ -34,6 +34,11 @@ object SwitchDedupe {
     private val VERSION_TAG = Regex("""\[v(\d+)\]""", RegexOption.IGNORE_CASE)
     private val BRACKET = Regex("""\[[^\]]*\]""")
     private val PAREN = Regex("""\([^)]*\)""")
+    private val WHITESPACE = Regex("""\s+""")
+    private val VERSION_V_TOKEN = Regex("""v\d+(\.\d+)*""")
+    private val VERSION_DOTTED_TOKEN = Regex("""\d+\.\d+(\.\d+)*""")
+    private val DLC_MARKER = Regex("""\bdlc\b""")
+    private val UPDATE_MARKER = Regex("""\b(update|upd)\b""")
 
     private enum class Role { BASE, UPDATE, DLC }
 
@@ -57,29 +62,46 @@ object SwitchDedupe {
 
     /** Entries with dedupe applied; non-switch entries pass through. */
     fun apply(entries: List<RomEntry>): List<RomEntry> {
-        val switch = entries.filter { it.platformId == Platforms.SWITCH.id }
-        if (switch.isEmpty()) return entries
+        // Zero-allocation fast path when library contains no Switch entries.
+        var switch: ArrayList<RomEntry>? = null
+        val switchId = Platforms.SWITCH.id
+        for (entry in entries) {
+            if (entry.platformId == switchId) {
+                if (switch == null) switch = ArrayList()
+                switch.add(entry)
+            }
+        }
+        if (switch == null) return entries
 
-        // Pass 1: group by normalized title.
+        // Pass 1: group by normalized title (memoize normalized titles for Pass 2).
         val groups = LinkedHashMap<String, Group>()
-        switch.forEach { entry ->
-            groups.getOrPut(normalizeTitle(entry.name)) { Group() }
-                .add(entry, roleOf(entry.name))
+        val normById = HashMap<String, String>(switch.size)
+        val byTitleId = LinkedHashMap<String, ArrayList<RomEntry>>()
+        for (entry in switch) {
+            val norm = normalizeTitle(entry.name)
+            normById[entry.id] = norm
+            groups.getOrPut(norm) { Group() }.add(entry, roleOf(entry.name))
+            val tid = titleIdKey(entry.name)
+            if (tid != null) {
+                byTitleId.getOrPut(tid) { ArrayList(3) }.add(entry)
+            }
         }
         // Pass 2: merge title groups that share a title-id prefix.
-        switch.groupBy { titleIdKey(it.name) }.filterKeys { it != null }.values
-            .forEach { sharing ->
-                val keys = sharing.map { normalizeTitle(it.name) }.distinct()
-                if (keys.size > 1) {
-                    val targetKey = keys.firstOrNull { groups.getValue(it).hasBase }
-                        ?: keys.first()
-                    val target = groups.getValue(targetKey)
-                    keys.filter { it != targetKey }.forEach { other ->
+        for (sharing in byTitleId.values) {
+            if (sharing.size <= 1) continue
+            val keys = sharing.map { normById.getValue(it.id) }.distinct()
+            if (keys.size > 1) {
+                val targetKey = keys.firstOrNull { groups.getValue(it).hasBase }
+                    ?: keys.first()
+                val target = groups.getValue(targetKey)
+                for (other in keys) {
+                    if (other != targetKey) {
                         target.absorb(groups.getValue(other))
                         groups.remove(other)
                     }
                 }
             }
+        }
         // Pass 3: base-less groups join the longest base group their title
         // key extends on a word boundary.
         val orphans = groups.entries.filter { !it.value.hasBase }
@@ -97,7 +119,7 @@ object SwitchDedupe {
             }
         }
 
-        val hidden = mutableSetOf<String>()
+        val hidden = HashSet<String>()
         groups.values.forEach { g ->
             if (!g.hasBase || g.entries.isEmpty()) return@forEach
             // Prefer the base with the lowest version; every other entry of
@@ -107,6 +129,15 @@ object SwitchDedupe {
                 .minByOrNull { versionOf(it.name) }
             g.entries.forEach { if (it.id != keeper?.id) hidden.add(it.id) }
         }
+        if (hidden.isEmpty()) return entries
+        var anyNeedsHide = false
+        for (entry in switch) {
+            if (entry.id in hidden && entry.visibleInUi) {
+                anyNeedsHide = true
+                break
+            }
+        }
+        if (!anyNeedsHide) return entries
         return entries.map { e ->
             if (e.id in hidden) e.copy(visibleInUi = false) else e
         }
@@ -130,7 +161,7 @@ object SwitchDedupe {
         // tag-stripped titles from different release sources still match.
         s = s.replace('-', ' ')
         s = s.filter { it.isLetterOrDigit() || it.isWhitespace() }
-        val tokens = s.trim().split(Regex("""\s+""")).filter { it.isNotEmpty() }
+        val tokens = s.trim().split(WHITESPACE).filter { it.isNotEmpty() }
         // VENOM-style release prefix: "v-sid_meiers_…" / "v-mario_kart_…"
         // carry a leading "v" token that the update/DLC files share with
         // their base — drop it so all three group together.
@@ -141,14 +172,13 @@ object SwitchDedupe {
 
     /** "v1.8.2", "v720896", "1.4.2", "1.0.4" — trailing version noise. */
     private fun isVersionToken(token: String): Boolean =
-        token.matches(Regex("""v\d+(\.\d+)*""")) ||
-            token.matches(Regex("""\d+\.\d+(\.\d+)*"""))
+        VERSION_V_TOKEN.matches(token) || VERSION_DOTTED_TOKEN.matches(token)
 
     private fun roleOf(name: String): Role {
         // Underscores are word characters in regex, so tokenize them away
         // before marker matching ("pack_dlc.nsp" must see "dlc").
         val lower = name.lowercase().replace('_', ' ')
-        val hasDlc = Regex("""\bdlc\b""").containsMatchIn(lower)
+        val hasDlc = DLC_MARKER.containsMatchIn(lower)
         val id = TITLE_ID.find(name)?.groupValues?.get(1)?.uppercase(Locale.ROOT)
         if (id != null) {
             return when {
@@ -159,8 +189,8 @@ object SwitchDedupe {
         }
         if (hasDlc) return Role.DLC
         val tagless = BRACKET.replace(lower, " ")
-        if (Regex("""\b(update|upd)\b""").containsMatchIn(tagless)) return Role.UPDATE
-        val tokens = tagless.trim().split(Regex("""\s+"""))
+        if (UPDATE_MARKER.containsMatchIn(tagless)) return Role.UPDATE
+        val tokens = tagless.trim().split(WHITESPACE)
         if (tokens.lastOrNull()?.let { isVersionToken(it) } == true) return Role.UPDATE
         return Role.BASE
     }

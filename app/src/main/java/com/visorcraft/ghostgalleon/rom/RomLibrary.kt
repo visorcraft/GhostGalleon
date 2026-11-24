@@ -8,7 +8,16 @@ import androidx.documentfile.provider.DocumentFile
 import com.visorcraft.ghostgalleon.settings.Settings
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.io.Reader
+import java.io.Writer
 import java.util.concurrent.Executors
 
 /**
@@ -45,26 +54,43 @@ class RomLibrary(private val file: File) {
         data object Unreadable : RescanResult()
     }
 
-    fun load(): List<RomEntry> {
+    private val ioLock = Any()
+
+    fun load(): List<RomEntry> = synchronized(ioLock) {
         if (!file.exists()) return emptyList()
         return try {
+            val loaded = BufferedInputStream(FileInputStream(file), STREAM_BUF_SIZE).use { input ->
+                InputStreamReader(input, Charsets.UTF_8).use { reader ->
+                    readEntriesStreaming(reader)
+                }
+            }
             // Recompute dedupe on load so a library stored by an older
             // build gets its flags without needing a rescan.
-            SwitchDedupe.apply(parseEntries(JSONArray(file.readText())))
-        } catch (e: Exception) {
+            SwitchDedupe.apply(loaded)
+        } catch (_: Exception) {
             emptyList()
         }
     }
 
     fun save(entries: List<RomEntry>) {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        // Compact JSON (no pretty indent): multi-k libraries rewrite often
-        // after rescan — indent doubled CPU + IO for zero UX gain.
-        tmp.writeText(entriesToJson(entries).toString())
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
+        synchronized(ioLock) {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            // Stream compact JSON directly to disk (zero DOM JSONArray/JSONObject
+            // heap spikes and null optional keys omitted).
+            BufferedWriter(
+                OutputStreamWriter(
+                    BufferedOutputStream(FileOutputStream(tmp), STREAM_BUF_SIZE),
+                    Charsets.UTF_8,
+                ),
+                STREAM_BUF_SIZE,
+            ).use { writer ->
+                writeEntriesStreaming(entries, writer)
+            }
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
         }
     }
 
@@ -196,32 +222,478 @@ class RomLibrary(private val file: File) {
 
     companion object {
         private val SCAN_EXECUTOR = Executors.newSingleThreadExecutor()
+        private const val STREAM_BUF_SIZE = 65536
+        private const val MAX_SKIP_DEPTH = 64
+        private val HEX_DIGITS = charArrayOf(
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+        )
 
         // Internal (not private) so the settings export/import bundle uses
         // the exact same entry codec as the on-disk library file.
+        // Null optional fields and default `visibleInUi = true` are omitted
+        // (100% backward-compatible with optNullableString / optBoolean).
         internal fun entriesToJson(entries: List<RomEntry>): JSONArray {
             val arr = JSONArray()
             entries.forEach { e ->
-                arr.put(
-                    JSONObject()
-                        .put("id", e.id)
-                        .put("name", e.name)
-                        .put("platformId", e.platformId)
-                        .put("uri", e.uri)
-                        .put("path", e.path ?: JSONObject.NULL)
-                        .put("artUri", e.artUri ?: JSONObject.NULL)
-                        .put("visibleInUi", e.visibleInUi)
-                        .put("description", e.description ?: JSONObject.NULL)
-                        .put("screenshotUri", e.screenshotUri ?: JSONObject.NULL)
-                        .put("logoUri", e.logoUri ?: JSONObject.NULL)
-                        .put("videoUri", e.videoUri ?: JSONObject.NULL)
-                        .put("year", e.year ?: JSONObject.NULL)
-                        .put("genre", e.genre ?: JSONObject.NULL)
-                        .put("developer", e.developer ?: JSONObject.NULL)
-                        .put("rating", e.rating ?: JSONObject.NULL),
-                )
+                val o = JSONObject()
+                    .put("id", e.id)
+                    .put("name", e.name)
+                    .put("platformId", e.platformId)
+                    .put("uri", e.uri)
+                e.path?.let { o.put("path", it) }
+                e.artUri?.let { o.put("artUri", it) }
+                if (!e.visibleInUi) o.put("visibleInUi", false)
+                e.description?.let { o.put("description", it) }
+                e.screenshotUri?.let { o.put("screenshotUri", it) }
+                e.logoUri?.let { o.put("logoUri", it) }
+                e.videoUri?.let { o.put("videoUri", it) }
+                e.year?.let { o.put("year", it) }
+                e.genre?.let { o.put("genre", it) }
+                e.developer?.let { o.put("developer", it) }
+                e.rating?.let { o.put("rating", it) }
+                arr.put(o)
             }
             return arr
+        }
+
+        internal fun writeEntriesStreaming(entries: List<RomEntry>, out: Writer) {
+            out.write('['.code)
+            for (i in entries.indices) {
+                if (i > 0) out.write(','.code)
+                val e = entries[i]
+                out.write("{\"id\":")
+                writeJsonString(out, e.id)
+                out.write(",\"name\":")
+                writeJsonString(out, e.name)
+                out.write(",\"platformId\":")
+                writeJsonString(out, e.platformId)
+                out.write(",\"uri\":")
+                writeJsonString(out, e.uri)
+                e.path?.let {
+                    out.write(",\"path\":")
+                    writeJsonString(out, it)
+                }
+                e.artUri?.let {
+                    out.write(",\"artUri\":")
+                    writeJsonString(out, it)
+                }
+                if (!e.visibleInUi) {
+                    out.write(",\"visibleInUi\":false")
+                }
+                e.description?.let {
+                    out.write(",\"description\":")
+                    writeJsonString(out, it)
+                }
+                e.screenshotUri?.let {
+                    out.write(",\"screenshotUri\":")
+                    writeJsonString(out, it)
+                }
+                e.logoUri?.let {
+                    out.write(",\"logoUri\":")
+                    writeJsonString(out, it)
+                }
+                e.videoUri?.let {
+                    out.write(",\"videoUri\":")
+                    writeJsonString(out, it)
+                }
+                e.year?.let {
+                    out.write(",\"year\":")
+                    writeJsonString(out, it)
+                }
+                e.genre?.let {
+                    out.write(",\"genre\":")
+                    writeJsonString(out, it)
+                }
+                e.developer?.let {
+                    out.write(",\"developer\":")
+                    writeJsonString(out, it)
+                }
+                e.rating?.let {
+                    out.write(",\"rating\":")
+                    writeJsonString(out, it)
+                }
+                out.write('}'.code)
+            }
+            out.write(']'.code)
+        }
+
+        private fun writeJsonString(out: Writer, s: String) {
+            out.write('"'.code)
+            val len = s.length
+            var spanStart = 0
+            for (i in 0 until len) {
+                val c = s[i]
+                if (c >= ' ' && c != '"' && c != '\\') continue
+                if (i > spanStart) out.write(s, spanStart, i - spanStart)
+                when (c) {
+                    '"' -> out.write("\\\"")
+                    '\\' -> out.write("\\\\")
+                    '\b' -> out.write("\\b")
+                    '\u000C' -> out.write("\\f")
+                    '\n' -> out.write("\\n")
+                    '\r' -> out.write("\\r")
+                    '\t' -> out.write("\\t")
+                    else -> {
+                        val code = c.code
+                        out.write("\\u00")
+                        out.write(HEX_DIGITS[(code ushr 4) and 0xF].code)
+                        out.write(HEX_DIGITS[code and 0xF].code)
+                    }
+                }
+                spanStart = i + 1
+            }
+            if (spanStart < len) out.write(s, spanStart, len - spanStart)
+            out.write('"'.code)
+        }
+
+        internal fun readEntriesStreaming(reader: Reader): List<RomEntry> =
+            StreamingRomJsonReader(reader).readEntries()
+
+        private class StreamingRomJsonReader(private val reader: Reader) {
+            private val buf = CharArray(STREAM_BUF_SIZE)
+            private var pos = 0
+            private var limit = 0
+            private val sb = StringBuilder(256)
+            private val platformPool = HashMap<String, String>(32)
+            private val metaPool = HashMap<String, String>(256)
+
+            private fun refill(): Boolean {
+                pos = 0
+                limit = reader.read(buf, 0, buf.size)
+                return limit > 0
+            }
+
+            private fun nextChar(): Int {
+                if (pos >= limit && !refill()) return -1
+                return buf[pos++].code
+            }
+
+            private fun skipWhitespace(): Int {
+                while (true) {
+                    if (pos >= limit && !refill()) return -1
+                    val c = buf[pos]
+                    if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                        pos++
+                    } else {
+                        return c.code
+                    }
+                }
+            }
+
+            private fun poolPlatform(raw: String): String =
+                platformPool.getOrPut(raw) { raw }
+
+            private fun poolMeta(raw: String?): String? {
+                if (raw == null || raw.length > 64) return raw
+                metaPool[raw]?.let { return it }
+                if (metaPool.size < 2048) metaPool[raw] = raw
+                return raw
+            }
+
+            fun readEntries(): List<RomEntry> {
+                var c = skipWhitespace()
+                if (c == 0xFEFF) {
+                    pos++
+                    c = skipWhitespace()
+                }
+                if (c != '['.code) throw IllegalArgumentException("Expected JSON array")
+                pos++ // consume '['
+
+                val next = skipWhitespace()
+                if (next == ']'.code) {
+                    pos++
+                    if (skipWhitespace() != -1) {
+                        throw IllegalArgumentException("Trailing content after JSON array")
+                    }
+                    return emptyList()
+                }
+
+                val out = ArrayList<RomEntry>(256)
+                while (true) {
+                    out.add(readEntry())
+                    when (skipWhitespace()) {
+                        ','.code -> pos++
+                        ']'.code -> {
+                            pos++
+                            break
+                        }
+                        else -> throw IllegalArgumentException("Expected ',' or ']' in ROM array")
+                    }
+                }
+                if (skipWhitespace() != -1) {
+                    throw IllegalArgumentException("Trailing content after JSON array")
+                }
+                return out
+            }
+
+            private fun readEntry(): RomEntry {
+                if (skipWhitespace() != '{'.code) {
+                    throw IllegalArgumentException("Expected '{' for RomEntry")
+                }
+                pos++ // consume '{'
+
+                var id: String? = null
+                var name: String? = null
+                var platformId: String? = null
+                var uri: String? = null
+                var path: String? = null
+                var artUri: String? = null
+                var visibleInUi = true
+                var description: String? = null
+                var screenshotUri: String? = null
+                var logoUri: String? = null
+                var videoUri: String? = null
+                var year: String? = null
+                var genre: String? = null
+                var developer: String? = null
+                var rating: String? = null
+
+                if (skipWhitespace() != '}'.code) {
+                    while (true) {
+                        val key = readString()
+                        if (skipWhitespace() != ':'.code) {
+                            throw IllegalArgumentException("Expected ':' after key $key")
+                        }
+                        pos++ // consume ':'
+                        when (key) {
+                            "id" -> id = readRequiredString()
+                            "name" -> name = readRequiredString()
+                            "platformId" -> platformId = poolPlatform(readRequiredString())
+                            "uri" -> uri = readRequiredString()
+                            "path" -> path = readNullableString()
+                            "artUri" -> artUri = readNullableString()
+                            "visibleInUi" -> visibleInUi = readBooleanOrDefault(true)
+                            "description" -> description = readNullableString()
+                            "screenshotUri" -> screenshotUri = readNullableString()
+                            "logoUri" -> logoUri = readNullableString()
+                            "videoUri" -> videoUri = readNullableString()
+                            "year" -> year = poolMeta(readNullableString())
+                            "genre" -> genre = poolMeta(readNullableString())
+                            "developer" -> developer = poolMeta(readNullableString())
+                            "rating" -> rating = poolMeta(readNullableString())
+                            else -> skipValue(0)
+                        }
+                        when (skipWhitespace()) {
+                            ','.code -> pos++
+                            '}'.code -> {
+                                pos++
+                                break
+                            }
+                            else -> throw IllegalArgumentException("Expected ',' or '}' in RomEntry")
+                        }
+                    }
+                } else {
+                    pos++
+                }
+
+                if (id == null || name == null || platformId == null || uri == null) {
+                    throw IllegalArgumentException("Missing required RomEntry field")
+                }
+                return RomEntry(
+                    id = id,
+                    name = name,
+                    platformId = platformId,
+                    uri = uri,
+                    path = path,
+                    artUri = artUri,
+                    visibleInUi = visibleInUi,
+                    description = description,
+                    screenshotUri = screenshotUri,
+                    logoUri = logoUri,
+                    videoUri = videoUri,
+                    year = year,
+                    genre = genre,
+                    developer = developer,
+                    rating = rating,
+                )
+            }
+
+            private fun readRequiredString(): String = readString()
+
+            private fun readNullableString(): String? = when (skipWhitespace()) {
+                'n'.code -> {
+                    expectLiteral("null")
+                    null
+                }
+                '"'.code -> readString()
+                else -> throw IllegalArgumentException("Expected JSON string or null")
+            }
+
+            private fun readBooleanOrDefault(default: Boolean): Boolean = when (skipWhitespace()) {
+                't'.code -> {
+                    expectLiteral("true")
+                    true
+                }
+                'f'.code -> {
+                    expectLiteral("false")
+                    false
+                }
+                'n'.code -> {
+                    expectLiteral("null")
+                    default
+                }
+                '"'.code -> {
+                    val s = readString()
+                    when {
+                        s.equals("true", ignoreCase = true) -> true
+                        s.equals("false", ignoreCase = true) -> false
+                        else -> default
+                    }
+                }
+                else -> {
+                    skipValue(0)
+                    default
+                }
+            }
+
+            private fun readString(): String {
+                if (skipWhitespace() != '"'.code) throw IllegalArgumentException("Expected '\"'")
+                pos++ // consume opening quote
+
+                val fastStart = pos
+                while (pos < limit) {
+                    val c = buf[pos]
+                    if (c == '"') {
+                        val result = String(buf, fastStart, pos - fastStart)
+                        pos++
+                        return result
+                    }
+                    if (c == '\\' || c < ' ') break
+                    pos++
+                }
+
+                sb.setLength(0)
+                if (pos > fastStart) sb.append(buf, fastStart, pos - fastStart)
+                while (true) {
+                    if (pos >= limit && !refill()) {
+                        throw IllegalArgumentException("Unterminated JSON string")
+                    }
+                    val spanStart = pos
+                    var hitEscape = false
+                    while (pos < limit) {
+                        val c = buf[pos]
+                        if (c == '"') {
+                            if (pos > spanStart) sb.append(buf, spanStart, pos - spanStart)
+                            pos++
+                            return sb.toString()
+                        }
+                        if (c == '\\') {
+                            if (pos > spanStart) sb.append(buf, spanStart, pos - spanStart)
+                            pos++
+                            hitEscape = true
+                            break
+                        }
+                        if (c < ' ') {
+                            throw IllegalArgumentException("Unescaped control character in JSON string")
+                        }
+                        pos++
+                    }
+                    if (hitEscape) {
+                        sb.append(readEscapeChar())
+                    } else if (pos > spanStart) {
+                        sb.append(buf, spanStart, pos - spanStart)
+                    }
+                }
+            }
+
+            private fun readEscapeChar(): Char = when (val esc = nextChar()) {
+                '"'.code -> '"'
+                '\\'.code -> '\\'
+                '/'.code -> '/'
+                'b'.code -> '\b'
+                'f'.code -> '\u000C'
+                'n'.code -> '\n'
+                'r'.code -> '\r'
+                't'.code -> '\t'
+                'u'.code -> {
+                    var value = 0
+                    repeat(4) {
+                        val ch = nextChar()
+                        val digit = when (ch) {
+                            in '0'.code..'9'.code -> ch - '0'.code
+                            in 'a'.code..'f'.code -> ch - 'a'.code + 10
+                            in 'A'.code..'F'.code -> ch - 'A'.code + 10
+                            else -> throw IllegalArgumentException("Invalid \\u escape")
+                        }
+                        value = (value shl 4) or digit
+                    }
+                    value.toChar()
+                }
+                else -> throw IllegalArgumentException("Invalid JSON escape: $esc")
+            }
+
+            private fun expectLiteral(literal: String) {
+                for (i in 0 until literal.length) {
+                    if (nextChar() != literal[i].code) {
+                        throw IllegalArgumentException("Expected literal '$literal'")
+                    }
+                }
+            }
+
+            private fun skipValue(depth: Int) {
+                if (depth > MAX_SKIP_DEPTH) throw IllegalArgumentException("JSON nesting too deep")
+                when (val c = skipWhitespace()) {
+                    '"'.code -> readString()
+                    't'.code -> expectLiteral("true")
+                    'f'.code -> expectLiteral("false")
+                    'n'.code -> expectLiteral("null")
+                    '{'.code -> {
+                        pos++
+                        if (skipWhitespace() == '}'.code) {
+                            pos++
+                            return
+                        }
+                        while (true) {
+                            readString()
+                            if (skipWhitespace() != ':'.code) {
+                                throw IllegalArgumentException("Expected ':' in skipped object")
+                            }
+                            pos++
+                            skipValue(depth + 1)
+                            when (skipWhitespace()) {
+                                ','.code -> pos++
+                                '}'.code -> {
+                                    pos++
+                                    return
+                                }
+                                else -> throw IllegalArgumentException("Expected ',' or '}' in skipped object")
+                            }
+                        }
+                    }
+                    '['.code -> {
+                        pos++
+                        if (skipWhitespace() == ']'.code) {
+                            pos++
+                            return
+                        }
+                        while (true) {
+                            skipValue(depth + 1)
+                            when (skipWhitespace()) {
+                                ','.code -> pos++
+                                ']'.code -> {
+                                    pos++
+                                    return
+                                }
+                                else -> throw IllegalArgumentException("Expected ',' or ']' in skipped array")
+                            }
+                        }
+                    }
+                    '-'.code, in '0'.code..'9'.code -> {
+                        pos++
+                        while (true) {
+                            if (pos >= limit && !refill()) break
+                            val ch = buf[pos]
+                            if (ch in '0'..'9' || ch == '.' || ch == 'e' || ch == 'E' || ch == '+' || ch == '-') {
+                                pos++
+                            } else {
+                                break
+                            }
+                        }
+                    }
+                    else -> throw IllegalArgumentException("Unexpected JSON token: $c")
+                }
+            }
         }
 
         private fun JSONObject.optNullableString(key: String): String? =

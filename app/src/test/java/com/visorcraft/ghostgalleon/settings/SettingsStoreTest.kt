@@ -683,4 +683,52 @@ class SettingsStoreTest {
         f.writeText(raw.toString())
         assertEquals(SoundPackId.AUTO.id, SettingsStore(f).load().soundPack)
     }
+
+    @Test
+    fun `concurrent multi-threaded save and load stress has zero corruption or tmp races`() {
+        val f = tmp.root.resolve("stress/settings.json")
+        val store = SettingsStore(f)
+        val threads = 8
+        val writesPerThread = 50
+        val startGate = java.util.concurrent.CountDownLatch(1)
+        val doneGate = java.util.concurrent.CountDownLatch(threads)
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+
+        repeat(threads) { tid ->
+            Thread {
+                try {
+                    startGate.await()
+                    for (iter in 0 until writesPerThread) {
+                        val s = Settings.DEFAULT.copy(
+                            gridColumns = 3 + ((tid + iter) % 5),
+                            sfxVolume = (tid * 10 + iter) % 101,
+                            searchHistory = listOf("t$tid-$iter"),
+                            lastLaunchedMs = mapOf("rom:snes:g$tid" to (iter + 1L) * 1000L),
+                        )
+                        store.save(s)
+                        if (iter % 10 == 0) {
+                            val loaded = store.load()
+                            assertTrue(loaded.gridColumns in 3..7)
+                            assertTrue(loaded.sfxVolume in 0..100)
+                            assertEquals(SettingsStore.CURRENT_SCHEMA, loaded.schemaVersion)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    errors.add(t)
+                } finally {
+                    doneGate.countDown()
+                }
+            }.start()
+        }
+        startGate.countDown()
+        assertTrue("stress threads timed out", doneGate.await(30, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue("concurrent errors: $errors", errors.isEmpty())
+        assertFalse(File(f.path + ".tmp").exists())
+
+        // Final persisted file must parse cleanly with no corruption.
+        val finalSettings = store.load()
+        assertEquals(SettingsStore.CURRENT_SCHEMA, finalSettings.schemaVersion)
+        assertTrue(finalSettings.gridColumns in 3..7)
+        assertTrue(finalSettings.searchHistory.isNotEmpty())
+    }
 }

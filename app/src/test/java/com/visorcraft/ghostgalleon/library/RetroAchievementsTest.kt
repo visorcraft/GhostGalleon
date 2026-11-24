@@ -73,4 +73,14 @@ class RetroAchievementsTest {
             RetroAchievements.heroLine(progress, hasCredentials = true),
         )
     }
+
+    @Test
+    fun `parseProgress JSONObject overload matches String overload directly`() {
+        val raw = """{"ID":789,"Title":"Chrono Trigger","NumAwardedToUser":12,"NumAchievements":40,"Score":250,"HardcoreMode":1}"""
+        val fromStr = RetroAchievements.parseProgress(raw)
+        val fromObj = RetroAchievements.parseProgress(org.json.JSONObject(raw))
+        assertEquals(fromStr, fromObj)
+        assertTrue(fromObj.hardcore)
+        assertEquals(250, fromObj.userScore)
+    }
 }

@@ -553,14 +553,18 @@ class GhostGalleonApp : Application() {
         }
     }
 
+    private val sgdbMissLock = Any()
+
     @Volatile
     private var sgdbMisses: Map<String, com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss> =
         emptyMap()
 
     private fun noteSgdbMiss(romId: String, query: String) {
-        sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.record(
-            sgdbMisses, romId, query, System.currentTimeMillis(),
-        )
+        synchronized(sgdbMissLock) {
+            sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.record(
+                sgdbMisses, romId, query, System.currentTimeMillis(),
+            )
+        }
         persistSgdbMisses()
     }
 
@@ -580,10 +584,22 @@ class GhostGalleonApp : Application() {
                     next[id] = com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss(id, query, at)
                 }
             }
-            sgdbMisses = com.visorcraft.ghostgalleon.art.SgdbMissCache.prune(
+            val pruned = com.visorcraft.ghostgalleon.art.SgdbMissCache.prune(
                 next,
                 System.currentTimeMillis(),
             )
+            synchronized(sgdbMissLock) {
+                if (sgdbMisses.isEmpty()) {
+                    sgdbMisses = pruned
+                } else {
+                    val merged = HashMap<String, com.visorcraft.ghostgalleon.art.SgdbMissCache.Miss>(
+                        pruned.size + sgdbMisses.size,
+                    )
+                    merged.putAll(pruned)
+                    merged.putAll(sgdbMisses) // live writes win over cold-start disk load
+                    sgdbMisses = merged
+                }
+            }
         }
     }
 
@@ -596,7 +612,8 @@ class GhostGalleonApp : Application() {
             while (keys.hasNext()) {
                 val id = keys.next()
                 val gameId = root.optLong(id, 0L)
-                if (gameId > 0L) com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds[id] = gameId
+                // putIfAbsent so any live pick made before disk load completes is preserved.
+                if (gameId > 0L) com.visorcraft.ghostgalleon.art.Sgdb.pickedGameIds.putIfAbsent(id, gameId)
             }
         }
     }
@@ -1056,6 +1073,10 @@ class GhostGalleonApp : Application() {
     }
 
     // Optional RetroAchievements progress by ROM id (filled by network fetch).
+    private val raCacheLock = Any()
+    private var raCacheLoaded = false
+    private val raClearedBeforeLoad = HashSet<String>()
+
     @Volatile
     private var raProgressByRomId: Map<String, com.visorcraft.ghostgalleon.library.RaProgress> =
         emptyMap()
@@ -1067,16 +1088,22 @@ class GhostGalleonApp : Application() {
     fun putRaProgress(romId: String, progress: RaProgress) {
         val id = romId.trim()
         if (id.isEmpty()) return
-        val prev = raProgressByRomId[id]
-        // Pure gate: no SETTINGS full-rebuild notify (black-screen thrash).
-        when (RaProgressGate.notifyAfterStore(prev, progress)) {
-            RaProgressGate.NotifyKind.NONE -> return
-            RaProgressGate.NotifyKind.SELECTION_ONLY -> {
-                raProgressByRomId = raProgressByRomId + (id to progress)
-                persistRaCache()
-                Handler(Looper.getMainLooper()).post {
-                    deckState.notifySelectionRefresh()
+        val shouldNotify = synchronized(raCacheLock) {
+            val prev = raProgressByRomId[id]
+            // Pure gate: no SETTINGS full-rebuild notify (black-screen thrash).
+            when (RaProgressGate.notifyAfterStore(prev, progress)) {
+                RaProgressGate.NotifyKind.NONE -> false
+                RaProgressGate.NotifyKind.SELECTION_ONLY -> {
+                    if (!raCacheLoaded) raClearedBeforeLoad.remove(id)
+                    raProgressByRomId = raProgressByRomId + (id to progress)
+                    true
                 }
+            }
+        }
+        if (shouldNotify) {
+            persistRaCache()
+            Handler(Looper.getMainLooper()).post {
+                deckState.notifySelectionRefresh()
             }
         }
     }
@@ -1085,47 +1112,88 @@ class GhostGalleonApp : Application() {
     fun setRaProgress(romId: String, json: String?) {
         val id = romId.trim()
         if (id.isEmpty()) return
-        if (json.isNullOrBlank()) {
-            if (id !in raProgressByRomId) return
-            raProgressByRomId = raProgressByRomId - id
-        } else {
-            val parsed = RetroAchievements.parseProgress(json)
-            val next = if (parsed.isEmpty) raProgressByRomId - id
-            else raProgressByRomId + (id to parsed)
-            if (next == raProgressByRomId) return
-            raProgressByRomId = next
+        val changed = synchronized(raCacheLock) {
+            if (json.isNullOrBlank()) {
+                if (!raCacheLoaded) raClearedBeforeLoad.add(id)
+                if (id !in raProgressByRomId) return@synchronized false
+                raProgressByRomId = raProgressByRomId - id
+                true
+            } else {
+                val parsed = RetroAchievements.parseProgress(json)
+                if (parsed.isEmpty) {
+                    if (!raCacheLoaded) raClearedBeforeLoad.add(id)
+                    if (id !in raProgressByRomId) return@synchronized false
+                    raProgressByRomId = raProgressByRomId - id
+                    true
+                } else {
+                    if (!raCacheLoaded) raClearedBeforeLoad.remove(id)
+                    val next = raProgressByRomId + (id to parsed)
+                    if (next == raProgressByRomId) return@synchronized false
+                    raProgressByRomId = next
+                    true
+                }
+            }
         }
-        persistRaCache()
-        Handler(Looper.getMainLooper()).post { deckState.notifySelectionRefresh() }
+        if (changed) {
+            persistRaCache()
+            Handler(Looper.getMainLooper()).post { deckState.notifySelectionRefresh() }
+        }
     }
 
     /** Load optional filesDir/ra_cache.json: `{ "romId": {…progress…}, … }`. */
     private fun loadRaCacheFile() {
         val file = File(filesDir, "ra_cache.json")
-        if (!file.isFile) return
-        runCatching {
+        if (!file.isFile) {
+            synchronized(raCacheLock) {
+                raCacheLoaded = true
+                raClearedBeforeLoad.clear()
+            }
+            return
+        }
+        val loaded = runCatching {
             val root = JSONObject(file.readText())
-            val next = raProgressByRomId.toMutableMap()
+            val parsedMap = HashMap<String, com.visorcraft.ghostgalleon.library.RaProgress>()
             val keys = root.keys()
             while (keys.hasNext()) {
                 val romId = keys.next()
-                val value = root.opt(romId) ?: continue
-                val json = when (value) {
-                    is JSONObject -> value.toString()
-                    is String -> value
+                val progress = when (val value = root.opt(romId)) {
+                    is JSONObject -> RetroAchievements.parseProgress(value)
+                    is String -> RetroAchievements.parseProgress(value)
                     else -> continue
                 }
-                val progress = RetroAchievements.parseProgress(json)
-                if (!progress.isEmpty) next[romId] = progress
+                if (!progress.isEmpty) parsedMap[romId] = progress
             }
-            raProgressByRomId = next
+            parsedMap
+        }.getOrNull()
+        var mergedAny = false
+        synchronized(raCacheLock) {
+            if (loaded != null && loaded.isNotEmpty()) {
+                val merged = HashMap<String, com.visorcraft.ghostgalleon.library.RaProgress>(
+                    loaded.size + raProgressByRomId.size,
+                )
+                for ((romId, progress) in loaded) {
+                    if (romId !in raClearedBeforeLoad) merged[romId] = progress
+                }
+                merged.putAll(raProgressByRomId) // live updates win over cold-start disk load
+                if (merged != raProgressByRomId) {
+                    raProgressByRomId = merged
+                    mergedAny = true
+                }
+            }
+            raCacheLoaded = true
+            raClearedBeforeLoad.clear()
+        }
+        if (mergedAny) {
+            mainHandler.post { deckState.notifySelectionRefresh() }
         }
     }
 
     /** Persist in-memory RA map so process death keeps last-known progress. */
     private fun persistRaCache() {
-        val snapshot = raProgressByRomId
         RA_IO.execute {
+            // Read snapshot on single-threaded RA_IO so any cold-start loadRaCacheFile()
+            // queued ahead of this task has already merged disk entries before we write.
+            val snapshot = raProgressByRomId
             runCatching {
                 val root = JSONObject()
                 snapshot.forEach { (romId, progress) ->
@@ -2601,11 +2669,15 @@ class GhostGalleonApp : Application() {
                 clearInstalledPackageCache()
             }
         }
-        loadRaCacheFile()
-        loadSgdbMissFile()
-        loadSgdbPicksFile()
         deckState = DeckState()
         deckState.setMode(settings.defaultMode)
+        // Cold-start sidecar caches stay off the main thread so first paint is never stalled;
+        // single-threaded RA_IO / SETTINGS_IO serialize disk loads before any subsequent saves.
+        RA_IO.execute { loadRaCacheFile() }
+        SETTINGS_IO.execute {
+            loadSgdbMissFile()
+            loadSgdbPicksFile()
+        }
         // Topology-driven primary (secondary prefer on Sugar Auto); not raw primaryDisplay.
         refreshDisplayConfig()
         registerDisplayListener()
@@ -2761,6 +2833,7 @@ class GhostGalleonApp : Application() {
 
     /** Finish every other live deck activity; called when one deck exits. */
     fun requestExitAll(except: BaseDeckActivity) {
+        flushSettingsBlocking()
         val engineToRelease = synchronized(ambientEngineLock) {
             val cur = _ambientEngine
             _ambientEngine = null
@@ -2907,13 +2980,35 @@ class GhostGalleonApp : Application() {
         }
     }
 
-    /** Flush any debounced settings write (call from activity onPause). */
+    private val settingsFlushLock = Any()
+
+    /**
+     * Flush any debounced settings write without blocking the UI thread (call
+     * from activity onPause). Cancels the debounce timer and dispatches an
+     * immediate save onto single-threaded [SETTINGS_IO].
+     */
     fun flushSettingsNow() {
         mainHandler.removeCallbacks(persistSettingsRunnable)
         // Nothing dirty: skip a full JSON rewrite on every pause / launch.
-        val snapshot = pendingSettingsSave.getAndSet(null) ?: return
-        // Sync on caller thread when leaving foreground — process may die.
-        runCatching { settingsStore.save(snapshot) }
+        if (pendingSettingsSave.get() == null) return
+        SETTINGS_IO.execute { drainPendingSettingsSave() }
+    }
+
+    /**
+     * Synchronous flush reserved for explicit process exit ([requestExitAll]).
+     * Serialized with [SETTINGS_IO] via [settingsFlushLock] so a newer snapshot
+     * can never be overwritten by an older queued flush.
+     */
+    private fun flushSettingsBlocking() {
+        mainHandler.removeCallbacks(persistSettingsRunnable)
+        drainPendingSettingsSave()
+    }
+
+    private fun drainPendingSettingsSave() {
+        synchronized(settingsFlushLock) {
+            val snapshot = pendingSettingsSave.getAndSet(null) ?: return
+            runCatching { settingsStore.save(snapshot) }
+        }
     }
 
     private fun scheduleSettingsSave(s: Settings) {
@@ -2923,10 +3018,8 @@ class GhostGalleonApp : Application() {
     }
 
     private val persistSettingsRunnable = Runnable {
-        val snapshot = pendingSettingsSave.getAndSet(null) ?: return@Runnable
-        SETTINGS_IO.execute {
-            runCatching { settingsStore.save(snapshot) }
-        }
+        if (pendingSettingsSave.get() == null) return@Runnable
+        SETTINGS_IO.execute { drainPendingSettingsSave() }
     }
 
     /** Interactive (PRIMARY-role) deck activity, if any is live. */
