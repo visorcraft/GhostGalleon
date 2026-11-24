@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.rom.CinemaFrame
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 
 /**
  * Pure visual metrics, status colors, and layout specs for `NOW_PLAYING`,
@@ -56,6 +57,47 @@ object PlayHudMetrics {
     ): String {
         val body = frames.joinToString(",") { "${it.slot}:${it.savedAtMs}:${it.thumbKey ?: ""}" }
         return "$body|p=${pinnedSlot ?: -1}|l=${lastSlot ?: -1}"
+    }
+
+    /** Corner radius (dp) for the Achievement Theater badge frame. */
+    const val THEATER_BADGE_RADIUS_DP: Int = 8
+
+    /** Height (dp) of the Achievement Theater horizontal progress meter. */
+    const val THEATER_METER_HEIGHT_DP: Int = 4
+
+    /** Alpha for inactive RAM tracker pills (readable pill silhouette, clearly dimmed). */
+    const val TRACKER_OFF_ALPHA: Float = 0.42f
+
+    data class TrackerCellStyle(
+        val fillColor: Int,
+        val strokeColor: Int,
+        val textColor: Int,
+        val alpha: Float,
+    )
+
+    /** Pure pill styling for RAM tracker cells separating acquired/on items from off slots. */
+    fun trackerCellStyle(
+        on: Boolean,
+        accentColor: Int,
+        idleSurface: Int,
+        sunkenSurface: Int,
+        hairlineColor: Int,
+    ): TrackerCellStyle = if (on) {
+        val fill = CompanionChromeErgonomics.activeChipFill(idleSurface, accentColor)
+        val liftedAccent = ThemePack.accentTextColor(accentColor, fill)
+        TrackerCellStyle(
+            fillColor = fill,
+            strokeColor = (liftedAccent and 0x00FFFFFF) or (0x88 shl 24),
+            textColor = UiDimens.ALPHA_PRIMARY,
+            alpha = 1f,
+        )
+    } else {
+        TrackerCellStyle(
+            fillColor = sunkenSurface,
+            strokeColor = hairlineColor,
+            textColor = UiDimens.ALPHA_MUTED,
+            alpha = TRACKER_OFF_ALPHA,
+        )
     }
 
     /** Live/paused indicator color (WCAG AA verified across all dark surfaces). */

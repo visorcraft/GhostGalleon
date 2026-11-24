@@ -168,6 +168,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_CINEMA = "play_hud_cinema"
     private const val TAG_PLAY_HUD_THEATER = "play_hud_theater"
     private const val TAG_PLAY_HUD_THEATER_PROGRESS = "play_hud_theater_progress"
+    private const val TAG_PLAY_HUD_THEATER_BAR = "play_hud_theater_bar"
     private const val TAG_PLAY_HUD_THEATER_NEXT = "play_hud_theater_next"
     private const val TAG_PLAY_HUD_THEATER_TICKER = "play_hud_theater_ticker"
     private const val TAG_PLAY_HUD_THEATER_BADGE = "play_hud_theater_badge"
@@ -4083,16 +4084,24 @@ object CompanionPanel {
             },
         )
         // Opt-in RAM lens under the clock. Tick controls visibility; GONE until match.
-        hud.addView(TextView(activity).apply {
-            tag = TAG_PLAY_HUD_LENS
-            visibility = View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-            setTextColor(0xCCFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
-            maxLines = 8
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        })
+        hud.addView(
+            TextView(activity).apply {
+                tag = TAG_PLAY_HUD_LENS
+                visibility = View.GONE
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                setTextColor(UiDimens.ALPHA_SECONDARY)
+                fontFeatureSettings = "tnum"
+                gravity = Gravity.CENTER
+                background = TileBackgrounds.sunkenField(activity, cornerRadiusDp = 12)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                maxLines = 8
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(8) },
+        )
         hud.addView(GridLayout(activity).apply {
             tag = TAG_PLAY_HUD_TRACKER
             visibility = View.GONE
@@ -4128,6 +4137,8 @@ object CompanionPanel {
                 )
             },
         )
+        val theaterSurface = TileBackgrounds.surfaceSunken(activity)
+        val badgeRadiusPx = activity.dpF(PlayHudMetrics.THEATER_BADGE_RADIUS_DP)
         hud.addView(
             LinearLayout(activity).apply {
                 tag = TAG_PLAY_HUD_THEATER
@@ -4135,11 +4146,29 @@ object CompanionPanel {
                 gravity = Gravity.CENTER_VERTICAL
                 visibility = View.GONE
                 contentDescription = activity.getString(R.string.settings_ra_theater)
-                setPadding(0, dp(6), 0, 0)
-                val badgeSize = dp(if (compact) 28 else 32)
+                background = TileBackgrounds.sunkenField(activity, cornerRadiusDp = 14)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val badgeSize = dp(if (compact) 34 else 40)
                 addView(
                     FrameLayout(activity).apply {
-                        background = TileBackgrounds.chip(activity)
+                        background = GradientDrawable().apply {
+                            setColor(TileBackgrounds.chipIdleColor(activity))
+                            cornerRadius = badgeRadiusPx
+                        }
+                        clipToOutline = true
+                        outlineProvider = object : ViewOutlineProvider() {
+                            override fun getOutline(view: View, outline: Outline) {
+                                outline.setRoundRect(0, 0, view.width, view.height, badgeRadiusPx)
+                            }
+                        }
+                        foreground = GradientDrawable().apply {
+                            setColor(Color.TRANSPARENT)
+                            cornerRadius = badgeRadiusPx
+                            setStroke(
+                                activity.strokePx(1),
+                                CompanionHeroStyle.artRimColor(settings.accentColor),
+                            )
+                        }
                         addView(
                             ImageView(activity).apply {
                                 tag = TAG_PLAY_HUD_THEATER_BADGE
@@ -4161,7 +4190,7 @@ object CompanionPanel {
                                         TileBackgrounds.chipIdleColor(activity),
                                     ),
                                 )
-                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                                 setTypeface(typeface, Typeface.BOLD)
                             },
                             FrameLayout.LayoutParams(
@@ -4171,7 +4200,7 @@ object CompanionPanel {
                         )
                     },
                     LinearLayout.LayoutParams(badgeSize, badgeSize).apply {
-                        marginEnd = dp(8)
+                        marginEnd = dp(10)
                     },
                 )
                 addView(
@@ -4181,16 +4210,33 @@ object CompanionPanel {
                             TextView(activity).apply {
                                 tag = TAG_PLAY_HUD_THEATER_PROGRESS
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-                                setTextColor(0xCCFFFFFF.toInt())
+                                setTypeface(typeface, Typeface.BOLD)
+                                setTextColor(UiDimens.ALPHA_PRIMARY)
+                                fontFeatureSettings = "tnum"
+                                includeFontPadding = false
                                 maxLines = 1
                                 ellipsize = android.text.TextUtils.TruncateAt.END
+                            },
+                        )
+                        addView(
+                            MeterBarView(activity).apply {
+                                tag = TAG_PLAY_HUD_THEATER_BAR
+                                visibility = View.GONE
+                            },
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                dp(PlayHudMetrics.THEATER_METER_HEIGHT_DP),
+                            ).apply {
+                                topMargin = dp(4)
+                                bottomMargin = dp(4)
                             },
                         )
                         addView(
                             TextView(activity).apply {
                                 tag = TAG_PLAY_HUD_THEATER_NEXT
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-                                setTextColor(0xBBFFFFFF.toInt())
+                                setTextColor(UiDimens.ALPHA_SECONDARY)
+                                includeFontPadding = false
                                 maxLines = 1
                                 ellipsize = android.text.TextUtils.TruncateAt.END
                             },
@@ -4200,12 +4246,18 @@ object CompanionPanel {
                                 tag = TAG_PLAY_HUD_THEATER_TICKER
                                 visibility = View.GONE
                                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
+                                setTypeface(typeface, Typeface.BOLD)
                                 setTextColor(
-                                    ThemePack.accentTextColor(settings.accentColor, cardSurface),
+                                    ThemePack.accentTextColor(settings.accentColor, theaterSurface),
                                 )
+                                includeFontPadding = false
                                 maxLines = 1
                                 ellipsize = android.text.TextUtils.TruncateAt.END
                             },
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply { topMargin = dp(2) },
                         )
                     },
                     LinearLayout.LayoutParams(
@@ -4215,6 +4267,10 @@ object CompanionPanel {
                     ),
                 )
             },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(8) },
         )
         // buildPlayHud is only called when playHostAllowed is true.
         val cockpit = CockpitPolicy.cockpitAllowed(
@@ -5017,6 +5073,7 @@ object CompanionPanel {
         snap: RaTheaterSnap,
     ) {
         val progressTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_PROGRESS)
+        val progressBar = block.findViewWithTag<MeterBarView>(TAG_PLAY_HUD_THEATER_BAR)
         val nextTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_NEXT)
         val tickerTv = block.findViewWithTag<TextView>(TAG_PLAY_HUD_THEATER_TICKER)
         val badge = block.findViewWithTag<ImageView>(TAG_PLAY_HUD_THEATER_BADGE)
@@ -5025,6 +5082,12 @@ object CompanionPanel {
         if (progressTv != null && progressTv.text?.toString() != progressText) {
             progressTv.text = progressText
         }
+        bindRaMeter(
+            bar = progressBar,
+            progress = snap.progress,
+            hasCreds = true,
+            accentColor = app.settings.accentColor,
+        )
         val nextTitle = snap.nextLocked?.title.orEmpty()
         if (nextTv != null && nextTv.text?.toString() != nextTitle) {
             nextTv.text = nextTitle
@@ -5135,20 +5198,38 @@ object CompanionPanel {
         }
         val cols = spec.widgets.firstOrNull { it.cols > 0 }?.cols ?: 8
         if (grid.columnCount != cols) grid.columnCount = cols
-        if (grid.childCount != cells.size) {
+        val ctx = grid.context
+        val app = ctx.applicationContext as? GhostGalleonApp
+        val accent = app?.settings?.accentColor ?: ThemePack.GHOST.accentColor
+        val idleSurface = TileBackgrounds.chipIdleColor(ctx)
+        val sunkenSurface = TileBackgrounds.surfaceSunken(ctx)
+        val hairline = TileBackgrounds.hairlineDivider(ctx)
+        val strokePx = ctx.strokePx(1)
+        val radiusPx = ctx.dpF(8)
+        val recreated = grid.childCount != cells.size
+        if (recreated) {
             grid.removeAllViews()
-            val ctx = grid.context
-            val pad = (4 * ctx.resources.displayMetrics.density).toInt()
+            val padH = (6 * ctx.resources.displayMetrics.density).toInt()
+            val padV = (4 * ctx.resources.displayMetrics.density).toInt()
+            val margin = (2 * ctx.resources.displayMetrics.density).toInt()
             for (cell in cells) {
+                val tv = TextView(ctx).apply {
+                    text = cellLabel(cell)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    fontFeatureSettings = "tnum"
+                    includeFontPadding = false
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(padH, padV, padH, padV)
+                    background = GradientDrawable().apply {
+                        cornerRadius = radiusPx
+                    }
+                }
                 grid.addView(
-                    TextView(ctx).apply {
-                        text = cellLabel(cell)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                        setTextColor(0xCCFFFFFF.toInt())
-                        gravity = Gravity.CENTER
-                        maxLines = 1
-                        ellipsize = android.text.TextUtils.TruncateAt.END
-                        setPadding(pad, pad, pad, pad)
+                    tv,
+                    GridLayout.LayoutParams().apply {
+                        setMargins(margin, margin, margin, margin)
                     },
                 )
             }
@@ -5166,8 +5247,23 @@ object CompanionPanel {
                 TrackerKind.METER -> TrackerCatalog.meterValue(cell.bytes) > 0
                 else -> TrackerCatalog.bitOn(cell.bytes, cell.bitIndex)
             }
-            val nextAlpha = if (on) 1f else 0.25f
-            if (tv.alpha != nextAlpha) tv.alpha = nextAlpha
+            if (recreated || tv.isActivated != on) {
+                tv.isActivated = on
+                val style = PlayHudMetrics.trackerCellStyle(
+                    on = on,
+                    accentColor = accent,
+                    idleSurface = idleSurface,
+                    sunkenSurface = sunkenSurface,
+                    hairlineColor = hairline,
+                )
+                tv.setTextColor(style.textColor)
+                tv.setTypeface(tv.typeface, if (on) Typeface.BOLD else Typeface.NORMAL)
+                tv.alpha = style.alpha
+                ((tv.background as? GradientDrawable)?.mutate() as? GradientDrawable)?.apply {
+                    setColor(style.fillColor)
+                    setStroke(strokePx, style.strokeColor)
+                }
+            }
         }
         if (grid.visibility != View.VISIBLE) grid.visibility = View.VISIBLE
     }

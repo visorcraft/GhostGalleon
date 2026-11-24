@@ -87,4 +87,34 @@ class PlayHudMetricsTest {
         assertNotEquals(k2, k3)
         assertTrue(PlayHudMetrics.slotCellSizeDp(compact = true) < PlayHudMetrics.slotCellSizeDp(compact = false))
     }
+
+    @Test
+    fun `trackerCellStyle separates active and inactive pills with WCAG AA active contrast`() {
+        for (pack in ThemePack.BUILTINS) {
+            val sunken = ThemePack.surfaceSunken(pack)
+            val hairline = ThemePack.hairlineDivider(pack)
+            val on = PlayHudMetrics.trackerCellStyle(
+                on = true,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                sunkenSurface = sunken,
+                hairlineColor = hairline,
+            )
+            val off = PlayHudMetrics.trackerCellStyle(
+                on = false,
+                accentColor = pack.accentColor,
+                idleSurface = pack.chipIdle,
+                sunkenSurface = sunken,
+                hairlineColor = hairline,
+            )
+            assertEquals(1f, on.alpha, 0.001f)
+            assertEquals(PlayHudMetrics.TRACKER_OFF_ALPHA, off.alpha, 0.001f)
+            assertNotEquals(on.fillColor, off.fillColor)
+            val ratio = ThemePack.contrastRatio(on.textColor, on.fillColor)
+            assertTrue(
+                "Active tracker cell contrast on ${pack.id} must be >= 4.5, was $ratio",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }
