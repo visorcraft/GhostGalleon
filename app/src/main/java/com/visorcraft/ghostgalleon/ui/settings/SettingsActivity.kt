@@ -302,6 +302,18 @@ internal object SettingsUiLogic {
 
     /** Show the compact L1·R1 shoulder cue pill on wide displays without crowding narrow panels. */
     fun shouldShowShoulderCue(isWide: Boolean): Boolean = isWide
+
+    internal data class ShellPaddingDp(val horizontal: Int, val top: Int, val bottom: Int)
+
+    /** Responsive shell padding that reclaims vertical breathing room on ~540dp Sugar panels. */
+    fun shellPaddingDp(isWide: Boolean, screenHeightDp: Int): ShellPaddingDp = when {
+        !isWide -> ShellPaddingDp(horizontal = 16, top = 12, bottom = 10)
+        screenHeightDp < 560 -> ShellPaddingDp(horizontal = 20, top = 12, bottom = 10)
+        else -> ShellPaddingDp(horizontal = 24, top = 18, bottom = 14)
+    }
+
+    /** Adaptive wide left nav blade width (200dp on compact-wide, 224dp on 820dp+). */
+    fun navBladeWidthDp(screenWidthDp: Int): Int = if (screenWidthDp >= 820) 224 else 200
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -2259,7 +2271,7 @@ class SettingsActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(48)
-                setPadding(dp(8), dp(10), dp(12), dp(10))
+                setPaddingRelative(dp(8), dp(10), dp(12), dp(10))
                 isFocusable = true
                 contentDescription = getString(page.titleRes)
                 setOnClickListener { selectPage(page) }
@@ -2311,7 +2323,7 @@ class SettingsActivity : AppCompatActivity() {
                 cornerRadiusDp = 18,
                 strokeDp = 2,
             )
-            setPadding(dp(16), dp(12), dp(14), dp(12))
+            setPaddingRelative(dp(16), dp(12), dp(14), dp(12))
             isFocusable = true
             setOnClickListener { showPagePicker() }
             setOnLongClickListener {
@@ -2482,10 +2494,19 @@ class SettingsActivity : AppCompatActivity() {
             ))
         }
 
+        val dm = resources.displayMetrics
+        val screenWidthDp = (dm.widthPixels / dm.density).toInt()
+        val screenHeightDp = (dm.heightPixels / dm.density).toInt()
+        val shellPad = SettingsUiLogic.shellPaddingDp(wide, screenHeightDp)
         val shell = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
-            setPadding(dp(24), dp(20), dp(24), dp(16))
+            setPaddingRelative(
+                dp(shellPad.horizontal),
+                dp(shellPad.top),
+                dp(shellPad.horizontal),
+                dp(shellPad.bottom),
+            )
         }
 
         val header = LinearLayout(this).apply {
@@ -4642,7 +4663,7 @@ class SettingsActivity : AppCompatActivity() {
         val recoveryCallout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
-            setPadding(dp(10), dp(10), dp(12), dp(10))
+            setPaddingRelative(dp(10), dp(10), dp(12), dp(10))
             addView(
                 View(this@SettingsActivity).apply {
                     background = TileBackgrounds.activeAccentBar(
@@ -4740,8 +4761,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (wide) {
             body.addView(buildNavBlade(), LinearLayout.LayoutParams(
-                dp(220), ViewGroup.LayoutParams.MATCH_PARENT,
-            ).apply { marginEnd = dp(20) })
+                dp(SettingsUiLogic.navBladeWidthDp(screenWidthDp)),
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ).apply { marginEnd = dp(18) })
         }
         val host = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

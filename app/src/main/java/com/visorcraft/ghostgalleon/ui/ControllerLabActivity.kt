@@ -131,6 +131,12 @@ internal object ControllerLabLogic {
     }
 
     fun mappedAction(keyCode: Int, keyMap: Map<Int, Action>): Action? = keyMap[keyCode]
+
+    /** True on short secondary panels (e.g. ~540dp Sugar bottom display). */
+    fun isCompactHeight(screenHeightDp: Int): Boolean = screenHeightDp < 560
+
+    /** Adaptive scrollable log box height that avoids pushing cards off-screen on short panels. */
+    fun logBoxHeightDp(screenHeightDp: Int): Int = if (isCompactHeight(screenHeightDp)) 104 else 140
 }
 
 /**
@@ -195,10 +201,15 @@ class ControllerLabActivity : AppCompatActivity() {
         val deadzonePercent = app.settings.stickDeadzone
         stickReleaseThreshold = StickThresholds.release(deadzonePercent)
 
+        val dm = resources.displayMetrics
+        val screenHeightDp = (dm.heightPixels / dm.density).toInt()
+        val compact = ControllerLabLogic.isCompactHeight(screenHeightDp)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
-            setPadding(dp(20), dp(16), dp(20), dp(16))
+            val hp = dp(if (compact) 14 else 20)
+            val vp = dp(if (compact) 10 else 16)
+            setPaddingRelative(hp, vp, hp, vp)
         }
 
         // Settings-style header with focusable vector Back button.
@@ -222,7 +233,7 @@ class ControllerLabActivity : AppCompatActivity() {
 
         val headerTexts = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, 0, 0)
+            setPaddingRelative(dp(12), 0, 0, 0)
         }
         headerTexts.addView(TextView(this).apply {
             setText(R.string.controller_lab_title)
@@ -601,7 +612,10 @@ class ControllerLabActivity : AppCompatActivity() {
         }
         logCard.addView(
             logBox,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(140)),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(ControllerLabLogic.logBoxHeightDp(screenHeightDp)),
+            ),
         )
         content.addView(
             logCard,

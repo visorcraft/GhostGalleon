@@ -39,4 +39,15 @@ class AboutPageLogicTest {
             )
         }
     }
+
+    @Test
+    fun `responsive feature columns and hero stacking adapt cleanly to narrow vs wide panels`() {
+        assertEquals(1, AboutPageLogic.featureColumnCount(360))
+        assertEquals(1, AboutPageLogic.featureColumnCount(480))
+        assertEquals(2, AboutPageLogic.featureColumnCount(540))
+        assertEquals(2, AboutPageLogic.featureColumnCount(960))
+
+        assertTrue(AboutPageLogic.shouldStackHero(360))
+        org.junit.Assert.assertFalse(AboutPageLogic.shouldStackHero(540))
+    }
 }

@@ -259,4 +259,15 @@ class SettingsUiLogicTest {
             )
         }
     }
+
+    @Test
+    fun `responsive shell padding and nav blade width tighten for compact 540dp panels`() {
+        val narrow = SettingsUiLogic.shellPaddingDp(isWide = false, screenHeightDp = 540)
+        val compactWide = SettingsUiLogic.shellPaddingDp(isWide = true, screenHeightDp = 540)
+        val spaciousWide = SettingsUiLogic.shellPaddingDp(isWide = true, screenHeightDp = 720)
+        assertTrue(narrow.horizontal < compactWide.horizontal)
+        assertTrue(compactWide.top < spaciousWide.top)
+        assertEquals(200, SettingsUiLogic.navBladeWidthDp(720))
+        assertEquals(224, SettingsUiLogic.navBladeWidthDp(960))
+    }
 }

@@ -50,6 +50,12 @@ internal object AboutPageLogic {
 
     fun creditLicenseTextColor(accent: Int, tokens: ThemeTokens): Int =
         SettingsUiLogic.accentOnSunken(accent, tokens)
+
+    /** 2 columns on landscape/tablet displays; single full-width stack on narrow panels. */
+    fun featureColumnCount(screenWidthDp: Int): Int = if (screenWidthDp >= 500) 2 else 1
+
+    /** Stack hero emblem above brand text on ultra-narrow viewports (< 400dp). */
+    fun shouldStackHero(screenWidthDp: Int): Boolean = screenWidthDp < 400
 }
 
 /**
@@ -239,9 +245,13 @@ object AboutPage {
                 ),
             )
         }
+        val dm = context.resources.displayMetrics
+        val screenWidthDp = (dm.widthPixels / dm.density).toInt()
+        val stackHero = AboutPageLogic.shouldStackHero(screenWidthDp)
+
         val heroRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = if (stackHero) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = if (stackHero) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
         }
         heroRow.addView(
             haloEmblem(
@@ -257,7 +267,11 @@ object AboutPage {
         )
         val heroText = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(context.dp(16), 0, 0, 0)
+            if (stackHero) {
+                setPaddingRelative(0, context.dp(12), 0, 0)
+            } else {
+                setPaddingRelative(context.dp(16), 0, 0, 0)
+            }
         }
         heroText.addView(text(
             context,
@@ -352,12 +366,21 @@ object AboutPage {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = context.dp(UiDimens.SPACE_SM) },
         )
-        heroRow.addView(heroText, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        heroRow.addView(
+            heroText,
+            if (stackHero) {
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            } else {
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            },
+        )
         hero.addView(heroRow)
         addSection(null, hero, topMarginDp = 24)
 
-        // What's inside: equal-height 2-column feature cards across all locales.
+        // What's inside: adaptive 2-column (wide) or 1-column (narrow) equal-height feature cards.
         data class Feature(@StringRes val titleRes: Int, @StringRes val bodyRes: Int)
         val features = listOf(
             Feature(R.string.about_grid_mode, R.string.about_grid_mode_body),
@@ -368,7 +391,8 @@ object AboutPage {
         val grid = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        features.chunked(2).forEachIndexed { rowIndex, pair ->
+        val featureCols = AboutPageLogic.featureColumnCount(screenWidthDp)
+        features.chunked(featureCols).forEachIndexed { rowIndex, pair ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 isBaselineAligned = false
@@ -446,7 +470,7 @@ object AboutPage {
         )
         val projectText = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(context.dp(14), 0, context.dp(UiDimens.SPACE_LG), 0)
+            setPaddingRelative(context.dp(14), 0, context.dp(UiDimens.SPACE_LG), 0)
         }
         projectText.addView(text(
             context,

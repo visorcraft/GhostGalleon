@@ -106,4 +106,11 @@ class ControllerLabLogicTest {
             ControllerLabLogic.padIndicatorsForHat(0.8f, 0.9f),
         )
     }
+
+    @Test
+    fun `compact height detection tightens log box height on 540dp panels`() {
+        assertTrue(ControllerLabLogic.isCompactHeight(540))
+        org.junit.Assert.assertFalse(ControllerLabLogic.isCompactHeight(720))
+        assertTrue(ControllerLabLogic.logBoxHeightDp(540) < ControllerLabLogic.logBoxHeightDp(720))
+    }
 }
