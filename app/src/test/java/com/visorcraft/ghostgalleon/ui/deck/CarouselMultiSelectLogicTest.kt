@@ -2,6 +2,8 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.quantityText
+import com.visorcraft.ghostgalleon.i18n.text
+import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,5 +66,61 @@ class CarouselMultiSelectLogicTest {
         assertEquals(accent and 0x00FFFFFF, stroke and 0x00FFFFFF)
         assertEquals(CarouselMultiSelectLogic.BANNER_FILL_ALPHA, (fill ushr 24) and 0xFF)
         assertEquals(CarouselMultiSelectLogic.BANNER_STROKE_ALPHA, (stroke ushr 24) and 0xFF)
+    }
+
+    @Test
+    fun `gamepadOutcome routes CONFIRM, BACK, and SHOW_DETAILS safely during multi-select`() {
+        // Inactive multi-select passes every action through unchanged.
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.PASS_THROUGH,
+            CarouselMultiSelectLogic.gamepadOutcome(false, Action.CONFIRM, hasFocusedEntry = true),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.PASS_THROUGH,
+            CarouselMultiSelectLogic.gamepadOutcome(false, Action.BACK, hasFocusedEntry = true),
+        )
+
+        // Active multi-select toggles focused card on CONFIRM, opens bulk actions when empty/details, exits on BACK.
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.TOGGLE_CURRENT_CARD,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.CONFIRM, hasFocusedEntry = true),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.OPEN_BULK_ACTIONS,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.CONFIRM, hasFocusedEntry = false),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.EXIT_MULTI_SELECT,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.BACK, hasFocusedEntry = true),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.OPEN_BULK_ACTIONS,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.SHOW_DETAILS, hasFocusedEntry = true),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.PASS_THROUGH,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.NAV_RIGHT, hasFocusedEntry = true),
+        )
+        assertEquals(
+            CarouselMultiSelectLogic.GamepadActionOutcome.PASS_THROUGH,
+            CarouselMultiSelectLogic.gamepadOutcome(true, Action.NAV_DOWN, hasFocusedEntry = true),
+        )
+    }
+
+    @Test
+    fun `multiSelectHintText builds localized summary with clamped non-negative count`() {
+        val expected = text(
+            R.string.format_dot_pair,
+            text(R.string.format_select_count, 4),
+            text(R.string.format_dot_pair, text(R.string.bulk_actions), text(R.string.action_cancel)),
+        )
+        assertEquals(expected, CarouselMultiSelectLogic.multiSelectHintText(4))
+
+        val expectedZero = text(
+            R.string.format_dot_pair,
+            text(R.string.format_select_count, 0),
+            text(R.string.format_dot_pair, text(R.string.bulk_actions), text(R.string.action_cancel)),
+        )
+        assertEquals(expectedZero, CarouselMultiSelectLogic.multiSelectHintText(-2))
     }
 }

@@ -493,9 +493,10 @@ class GameDeck(
     /** Horizontal scrollers for auto-centering active browse and letter chips. */
     private var browseScrollView: android.widget.HorizontalScrollView? = null
     private var letterScrollView: android.widget.HorizontalScrollView? = null
-    /** Contextual multi-select banner refs updated in-place on SELECTION ticks. */
+    /** Contextual multi-select banner & browse chip refs updated in-place on SELECTION ticks. */
     private var multiSelectCountView: TextView? = null
     private var multiSelectAllButton: TextView? = null
+    private var multiSelectChipView: TextView? = null
     /** Last filter-chrome structure; equal → restyle chip colors only. */
     private var chromeStructureKey: String = ""
     /** Browse chips + live selected predicates for in-place restyle. */
@@ -642,6 +643,7 @@ class GameDeck(
         applyRootWallpaper(root)
         syncEmptyState(context)
         syncMultiSelectBanner(context)
+        hintView?.text = currentHintText(context)
         val existing = rv.adapter as? CardAdapter
         val sameCards = entries === oldEntries &&
             existing != null &&
@@ -1004,13 +1006,24 @@ class GameDeck(
         }
     }
 
+    private fun currentHintText(context: Context): String = when {
+        dockMove.active -> HintBar.moveText(activity)
+        state.dockSlot != null -> HintBar.textFor(activity, dockFocused = true)
+        state.multiSelectEnabled -> context.resolveText(
+            CarouselMultiSelectLogic.multiSelectHintText(state.multiSelectKeys.size),
+        )
+        else -> HintBar.textFor(activity, dockFocused = false)
+    }
+
     private fun syncMultiSelectBanner(context: Context) {
-        val countTv = multiSelectCountView ?: return
         val n = state.multiSelectKeys.size
-        countTv.text = context.resolveText(CarouselMultiSelectLogic.bannerCountText(n))
+        multiSelectCountView?.text = context.resolveText(CarouselMultiSelectLogic.bannerCountText(n))
         multiSelectAllButton?.visibility =
             if (CarouselMultiSelectLogic.showSelectAllPill(n, entries.size)) View.VISIBLE
             else View.GONE
+        if (state.multiSelectEnabled) {
+            multiSelectChipView?.text = context.getString(R.string.format_select_count, n)
+        }
     }
 
     private fun buildMultiSelectBanner(context: Context, dp: (Int) -> Int): View? {
@@ -1147,6 +1160,7 @@ class GameDeck(
         browseChipHandles.clear()
         multiSelectCountView = null
         multiSelectAllButton = null
+        multiSelectChipView = null
         chrome.removeAllViews()
         chrome.addView(
             buildBrowseBar(context, dp),
@@ -1438,7 +1452,7 @@ class GameDeck(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (settings.showHints) {
             val hints = HintBar.build(context) as TextView
-            hints.text = HintBar.textFor(activity, state.dockSlot != null)
+            hints.text = currentHintText(context)
             hintView = hints
             content.addView(hints, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1526,11 +1540,7 @@ class GameDeck(
         syncRailIndicator(rv.context)
         syncMultiSelectBanner(rv.context)
         dockBar?.updateFocus(state.dockSlot, dockMove.index)
-        hintView?.text = if (dockMove.active) {
-            HintBar.moveText(activity)
-        } else {
-            HintBar.textFor(activity, state.dockSlot != null)
-        }
+        hintView?.text = currentHintText(rv.context)
         return true
     }
 
@@ -1570,6 +1580,28 @@ class GameDeck(
         picker?.let { return it.handleAction(action) }
         dockMove.index?.let { return handleDockMoveAction(action, it) }
         state.dockSlot?.let { return handleDockAction(action, it) }
+        val focusedEntry = entries.getOrNull(selectedIndex())
+        when (
+            CarouselMultiSelectLogic.gamepadOutcome(
+                multiSelectEnabled = state.multiSelectEnabled,
+                action = action,
+                hasFocusedEntry = focusedEntry != null,
+            )
+        ) {
+            CarouselMultiSelectLogic.GamepadActionOutcome.TOGGLE_CURRENT_CARD -> {
+                focusedEntry?.let { state.toggleMultiSelectKey(it.key) }
+                return true
+            }
+            CarouselMultiSelectLogic.GamepadActionOutcome.OPEN_BULK_ACTIONS -> {
+                showBulkActions()
+                return true
+            }
+            CarouselMultiSelectLogic.GamepadActionOutcome.EXIT_MULTI_SELECT -> {
+                state.clearMultiSelect()
+                return true
+            }
+            CarouselMultiSelectLogic.GamepadActionOutcome.PASS_THROUGH -> Unit
+        }
         return when (action) {
             Action.CONFIRM -> {
                 if (GameDeckChromeLogic.emptyStateConfirmResets(
@@ -2170,7 +2202,7 @@ class GameDeck(
             },
         )
         addGap()
-        row.addView(chip(
+        val selectChip = chip(
             if (state.multiSelectEnabled) {
                 context.getString(R.string.format_select_count, state.multiSelectKeys.size)
             } else {
@@ -2183,7 +2215,9 @@ class GameDeck(
             } else {
                 state.setMultiSelectEnabled(true)
             }
-        })
+        }
+        multiSelectChipView = selectChip
+        row.addView(selectChip)
         // Horizontal scroll with fading edge so many platforms never crush the bar.
         val scroller = android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false

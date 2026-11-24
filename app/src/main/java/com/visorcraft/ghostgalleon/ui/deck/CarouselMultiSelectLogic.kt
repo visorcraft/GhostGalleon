@@ -3,6 +3,8 @@ package com.visorcraft.ghostgalleon.ui.deck
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.quantityText
+import com.visorcraft.ghostgalleon.i18n.text
+import com.visorcraft.ghostgalleon.settings.Action
 
 /**
  * Pure, host-tested visual state helpers for [GameDeck]'s multi-select action
@@ -20,6 +22,13 @@ object CarouselMultiSelectLogic {
         HIDDEN,
         UNCHECKED,
         CHECKED,
+    }
+
+    enum class GamepadActionOutcome {
+        TOGGLE_CURRENT_CARD,
+        OPEN_BULK_ACTIONS,
+        EXIT_MULTI_SELECT,
+        PASS_THROUGH,
     }
 
     /** Determine which corner indicator a carousel card shows for multi-select. */
@@ -49,4 +58,39 @@ object CarouselMultiSelectLogic {
     /** Translucent accent border color derived from [accentColor]. */
     fun bannerTintStroke(accentColor: Int): Int =
         (accentColor and 0x00FFFFFF) or (BANNER_STROKE_ALPHA shl 24)
+
+    /**
+     * Gamepad action routing while multi-select mode is active:
+     * - CONFIRM toggles selection on the focused card instead of launching.
+     * - BACK exits multi-select cleanly.
+     * - SHOW_DETAILS opens the bulk-actions sheet.
+     * - Directional / nav actions pass through so users browse cards freely.
+     */
+    fun gamepadOutcome(
+        multiSelectEnabled: Boolean,
+        action: Action,
+        hasFocusedEntry: Boolean,
+    ): GamepadActionOutcome {
+        if (!multiSelectEnabled) return GamepadActionOutcome.PASS_THROUGH
+        return when (action) {
+            Action.CONFIRM ->
+                if (hasFocusedEntry) GamepadActionOutcome.TOGGLE_CURRENT_CARD
+                else GamepadActionOutcome.OPEN_BULK_ACTIONS
+            Action.BACK -> GamepadActionOutcome.EXIT_MULTI_SELECT
+            Action.SHOW_DETAILS -> GamepadActionOutcome.OPEN_BULK_ACTIONS
+            else -> GamepadActionOutcome.PASS_THROUGH
+        }
+    }
+
+    /** Localized single-line HintBar cue while multi-select mode is active. */
+    fun multiSelectHintText(selectedCount: Int): UiText {
+        val safe = selectedCount.coerceAtLeast(0)
+        val countPart = text(R.string.format_select_count, safe)
+        val actionPart = text(
+            R.string.format_dot_pair,
+            text(R.string.bulk_actions),
+            text(R.string.action_cancel),
+        )
+        return text(R.string.format_dot_pair, countPart, actionPart)
+    }
 }
