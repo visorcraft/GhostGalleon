@@ -308,6 +308,15 @@ class GridDeck(
                     MoveChoreography.SlotRole.NORMAL -> BLANK_PLUS_IDLE_COLOR
                 },
             )
+        } else if (cell is LinearLayout && cell.childCount > 1) {
+            val labelView = cell.getChildAt(cell.childCount - 1) as? TextView
+            if (labelView != null) {
+                val key = slotPackages().getOrNull(position)
+                val isMissing = key != null && SlotKey.isRom(key) && romByKey[key] == null
+                val style = GridLabelMetrics.labelStyleForRole(role, isMissing)
+                labelView.setTextColor(style.textColor)
+                labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+            }
         }
 
         frame.animate().cancel()
@@ -936,18 +945,30 @@ class GridDeck(
                 val cellHeight =
                     (grid.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
+                val safeDensity = density.coerceAtLeast(0.1f)
+                val tokens = ThemePack.resolve(settings)
+                val labelSpec = GridLabelMetrics.compute(
+                    cellWidthDp = (cellWidth / safeDensity).toInt(),
+                    cellHeightDp = (cellHeight / safeDensity).toInt(),
+                    iconSizeDp = (guessIconSize / safeDensity).toInt(),
+                    cellPaddingDp = 8,
+                    showLabels = settings.showLabels,
+                    hasWallpaper = !settings.wallpaperUri.isNullOrBlank(),
+                    fontScale = tokens.fontScale,
+                )
+                val resolvedLabelHeight = (labelSpec.reservedHeightDp * safeDensity).toInt()
                 val iconSize = GridIconMetrics.iconSizePx(
                     cellWidthPx = cellWidth,
                     cellHeightPx = cellHeight,
                     cellPaddingPx = cellPadding,
-                    labelHeightPx = labelHeight,
+                    labelHeightPx = resolvedLabelHeight,
                     iconSizeDp = settings.iconSizeDp,
                     density = density,
                 )
                 val adapter = (grid.adapter as? GridAdapter)
-                    ?: GridAdapter(context, cellWidth, iconSize, cellHeight, cellPadding)
+                    ?: GridAdapter(context, cellWidth, iconSize, cellHeight, cellPadding, labelSpec)
                         .also { grid.adapter = it }
-                adapter.updateMetrics(cellWidth, iconSize, cellHeight)
+                adapter.updateMetrics(cellWidth, iconSize, cellHeight, labelSpec)
                 // Cells already attached carry the previous height in their
                 // LayoutParams; restamp them so a geometry change (IME
                 // race) actually resizes the visible tiles.
@@ -1031,11 +1052,23 @@ class GridDeck(
                 val cellHeight =
                     (pager.height - gridPadTop - gridPadV -
                         spacing * (visibleRows - 1)) / visibleRows
+                val safeDensity = density.coerceAtLeast(0.1f)
+                val tokens = ThemePack.resolve(settings)
+                val labelSpec = GridLabelMetrics.compute(
+                    cellWidthDp = (cellWidth / safeDensity).toInt(),
+                    cellHeightDp = (cellHeight / safeDensity).toInt(),
+                    iconSizeDp = (guessIconSize / safeDensity).toInt(),
+                    cellPaddingDp = 8,
+                    showLabels = settings.showLabels,
+                    hasWallpaper = !settings.wallpaperUri.isNullOrBlank(),
+                    fontScale = tokens.fontScale,
+                )
+                val resolvedLabelHeight = (labelSpec.reservedHeightDp * safeDensity).toInt()
                 val iconSize = GridIconMetrics.iconSizePx(
                     cellWidthPx = cellWidth,
                     cellHeightPx = cellHeight,
                     cellPaddingPx = cellPadding,
-                    labelHeightPx = labelHeight,
+                    labelHeightPx = resolvedLabelHeight,
                     iconSizeDp = settings.iconSizeDp,
                     density = density,
                 )
@@ -1059,6 +1092,7 @@ class GridDeck(
                             Color.TRANSPARENT)
                         adapter = GridAdapter(
                             context, cellWidth, iconSize, cellHeight, cellPadding,
+                            labelSpec = labelSpec,
                             slotOffset = offset, fixedCount = count)
                         onItemClickListener =
                             AdapterView.OnItemClickListener { _, _, position, _ ->
@@ -1934,6 +1968,7 @@ class GridDeck(
         iconSize: Int,
         cellHeight: Int,
         private val cellPadding: Int,
+        labelSpec: GridLabelMetrics.Spec,
         // Horizontal page panels bind a fixed slice of the slot list; the
         // vertical grid uses the defaults (whole list from slot 0).
         private val slotOffset: Int = 0,
@@ -1945,11 +1980,18 @@ class GridDeck(
         private var cellWidth = cellWidth
         private var iconSize = iconSize
         private var cellHeight = cellHeight
+        private var labelSpec = labelSpec
 
-        fun updateMetrics(cellWidth: Int, iconSize: Int, cellHeight: Int) {
+        fun updateMetrics(
+            cellWidth: Int,
+            iconSize: Int,
+            cellHeight: Int,
+            labelSpec: GridLabelMetrics.Spec,
+        ) {
             this.cellWidth = cellWidth
             this.iconSize = iconSize
             this.cellHeight = cellHeight
+            this.labelSpec = labelSpec
         }
 
         override fun getCount() = fixedCount ?: slotCount
@@ -2090,22 +2132,38 @@ class GridDeck(
                 setStroke(ctx.strokePx(1), BADGE_SCRIM_STROKE)
             }
 
-        private fun buildCellLabel(labelText: String, color: Int = Color.WHITE): TextView =
-            TextView(context).apply {
-                text = labelText
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(color)
-                gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                includeFontPadding = false
+        private fun buildCellLabel(
+            labelText: String,
+            color: Int = GridLabelMetrics.LABEL_UNFOCUSED_COLOR,
+        ): TextView = TextView(context).apply {
+            text = labelText
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, labelSpec.textSp)
+            setTextColor(color)
+            gravity = Gravity.CENTER
+            maxLines = labelSpec.maxLines
+            setLineSpacing(0f, 1.05f)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
+            if (labelSpec.useReadabilityScrim) {
+                setPadding(context.dp(4), context.dp(1.5f), context.dp(4), context.dp(1.5f))
+                background = GradientDrawable().apply {
+                    setColor(GridLabelMetrics.WALLPAPER_SCRIM_FILL)
+                    cornerRadius = context.dpF(6)
+                }
+                setShadowLayer(
+                    context.dpF(2),
+                    0f,
+                    context.dpF(1),
+                    GridLabelMetrics.WALLPAPER_SHADOW_COLOR,
+                )
             }
+        }
 
         private fun labelParams(): LinearLayout.LayoutParams =
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = context.dp(4) }
+            ).apply { topMargin = context.dp(labelSpec.topMarginDp) }
 
         private fun innerArtRadiusDp(): Int {
             val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
