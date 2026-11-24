@@ -595,10 +595,9 @@ class SettingsActivity : AppCompatActivity() {
                 appContext.assets.list("platform_packs")
                     ?.filter { it.endsWith(".json", ignoreCase = true) }
                     ?.sorted()
-                    .orEmpty()
-            }.getOrDefault(emptyList()).also {
+            }.getOrNull()?.also {
                 cachedBundledPackAssets = it
-            }
+            } ?: emptyList()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 onReady(listed)
@@ -1968,16 +1967,17 @@ class SettingsActivity : AppCompatActivity() {
         }
         wallpaperValue?.setText(R.string.glyph_ellipsis)
         val appContext = applicationContext
-        val fallback = getString(R.string.label_set)
         val expectedBuildGen = pageCache.generation
         PROBE_IO.execute {
-            val resolved = resolveWallpaperDisplayName(appContext, uri, fallback)
-            cachedWallpaperLabel = uri to resolved
+            val resolved = resolveWallpaperDisplayName(appContext, uri)
+            if (resolved != null) {
+                cachedWallpaperLabel = uri to resolved
+            }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 if (gen != wallpaperNameGen || expectedBuildGen != pageCache.generation) return@runOnUiThread
                 if (app.settings.wallpaperUri != uri) return@runOnUiThread
-                wallpaperValue?.text = resolved
+                wallpaperValue?.text = resolved ?: getString(R.string.label_set)
             }
         }
     }
@@ -5731,10 +5731,9 @@ class SettingsActivity : AppCompatActivity() {
         fun resolveWallpaperDisplayName(
             context: android.content.Context,
             uriString: String,
-            fallback: String,
-        ): String = runCatching {
+        ): String? = runCatching {
             val uri = Uri.parse(uriString)
-            context.contentResolver.query(
+            val fromProvider = context.contentResolver.query(
                 uri,
                 arrayOf(OpenableColumns.DISPLAY_NAME),
                 null,
@@ -5742,8 +5741,9 @@ class SettingsActivity : AppCompatActivity() {
                 null,
             )?.use { c ->
                 val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (i >= 0 && c.moveToFirst()) c.getString(i) else null
-            } ?: uri.lastPathSegment ?: fallback
-        }.getOrDefault(fallback)
+                if (i >= 0 && c.moveToFirst()) c.getString(i)?.takeIf { it.isNotBlank() } else null
+            }
+            fromProvider ?: uri.lastPathSegment?.takeIf { it.isNotBlank() }
+        }.getOrNull()
     }
 }
