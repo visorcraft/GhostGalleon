@@ -36,7 +36,7 @@ object CustomIcon {
     ) {
         ArtCache.dropDisplayed(image)
         applyStockFraming(image)
-        image.setImageDrawable(iconLoader.load(packageName))
+        image.setImageDrawable(iconLoader.load(packageName, targetPx))
         val uri = settings.customIcons[packageName]
         if (uri == null) {
             image.setTag(R.id.custom_icon_key, null)
