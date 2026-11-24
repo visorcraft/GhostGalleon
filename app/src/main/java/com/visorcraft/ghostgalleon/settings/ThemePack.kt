@@ -52,6 +52,21 @@ object ThemePack {
 
     val BUILTINS: List<ThemeTokens> = listOf(GHOST, THREEDS, OLED, NEON)
 
+    /** Default card surface fill for the built-in Ghost theme. */
+    const val DEFAULT_CARD_FILL: Int = 0xFF1C1C22.toInt()
+
+    /** Baseline dark surface used when checking accent-on-dark legibility. */
+    const val DEFAULT_DARK_SURFACE: Int = DEFAULT_CARD_FILL
+
+    /** Standard subtle 1dp hairline on dark cards/pills (~10% white). */
+    const val HAIRLINE_LIGHT: Int = 0x1AFFFFFF
+
+    /** Faint outline for recessed blank slots and secondary dividers (~8% white). */
+    const val HAIRLINE_SUBTLE: Int = 0x14FFFFFF
+
+    /** WCAG AA minimum contrast ratio for normal-size text. */
+    const val MIN_TEXT_CONTRAST: Double = 4.5
+
     fun byId(id: String?): ThemeTokens =
         BUILTINS.firstOrNull { it.id.equals(id?.trim(), ignoreCase = true) } ?: GHOST
 
@@ -66,6 +81,142 @@ object ThemePack {
         val luma = (r + r + b + g + g + g) / 6
         return if (luma >= 150) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
     }
+
+    /** WCAG 2.1 relative luminance in `[0.0, 1.0]` for the opaque RGB channels. */
+    fun relativeLuminance(color: Int): Double {
+        fun channel(c: Int): Double {
+            val s = c / 255.0
+            return if (s <= 0.04045) s / 12.92 else Math.pow((s + 0.055) / 1.055, 2.4)
+        }
+        val r = channel((color shr 16) and 0xFF)
+        val g = channel((color shr 8) and 0xFF)
+        val b = channel(color and 0xFF)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /** WCAG 2.1 contrast ratio in `[1.0, 21.0]` between opaque [fg] and [bg]. */
+    fun contrastRatio(fg: Int, bg: Int): Double {
+        val l1 = relativeLuminance(fg)
+        val l2 = relativeLuminance(bg)
+        val hi = maxOf(l1, l2)
+        val lo = minOf(l1, l2)
+        return (hi + 0.05) / (lo + 0.05)
+    }
+
+    /**
+     * Legible accent color for text drawn over a dark [surface] (defaults to
+     * [DEFAULT_DARK_SURFACE] `#1C1C22`).
+     *
+     * Accents already meeting WCAG AA (`>= 4.5:1`) are returned opaque as-is.
+     * Darker accents (e.g. Ghost `#3F51B5`) are lifted first along brightness
+     * (preserving HSV hue + saturation) and then linearly toward white
+     * (preserving exact HSV hue) until contrast reaches at least `4.5:1`.
+     */
+    fun accentTextColor(accent: Int, surface: Int = DEFAULT_DARK_SURFACE): Int {
+        val opaque = (0xFF shl 24) or (accent and 0x00FFFFFF)
+        val bg = (0xFF shl 24) or (surface and 0x00FFFFFF)
+        if (contrastRatio(opaque, bg) >= MIN_TEXT_CONTRAST) return opaque
+
+        val r0 = (opaque shr 16) and 0xFF
+        val g0 = (opaque shr 8) and 0xFF
+        val b0 = opaque and 0xFF
+        val maxCh = maxOf(r0, maxOf(g0, b0))
+        // Aim slightly above 4.5 so integer channel quantization stays >= 4.5.
+        val target = 4.6
+
+        fun packRgb(r: Int, g: Int, b: Int): Int =
+            (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or
+                (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
+
+        // Stage 1: pure brightness lift (exact HSV hue & saturation preserved).
+        val baseColor = if (maxCh > 0) {
+            val maxScale = 255.0 / maxCh
+            val brightest = packRgb(
+                kotlin.math.ceil(r0 * maxScale).toInt(),
+                kotlin.math.ceil(g0 * maxScale).toInt(),
+                kotlin.math.ceil(b0 * maxScale).toInt(),
+            )
+            if (contrastRatio(brightest, bg) >= MIN_TEXT_CONTRAST) {
+                var lo = 1.0
+                var hi = maxScale
+                var best = brightest
+                repeat(18) {
+                    val mid = (lo + hi) * 0.5
+                    val cand = packRgb(
+                        kotlin.math.ceil(r0 * mid).toInt(),
+                        kotlin.math.ceil(g0 * mid).toInt(),
+                        kotlin.math.ceil(b0 * mid).toInt(),
+                    )
+                    if (contrastRatio(cand, bg) >= target) {
+                        best = cand
+                        hi = mid
+                    } else {
+                        lo = mid
+                    }
+                }
+                return if (contrastRatio(best, bg) >= MIN_TEXT_CONTRAST) best else brightest
+            }
+            brightest
+        } else {
+            opaque
+        }
+
+        // Stage 2: linear tint toward white (exact HSV hue preserved).
+        val br = (baseColor shr 16) and 0xFF
+        val bgCh = (baseColor shr 8) and 0xFF
+        val bb = baseColor and 0xFF
+        var lo = 0.0
+        var hi = 1.0
+        var best = 0xFFFFFFFF.toInt()
+        repeat(18) {
+            val mid = (lo + hi) * 0.5
+            val cand = packRgb(
+                kotlin.math.ceil(br + (255 - br) * mid).toInt(),
+                kotlin.math.ceil(bgCh + (255 - bgCh) * mid).toInt(),
+                kotlin.math.ceil(bb + (255 - bb) * mid).toInt(),
+            )
+            if (contrastRatio(cand, bg) >= target) {
+                best = cand
+                hi = mid
+            } else {
+                lo = mid
+            }
+        }
+        return if (contrastRatio(best, bg) >= MIN_TEXT_CONTRAST) best else 0xFFFFFFFF.toInt()
+    }
+
+    /** Primary card fill for [tokens] (preserves Ghost's `#1C1C22` card fill). */
+    fun cardFill(tokens: ThemeTokens): Int =
+        if (tokens.id == GHOST.id && tokens.panelLift == GHOST.panelLift) {
+            DEFAULT_CARD_FILL
+        } else {
+            tokens.panelLift
+        }
+
+    /**
+     * Recessed sunken surface derived from [cardFill] for search fields,
+     * segmented tracks, nav blades, blank slots, and art backing.
+     */
+    fun surfaceSunken(tokens: ThemeTokens): Int {
+        val fill = cardFill(tokens)
+        val scale = if (tokens.id == OLED.id) 0.50f else 0.58f
+        val r = (((fill shr 16) and 0xFF) * scale).toInt().coerceIn(0, 255)
+        val g = (((fill shr 8) and 0xFF) * scale).toInt().coerceIn(0, 255)
+        val b = ((fill and 0xFF) * scale).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /** Subtle 1dp translucent border/divider color for [tokens]. */
+    fun hairlineDivider(tokens: ThemeTokens): Int =
+        if (tokens.id == OLED.id) 0x22FFFFFF else HAIRLINE_LIGHT
+
+    /** Corner radius (dp) for dock/status pills derived from [tokens]. */
+    fun pillRadiusDp(tokens: ThemeTokens): Int =
+        (tokens.cardRadiusDp + 4).coerceAtMost(32)
+
+    /** Corner radius (dp) for compact chips derived from [tokens]. */
+    fun chipRadiusDp(tokens: ThemeTokens): Int =
+        (tokens.cardRadiusDp / 2).coerceIn(8, 14)
 
     /**
      * Parse a theme pack JSON object. Accepts:

@@ -2,25 +2,31 @@ package com.visorcraft.ghostgalleon.art
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Outline
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.core.graphics.drawable.RoundedBitmapDrawable
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import androidx.core.view.children
 import com.visorcraft.ghostgalleon.rom.HeroDetail
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
+import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 
 /**
  * ROM tile art with async cache fill: the PlatformTile placeholder with an
- * empty ImageView overlaid on top. The overlay fills in from ArtCache when
- * art exists for the ROM (disk cache or the entry's local artUri); without
- * art the placeholder simply shows through. Used by the grid, the carousel,
- * and the companion hero.
+ * ImageView overlaid on top. When real artwork arrives (grid art or logo),
+ * the bright platform placeholder hides behind a clean dark rounded backing so
+ * non-square (e.g. 2:3) covers never reveal colored placeholder bars or text.
+ * On reset/miss the placeholder restores immediately. Used by the grid,
+ * carousel, dock, and companion hero.
  */
 object ArtTile {
 
@@ -41,6 +47,7 @@ object ArtTile {
         bindNow: Boolean = true,
         artOverrides: Map<String, String> = emptyMap(),
     ): View {
+        val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
         val frame = FrameLayout(context)
         frame.addView(
             PlatformTile.view(context, rom.platformId, cornerRadiusDp),
@@ -51,6 +58,8 @@ object ArtTile {
         )
         val overlay = ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
+            clipToOutline = true
+            outlineProvider = roundedOutline(radiusPx)
         }
         frame.addView(overlay, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -65,11 +74,11 @@ object ArtTile {
         frame.children.filterIsInstance<ImageView>().firstOrNull()
 
     /**
-     * (Re)bind an overlay to a ROM: clears any stale bitmap, then kicks the
-     * async load. The overlay's tag holds the RomEntry id the pending load
-     * belongs to; the load is skipped pre-decode and the result applied
-     * only when the tag still matches and the view is attached (recycled
-     * cells, in-place hero swaps).
+     * (Re)bind an overlay to a ROM: restores the placeholder and clears any
+     * stale bitmap, then kicks the async load. The overlay's tag holds the
+     * RomEntry id the pending load belongs to; the load is skipped pre-decode
+     * and the result applied only when the tag still matches and the view is
+     * attached (recycled cells, in-place hero swaps).
      */
     fun bind(
         overlay: ImageView,
@@ -80,34 +89,46 @@ object ArtTile {
         artOverrides: Map<String, String> = emptyMap(),
     ) {
         val context = overlay.context
+        val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
         if (overlay.tag == rom.id && overlay.drawable != null) return
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
+        showPlaceholder(overlay)
         overlay.tag = rom.id
-        val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
+        overlay.clipToOutline = true
+        overlay.outlineProvider = roundedOutline(radiusPx)
+
+        var syncGrid = true
         cache.load(
             context, rom, targetPx,
             artOverrides = artOverrides,
             isStillValid = { overlay.tag == rom.id },
         ) onGrid@{ bitmap ->
-            // onResult is already main-thread; skip an extra post frame.
-            if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@onGrid
+            // onResult is already main-thread; allow immediate paint on a
+            // synchronous memory hit before first attach, guard async hits.
+            if (overlay.tag != rom.id || (!syncGrid && !overlay.isAttachedToWindow)) {
+                return@onGrid
+            }
             if (bitmap != null) {
                 applyRounded(overlay, context, bitmap, radiusPx)
                 return@onGrid
             }
             // Logo fallback on the decode thread (no main-thread disk stat).
+            var syncLogo = true
             cache.load(
                 context, rom, targetPx,
                 kind = ArtCache.ArtKind.LOGO,
                 isStillValid = { overlay.tag == rom.id },
             ) onLogo@{ logoBmp ->
-                if (overlay.tag != rom.id || !overlay.isAttachedToWindow) return@onLogo
+                if (overlay.tag != rom.id || (!syncLogo && !overlay.isAttachedToWindow)) {
+                    return@onLogo
+                }
                 if (logoBmp != null) {
                     applyRounded(overlay, context, logoBmp, radiusPx)
                     return@onLogo
                 }
                 val logo = HeroDetail.logoUri(rom) ?: return@onLogo
+                var syncLocal = true
                 cache.loadUri(
                     context,
                     key = "${rom.id}.logo",
@@ -116,14 +137,47 @@ object ArtTile {
                     isStillValid = { overlay.tag == rom.id },
                 ) { local ->
                     if (local != null && overlay.tag == rom.id &&
-                        overlay.isAttachedToWindow
+                        (syncLocal || overlay.isAttachedToWindow)
                     ) {
                         applyRounded(overlay, context, local, radiusPx)
                     }
                 }
+                syncLocal = false
             }
+            syncLogo = false
+        }
+        syncGrid = false
+    }
+
+    private fun placeholderOf(overlay: ImageView): TextView? =
+        (overlay.parent as? ViewGroup)?.children?.filterIsInstance<TextView>()?.firstOrNull()
+
+    private fun showPlaceholder(overlay: ImageView) {
+        placeholderOf(overlay)?.visibility = View.VISIBLE
+        (overlay.parent as? View)?.background = null
+    }
+
+    private fun hidePlaceholderWithBacking(
+        overlay: ImageView,
+        context: Context,
+        radiusPx: Float,
+    ) {
+        // INVISIBLE (not GONE) preserves layout bounds and findViewWithTag
+        // lookup stability (e.g. CompanionPanel TAG_HERO_ICON).
+        placeholderOf(overlay)?.visibility = View.INVISIBLE
+        val parent = overlay.parent as? View ?: return
+        parent.background = GradientDrawable().apply {
+            setColor(TileBackgrounds.surfaceSunken(context))
+            cornerRadius = radiusPx
         }
     }
+
+    private fun roundedOutline(radiusPx: Float): ViewOutlineProvider =
+        object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+            }
+        }
 
     private fun applyRounded(
         overlay: ImageView,
@@ -137,6 +191,7 @@ object ArtTile {
             RoundedBitmapDrawableFactory.create(context.resources, bitmap)
                 .apply { cornerRadius = radiusPx },
         )
+        hidePlaceholderWithBacking(overlay, context, radiusPx)
     }
 
     private fun releaseDisplayed(overlay: ImageView) {
