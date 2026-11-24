@@ -127,4 +127,55 @@ class CompanionChromeErgonomicsTest {
             )
         }
     }
+
+    @Test
+    fun `resumeSwipeFeedback ignores micro-jitter and vertical drags`() {
+        val jitter = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 4f,
+            dy = 1f,
+            dismissSlopPx = 80f,
+            touchSlopPx = 8f,
+        )
+        assertEquals(0f, jitter.translationX, 0.001f)
+        assertEquals(1f, jitter.alpha, 0.001f)
+        assertEquals(false, jitter.shouldDismiss)
+
+        val vertical = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 30f,
+            dy = 50f,
+            dismissSlopPx = 80f,
+        )
+        assertEquals(0f, vertical.translationX, 0.001f)
+        assertEquals(1f, vertical.alpha, 0.001f)
+        assertEquals(false, vertical.shouldDismiss)
+    }
+
+    @Test
+    fun `resumeSwipeFeedback tracks horizontal drag left and right with proportional fade and dismiss`() {
+        val midRight = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 40f,
+            dy = 4f,
+            dismissSlopPx = 80f,
+        )
+        assertTrue(midRight.translationX > 0f)
+        assertTrue(midRight.alpha < 1f && midRight.alpha > CompanionChromeErgonomics.RESUME_SWIPE_MIN_ALPHA)
+        assertEquals(false, midRight.shouldDismiss)
+
+        val dismissLeft = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = -100f,
+            dy = 5f,
+            dismissSlopPx = 80f,
+        )
+        assertTrue(dismissLeft.translationX < 0f)
+        assertEquals(true, dismissLeft.shouldDismiss)
+        assertTrue(dismissLeft.alpha >= CompanionChromeErgonomics.RESUME_SWIPE_MIN_ALPHA)
+
+        val clamped = CompanionChromeErgonomics.resumeSwipeFeedback(
+            dx = 999f,
+            dy = 0f,
+            dismissSlopPx = 80f,
+        )
+        assertEquals(80f * 2.2f, clamped.translationX, 0.01f)
+        assertEquals(CompanionChromeErgonomics.RESUME_SWIPE_MIN_ALPHA, clamped.alpha, 0.001f)
+    }
 }

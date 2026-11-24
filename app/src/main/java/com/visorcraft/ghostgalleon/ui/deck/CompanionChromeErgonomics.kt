@@ -91,4 +91,49 @@ object CompanionChromeErgonomics {
             (g.coerceIn(0, 255) shl 8) or
             b.coerceIn(0, 255)
     }
+
+    /** Minimum alpha during horizontal drag before swipe-dismiss completes. */
+    const val RESUME_SWIPE_MIN_ALPHA: Float = 0.25f
+
+    /** Gentle drag damping so the Resume pill tracks the finger with tactile weight. */
+    const val RESUME_SWIPE_DAMPING: Float = 0.85f
+
+    /** Duration (ms) for Resume pill slide-out dismiss or snap-back settle. */
+    const val RESUME_SWIPE_ANIM_MS: Long = 120L
+
+    data class SwipeFeedback(
+        val translationX: Float,
+        val alpha: Float,
+        val shouldDismiss: Boolean,
+    )
+
+    /**
+     * Pure finger-tracking drag physics for the Resume CTA pill's horizontal
+     * swipe-to-dismiss gesture. Uses raw deltas so translating the view never
+     * causes coordinate feedback jitter.
+     */
+    fun resumeSwipeFeedback(
+        dx: Float,
+        dy: Float,
+        dismissSlopPx: Float,
+        touchSlopPx: Float = 8f,
+    ): SwipeFeedback {
+        if (dismissSlopPx <= 0f) return SwipeFeedback(0f, 1f, shouldDismiss = false)
+        val absX = kotlin.math.abs(dx)
+        val absY = kotlin.math.abs(dy)
+        if (absX < touchSlopPx || absY > absX) {
+            return SwipeFeedback(0f, 1f, shouldDismiss = false)
+        }
+        val maxTravel = dismissSlopPx * 2.2f
+        val tx = (dx * RESUME_SWIPE_DAMPING).coerceIn(-maxTravel, maxTravel)
+        val progress = (absX / (dismissSlopPx * 1.35f)).coerceIn(0f, 1f)
+        val alpha = (1f - progress * (1f - RESUME_SWIPE_MIN_ALPHA))
+            .coerceIn(RESUME_SWIPE_MIN_ALPHA, 1f)
+        val shouldDismiss = absX >= dismissSlopPx && absX > absY
+        return SwipeFeedback(
+            translationX = tx,
+            alpha = alpha,
+            shouldDismiss = shouldDismiss,
+        )
+    }
 }

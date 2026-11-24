@@ -1204,9 +1204,51 @@ object CompanionPanel {
         app: GhostGalleonApp,
         swipeSlopPx: Float,
     ) {
-        var downX = 0f
-        var downY = 0f
+        var downRawX = 0f
+        var downRawY = 0f
         var tracking = false
+        var dismissing = false
+        val touchSlopPx = (8 * view.resources.displayMetrics.density).coerceAtLeast(4f)
+        fun settleRest(scale: Float) {
+            view.animate().cancel()
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                view.translationX = 0f
+                view.alpha = 1f
+                view.scaleX = scale
+                view.scaleY = scale
+                return
+            }
+            view.animate()
+                .translationX(0f)
+                .alpha(1f)
+                .scaleX(scale)
+                .scaleY(scale)
+                .setDuration(CompanionChromeErgonomics.RESUME_SWIPE_ANIM_MS)
+                .setInterpolator(heroSettleInterpolator)
+                .start()
+        }
+        view.setOnFocusChangeListener { _, hasFocus ->
+            if (dismissing || tracking) return@setOnFocusChangeListener
+            val scale = CompanionChromeErgonomics.targetScale(pressed = false, focused = hasFocus)
+            view.animate().cancel()
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                view.scaleX = scale
+                view.scaleY = scale
+            } else {
+                view.animate()
+                    .scaleX(scale)
+                    .scaleY(scale)
+                    .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
+                    .setInterpolator(heroSettleInterpolator)
+                    .start()
+            }
+        }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) {
+                v.animate().cancel()
+            }
+        })
         view.setOnClickListener {
             val key = resumeLaunchKey(
                 continueKey = cont,
@@ -1219,32 +1261,73 @@ object CompanionPanel {
             launchSlotKey(activity, state, roms, key, reason = LaunchReason.CONTINUE)
         }
         view.setOnTouchListener { _, event ->
+            if (dismissing) return@setOnTouchListener true
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = event.x
-                    downY = event.y
+                    downRawX = event.rawX
+                    downRawY = event.rawY
                     tracking = true
+                    view.animate().cancel()
+                    if (ValueAnimator.areAnimatorsEnabled()) {
+                        view.animate()
+                            .scaleX(CompanionChromeErgonomics.CHIP_PRESS_SCALE)
+                            .scaleY(CompanionChromeErgonomics.CHIP_PRESS_SCALE)
+                            .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
+                            .start()
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!tracking) return@setOnTouchListener false
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    val fb = CompanionChromeErgonomics.resumeSwipeFeedback(
+                        dx = dx,
+                        dy = dy,
+                        dismissSlopPx = swipeSlopPx,
+                        touchSlopPx = touchSlopPx,
+                    )
+                    view.translationX = fb.translationX
+                    view.alpha = fb.alpha
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (!tracking) return@setOnTouchListener false
                     tracking = false
-                    val dx = event.x - downX
-                    val dy = event.y - downY
-                    if (abs(dx) >= swipeSlopPx && abs(dx) > abs(dy)) {
-                        // Horizontal swipe either way → hide Resume.
-                        app.dismissResumeChip()
-                        true
-                    } else if (abs(dx) < swipeSlopPx * 0.5f && abs(dy) < swipeSlopPx * 0.5f &&
-                        event.actionMasked == MotionEvent.ACTION_UP
-                    ) {
-                        view.performClick()
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    val fb = CompanionChromeErgonomics.resumeSwipeFeedback(
+                        dx = dx,
+                        dy = dy,
+                        dismissSlopPx = swipeSlopPx,
+                        touchSlopPx = touchSlopPx,
+                    )
+                    if (event.actionMasked == MotionEvent.ACTION_UP && fb.shouldDismiss) {
+                        dismissing = true
+                        val exitX = if (dx >= 0f) swipeSlopPx * 2.5f else -swipeSlopPx * 2.5f
+                        if (ValueAnimator.areAnimatorsEnabled()) {
+                            view.animate()
+                                .translationX(exitX)
+                                .alpha(0f)
+                                .setDuration(CompanionChromeErgonomics.RESUME_SWIPE_ANIM_MS)
+                                .setInterpolator(heroSettleInterpolator)
+                                .withEndAction { app.dismissResumeChip() }
+                                .start()
+                        } else {
+                            app.dismissResumeChip()
+                        }
                         true
                     } else {
+                        val restScale = CompanionChromeErgonomics.targetScale(
+                            pressed = false,
+                            focused = view.isFocused,
+                        )
+                        settleRest(restScale)
+                        if (abs(dx) < swipeSlopPx * 0.5f && abs(dy) < swipeSlopPx * 0.5f &&
+                            event.actionMasked == MotionEvent.ACTION_UP
+                        ) {
+                            view.performClick()
+                        }
                         true
                     }
                 }
@@ -2266,6 +2349,15 @@ object CompanionPanel {
             )
             val cont = candidates.firstOrNull() ?: return@run
             val contName = resumeLabel(cont, library, roms, settings, app)
+            val onFill = ThemePack.onFillTextColor(settings.accentColor)
+            val chevron = androidx.core.content.ContextCompat.getDrawable(
+                context,
+                R.drawable.ic_chevron_right,
+            )?.mutate()?.apply {
+                setTint(onFill)
+                val iconPx = dp(16)
+                setBounds(0, 0, iconPx, iconPx)
+            }
             // Filled accent pill + WCAG-safe contrast text (legible on OLED #E0E0E0).
             hero.addView(TextView(context).apply {
                 tag = TAG_RESUME_CHIP
@@ -2276,9 +2368,24 @@ object CompanionPanel {
                 )
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTypeface(typeface, Typeface.BOLD)
-                setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                background = TileBackgrounds.accentPill(context, settings.accentColor)
-                setPadding(dp(18), dp(10), dp(18), dp(10))
+                setTextColor(onFill)
+                background = buildInteractivePillBackground(
+                    context = context,
+                    base = TileBackgrounds.accentPill(context, settings.accentColor, cornerRadiusDp = 22),
+                    accent = settings.accentColor,
+                    cornerRadiusDp = 22,
+                    verticalInsetDp = 0,
+                )
+                elevation = context.dpF(6)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val shadow = CompanionHeroStyle.artShadowColor(settings.accentColor)
+                    outlineSpotShadowColor = shadow
+                    outlineAmbientShadowColor = shadow
+                }
+                minimumHeight = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
+                setPadding(dp(18), dp(10), dp(14), dp(10))
+                setCompoundDrawablesRelative(null, null, chevron, null)
+                compoundDrawablePadding = dp(4)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
