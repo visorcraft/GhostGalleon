@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -134,23 +133,23 @@ class ControllerLabActivity : AppCompatActivity() {
             Action.CLAIM_HOST, Action.RELEASE_HOST, Action.TOGGLE_SEAT,
         )
         val labels = actions.map { resolveText(it.label()) }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.controller_bind_title)
-            .setItems(labels) { _, which ->
-                if (which !in actions.indices) return@setItems
-                val app = application as GhostGalleonApp
-                val next = app.settings.keyMap.toMutableMap()
-                next.entries.removeAll { it.value == actions[which] }
-                next[code] = actions[which]
-                app.updateSettings(app.settings.copy(keyMap = next), notify = false)
-                android.widget.Toast.makeText(
-                    this,
-                    getString(R.string.controller_bound, resolveText(actions[which].label()), code),
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.controller_bind_title,
+            items = labels,
+        ) { which ->
+            if (which !in actions.indices) return@chooseItem
+            val app = application as GhostGalleonApp
+            val next = app.settings.keyMap.toMutableMap()
+            next.entries.removeAll { it.value == actions[which] }
+            next[code] = actions[which]
+            app.updateSettings(app.settings.copy(keyMap = next), notify = false)
+            android.widget.Toast.makeText(
+                this,
+                getString(R.string.controller_bound, resolveText(actions[which].label()), code),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     private fun paintKey(keyCode: Int, action: Int, event: KeyEvent) {

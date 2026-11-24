@@ -26,7 +26,6 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.GhostGalleonApp
@@ -62,7 +61,9 @@ import com.visorcraft.ghostgalleon.state.UIMode
 import com.visorcraft.ghostgalleon.system.SystemInfoCollector
 import com.visorcraft.ghostgalleon.system.SystemInfoFormat
 import com.visorcraft.ghostgalleon.ui.ControllerLabActivity
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.deviceProfileName
 import com.visorcraft.ghostgalleon.ui.applyThemeFontScale
@@ -268,14 +269,16 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         val labels = names.map { it.removeSuffix(".json") }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_bundled_packs)
-            .setItems(labels) { _, which ->
-                loadBundledPackAsset(names[which])
-            }
-            .setNeutralButton(R.string.action_load_all) { _, _ -> loadAllBundledPacks() }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.settings_bundled_packs,
+            items = labels,
+            neutralRes = R.string.action_load_all,
+            onNeutral = { loadAllBundledPacks() },
+            negativeRes = R.string.action_cancel,
+        ) { which ->
+            loadBundledPackAsset(names[which])
+        }
     }
 
     private fun refreshAppsRows() {
@@ -346,12 +349,23 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rebuild()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_hidden_apps)
-            .setView(ScrollView(this).apply { addView(list) })
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        DeckDialogs.customView(
+            context = this,
+            titleRes = R.string.settings_hidden_apps,
+            view = dialogScroll(list),
+            negativeRes = R.string.action_close,
+        )
     }
+
+    private fun dialogScroll(content: View): OverlayPrimitives.MaxHeightScrollView =
+        OverlayPrimitives.MaxHeightScrollView(
+            context = this,
+            maxHeightPx = OverlayPrimitives.maxModalHeight(
+                context = this,
+                heightFrac = 0.56f,
+                minDp = 140,
+            ),
+        ).apply { addView(content) }
 
     private fun showHiddenRomsDialog() {
         val list = LinearLayout(this).apply {
@@ -383,11 +397,12 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rebuild()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_hidden_roms)
-            .setView(ScrollView(this).apply { addView(list) })
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        DeckDialogs.customView(
+            context = this,
+            titleRes = R.string.settings_hidden_roms,
+            view = dialogScroll(list),
+            negativeRes = R.string.action_close,
+        )
     }
 
     /** Pick an installed launcher app as the companion pin. */
@@ -399,19 +414,20 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         val labels = apps.map { it.label }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_pinned_companion)
-            .setItems(labels) { _, which ->
-                val pkg = apps[which].packageName
-                app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
-                refreshSettingsUi()
-            }
-            .setNeutralButton(R.string.action_clear) { _, _ ->
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.settings_pinned_companion,
+            items = labels,
+            neutralRes = R.string.action_clear,
+            onNeutral = {
                 app.updateSettings(app.settings.copy(companionPinnedPackage = null))
                 refreshSettingsUi()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            },
+        ) { which ->
+            val pkg = apps[which].packageName
+            app.updateSettings(app.settings.copy(companionPinnedPackage = pkg))
+            refreshSettingsUi()
+        }
     }
 
     /** Pick a non-session, non-dual-surface helper for the KEEP play host. */
@@ -422,19 +438,20 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         val labels = apps.map { it.label }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_play_host_helper)
-            .setItems(labels) { _, which ->
-                val pkg = apps[which].packageName
-                app.updateSettings(app.settings.copy(playHostHelperPackage = pkg))
-                refreshSettingsUi()
-            }
-            .setNeutralButton(R.string.action_clear) { _, _ ->
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.settings_play_host_helper,
+            items = labels,
+            neutralRes = R.string.action_clear,
+            onNeutral = {
                 app.updateSettings(app.settings.copy(playHostHelperPackage = null))
                 refreshSettingsUi()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            },
+        ) { which ->
+            val pkg = apps[which].packageName
+            app.updateSettings(app.settings.copy(playHostHelperPackage = pkg))
+            refreshSettingsUi()
+        }
     }
 
     private fun helperPickerApps() = appLibrary.visible(app.settings)
@@ -473,11 +490,12 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rebuild()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.label_dock)
-            .setView(ScrollView(this).apply { addView(list) })
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        DeckDialogs.customView(
+            context = this,
+            titleRes = R.string.label_dock,
+            view = dialogScroll(list),
+            negativeRes = R.string.action_close,
+        )
     }
 
     /** Per-package YIELD_BOTH overrides for Android apps (no launch face). */
@@ -520,11 +538,12 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rebuild()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_package_yield)
-            .setView(ScrollView(this).apply { addView(list) })
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        DeckDialogs.customView(
+            context = this,
+            titleRes = R.string.settings_package_yield,
+            view = dialogScroll(list),
+            negativeRes = R.string.action_close,
+        )
     }
 
     private val platformPackLauncher =
@@ -767,95 +786,79 @@ class SettingsActivity : AppCompatActivity() {
         val names = app.settings.collections.keys.sortedBy { it.lowercase() }
             .toMutableList()
         names.add(0, getString(R.string.settings_new_collection_row))
-        AlertDialog.Builder(this)
-            .setTitle(R.string.label_collections)
-            .setItems(names.toTypedArray()) { _, which ->
-                if (which == 0) {
-                    val input = EditText(this).apply {
-                        setHint(R.string.settings_collection_name_hint)
-                        setTextColor(Color.WHITE)
-                        setHintTextColor(0x66FFFFFF)
-                    }
-                    AlertDialog.Builder(this)
-                        .setTitle(R.string.settings_new_collection)
-                        .setView(input)
-                        .setPositiveButton(R.string.action_create) { _, _ ->
-                            val next = com.visorcraft.ghostgalleon.library.CollectionsOps
-                                .createCollection(
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.label_collections,
+            items = names.toTypedArray(),
+            negativeRes = R.string.action_close,
+        ) { which ->
+            if (which == 0) {
+                DeckDialogs.promptText(
+                    context = this,
+                    titleRes = R.string.settings_new_collection,
+                    hintRes = R.string.settings_collection_name_hint,
+                    positiveRes = R.string.action_create,
+                ) { rawName ->
+                    val next = com.visorcraft.ghostgalleon.library.CollectionsOps
+                        .createCollection(app.settings.collections, rawName)
+                    app.updateSettings(app.settings.copy(collections = next))
+                }
+            } else {
+                val name = names[which]
+                val count = app.settings.collections[name]?.size ?: 0
+                val titleWithCount = getString(
+                    R.string.format_dot_pair,
+                    name,
+                    resources.getQuantityString(R.plurals.count_items, count, count),
+                )
+                DeckDialogs.chooseItem(
+                    context = this,
+                    title = titleWithCount,
+                    items = arrayOf(
+                        getString(R.string.action_edit_members),
+                        getString(R.string.action_mirror_to_folder),
+                        getString(R.string.action_rename),
+                        getString(R.string.action_delete),
+                    ),
+                    negativeRes = R.string.action_close,
+                ) { action ->
+                    when (action) {
+                        0 -> com.visorcraft.ghostgalleon.ui.deck.CollectionDialogs
+                            .promptMembers(
+                                this,
+                                app,
+                                name,
+                                labelOf = { k ->
+                                    com.visorcraft.ghostgalleon.settings.SlotKey.romId(k)
+                                        ?.let { id ->
+                                            app.romEntries.firstOrNull { it.id == id }?.name
+                                        } ?: k
+                                },
+                            )
+                        1 -> mirrorCollectionToGridFolder(name)
+                        2 -> DeckDialogs.promptText(
+                            context = this,
+                            titleRes = R.string.action_rename,
+                            initialText = name,
+                            positiveRes = R.string.action_save,
+                        ) { newName ->
+                            val next = com.visorcraft.ghostgalleon.library
+                                .CollectionsOps.renameCollection(
                                     app.settings.collections,
-                                    input.text?.toString().orEmpty(),
+                                    name,
+                                    newName,
                                 )
                             app.updateSettings(app.settings.copy(collections = next))
                         }
-                        .setNegativeButton(R.string.action_cancel, null)
-                        .show()
-                } else {
-                    val name = names[which]
-                    val count = app.settings.collections[name]?.size ?: 0
-                    AlertDialog.Builder(this)
-                        .setTitle(name)
-                        .setMessage(resources.getQuantityString(
-                            R.plurals.count_items,
-                            count,
-                            count,
-                        ))
-                        .setItems(
-                            arrayOf(
-                                getString(R.string.action_edit_members),
-                                getString(R.string.action_mirror_to_folder),
-                                getString(R.string.action_rename),
-                                getString(R.string.action_delete),
-                            ),
-                        ) { _, action ->
-                            when (action) {
-                                0 -> com.visorcraft.ghostgalleon.ui.deck.CollectionDialogs
-                                    .promptMembers(
-                                        this,
-                                        app,
-                                        name,
-                                        labelOf = { k ->
-                                            com.visorcraft.ghostgalleon.settings.SlotKey.romId(k)
-                                                ?.let { id ->
-                                                    app.romEntries.firstOrNull { it.id == id }?.name
-                                                } ?: k
-                                        },
-                                    )
-                                1 -> mirrorCollectionToGridFolder(name)
-                                2 -> {
-                                    val input = EditText(this).apply {
-                                        setText(name)
-                                        setTextColor(Color.WHITE)
-                                    }
-                                    AlertDialog.Builder(this)
-                                        .setTitle(R.string.action_rename)
-                                        .setView(input)
-                                        .setPositiveButton(R.string.action_save) { _, _ ->
-                                            val next = com.visorcraft.ghostgalleon.library
-                                                .CollectionsOps.renameCollection(
-                                                    app.settings.collections,
-                                                    name,
-                                                    input.text?.toString().orEmpty(),
-                                                )
-                                            app.updateSettings(
-                                                app.settings.copy(collections = next),
-                                            )
-                                        }
-                                        .setNegativeButton(R.string.action_cancel, null)
-                                        .show()
-                                }
-                                3 -> {
-                                    val next = com.visorcraft.ghostgalleon.library.CollectionsOps
-                                        .deleteCollection(app.settings.collections, name)
-                                    app.updateSettings(app.settings.copy(collections = next))
-                                }
-                            }
+                        3 -> {
+                            val next = com.visorcraft.ghostgalleon.library.CollectionsOps
+                                .deleteCollection(app.settings.collections, name)
+                            app.updateSettings(app.settings.copy(collections = next))
                         }
-                        .setNegativeButton(R.string.action_close, null)
-                        .show()
+                    }
                 }
             }
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        }
     }
 
     /** Collection → grid folder mirror (symmetric with folder → collection). */
@@ -892,28 +895,29 @@ class SettingsActivity : AppCompatActivity() {
                 ?: p.player
             getString(R.string.format_label_value, p.displayName, playerListLabel(def))
         }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_default_players)
-            .setItems(labels) { _, which ->
-                val platform = platforms[which]
-                val playerLabels = platform.players.map { playerListLabel(it) }.toTypedArray()
-                AlertDialog.Builder(this)
-                    .setTitle(platform.displayName)
-                    .setItems(playerLabels) { _, pWhich ->
-                        val player = platform.players[pWhich]
-                        app.updateSettings(
-                            app.settings.copy(
-                                defaultPlayers = app.settings.defaultPlayers +
-                                    (platform.id to player.id),
-                            ),
-                        )
-                        refreshSettingsUi()
-                    }
-                    .setNegativeButton(R.string.action_cancel, null)
-                    .show()
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.settings_default_players,
+            items = labels,
+            negativeRes = R.string.action_close,
+        ) { which ->
+            val platform = platforms[which]
+            val playerLabels = platform.players.map { playerListLabel(it) }.toTypedArray()
+            DeckDialogs.chooseItem(
+                context = this,
+                title = platform.displayName,
+                items = playerLabels,
+            ) { pWhich ->
+                val player = platform.players[pWhich]
+                app.updateSettings(
+                    app.settings.copy(
+                        defaultPlayers = app.settings.defaultPlayers +
+                            (platform.id to player.id),
+                    ),
+                )
+                refreshSettingsUi()
             }
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        }
     }
 
     private fun playerListLabel(player: PlayerTemplate): String =
@@ -924,83 +928,44 @@ class SettingsActivity : AppCompatActivity() {
         )
 
     private fun showSgdbKeyDialog() {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(app.settings.sgdbApiKey ?: "")
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(offTint)
-            setHint(R.string.settings_api_key_hint)
+        DeckDialogs.promptText(
+            context = this,
+            titleRes = R.string.settings_sgdb_api_key,
+            initialText = app.settings.sgdbApiKey ?: "",
+            hintRes = R.string.settings_api_key_hint,
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        ) { raw ->
+            val key = raw.trim().ifEmpty { null }
+            app.updateSettings(app.settings.copy(sgdbApiKey = key))
+            refreshSgdbRows()
         }
-        val container = FrameLayout(this).apply {
-            val margin = dp(20)
-            setPadding(margin, dp(12), margin, 0)
-            addView(input)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_sgdb_api_key)
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val key = input.text.toString().trim().ifEmpty { null }
-                app.updateSettings(app.settings.copy(sgdbApiKey = key))
-                refreshSgdbRows()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
     }
 
     private fun showRaUsernameDialog() {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            setText(app.settings.raUsername ?: "")
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(offTint)
-            setHint(R.string.settings_ra_username_hint)
+        DeckDialogs.promptText(
+            context = this,
+            titleRes = R.string.settings_ra_username,
+            initialText = app.settings.raUsername ?: "",
+            hintRes = R.string.settings_ra_username_hint,
+        ) { raw ->
+            val name = raw.trim().ifEmpty { null }
+            app.updateSettings(app.settings.copy(raUsername = name))
+            refreshRaRows()
         }
-        val container = FrameLayout(this).apply {
-            val margin = dp(20)
-            setPadding(margin, dp(12), margin, 0)
-            addView(input)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_ra_username)
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { null }
-                app.updateSettings(app.settings.copy(raUsername = name))
-                refreshRaRows()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
     }
 
     private fun showRaApiKeyDialog() {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(app.settings.raApiKey ?: "")
-            setSelectAllOnFocus(true)
-            setTextColor(Color.WHITE)
-            setHintTextColor(offTint)
-            setHint(R.string.settings_api_key_hint)
+        DeckDialogs.promptText(
+            context = this,
+            titleRes = R.string.settings_ra_api_key,
+            initialText = app.settings.raApiKey ?: "",
+            hintRes = R.string.settings_api_key_hint,
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        ) { raw ->
+            val key = raw.trim().ifEmpty { null }
+            app.updateSettings(app.settings.copy(raApiKey = key))
+            refreshRaRows()
         }
-        val container = FrameLayout(this).apply {
-            val margin = dp(20)
-            setPadding(margin, dp(12), margin, 0)
-            addView(input)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_ra_api_key)
-            .setView(container)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val key = input.text.toString().trim().ifEmpty { null }
-                app.updateSettings(app.settings.copy(raApiKey = key))
-                refreshRaRows()
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
     }
 
     /** First ON: mutate RA cfg if writable; otherwise show paste lines. Toggle stays on. */
@@ -1039,11 +1004,13 @@ class SettingsActivity : AppCompatActivity() {
             |network_cmd_enable = "true"
             |network_cmd_port = "55355"
         """.trimMargin()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_ra_network_commands)
-            .setMessage(getString(R.string.settings_ra_network_commands_help) + "\n\n" + paste)
-            .setPositiveButton(R.string.action_ok, null)
-            .show()
+        DeckDialogs.confirm(
+            context = this,
+            titleRes = R.string.settings_ra_network_commands,
+            message = getString(R.string.settings_ra_network_commands_help) + "\n\n" + paste,
+            positiveRes = R.string.action_ok,
+            negativeRes = null,
+        )
     }
 
     /**
@@ -1492,36 +1459,31 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showSettingsSearch() {
-        val input = android.widget.EditText(this).apply {
-            setHint(R.string.settings_search_hint)
-            setSingleLine()
-            setTextColor(Color.WHITE)
-            setHintTextColor(0x66FFFFFF)
-        }
         val jumps = settingsSearchIndex()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_search_hint)
-            .setView(input)
-            .setPositiveButton(R.string.action_search) { _, _ ->
-                val hits = SettingsCatalog.matches(input.text.toString(), jumps)
-                if (hits.isEmpty()) {
-                    Toast.makeText(this, R.string.browse_nothing_to_continue, Toast.LENGTH_SHORT)
-                        .show()
-                    return@setPositiveButton
-                }
-                if (hits.size == 1) {
-                    jumpToSettingsPage(hits[0].pageId)
-                    return@setPositiveButton
-                }
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.settings_search_hint)
-                    .setItems(hits.map { it.label }.toTypedArray()) { _, which ->
-                        jumpToSettingsPage(hits[which].pageId)
-                    }
+        DeckDialogs.promptText(
+            context = this,
+            titleRes = R.string.settings_search_hint,
+            hintRes = R.string.settings_search_hint,
+            positiveRes = R.string.action_search,
+        ) { query ->
+            val hits = SettingsCatalog.matches(query, jumps)
+            if (hits.isEmpty()) {
+                Toast.makeText(this, R.string.browse_no_matches_short, Toast.LENGTH_SHORT)
                     .show()
+                return@promptText
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            if (hits.size == 1) {
+                jumpToSettingsPage(hits[0].pageId)
+                return@promptText
+            }
+            DeckDialogs.chooseItem(
+                context = this,
+                titleRes = R.string.settings_search_hint,
+                items = hits.map { it.label }.toTypedArray(),
+            ) { which ->
+                jumpToSettingsPage(hits[which].pageId)
+            }
+        }
     }
 
     private fun jumpToSettingsPage(pageId: String) {
@@ -1549,12 +1511,13 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun showPagePicker() {
         val labels = SettingsPage.entries.map { getString(it.titleRes) }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.settings_page_picker)
-            .setItems(labels) { _, which ->
-                selectPage(SettingsPage.entries[which])
-            }
-            .show()
+        DeckDialogs.chooseItem(
+            context = this,
+            titleRes = R.string.settings_page_picker,
+            items = labels,
+        ) { which ->
+            selectPage(SettingsPage.entries[which])
+        }
     }
 
     private fun buildContent(): View {

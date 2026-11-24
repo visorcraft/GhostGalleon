@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GhostGalleon" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:colorBackground">#FF000000</item>
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
+        <item name="colorPrimary">#FF1C1C22</item>
+        <item name="colorPrimaryDark">#FF000000</item>
+        <item name="colorAccent">#FF7986CB</item>
+        <item name="alertDialogTheme">@style/Theme.GhostGalleon.Dialog</item>
+        <item name="android:alertDialogTheme">@style/Theme.GhostGalleon.Dialog</item>
+    </style>
+
+    <style name="Theme.GhostGalleon.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bg_dialog_card</item>
+        <item name="android:colorBackground">#FF1C1C22</item>
+        <item name="colorAccent">#FF7986CB</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#CCFFFFFF</item>
+        <item name="android:textColorAlertDialogListItem">#FFFFFFFF</item>
+        <item name="android:backgroundDimAmount">0.80</item>
+    </style>
+</resources>

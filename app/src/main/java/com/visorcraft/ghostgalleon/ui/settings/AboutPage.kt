@@ -14,13 +14,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.StringRes
-import androidx.appcompat.app.AlertDialog
 import com.visorcraft.ghostgalleon.BuildConfig
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 
 /**
@@ -390,16 +390,30 @@ object AboutPage {
             isHorizontalScrollBarEnabled = false
             addView(tabRow)
         })
-        content.addView(ScrollView(context).apply {
-            addView(body)
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 360)))
+        content.addView(
+            OverlayPrimitives.MaxHeightScrollView(
+                context = context,
+                maxHeightPx = OverlayPrimitives.maxModalHeight(
+                    context = context,
+                    heightFrac = 0.50f,
+                    minDp = 160,
+                ),
+            ).apply {
+                addView(body)
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         restyle()
 
-        AlertDialog.Builder(context)
-            .setTitle(R.string.about_licenses)
-            .setView(content)
-            .setPositiveButton(R.string.action_copy) { _, _ ->
+        DeckDialogs.customView(
+            context = context,
+            titleRes = R.string.about_licenses,
+            view = content,
+            positiveRes = R.string.action_copy,
+            onPositive = {
                 val clipboard = context.getSystemService(
                     Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText(
@@ -407,9 +421,9 @@ object AboutPage {
                     loadRaw(context, tabs[selected].second),
                 ))
                 Toast.makeText(context, R.string.about_copied, Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+            },
+            negativeRes = R.string.action_close,
+        )
     }
 
     /** Credits dialog: runtime components + bundled library table. */
@@ -467,10 +481,19 @@ object AboutPage {
         })
         bundledLibraries.forEach(::creditRow)
 
-        AlertDialog.Builder(context)
-            .setTitle(R.string.about_credits)
-            .setView(ScrollView(context).apply { addView(list) })
-            .setNegativeButton(R.string.action_close, null)
-            .show()
+        val scroll = OverlayPrimitives.MaxHeightScrollView(
+            context = context,
+            maxHeightPx = OverlayPrimitives.maxModalHeight(
+                context = context,
+                heightFrac = 0.58f,
+                minDp = 160,
+            ),
+        ).apply { addView(list) }
+        DeckDialogs.customView(
+            context = context,
+            titleRes = R.string.about_credits,
+            view = scroll,
+            negativeRes = R.string.action_close,
+        )
     }
 }

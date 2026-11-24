@@ -18,7 +18,7 @@
         android:name=".GhostGalleonApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:theme="@style/Theme.GhostGalleon"
         android:allowBackup="false"
         android:directBootAware="true"
         android:supportsRtl="true">

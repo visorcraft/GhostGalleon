@@ -1,6 +1,5 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -24,6 +23,7 @@ import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.rom.StagePlots
 import com.visorcraft.ghostgalleon.rom.isInstalled
+import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.toast
 
 /** Shared, locale-safe library entry actions. */
@@ -49,24 +49,26 @@ object EntryActions {
             activity.toast(R.string.stats_no_play_stats)
             return
         }
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.stats_clear_play_stats)
-            .setMessage(activity.getString(R.string.stats_clear_confirm, label))
-            .setPositiveButton(R.string.action_clear) { _, _ ->
-                val next = SessionMath.clearStats(
-                    PlayStats(live.lastLaunchedMs, live.playtimeMs),
-                    key,
-                )
-                app.updateSettings(
-                    live.copy(
-                        lastLaunchedMs = next.lastLaunchedMs,
-                        playtimeMs = next.totalPlaytimeMs,
-                    ),
-                )
-                activity.toast(R.string.stats_cleared)
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.confirm(
+            context = activity,
+            titleRes = R.string.stats_clear_play_stats,
+            message = activity.getString(R.string.stats_clear_confirm, label),
+            positiveRes = R.string.action_clear,
+            destructive = true,
+        ) {
+            val current = app.settings
+            val next = SessionMath.clearStats(
+                PlayStats(current.lastLaunchedMs, current.playtimeMs),
+                key,
+            )
+            app.updateSettings(
+                current.copy(
+                    lastLaunchedMs = next.lastLaunchedMs,
+                    playtimeMs = next.totalPlaytimeMs,
+                ),
+            )
+            activity.toast(R.string.stats_cleared)
+        }
     }
 
     fun toggleFavorite(activity: AppCompatActivity, key: String) {
@@ -98,22 +100,22 @@ object EntryActions {
             activity.toast(R.string.deck_no_players_installed)
             return
         }
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.action_open_with)
-            .setItems(installed.map { it.displayName }.toTypedArray()) { _, which ->
-                val player = installed[which]
-                val app = activity.application as GhostGalleonApp
-                app.updateSettings(
-                    app.settings.copy(
-                        defaultPlayers = app.settings.defaultPlayers +
-                            (rom.platformId to player.id),
-                    ),
-                    notify = false,
-                )
-                onLaunch(player.id)
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.action_open_with,
+            items = installed.map { it.displayName }.toTypedArray(),
+        ) { which ->
+            val player = installed.getOrNull(which) ?: return@chooseItem
+            val app = activity.application as GhostGalleonApp
+            app.updateSettings(
+                app.settings.copy(
+                    defaultPlayers = app.settings.defaultPlayers +
+                        (rom.platformId to player.id),
+                ),
+                notify = false,
+            )
+            onLaunch(player.id)
+        }
     }
 
     fun playerProfile(activity: AppCompatActivity, rom: RomEntry) {
@@ -135,20 +137,20 @@ object EntryActions {
             if (current == null) R.string.deck_platform_default_selected
             else R.string.deck_platform_default,
         )
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.deck_player_profile)
-            .setItems(labels.toTypedArray()) { _, which ->
-                val live = app.settings
-                val nextProfiles = if (which >= players.size) {
-                    RomProfiles.clearProfile(live.romProfiles, rom.id)
-                } else {
-                    RomProfiles.setProfile(live.romProfiles, rom.id, players[which].id)
-                }
-                app.updateSettings(live.copy(romProfiles = nextProfiles))
-                activity.toast(R.string.deck_player_saved)
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.deck_player_profile,
+            items = labels.toTypedArray(),
+        ) { which ->
+            val live = app.settings
+            val nextProfiles = if (which >= players.size) {
+                RomProfiles.clearProfile(live.romProfiles, rom.id)
+            } else {
+                RomProfiles.setProfile(live.romProfiles, rom.id, players[which].id)
             }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+            app.updateSettings(live.copy(romProfiles = nextProfiles))
+            activity.toast(R.string.deck_player_saved)
+        }
     }
 
     fun openAppInfo(activity: AppCompatActivity, packageName: String) {
@@ -271,21 +273,21 @@ object EntryActions {
                 PlotConfirm.YIELD_ON_KEEP_PLAYER -> R.string.confirm_yield_on_keep_player
                 PlotConfirm.NONE -> return
             }
-            AlertDialog.Builder(activity)
-                .setTitle(R.string.settings_stage_plot)
-                .setMessage(message)
-                .setPositiveButton(R.string.action_ok) { _, _ -> writePlot(opt) }
-                .setNegativeButton(R.string.action_cancel, null)
-                .show()
+            DeckDialogs.confirm(
+                context = activity,
+                titleRes = R.string.settings_stage_plot,
+                messageRes = message,
+                positiveRes = R.string.action_ok,
+            ) { writePlot(opt) }
         }
 
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.settings_stage_plot)
-            .setItems(labels) { _, which ->
-                options.getOrNull(which)?.let(::applyOption)
-            }
-            .setNegativeButton(R.string.action_cancel, null)
-            .show()
+        DeckDialogs.chooseItem(
+            context = activity,
+            titleRes = R.string.settings_stage_plot,
+            items = labels,
+        ) { which ->
+            options.getOrNull(which)?.let(::applyOption)
+        }
     }
 
     fun copyTitle(activity: AppCompatActivity, title: String) {
