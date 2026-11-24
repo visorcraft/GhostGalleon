@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.settings
 
 import android.view.KeyEvent
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.BrowseChrome
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -136,5 +137,22 @@ class SettingsUiLogicTest {
         assertFalse(SettingsUiLogic.hasAnyArtCredentials("", "user", ""))
         assertTrue(SettingsUiLogic.hasAnyArtCredentials("sgdb-token", null, null))
         assertTrue(SettingsUiLogic.hasAnyArtCredentials(null, "user", "ra-key"))
+    }
+
+    @Test
+    fun `enabledPowerRailsCount and chevronRotationDegrees reflect BrowseChrome presets`() {
+        assertEquals(0, SettingsUiLogic.enabledPowerRailsCount(BrowseChrome.MINIMAL))
+        assertEquals(
+            SettingsUiLogic.TOTAL_POWER_RAILS,
+            SettingsUiLogic.enabledPowerRailsCount(BrowseChrome.FULL),
+        )
+        val custom = BrowseChrome.MINIMAL.copy(deckStatusPill = true, resumeChip = true)
+        assertEquals(2, SettingsUiLogic.enabledPowerRailsCount(custom))
+        // Core platformChips / collectionRails toggles do not alter the power-rail count.
+        val coreOff = BrowseChrome.MINIMAL.copy(platformChips = false, collectionRails = false)
+        assertEquals(0, SettingsUiLogic.enabledPowerRailsCount(coreOff))
+
+        assertEquals(0f, SettingsUiLogic.chevronRotationDegrees(false), 0.001f)
+        assertEquals(180f, SettingsUiLogic.chevronRotationDegrees(true), 0.001f)
     }
 }

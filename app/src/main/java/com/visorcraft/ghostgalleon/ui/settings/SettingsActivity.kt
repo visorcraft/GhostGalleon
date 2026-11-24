@@ -53,6 +53,7 @@ import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.input.SecondSeatPolicy
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.BrowseChrome
 import com.visorcraft.ghostgalleon.settings.CompanionRole
 import com.visorcraft.ghostgalleon.settings.CompanionRoleResolve
 import com.visorcraft.ghostgalleon.settings.SettingsBundle
@@ -208,6 +209,16 @@ internal object SettingsUiLogic {
     /** True when either SteamGridDB or RetroAchievements credentials are ready. */
     fun hasAnyArtCredentials(sgdbKey: String?, raUsername: String?, raApiKey: String?): Boolean =
         isConfiguredStatus(sgdbKey) || hasRaCredentials(raUsername, raApiKey)
+
+    /** Number of optional power-rail toggles under the Browse Chrome expander. */
+    const val TOTAL_POWER_RAILS: Int = 16
+
+    /** Count of currently enabled Browse Chrome power-rail / extra toggles (`0..16`). */
+    fun enabledPowerRailsCount(chrome: BrowseChrome): Int =
+        chrome.switchFlags().drop(2).count { it }
+
+    /** Target rotation degrees for the collapsible Browse Chrome chevron. */
+    fun chevronRotationDegrees(expanded: Boolean): Float = if (expanded) 180f else 0f
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -2602,7 +2613,8 @@ class SettingsActivity : AppCompatActivity() {
         val powerHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        fun rebindChromeUi(c: com.visorcraft.ghostgalleon.settings.BrowseChrome) {
+        var updatePowerExpanderMeta: ((BrowseChrome, Boolean) -> Unit)? = null
+        fun rebindChromeUi(c: BrowseChrome) {
             rebindChromePreset?.invoke(chromePresetId(c))
             suppressChromeSwitchCallbacks = true
             try {
@@ -2610,11 +2622,9 @@ class SettingsActivity : AppCompatActivity() {
             } finally {
                 suppressChromeSwitchCallbacks = false
             }
-            powerHost.visibility = if (c.powerRailsPanelVisible()) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
+            val visible = c.powerRailsPanelVisible()
+            powerHost.visibility = if (visible) View.VISIBLE else View.GONE
+            updatePowerExpanderMeta?.invoke(c, true)
         }
         segmentedRow(
             card = chromeCard,
@@ -2624,8 +2634,8 @@ class SettingsActivity : AppCompatActivity() {
             bindSelected = { set -> rebindChromePreset = set },
         ) { id ->
             when (id) {
-                com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_FULL -> {
-                    val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.FULL
+                BrowseChrome.PRESET_FULL -> {
+                    val next = BrowseChrome.FULL
                     val prev = app.settings.browseChrome
                     app.updateSettings(
                         app.settings.copy(browseChrome = next),
@@ -2633,8 +2643,8 @@ class SettingsActivity : AppCompatActivity() {
                     )
                     rebindChromeUi(next)
                 }
-                com.visorcraft.ghostgalleon.settings.BrowseChrome.PRESET_MINIMAL -> {
-                    val next = com.visorcraft.ghostgalleon.settings.BrowseChrome.MINIMAL
+                BrowseChrome.PRESET_MINIMAL -> {
+                    val next = BrowseChrome.MINIMAL
                     val prev = app.settings.browseChrome
                     app.updateSettings(
                         app.settings.copy(browseChrome = next),
@@ -2661,9 +2671,8 @@ class SettingsActivity : AppCompatActivity() {
         fun chromeFlag(
             host: LinearLayout,
             label: String,
-            get: (com.visorcraft.ghostgalleon.settings.BrowseChrome) -> Boolean,
-            set: (com.visorcraft.ghostgalleon.settings.BrowseChrome, Boolean) ->
-                com.visorcraft.ghostgalleon.settings.BrowseChrome,
+            get: (BrowseChrome) -> Boolean,
+            set: (BrowseChrome, Boolean) -> BrowseChrome,
         ) {
             addDividerIfNeeded(host)
             val sw = accentSwitch(get(chrome)) { on ->
@@ -2681,6 +2690,7 @@ class SettingsActivity : AppCompatActivity() {
                 } else {
                     View.GONE
                 }
+                updatePowerExpanderMeta?.invoke(next, true)
             }
             host.addView(
                 switchRow(label, sw),
@@ -2705,11 +2715,36 @@ class SettingsActivity : AppCompatActivity() {
             get = { it.collectionRails },
             set = { c, v -> c.copy(collectionRails = v) },
         )
-        // Power rails expander — collapsed when currently minimal.
+        // Power rails expander — collapsed when currently minimal, with live count pill & chevron.
         powerHost.visibility = if (chrome.powerRailsPanelVisible()) {
             View.VISIBLE
         } else {
             View.GONE
+        }
+        val powerCountBadge = TextView(this).apply {
+            maxLines = 1
+        }
+        val expanderChevron = ImageView(this).apply {
+            setImageResource(R.drawable.ic_dropdown)
+            imageTintList = ColorStateList.valueOf(accentOnCard)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        updatePowerExpanderMeta = { c, animate ->
+            val enabled = SettingsUiLogic.enabledPowerRailsCount(c)
+            powerCountBadge.text = getString(
+                R.string.format_progress,
+                enabled,
+                SettingsUiLogic.TOTAL_POWER_RAILS,
+            )
+            styleStatusBadge(powerCountBadge, active = enabled > 0)
+            val targetDeg = SettingsUiLogic.chevronRotationDegrees(powerHost.visibility == View.VISIBLE)
+            expanderChevron.animate().cancel()
+            if (animate) {
+                expanderChevron.animate().rotation(targetDeg).setDuration(160L).start()
+            } else {
+                expanderChevron.rotation = targetDeg
+            }
         }
         val expander = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2717,16 +2752,29 @@ class SettingsActivity : AppCompatActivity() {
             setOnClickListener {
                 powerHost.visibility =
                     if (powerHost.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                updatePowerExpanderMeta?.invoke(app.settings.browseChrome, true)
             }
         }
         expander.addView(rowLabel(getString(R.string.settings_chrome_power_rails)), LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        expander.addView(
+            powerCountBadge,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = dp(8) },
+        )
         expander.addView(TextView(this).apply {
             text = getString(R.string.settings_chrome_expand)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             setTextColor(accentOnCard)
             setTypeface(typeface, Typeface.BOLD)
-        })
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginEnd = dp(4) })
+        expander.addView(expanderChevron, LinearLayout.LayoutParams(dp(20), dp(20)))
+        updatePowerExpanderMeta.invoke(chrome, false)
         addActionRow(chromeCard, expander, heightDp = 56)
         chromeFlag(
             powerHost, getString(R.string.settings_installed_rail),
