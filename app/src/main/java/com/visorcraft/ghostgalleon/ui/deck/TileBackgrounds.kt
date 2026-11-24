@@ -125,6 +125,9 @@ object TileBackgrounds {
     /** Recessed sunken surface fill color for inputs, tracks, and nav blades. */
     fun surfaceSunken(context: Context): Int = ThemePack.surfaceSunken(tokens(context))
 
+    /** Slightly lifted card highlight surface color for active nav tiles and previews. */
+    fun surfaceElevated(context: Context): Int = ThemePack.surfaceElevated(tokens(context))
+
     /** Subtle 1dp translucent divider/border color for the active theme pack. */
     fun hairlineDivider(context: Context): Int = ThemePack.hairlineDivider(tokens(context))
 
@@ -365,5 +368,84 @@ object TileBackgrounds {
             setColor(Color.WHITE)
         }
         return RippleDrawable(ColorStateList.valueOf(CHROME_RIPPLE_COLOR), content, mask)
+    }
+
+    /**
+     * Combines [focusableRow] gamepad focus rings with a rounded touch [RippleDrawable]
+     * mask so Settings rows, About actions, and Lab buttons give crisp feedback on
+     * both touch and controller input.
+     */
+    fun pressableRow(
+        context: Context,
+        accent: Int,
+        idleBackground: Drawable? = null,
+        cornerRadiusDp: Int = 12,
+        strokeDp: Int = 2,
+    ): Drawable {
+        val content = focusableRow(
+            context = context,
+            accent = accent,
+            idleBackground = idleBackground,
+            cornerRadiusDp = cornerRadiusDp,
+            strokeDp = strokeDp,
+        )
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
+        }
+        val rippleColor = ThemePack.accentGlowColor(accent, alpha = 0x38)
+        return RippleDrawable(ColorStateList.valueOf(rippleColor), content, mask)
+    }
+
+    /**
+     * Recessed value pill with a subtle luminance-adaptive accent hairline for
+     * live slider readouts, counters, and keycap indicators.
+     */
+    fun valueBadge(
+        context: Context,
+        accent: Int,
+        cornerRadiusDp: Int = UiDimens.RADIUS_SM,
+    ): GradientDrawable {
+        val t = tokens(context)
+        return GradientDrawable().apply {
+            setColor(ThemePack.surfaceSunken(t))
+            cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
+            setStroke(UiDimens.strokePx(context, 1), ThemePack.accentHairline(accent))
+        }
+    }
+
+    /** Vertical rounded pill bar (e.g. 3dp active indicator on left nav blade). */
+    fun activeAccentBar(
+        context: Context,
+        accent: Int,
+        cornerRadiusDp: Int = 2,
+    ): GradientDrawable = GradientDrawable().apply {
+        setColor(accent)
+        cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
+    }
+
+    /**
+     * Subtle radial or top-down translucent accent aura for brand emblems and
+     * hero framing cards.
+     */
+    fun accentGlow(
+        context: Context,
+        accent: Int,
+        cornerRadiusDp: Int = 24,
+        radial: Boolean = true,
+        peakAlpha: Int = 0x44,
+    ): GradientDrawable = GradientDrawable().apply {
+        val peak = ThemePack.accentGlowColor(accent, peakAlpha)
+        val transparent = ThemePack.withAlpha(accent, 0)
+        colors = intArrayOf(peak, transparent)
+        if (radial) {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = UiDimens.dpF(context, cornerRadiusDp * 2).coerceAtLeast(1f)
+            setGradientCenter(0.5f, 0.5f)
+        } else {
+            gradientType = GradientDrawable.LINEAR_GRADIENT
+            orientation = GradientDrawable.Orientation.TOP_BOTTOM
+        }
+        cornerRadius = UiDimens.dpF(context, cornerRadiusDp)
     }
 }

@@ -142,4 +142,50 @@ class ThemePackTest {
         val customGhost = ThemePack.GHOST.copy(panelLift = 0xFF282034.toInt())
         assertEquals(0xFF282034.toInt(), ThemePack.cardFill(customGhost))
     }
+
+    @Test
+    fun `nestedRadiusDp computes optical concentric radius with floor`() {
+        assertEquals(16, ThemePack.nestedRadiusDp(outerRadiusDp = 24, insetDp = 8))
+        assertEquals(4, ThemePack.nestedRadiusDp(outerRadiusDp = 12, insetDp = 20))
+        assertEquals(6, ThemePack.nestedRadiusDp(outerRadiusDp = 10, insetDp = 20, minDp = 6))
+        assertEquals(20, ThemePack.nestedRadiusDp(outerRadiusDp = 20, insetDp = -4))
+    }
+
+    @Test
+    fun `surfaceElevated stays brighter than cardFill while preserving high white-text contrast`() {
+        val white = 0xFFFFFFFF.toInt()
+        for (tokens in ThemePack.BUILTINS) {
+            val card = ThemePack.cardFill(tokens)
+            val elevated = ThemePack.surfaceElevated(tokens)
+            org.junit.Assert.assertTrue(
+                "elevated should be lighter than cardFill for ${tokens.id}",
+                ThemePack.relativeLuminance(elevated) > ThemePack.relativeLuminance(card),
+            )
+            val contrast = ThemePack.contrastRatio(white, elevated)
+            org.junit.Assert.assertTrue(
+                "white on elevated contrast=$contrast too low for ${tokens.id}",
+                contrast >= 10.0,
+            )
+        }
+    }
+
+    @Test
+    fun `withAlpha and luminance-adaptive glow and hairline clamp cleanly`() {
+        assertEquals(0x003F51B5, ThemePack.withAlpha(0xFF3F51B5.toInt(), -10))
+        assertEquals(0xFF3F51B5.toInt(), ThemePack.withAlpha(0x103F51B5, 999))
+
+        val ghostGlowAlpha = (ThemePack.accentGlowColor(ThemePack.GHOST.accentColor, 0x44) ushr 24) and 0xFF
+        val oledGlowAlpha = (ThemePack.accentGlowColor(ThemePack.OLED.accentColor, 0x44) ushr 24) and 0xFF
+        assertEquals(0x44, ghostGlowAlpha)
+        org.junit.Assert.assertTrue("OLED bright accent glow should dampen alpha ($oledGlowAlpha)", oledGlowAlpha < ghostGlowAlpha)
+
+        val ghostHairAlpha = (ThemePack.accentHairline(ThemePack.GHOST.accentColor, 0x66) ushr 24) and 0xFF
+        val oledHairAlpha = (ThemePack.accentHairline(ThemePack.OLED.accentColor, 0x66) ushr 24) and 0xFF
+        assertEquals(0x66, ghostHairAlpha)
+        org.junit.Assert.assertTrue("OLED bright accent hairline should dampen alpha ($oledHairAlpha)", oledHairAlpha < ghostHairAlpha)
+
+        assertEquals(0xFF000000.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0f))
+        assertEquals(0xFFFFFFFF.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 1f))
+        assertEquals(0xFF7F7F7F.toInt(), ThemePack.blendColors(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0.5f))
+    }
 }

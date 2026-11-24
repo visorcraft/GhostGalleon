@@ -218,6 +218,65 @@ object ThemePack {
     fun chipRadiusDp(tokens: ThemeTokens): Int =
         (tokens.cardRadiusDp / 2).coerceIn(8, 14)
 
+    /** Replaces the alpha byte of [color] with [alpha] clamped to `0..255`. */
+    fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
+
+    /**
+     * Optical concentric corner radius for a nested child inset by [insetDp]
+     * inside a container with [outerRadiusDp], clamped to at least [minDp].
+     */
+    fun nestedRadiusDp(outerRadiusDp: Int, insetDp: Int, minDp: Int = 4): Int =
+        (outerRadiusDp - insetDp.coerceAtLeast(0)).coerceAtLeast(minDp.coerceAtLeast(0))
+
+    /**
+     * Opaque linear RGB blend from [base] toward [overlay] by [overlayFraction]
+     * (`0f` = [base], `1f` = [overlay]). Pure; host-tested.
+     */
+    fun blendColors(base: Int, overlay: Int, overlayFraction: Float): Int {
+        val f = overlayFraction.coerceIn(0f, 1f)
+        val inv = 1f - f
+        val r = (((base shr 16) and 0xFF) * inv + ((overlay shr 16) and 0xFF) * f)
+            .toInt().coerceIn(0, 255)
+        val g = (((base shr 8) and 0xFF) * inv + ((overlay shr 8) and 0xFF) * f)
+            .toInt().coerceIn(0, 255)
+        val b = ((base and 0xFF) * inv + (overlay and 0xFF) * f)
+            .toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /**
+     * Slightly lifted surface derived from [cardFill] for active nav tiles,
+     * preview cards, and interactive highlighted panels.
+     */
+    fun surfaceElevated(tokens: ThemeTokens): Int {
+        val fill = cardFill(tokens)
+        val lift = if (tokens.id == OLED.id) 0.06f else 0.08f
+        return blendColors(fill, 0xFFFFFFFF.toInt(), lift)
+    }
+
+    /**
+     * Luminance-adaptive translucent aura derived from [accent]. Bright accents
+     * (such as OLED `#E0E0E0`) scale down alpha so glows stay refined on dark cards.
+     */
+    fun accentGlowColor(accent: Int, alpha: Int = 0x44): Int {
+        val clamped = alpha.coerceIn(0, 255)
+        val lum = relativeLuminance(accent)
+        val scaled = if (lum > 0.55) (clamped * 0.65).toInt() else clamped
+        return withAlpha(accent, scaled)
+    }
+
+    /**
+     * Luminance-adaptive translucent accent border for value badges, active
+     * nav pills, and preview highlights.
+     */
+    fun accentHairline(accent: Int, alpha: Int = 0x66): Int {
+        val clamped = alpha.coerceIn(0, 255)
+        val lum = relativeLuminance(accent)
+        val scaled = if (lum > 0.55) (clamped * 0.72).toInt() else clamped
+        return withAlpha(accent, scaled)
+    }
+
     /**
      * Parse a theme pack JSON object. Accepts:
      * `{ "id":"…", "displayName":"…", "accentColor":"#FF2D95" or long,

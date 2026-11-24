@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui
 
 import android.content.Context
 import android.view.View
+import android.widget.TextView
 
 /**
  * Density-independent sizing and shared UI alpha/spacing tokens used across
@@ -33,6 +34,19 @@ object UiDimens {
     const val SPACE_LG: Int = 16
     const val SPACE_XL: Int = 24
 
+    /** OpenType feature tag for fixed-width tabular numerals on live readouts. */
+    const val TABULAR_NUMS_FEATURE: String = "tnum"
+
+    /** Minimum accessible touch/focus target size in dp. */
+    const val TOUCH_MIN_DP: Int = 44
+
+    const val RADIUS_SM: Int = 10
+    const val RADIUS_MD: Int = 14
+    const val RADIUS_LG: Int = 20
+
+    const val ELEVATION_CARD_DP: Int = 2
+    const val ELEVATION_FLOATING_DP: Int = 6
+
     fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
@@ -48,6 +62,11 @@ object UiDimens {
     /** Pixel width for hairline/focus strokes, clamped to at least 1px. */
     fun strokePx(context: Context, dpValue: Int = 1): Int =
         dp(context, dpValue).coerceAtLeast(1)
+
+    /** Enable tabular numerals (`tnum`) so live counters and slider badges do not jitter. */
+    fun applyTabularNumerals(view: TextView) {
+        view.fontFeatureSettings = TABULAR_NUMS_FEATURE
+    }
 }
 
 fun Context.dp(value: Int): Int = UiDimens.dp(this, value)
@@ -69,3 +88,5 @@ fun View.dpF(value: Int): Float = context.dpF(value)
 fun View.dpF(value: Float): Float = context.dpF(value)
 
 fun View.strokePx(dpValue: Int = 1): Int = context.strokePx(dpValue)
+
+fun TextView.useTabularNumerals() = UiDimens.applyTabularNumerals(this)
