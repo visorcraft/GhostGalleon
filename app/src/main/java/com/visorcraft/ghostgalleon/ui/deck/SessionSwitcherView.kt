@@ -542,6 +542,10 @@ object SessionSwitcherView {
                 Gravity.CENTER,
             ),
         )
+        OverlayPrimitives.bindModalPaneTitle(
+            overlay,
+            context.getString(R.string.session_switcher_title),
+        )
         OverlayPrimitives.applyImeSafeInsets(overlay)
         OverlayPrimitives.bindModalEnter(
             backdrop = overlay,

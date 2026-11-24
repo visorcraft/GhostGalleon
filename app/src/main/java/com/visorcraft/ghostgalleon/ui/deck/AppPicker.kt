@@ -3,7 +3,6 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
@@ -260,18 +259,24 @@ class AppPicker(
         )
 
         // Header row: modal title + live result-count pill + 1dp hairline divider.
+        val resolvedTitle = OverlayPrimitives.resolvePaneTitle(
+            explicitTitle = title,
+            fallbackTitle = context.getString(R.string.action_add_to_grid),
+        )
+        OverlayPrimitives.bindModalPaneTitle(overlay, resolvedTitle)
         val headerRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerRow.addView(
             TextView(context).apply {
-                text = title ?: context.getString(R.string.action_add_to_grid)
+                text = resolvedTitle
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
+                OverlayPrimitives.markHeading(this)
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
@@ -282,6 +287,7 @@ class AppPicker(
             maxLines = 1
             background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
             setPadding(context.dp(10), context.dp(4), context.dp(10), context.dp(4))
+            OverlayPrimitives.markPoliteLiveRegion(this)
         }
         countBadge = badge
         headerRow.addView(
@@ -301,6 +307,7 @@ class AppPicker(
         card.addView(
             View(context).apply {
                 setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -325,6 +332,7 @@ class AppPicker(
                 imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 isFocusable = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             },
             LinearLayout.LayoutParams(context.dp(20), context.dp(20)).apply {
                 marginEnd = context.dp(UiDimens.SPACE_SM)
@@ -450,6 +458,7 @@ class AppPicker(
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
+            OverlayPrimitives.markPoliteLiveRegion(this)
         }
         emptyBox.addView(
             emptyText,
@@ -786,9 +795,7 @@ class AppPicker(
                     setTypeface(typeface, Typeface.BOLD)
                     letterSpacing = 0.12f
                     setPadding(rowPadH, context.dp(12), rowPadH, context.dp(UiDimens.SPACE_XS))
-                    if (Build.VERSION.SDK_INT >= 28) {
-                        isAccessibilityHeading = true
-                    }
+                    OverlayPrimitives.markHeading(this)
                     layoutParams = RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,

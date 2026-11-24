@@ -338,6 +338,7 @@ class QuickPanel(
         cells = core
 
         val root = OverlayPrimitives.modalBackdrop(context, onClose)
+        OverlayPrimitives.bindModalPaneTitle(root, context.getString(R.string.deck_quick_panel))
         val cardWidth = OverlayPrimitives.responsiveCardWidth(
             context = context,
             maxDp = 560,
@@ -363,7 +364,9 @@ class QuickPanel(
             titleRes = R.string.deck_quick_panel,
             subtitle = themeSubtitle,
         )
-        headerSubtitleView = header.getChildAt(1) as? TextView
+        headerSubtitleView = (header.getChildAt(1) as? TextView)?.also {
+            OverlayPrimitives.markPoliteLiveRegion(it)
+        }
         sheet.addView(
             header,
             LinearLayout.LayoutParams(

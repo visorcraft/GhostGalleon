@@ -218,4 +218,12 @@ class OverlayPrimitivesTest {
             ),
         )
     }
+
+    @Test
+    fun `resolvePaneTitle trims explicit titles and falls back on blank or null`() {
+        assertEquals("Super Mario World", OverlayPrimitives.resolvePaneTitle("  Super Mario World  ", "Select"))
+        assertEquals("Select", OverlayPrimitives.resolvePaneTitle("", "Select"))
+        assertEquals("Select", OverlayPrimitives.resolvePaneTitle("   ", "Select"))
+        assertEquals("Select", OverlayPrimitives.resolvePaneTitle(null, "Select"))
+    }
 }

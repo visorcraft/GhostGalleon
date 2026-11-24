@@ -227,6 +227,10 @@ class SetupCard(
             isClickable = true
             isFocusable = true
         }
+        val titleText = context.getString(
+            if (chromeOnly) R.string.setup_chrome_title else R.string.setup_welcome,
+        )
+        OverlayPrimitives.bindModalPaneTitle(overlay, titleText)
 
         val cardWidth = OverlayPrimitives.responsiveCardWidth(
             context = context,
@@ -257,12 +261,13 @@ class SetupCard(
         )
         headerRow.addView(
             TextView(context).apply {
-                setText(if (chromeOnly) R.string.setup_chrome_title else R.string.setup_welcome)
+                text = titleText
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 19.5f)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
+                OverlayPrimitives.markHeading(this)
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )

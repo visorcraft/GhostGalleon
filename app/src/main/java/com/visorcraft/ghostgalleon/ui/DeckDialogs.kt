@@ -169,6 +169,7 @@ object DeckDialogs {
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
+            OverlayPrimitives.markHeading(this)
         }
         dialog.findViewById<TextView>(android.R.id.message)?.apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)

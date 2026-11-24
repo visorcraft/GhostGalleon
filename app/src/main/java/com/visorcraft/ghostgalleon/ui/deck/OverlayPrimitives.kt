@@ -176,6 +176,31 @@ object OverlayPrimitives {
     }
 
     /**
+     * Pure pane title resolution for TalkBack modal announcements: trims and
+     * prefers [explicitTitle] when non-blank, else returns [fallbackTitle].
+     * Host-tested.
+     */
+    fun resolvePaneTitle(
+        explicitTitle: CharSequence?,
+        fallbackTitle: CharSequence,
+    ): CharSequence = explicitTitle?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackTitle
+
+    /** Announce a modal overlay as a named accessibility pane across API 26–34. */
+    fun bindModalPaneTitle(view: View, title: CharSequence) {
+        ViewCompat.setAccessibilityPaneTitle(view, title)
+    }
+
+    /** Mark a modal/section title as a TalkBack accessibility heading across API 26–34. */
+    fun markHeading(view: View) {
+        ViewCompat.setAccessibilityHeading(view, true)
+    }
+
+    /** Mark dynamic count/status labels as polite TalkBack live regions. */
+    fun markPoliteLiveRegion(view: View) {
+        view.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+    }
+
+    /**
      * Keep [backdrop]'s children clear of the soft keyboard and bottom
      * navigation insets without triggering redundant layout passes.
      */
@@ -547,6 +572,7 @@ object OverlayPrimitives {
                 this.gravity = gravity
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
+                markHeading(this)
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -573,6 +599,7 @@ object OverlayPrimitives {
             addView(
                 View(context).apply {
                     setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 },
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,

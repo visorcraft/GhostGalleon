@@ -5,7 +5,6 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -325,6 +324,10 @@ class SlotMenu(
     val view: View by lazy {
         themeTokens = resolveTokens()
         val overlay = OverlayPrimitives.modalBackdrop(context) { onChoice(Choice.CANCEL) }
+        OverlayPrimitives.bindModalPaneTitle(
+            overlay,
+            OverlayPrimitives.resolvePaneTitle(title, context.getString(R.string.label_select)),
+        )
         val cardWidth = OverlayPrimitives.responsiveCardWidth(
             context = context,
             maxDp = 340,
@@ -402,9 +405,7 @@ class SlotMenu(
                         )
                         isClickable = false
                         isFocusable = false
-                        if (Build.VERSION.SDK_INT >= 28) {
-                            isAccessibilityHeading = true
-                        }
+                        OverlayPrimitives.markHeading(this)
                     }
                     list.addView(
                         header,
