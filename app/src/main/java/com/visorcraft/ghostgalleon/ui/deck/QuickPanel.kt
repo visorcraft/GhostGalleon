@@ -1,13 +1,9 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.TypedValue
@@ -15,7 +11,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -105,8 +100,7 @@ internal object QuickPanelNav {
      * short 540dp handheld screens.
      */
     fun tileHeightDp(tileCount: Int, columns: Int): Int {
-        val cols = columns.coerceAtLeast(1)
-        val rows = if (tileCount <= 0) 1 else (tileCount + cols - 1) / cols
+        val rows = GridWrapNav.rowCount(tileCount, columns).coerceAtLeast(1)
         return if (rows <= 2) COMPACT_TILE_HEIGHT_DP else EXPANDED_TILE_HEIGHT_DP
     }
 
@@ -215,7 +209,6 @@ class QuickPanel(
     private var headerSubtitleView: TextView? = null
     private var topScrollCue: View? = null
     private var bottomScrollCue: View? = null
-    private val focusInterpolator = DecelerateInterpolator()
 
     val view: View by lazy { build() }
 
@@ -480,17 +473,9 @@ class QuickPanel(
             })
         }
 
-        val scrollCueColor = scrollCueTint()
-        val topCue = View(context).apply {
-            setBackgroundColor(scrollCueColor)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        val bottomCue = View(context).apply {
-            setBackgroundColor(scrollCueColor)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
+        val scrollCueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
+        val topCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
+        val bottomCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
         topScrollCue = topCue
         bottomScrollCue = bottomCue
 
@@ -510,16 +495,7 @@ class QuickPanel(
                 ),
             )
         }
-        fun refreshScrollCues() {
-            val (topAlpha, bottomAlpha) = SlotMenuNav.scrollCueAlphas(
-                canScrollUp = scroll.canScrollVertically(-1),
-                canScrollDown = scroll.canScrollVertically(1),
-            )
-            topCue.alpha = topAlpha
-            bottomCue.alpha = bottomAlpha
-        }
-        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refreshScrollCues() }
-        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshScrollCues() }
+        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue)
         scrollHost = scroll
 
         sheet.addView(
@@ -561,27 +537,6 @@ class QuickPanel(
         return root
     }
 
-    private fun scrollCueTint(): Int {
-        val accentText = ThemePack.accentTextColor(accent, ThemePack.cardFill(themeTokens))
-        return (0x66 shl 24) or (accentText and 0x00FFFFFF)
-    }
-
-    private fun wrapRipple(
-        content: Drawable,
-        cornerRadiusDp: Int,
-        role: QuickPanelNav.TileRole,
-    ): Drawable {
-        val mask = GradientDrawable().apply {
-            setColor(Color.WHITE)
-            cornerRadius = activity.dpF(cornerRadiusDp)
-        }
-        return RippleDrawable(
-            ColorStateList.valueOf(QuickPanelNav.tileRippleColor(role, accent)),
-            content,
-            mask,
-        )
-    }
-
     private fun paint(
         animateFocus: Boolean = true,
         scrollToFocused: Boolean = true,
@@ -591,7 +546,6 @@ class QuickPanel(
         selection = sel
         val tileRadius = themeTokens.cardRadiusDp
         val swatchBorder = QuickPanelNav.swatchBorderColor(accent)
-        val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
         tileViews.forEachIndexed { index, bound ->
             val selected = index == sel
             val role = bound.cell.role
@@ -606,7 +560,12 @@ class QuickPanel(
                 else ->
                     TileBackgrounds.chipIdle(activity, cornerRadiusDp = tileRadius)
             }
-            bound.container.background = wrapRipple(baseBg, tileRadius, role)
+            bound.container.background = OverlayPrimitives.roundedRipple(
+                context = activity,
+                content = baseBg,
+                cornerRadiusDp = tileRadius,
+                rippleColor = QuickPanelNav.tileRippleColor(role, accent),
+            )
             bound.labelView.setTextColor(textColor)
             bound.labelView.setTypeface(
                 null,
@@ -625,19 +584,13 @@ class QuickPanel(
             bound.container.isSelected = selected
             bound.container.alpha = 1f
             bound.container.elevation = activity.dpF(QuickPanelNav.focusElevationDp(selected))
-            val scale = QuickPanelNav.focusScale(selected)
-            bound.container.animate().cancel()
-            if (shouldAnimate) {
-                bound.container.animate()
-                    .scaleX(scale)
-                    .scaleY(scale)
-                    .setDuration(QuickPanelNav.FOCUS_ANIM_MS)
-                    .setInterpolator(focusInterpolator)
-                    .start()
-            } else {
-                bound.container.scaleX = scale
-                bound.container.scaleY = scale
-            }
+            OverlayPrimitives.applyFocusScale(
+                view = bound.container,
+                selected = selected,
+                focusedScale = QuickPanelNav.FOCUS_SCALE,
+                animate = animateFocus,
+                durationMs = QuickPanelNav.FOCUS_ANIM_MS,
+            )
         }
         if (!scrollToFocused) return
         val focusedRow = tileViews.getOrNull(sel)?.container?.parent as? View ?: return
@@ -729,7 +682,7 @@ class QuickPanel(
             activity.themeName(next.id, next.displayName),
         )
         headerSubtitleView?.text = label
-        val cueColor = scrollCueTint()
+        val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
         topScrollCue?.setBackgroundColor(cueColor)
         bottomScrollCue?.setBackgroundColor(cueColor)
         paint(animateFocus = false, scrollToFocused = false)

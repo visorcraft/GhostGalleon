@@ -18,6 +18,29 @@ object GridWrapNav {
         return index.coerceIn(0, count - 1)
     }
 
+    /** Total rows required to render [count] items in [columns] columns (`0` if empty). */
+    fun rowCount(count: Int, columns: Int): Int {
+        if (count <= 0) return 0
+        val cols = columns.coerceAtLeast(1)
+        return (count + cols - 1) / cols
+    }
+
+    /** Zero-based row index of [index] in a [columns]-column grid (clamped >= 0). */
+    fun rowOf(index: Int, columns: Int): Int =
+        index.coerceAtLeast(0) / columns.coerceAtLeast(1)
+
+    /** Zero-based column index of [index] in a [columns]-column grid (clamped >= 0). */
+    fun colOf(index: Int, columns: Int): Int =
+        index.coerceAtLeast(0) % columns.coerceAtLeast(1)
+
+    /** Number of invisible filler slots needed to align a partial last row (`0` when full/empty). */
+    fun trailingSpacers(count: Int, columns: Int): Int {
+        if (count <= 0) return 0
+        val cols = columns.coerceAtLeast(1)
+        val rem = count % cols
+        return if (rem == 0) 0 else cols - rem
+    }
+
     /**
      * Move [index] by horizontal delta [dx] and vertical delta [dy] in a grid
      * of [count] items with [columns] columns.

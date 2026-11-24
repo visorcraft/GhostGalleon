@@ -1,20 +1,16 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -253,7 +249,6 @@ object SessionSwitcherView {
         val rows = mutableListOf<View>()
         internal val subtitleViews = mutableListOf<TextView?>()
         internal var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
-        private val focusInterpolator = DecelerateInterpolator()
 
         fun moveSelection(delta: Int) {
             if (entries.isEmpty()) return
@@ -282,26 +277,20 @@ object SessionSwitcherView {
         }
 
         private fun rowDrawable(visual: SessionSwitcherNav.RowVisual): Drawable {
-            val radiusPx = context.dpF(rowRadiusDp)
             val content = GradientDrawable().apply {
                 setColor(visual.fillColor)
-                cornerRadius = radiusPx
+                cornerRadius = context.dpF(rowRadiusDp)
                 if (visual.strokeDp > 0 && visual.strokeColor != 0) {
                     setStroke(context.strokePx(visual.strokeDp), visual.strokeColor)
                 }
             }
-            val mask = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                cornerRadius = radiusPx
-            }
-            return RippleDrawable(ColorStateList.valueOf(visual.rippleColor), content, mask)
+            return OverlayPrimitives.roundedRipple(context, content, rowRadiusDp, visual.rippleColor)
         }
 
         fun paint(animateFocus: Boolean = false) {
             if (rows.isEmpty()) return
             val sel = GridWrapNav.clampIndex(selection, rows.size)
             selection = sel
-            val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
             rows.forEachIndexed { index, row ->
                 val selected = index == sel
                 val entry = entries.getOrNull(index)
@@ -316,19 +305,13 @@ object SessionSwitcherView {
                 row.background = rowDrawable(visual)
                 row.isSelected = selected
                 subtitleViews.getOrNull(index)?.setTextColor(visual.subtitleColor)
-                val scale = if (selected) SessionSwitcherNav.FOCUS_SCALE else 1f
-                row.animate().cancel()
-                if (shouldAnimate) {
-                    row.animate()
-                        .scaleX(scale)
-                        .scaleY(scale)
-                        .setDuration(SessionSwitcherNav.FOCUS_ANIM_MS)
-                        .setInterpolator(focusInterpolator)
-                        .start()
-                } else {
-                    row.scaleX = scale
-                    row.scaleY = scale
-                }
+                OverlayPrimitives.applyFocusScale(
+                    view = row,
+                    selected = selected,
+                    focusedScale = SessionSwitcherNav.FOCUS_SCALE,
+                    animate = animateFocus,
+                    durationMs = SessionSwitcherNav.FOCUS_ANIM_MS,
+                )
             }
             val focused = rows.getOrNull(sel) ?: return
             scrollHost?.smoothScrollToCenter(focused)
@@ -491,18 +474,9 @@ object SessionSwitcherView {
             }
         }
 
-        val cueTint = (0x66 shl 24) or
-            (ThemePack.accentTextColor(accent, ThemePack.cardFill(themeTokens)) and 0x00FFFFFF)
-        val topCue = View(context).apply {
-            setBackgroundColor(cueTint)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        val bottomCue = View(context).apply {
-            setBackgroundColor(cueTint)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
+        val cueTint = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
+        val topCue = OverlayPrimitives.scrollCueBar(context, cueTint)
+        val bottomCue = OverlayPrimitives.scrollCueBar(context, cueTint)
 
         val scroll = OverlayPrimitives.MaxHeightScrollView(
             context = context,
@@ -521,16 +495,7 @@ object SessionSwitcherView {
                 ),
             )
         }
-        fun refreshScrollCues() {
-            val (topAlpha, bottomAlpha) = SlotMenuNav.scrollCueAlphas(
-                canScrollUp = scroll.canScrollVertically(-1),
-                canScrollDown = scroll.canScrollVertically(1),
-            )
-            topCue.alpha = topAlpha
-            bottomCue.alpha = bottomAlpha
-        }
-        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refreshScrollCues() }
-        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshScrollCues() }
+        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue)
         overlay.scrollHost = scroll
         sheet.addView(
             topCue,
@@ -738,16 +703,11 @@ object SessionSwitcherView {
             texts,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        val removeRadiusPx = context.dpF(10)
-        val removeContent = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
-        val removeMask = GradientDrawable().apply {
-            setColor(Color.WHITE)
-            cornerRadius = removeRadiusPx
-        }
-        val removeBg = RippleDrawable(
-            ColorStateList.valueOf(SessionSwitcherNav.REMOVE_RIPPLE_COLOR),
-            removeContent,
-            removeMask,
+        val removeBg = OverlayPrimitives.roundedRipple(
+            context = context,
+            content = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10),
+            cornerRadiusDp = 10,
+            rippleColor = SessionSwitcherNav.REMOVE_RIPPLE_COLOR,
         )
         row.addView(
             TextView(context).apply {

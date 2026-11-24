@@ -2,11 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -922,19 +918,14 @@ class AppPicker(
             paintHighlight(row, position)
         }
 
-        private fun rippleBackground(content: Drawable?): Drawable {
-            val mask = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                cornerRadius = context.dp(rowCornerRadiusDp).toFloat()
-            }
-            return RippleDrawable(ColorStateList.valueOf(ROW_RIPPLE_COLOR), content, mask)
-        }
-
         private fun paintHighlight(row: View, position: Int) {
             val isHighlighted = position == highlight
             row.isSelected = isHighlighted
-            row.background = rippleBackground(
-                if (isHighlighted) TileBackgrounds.selected(context, accentColor) else null,
+            row.background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = if (isHighlighted) TileBackgrounds.selected(context, accentColor) else null,
+                cornerRadiusDp = rowCornerRadiusDp,
+                rippleColor = ROW_RIPPLE_COLOR,
             )
         }
     }

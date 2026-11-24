@@ -1,20 +1,15 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
-import android.animation.ValueAnimator
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -177,7 +172,7 @@ internal object SlotMenuNav {
 
     /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling scrollable overflow. */
     fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
-        (if (canScrollUp) 1f else 0f) to (if (canScrollDown) 1f else 0f)
+        OverlayPrimitives.scrollCueAlphas(canScrollUp, canScrollDown)
 }
 
 /**
@@ -259,7 +254,6 @@ class SlotMenu(
     private val actionRows = mutableListOf<BoundAction>()
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
     private var themeTokens: ThemeTokens = ThemePack.GHOST
-    private val focusInterpolator = DecelerateInterpolator()
 
     private fun resolveTokens(): ThemeTokens {
         val app = context.applicationContext
@@ -302,7 +296,7 @@ class SlotMenu(
         val surfaceColor = TileBackgrounds.surfaceColor(context)
         val headerColor = ThemePack.accentTextColor(accentColor, surfaceColor)
         val dividerColor = TileBackgrounds.hairlineDivider(context)
-        val scrollCueColor = (0x66 shl 24) or (headerColor and 0x00FFFFFF)
+        val scrollCueColor = OverlayPrimitives.scrollCueTint(accentColor, surfaceColor)
         val locale = context.resources.configuration.locales[0]
 
         val list = LinearLayout(context).apply {
@@ -392,16 +386,8 @@ class SlotMenu(
             }
         }
 
-        val topScrollCue = View(context).apply {
-            setBackgroundColor(scrollCueColor)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        val bottomScrollCue = View(context).apply {
-            setBackgroundColor(scrollCueColor)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
+        val topScrollCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
+        val bottomScrollCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
 
         val scroll = OverlayPrimitives.MaxHeightScrollView(
             context = context,
@@ -420,16 +406,7 @@ class SlotMenu(
                 ),
             )
         }
-        fun refreshScrollCues() {
-            val (topAlpha, bottomAlpha) = SlotMenuNav.scrollCueAlphas(
-                canScrollUp = scroll.canScrollVertically(-1),
-                canScrollDown = scroll.canScrollVertically(1),
-            )
-            topScrollCue.alpha = topAlpha
-            bottomScrollCue.alpha = bottomAlpha
-        }
-        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refreshScrollCues() }
-        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshScrollCues() }
+        OverlayPrimitives.bindScrollCues(scroll, topScrollCue, bottomScrollCue)
         scrollHost = scroll
 
         card.addView(
@@ -481,11 +458,11 @@ class SlotMenu(
     }
 
     private fun rowBackground(spec: SlotMenuNav.RowVisualSpec): Drawable {
-        val radiusPx = context.dpF(themeTokens.cardRadiusDp.coerceAtMost(14))
+        val cornerDp = themeTokens.cardRadiusDp.coerceAtMost(14)
         val content: Drawable? = if (spec.fillColor != 0 || spec.strokeDp > 0) {
             GradientDrawable().apply {
                 setColor(spec.fillColor)
-                cornerRadius = radiusPx
+                cornerRadius = context.dpF(cornerDp)
                 if (spec.strokeDp > 0 && spec.strokeColor != 0) {
                     setStroke(context.strokePx(spec.strokeDp), spec.strokeColor)
                 }
@@ -493,11 +470,7 @@ class SlotMenu(
         } else {
             null
         }
-        val mask = GradientDrawable().apply {
-            setColor(Color.WHITE)
-            cornerRadius = radiusPx
-        }
-        return RippleDrawable(ColorStateList.valueOf(spec.rippleColor), content, mask)
+        return OverlayPrimitives.roundedRipple(context, content, cornerDp, spec.rippleColor)
     }
 
     private fun paintRows(
@@ -507,7 +480,6 @@ class SlotMenu(
         if (actionRows.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, actionRows.size)
         selection = sel
-        val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
         actionRows.forEachIndexed { index, bound ->
             val selected = index == sel
             val spec = SlotMenuNav.rowVisual(
@@ -520,20 +492,13 @@ class SlotMenu(
             bound.view.setTextColor(spec.textColor)
             bound.view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
             bound.view.isSelected = selected
-
-            val targetScale = if (selected) SlotMenuNav.FOCUS_SCALE else 1f
-            bound.view.animate().cancel()
-            if (shouldAnimate) {
-                bound.view.animate()
-                    .scaleX(targetScale)
-                    .scaleY(targetScale)
-                    .setDuration(SlotMenuNav.FOCUS_ANIM_MS)
-                    .setInterpolator(focusInterpolator)
-                    .start()
-            } else {
-                bound.view.scaleX = targetScale
-                bound.view.scaleY = targetScale
-            }
+            OverlayPrimitives.applyFocusScale(
+                view = bound.view,
+                selected = selected,
+                focusedScale = SlotMenuNav.FOCUS_SCALE,
+                animate = animateFocus,
+                durationMs = SlotMenuNav.FOCUS_ANIM_MS,
+            )
         }
         if (!scrollToFocused) return
         val focused = actionRows.getOrNull(sel)?.view ?: return

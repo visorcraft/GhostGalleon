@@ -1,20 +1,15 @@
 package com.visorcraft.ghostgalleon.ui.settings
 
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -200,7 +195,6 @@ class SetupCard(
     private val buttonViews = mutableListOf<TextView>()
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
     private var themeTokens: ThemeTokens = ThemePack.GHOST
-    private val focusInterpolator = DecelerateInterpolator()
 
     val view: View by lazy { buildView() }
 
@@ -629,24 +623,11 @@ class SetupCard(
         return overlay
     }
 
-    private fun wrapRipple(content: Drawable, cornerRadiusDp: Int): Drawable {
-        val mask = GradientDrawable().apply {
-            setColor(Color.WHITE)
-            cornerRadius = activity.dpF(cornerRadiusDp)
-        }
-        return RippleDrawable(
-            ColorStateList.valueOf(SetupCardNav.BUTTON_RIPPLE_COLOR),
-            content,
-            mask,
-        )
-    }
-
     private fun paintButtons(scrollToFocused: Boolean, animateFocus: Boolean = true) {
         if (buttonViews.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, buttonViews.size)
         selection = sel
         val btnRadius = themeTokens.cardRadiusDp
-        val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
         buttonViews.forEachIndexed { index, tv ->
             val selected = index == sel
             val role = specs.getOrNull(index)?.role ?: SetupCardNav.ButtonRole.SECONDARY
@@ -673,7 +654,12 @@ class SetupCard(
                     TileBackgrounds.chipIdle(activity, cornerRadiusDp = btnRadius)
                 }
             }
-            tv.background = wrapRipple(baseBg, btnRadius)
+            tv.background = OverlayPrimitives.roundedRipple(
+                context = activity,
+                content = baseBg,
+                cornerRadiusDp = btnRadius,
+                rippleColor = SetupCardNav.BUTTON_RIPPLE_COLOR,
+            )
             tv.setTextColor(textColor)
             tv.setTypeface(
                 null,
@@ -684,19 +670,13 @@ class SetupCard(
                 },
             )
             tv.isSelected = selected
-            val scale = if (selected) 1.02f else 1f
-            tv.animate().cancel()
-            if (shouldAnimate) {
-                tv.animate()
-                    .scaleX(scale)
-                    .scaleY(scale)
-                    .setDuration(SetupCardNav.FOCUS_ANIM_MS)
-                    .setInterpolator(focusInterpolator)
-                    .start()
-            } else {
-                tv.scaleX = scale
-                tv.scaleY = scale
-            }
+            OverlayPrimitives.applyFocusScale(
+                view = tv,
+                selected = selected,
+                focusedScale = 1.02f,
+                animate = animateFocus,
+                durationMs = SetupCardNav.FOCUS_ANIM_MS,
+            )
         }
         if (!scrollToFocused) return
         val focused = buttonViews.getOrNull(sel) ?: return

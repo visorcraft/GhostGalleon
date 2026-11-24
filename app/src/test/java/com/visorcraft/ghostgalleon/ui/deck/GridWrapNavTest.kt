@@ -93,4 +93,24 @@ class GridWrapNavTest {
         assertEquals(11, GridWrapNav.pageMove(9, count = 12, pageSize = 5, deltaPages = 1))
         assertEquals(0, GridWrapNav.pageMove(2, count = 12, pageSize = 5, deltaPages = -1))
     }
+
+    @Test
+    fun `rowCount, rowOf, colOf, and trailingSpacers compute safe grid geometry`() {
+        assertEquals(0, GridWrapNav.rowCount(count = 0, columns = 4))
+        assertEquals(2, GridWrapNav.rowCount(count = 8, columns = 4))
+        assertEquals(3, GridWrapNav.rowCount(count = 9, columns = 4))
+        assertEquals(4, GridWrapNav.rowCount(count = 4, columns = 0))
+
+        assertEquals(0, GridWrapNav.rowOf(index = 2, columns = 4))
+        assertEquals(2, GridWrapNav.colOf(index = 2, columns = 4))
+        assertEquals(2, GridWrapNav.rowOf(index = 9, columns = 4))
+        assertEquals(1, GridWrapNav.colOf(index = 9, columns = 4))
+        assertEquals(0, GridWrapNav.rowOf(index = -3, columns = 4))
+        assertEquals(0, GridWrapNav.colOf(index = -3, columns = 4))
+
+        assertEquals(0, GridWrapNav.trailingSpacers(count = 0, columns = 4))
+        assertEquals(0, GridWrapNav.trailingSpacers(count = 8, columns = 4))
+        assertEquals(3, GridWrapNav.trailingSpacers(count = 9, columns = 4))
+        assertEquals(1, GridWrapNav.trailingSpacers(count = 5, columns = 3))
+    }
 }

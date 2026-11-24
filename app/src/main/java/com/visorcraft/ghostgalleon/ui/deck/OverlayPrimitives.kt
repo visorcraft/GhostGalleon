@@ -2,7 +2,12 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -16,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.StringRes
 import androidx.core.widget.TextViewCompat
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
@@ -45,7 +51,87 @@ object OverlayPrimitives {
     /** Crisp modal entrance duration in milliseconds. */
     const val ENTER_DURATION_MS: Long = 120L
 
+    /** Standard duration for modal row/tile focus lift animations. */
+    const val FOCUS_ANIM_MS: Long = 90L
+
+    /** Default subtle focus lift scale for modal rows. */
+    const val DEFAULT_FOCUS_SCALE: Float = 1.015f
+
+    /** Standard subtle white touch ripple color for dark modal surfaces. */
+    const val DEFAULT_RIPPLE_COLOR: Int = 0x26FFFFFF
+
     private val ENTER_INTERPOLATOR = DecelerateInterpolator()
+
+    /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling vertical scroll overflow. */
+    fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
+        (if (canScrollUp) 1f else 0f) to (if (canScrollDown) 1f else 0f)
+
+    /** Accent-tinted translucent scroll-overflow bar color with WCAG-lifted RGB hue. */
+    fun scrollCueTint(accent: Int, surface: Int): Int {
+        val lifted = ThemePack.accentTextColor(accent, surface)
+        return (0x66 shl 24) or (lifted and 0x00FFFFFF)
+    }
+
+    /** Create a subtle decorative scroll-overflow indicator hairline view. */
+    fun scrollCueBar(context: Context, color: Int): View = View(context).apply {
+        setBackgroundColor(color)
+        alpha = 0f
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    /** Wire [topCue] and [bottomCue] visibility to [scroll]'s vertical overflow state. */
+    fun bindScrollCues(scroll: View, topCue: View, bottomCue: View) {
+        fun refresh() {
+            val (topAlpha, bottomAlpha) = scrollCueAlphas(
+                canScrollUp = scroll.canScrollVertically(-1),
+                canScrollDown = scroll.canScrollVertically(1),
+            )
+            topCue.alpha = topAlpha
+            bottomCue.alpha = bottomAlpha
+        }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refresh() }
+        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refresh() }
+    }
+
+    /** Wrap [content] in a crisp rounded [RippleDrawable] clipped to [cornerRadiusDp]. */
+    fun roundedRipple(
+        context: Context,
+        content: Drawable?,
+        cornerRadiusDp: Int,
+        rippleColor: Int = DEFAULT_RIPPLE_COLOR,
+    ): Drawable {
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = context.dpF(cornerRadiusDp)
+        }
+        return RippleDrawable(ColorStateList.valueOf(rippleColor), content, mask)
+    }
+
+    /**
+     * Apply a cancelable focus scale lift (`1f` vs [focusedScale]) respecting
+     * OS animator settings so every modal shares consistent focus choreography.
+     */
+    fun applyFocusScale(
+        view: View,
+        selected: Boolean,
+        focusedScale: Float = DEFAULT_FOCUS_SCALE,
+        animate: Boolean = true,
+        durationMs: Long = FOCUS_ANIM_MS,
+    ) {
+        val target = if (selected) focusedScale else 1f
+        view.animate().cancel()
+        if (animate && ValueAnimator.areAnimatorsEnabled()) {
+            view.animate()
+                .scaleX(target)
+                .scaleY(target)
+                .setDuration(durationMs)
+                .setInterpolator(ENTER_INTERPOLATOR)
+                .start()
+        } else {
+            view.scaleX = target
+            view.scaleY = target
+        }
+    }
 
     /**
      * Pure pixel length for vertical scroll fading edges. Host-tested.

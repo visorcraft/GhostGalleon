@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -152,5 +153,24 @@ class OverlayPrimitivesTest {
         assertEquals(1.0f, OverlayPrimitives.entranceScale(1f), 0.0001f)
         assertEquals(0.96f, OverlayPrimitives.entranceScale(-1f), 0.0001f)
         assertEquals(1.0f, OverlayPrimitives.entranceScale(2f), 0.0001f)
+    }
+
+    @Test
+    fun `scrollCueAlphas and scrollCueTint stay translucent and contrast-lifted across themes`() {
+        assertEquals(0f to 0f, OverlayPrimitives.scrollCueAlphas(false, false))
+        assertEquals(0f to 1f, OverlayPrimitives.scrollCueAlphas(false, true))
+        assertEquals(1f to 0f, OverlayPrimitives.scrollCueAlphas(true, false))
+        assertEquals(1f to 1f, OverlayPrimitives.scrollCueAlphas(true, true))
+
+        for (tokens in ThemePack.BUILTINS) {
+            val surface = ThemePack.cardFill(tokens)
+            val tint = OverlayPrimitives.scrollCueTint(tokens.accentColor, surface)
+            assertEquals(0x66, (tint ushr 24) and 0xFF)
+            val opaqueRgb = (0xFF shl 24) or (tint and 0x00FFFFFF)
+            assertTrue(
+                "Scroll cue RGB should be WCAG-lifted on ${tokens.id}",
+                ThemePack.contrastRatio(opaqueRgb, surface) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
     }
 }
