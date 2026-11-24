@@ -285,6 +285,14 @@ internal object SettingsUiLogic {
             }
         }
     }
+
+    /** True when the Library card should render a framed empty-folders hint. */
+    fun shouldShowEmptyFoldersPrompt(folderCount: Int): Boolean = folderCount <= 0
+
+    /** True when stick deadzone differs from the 50% factory default. */
+    fun isCustomDeadzone(deadzonePercent: Int): Boolean =
+        com.visorcraft.ghostgalleon.input.StickThresholds.clamp(deadzonePercent) !=
+            com.visorcraft.ghostgalleon.input.StickThresholds.DEFAULT_PERCENT
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -1523,22 +1531,75 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshFolderRows() {
         val rows = folderRows ?: return
         rows.removeAllViews()
-        app.settings.romTreeUris.forEachIndexed { index, uriString ->
+        val trees = app.settings.romTreeUris
+        if (SettingsUiLogic.shouldShowEmptyFoldersPrompt(trees.size)) {
+            val emptyHint = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 12)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                addView(
+                    ImageView(this@SettingsActivity).apply {
+                        setImageResource(R.drawable.ic_folder)
+                        imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) },
+                )
+                addView(
+                    TextView(this@SettingsActivity).apply {
+                        setText(R.string.setup_check_rom_folder)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                        setTextColor(UiDimens.ALPHA_MUTED)
+                    },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+            }
+            rows.addView(
+                emptyHint,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    marginStart = dp(10)
+                    marginEnd = dp(10)
+                    topMargin = dp(4)
+                    bottomMargin = dp(6)
+                },
+            )
+            return
+        }
+        trees.forEachIndexed { index, uriString ->
             if (index > 0) addDivider(rows)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(10), 0, dp(10), 0)
             }
-            row.addView(rowLabel(resolveText(TreeLabels.label(uriString))), LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(
+                ImageView(this).apply {
+                    setImageResource(R.drawable.ic_folder)
+                    imageTintList = ColorStateList.valueOf(accentOnCard)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) },
+            )
+            row.addView(rowLabel(resolveText(TreeLabels.label(uriString))).apply {
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
             row.addView(TextView(this).apply {
                 setText(R.string.action_remove)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
                 setTextColor(UiDimens.COLOR_DESTRUCTIVE)
                 setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                minHeight = dp(38)
                 isFocusable = true
-                background = TileBackgrounds.focusableRow(
+                background = TileBackgrounds.pressableRow(
                     context = this@SettingsActivity,
                     accent = accent,
                     idleBackground = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14),
@@ -3196,10 +3257,13 @@ class SettingsActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12) })
         val clearView = TextView(this).apply {
             setText(R.string.action_clear)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            minHeight = dp(38)
             isFocusable = true
-            background = TileBackgrounds.focusableRow(
+            background = TileBackgrounds.pressableRow(
                 context = this@SettingsActivity,
                 accent = accent,
                 idleBackground = TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14),
@@ -3522,14 +3586,23 @@ class SettingsActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         addActionRow(controlsCard, labRow, showChevron = true)
+        var controlsDeadzoneBadge: TextView? = null
+        fun updateDeadzoneBadge(percent: Int) {
+            controlsDeadzoneBadge?.apply {
+                text = getString(R.string.format_percent, percent)
+                styleStatusBadge(this, active = SettingsUiLogic.isCustomDeadzone(percent))
+            }
+        }
         seek(
-            controlsCard,
-            getString(R.string.settings_stick_deadzone),
-            s.stickDeadzone,
-            20,
-            80,
+            card = controlsCard,
+            label = getString(R.string.settings_stick_deadzone),
+            value = s.stickDeadzone,
+            min = 20,
+            max = 80,
             format = { n -> getString(R.string.format_percent, n) },
+            onLiveChange = ::updateDeadzoneBadge,
         ) { n ->
+            updateDeadzoneBadge(n)
             app.updateSettings(app.settings.copy(stickDeadzone = n), notify = false)
         }
         remappable.forEach { action ->
@@ -3546,7 +3619,14 @@ class SettingsActivity : AppCompatActivity() {
             row.setOnClickListener { startKeyCapture(action, chip) }
             addActionRow(controlsCard, row)
         }
-        addSection(SettingsPage.CONTROLS, getString(R.string.settings_page_controls), controlsCard)
+        addSection(
+            page = SettingsPage.CONTROLS,
+            title = getString(R.string.settings_page_controls),
+            card = controlsCard,
+            badgeText = getString(R.string.format_percent, s.stickDeadzone),
+            badgeActive = SettingsUiLogic.isCustomDeadzone(s.stickDeadzone),
+            onBadgeView = { controlsDeadzoneBadge = it },
+        )
 
         val libraryCard = sectionCard()
         val artCard = sectionCard()
@@ -3568,8 +3648,9 @@ class SettingsActivity : AppCompatActivity() {
             setText(R.string.glyph_add)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(accentOnSunken)
+            setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+            background = TileBackgrounds.valueBadge(this@SettingsActivity, accent, cornerRadiusDp = 12)
         }, LinearLayout.LayoutParams(dp(40), dp(40)))
         addActionRow(libraryCard, addRow)
         val hiddenRomsRow = LinearLayout(this).apply {
@@ -3647,8 +3728,10 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         rescanRow.addView(TextView(this).apply {
             setText(R.string.settings_hold_full)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(UiDimens.ALPHA_SUBTLE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextColor(UiDimens.ALPHA_MUTED)
+            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = UiDimens.RADIUS_SM)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
         })
         addActionRow(libraryCard, rescanRow)
         val pinFavsRow = LinearLayout(this).apply {

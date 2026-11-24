@@ -231,4 +231,15 @@ class SettingsUiLogicTest {
             )
         }
     }
+
+    @Test
+    fun `empty folders prompt and custom deadzone highlight respond to state`() {
+        assertTrue(SettingsUiLogic.shouldShowEmptyFoldersPrompt(0))
+        assertFalse(SettingsUiLogic.shouldShowEmptyFoldersPrompt(1))
+        assertFalse(SettingsUiLogic.shouldShowEmptyFoldersPrompt(4))
+
+        assertFalse(SettingsUiLogic.isCustomDeadzone(50))
+        assertTrue(SettingsUiLogic.isCustomDeadzone(35))
+        assertTrue(SettingsUiLogic.isCustomDeadzone(75))
+    }
 }
