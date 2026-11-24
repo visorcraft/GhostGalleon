@@ -3607,41 +3607,229 @@ class GameDeck(
             .setNeutralButton(R.string.action_copy_title) { _, _ ->
                 copyTitleToClipboard(entry.label)
             }
-        var bodyView: TextView? = null
-        if (rom != null) {
-            val pad = (20 * activity.resources.displayMetrics.density).toInt()
-            val surface = TileBackgrounds.surfaceColor(activity)
-            val message = TextView(activity).apply {
-                text = body
-                setTextColor(UiDimens.ALPHA_SECONDARY)
-                setTextIsSelectable(true)
-                setPadding(pad, pad / 2, pad, pad / 2)
+        val density = activity.resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val surface = TileBackgrounds.surfaceColor(activity)
+        val pillSurface = TileBackgrounds.chipIdleColor(activity)
+        val pad = dp(20)
+        val headerSpec = DetailsCardFormatter.headerSpec(
+            title = entry.label,
+            platformId = rom?.platformId,
+            favorite = key in settings.favorites,
+            year = rom?.year,
+            genre = rom?.genre,
+            surfaceColor = pillSurface,
+        )
+        val thumbPx = dp(DetailsCardFormatter.HEADER_THUMB_DP)
+        val thumbRadiusPx = activity.dpF(DetailsCardFormatter.HEADER_THUMB_CORNER_DP)
+        val thumbFrame = FrameLayout(activity).apply {
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, thumbRadiusPx)
+                }
             }
-            bodyView = message
+        }
+        val thumbView: View = rom?.let {
+            ArtTile.view(
+                activity,
+                app().artCache,
+                it,
+                targetPx = thumbPx,
+                cornerRadiusDp = DetailsCardFormatter.HEADER_THUMB_CORNER_DP,
+                artOverrides = settings.artOverrides,
+            )
+        } ?: ImageView(activity).apply {
+            entry.appPackage?.let { pkg ->
+                CustomIcon.bind(this, iconLoader, app().artCache, settings, pkg, thumbPx)
+            }
+        }
+        thumbFrame.addView(
+            thumbView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        val headerTextCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        headerTextCol.addView(
+            TextView(activity).apply {
+                text = headerSpec.title
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            },
+        )
+        val badgeRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val typePill = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(TileBackgrounds.chipIdleColor(activity))
+                cornerRadius = activity.dpF(8)
+                setStroke(activity.strokePx(1), TileBackgrounds.hairlineDivider(activity))
+            }
+            setPadding(dp(7), dp(2), dp(7), dp(2))
+        }
+        headerSpec.badgeDotColor?.let { dot ->
+            typePill.addView(
+                View(activity).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(dot)
+                    }
+                },
+                LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginEnd = dp(5) },
+            )
+        }
+        typePill.addView(
+            TextView(activity).apply {
+                text = activity.resolveText(headerSpec.badgeText)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                includeFontPadding = false
+            },
+        )
+        badgeRow.addView(typePill)
+        if (headerSpec.showFavoriteStar) {
+            badgeRow.addView(
+                TextView(activity).apply {
+                    setText(R.string.glyph_favorite)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(TileBackgrounds.chipIdleColor(activity))
+                        setStroke(activity.strokePx(1), CarouselCardBadges.FAVORITE_STROKE_COLOR)
+                    }
+                    contentDescription = activity.getString(R.string.action_favorite)
+                },
+                LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginStart = dp(6) },
+            )
+        }
+        headerTextCol.addView(
+            badgeRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(5) },
+        )
+        headerSpec.subtitle?.let { sub ->
+            headerTextCol.addView(
+                TextView(activity).apply {
+                    text = activity.resolveText(sub)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(3) },
+            )
+        }
+        val headerRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(pad, dp(10), pad, dp(12))
+            addView(thumbFrame, LinearLayout.LayoutParams(thumbPx, thumbPx).apply {
+                marginEnd = dp(14)
+            })
+            addView(
+                headerTextCol,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+        }
+        val message = TextView(activity).apply {
+            text = body
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            setLineSpacing(0f, DetailsCardFormatter.BODY_LINE_SPACING_MULT)
+            setTextIsSelectable(true)
+            setPadding(pad, dp(10), pad, dp(10))
+        }
+        val bodyView: TextView = message
+        val content = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(headerRow)
+            addView(
+                View(activity).apply { setBackgroundColor(TileBackgrounds.hairlineDivider(activity)) },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    activity.strokePx(1),
+                ).apply {
+                    marginStart = pad
+                    marginEnd = pad
+                },
+            )
+            addView(message)
+        }
+        if (rom != null) {
+            content.addView(
+                View(activity).apply { setBackgroundColor(TileBackgrounds.hairlineDivider(activity)) },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    activity.strokePx(1),
+                ).apply {
+                    marginStart = pad
+                    marginEnd = pad
+                    topMargin = dp(2)
+                    bottomMargin = dp(4)
+                },
+            )
             val helperValue = TextView(activity).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(ThemePack.accentTextColor(settings.accentColor, surface))
+                typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 gravity = Gravity.END
             }
-            bindRomHelperValue(helperValue, rom.id)
             val helperRow = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(pad, activity.dp(8), pad, activity.dp(8))
+                setPadding(pad, dp(10), pad, dp(10))
                 isFocusable = true
+                isClickable = true
                 background = TileBackgrounds.focusableRow(
                     context = activity,
                     accent = settings.accentColor,
                     cornerRadiusDp = 10,
                 )
-                setOnClickListener { showRomHelperPicker(rom.id, helperValue) }
+                setOnClickListener {
+                    showRomHelperPicker(rom.id, helperValue) { label ->
+                        contentDescription = activity.resolveText(
+                            DetailsCardFormatter.helperRowAccessibilityText(label),
+                        )
+                    }
+                }
                 setOnLongClickListener {
-                    clearRomHelper(rom.id, helperValue)
+                    clearRomHelper(rom.id, helperValue) { label ->
+                        contentDescription = activity.resolveText(
+                            DetailsCardFormatter.helperRowAccessibilityText(label),
+                        )
+                    }
                     true
                 }
             }
+            val initialHelperLabel = bindRomHelperValue(helperValue, rom.id)
+            helperRow.contentDescription = activity.resolveText(
+                DetailsCardFormatter.helperRowAccessibilityText(initialHelperLabel),
+            )
             helperRow.addView(
                 TextView(activity).apply {
                     setText(R.string.settings_play_host_helper)
@@ -3652,22 +3840,29 @@ class GameDeck(
             )
             helperRow.addView(
                 helperValue,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f),
             )
-            val content = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(message)
-                addView(helperRow)
-            }
-            builder.setView(
-                OverlayPrimitives.MaxHeightScrollView(
-                    activity,
-                    OverlayPrimitives.maxModalHeight(activity, 0.56f),
-                ).apply { addView(content) },
+            helperRow.addView(
+                ImageView(activity).apply {
+                    setImageResource(R.drawable.ic_chevron_right)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setColorFilter(UiDimens.ALPHA_MUTED, PorterDuff.Mode.SRC_IN)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(6) },
             )
-        } else {
-            builder.setMessage(body)
+            content.addView(helperRow)
         }
+        builder.setView(
+            OverlayPrimitives.MaxHeightScrollView(
+                activity,
+                OverlayPrimitives.maxModalHeight(activity, 0.58f),
+            ).apply {
+                isVerticalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(16))
+                addView(content)
+            },
+        )
         // Apps: system package details. Same-title ferry dests. Else related.
         when {
             rom == null && !SlotKey.isRom(key) ->
@@ -3691,9 +3886,7 @@ class GameDeck(
         }
         val fullHash = GameDetails.copyableHash(identity)
         if (fullHash != null) {
-            val hashTarget = bodyView
-                ?: dialog.findViewById<TextView>(android.R.id.message)
-            hashTarget?.setOnLongClickListener {
+            bodyView.setOnLongClickListener {
                 copyHashToClipboard(fullHash)
                 true
             }
@@ -3703,10 +3896,12 @@ class GameDeck(
     private fun helperAppLabel(packageName: String): String =
         library.byPackage(settings)[packageName]?.label ?: packageName
 
-    private fun bindRomHelperValue(value: TextView, romId: String) {
+    private fun bindRomHelperValue(value: TextView, romId: String): String {
         val pkg = app().settings.romHelpers[romId]
-        value.text = pkg?.let { helperAppLabel(it) }
+        val label = pkg?.let { helperAppLabel(it) }
             ?: activity.getString(R.string.action_none)
+        value.text = label
+        return label
     }
 
     private fun helperPickerApps() = library.visible(settings)
@@ -3719,13 +3914,21 @@ class GameDeck(
                 )
         }
 
-    private fun clearRomHelper(romId: String, value: TextView) {
+    private fun clearRomHelper(
+        romId: String,
+        value: TextView,
+        onUpdated: (String) -> Unit = {},
+    ) {
         val live = app().settings
         app().updateSettings(live.copy(romHelpers = live.romHelpers - romId))
-        bindRomHelperValue(value, romId)
+        onUpdated(bindRomHelperValue(value, romId))
     }
 
-    private fun showRomHelperPicker(romId: String, value: TextView) {
+    private fun showRomHelperPicker(
+        romId: String,
+        value: TextView,
+        onUpdated: (String) -> Unit = {},
+    ) {
         val apps = helperPickerApps()
         if (apps.isEmpty()) {
             Toast.makeText(activity, R.string.settings_no_apps, Toast.LENGTH_SHORT).show()
@@ -3737,12 +3940,12 @@ class GameDeck(
             titleRes = R.string.settings_play_host_helper,
             items = labels,
             neutralRes = R.string.action_clear,
-            onNeutral = { clearRomHelper(romId, value) },
+            onNeutral = { clearRomHelper(romId, value, onUpdated) },
         ) { which ->
             val pkg = apps[which].packageName
             val live = app().settings
             app().updateSettings(live.copy(romHelpers = live.romHelpers + (romId to pkg)))
-            bindRomHelperValue(value, romId)
+            onUpdated(bindRomHelperValue(value, romId))
         }
     }
 
