@@ -197,6 +197,17 @@ internal object SettingsUiLogic {
         if (total <= 0) return 0f
         return (done.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     }
+
+    /** True when a user-configured text credential or path is non-blank. */
+    fun isConfiguredStatus(value: String?): Boolean = !value.isNullOrBlank()
+
+    /** True when RetroAchievements username and API key are both configured. */
+    fun hasRaCredentials(username: String?, apiKey: String?): Boolean =
+        isConfiguredStatus(username) && isConfiguredStatus(apiKey)
+
+    /** True when either SteamGridDB or RetroAchievements credentials are ready. */
+    fun hasAnyArtCredentials(sgdbKey: String?, raUsername: String?, raApiKey: String?): Boolean =
+        isConfiguredStatus(sgdbKey) || hasRaCredentials(raUsername, raApiKey)
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -259,6 +270,7 @@ class SettingsActivity : AppCompatActivity() {
     private var dockValue: TextView? = null
     private var packageYieldValue: TextView? = null
     private var playHostHelperValue: TextView? = null
+    private var artHeaderStatusPill: TextView? = null
 
     private fun appLabel(packageName: String): String =
         appLibrary.all(app.settings).firstOrNull { it.packageName == packageName }
@@ -421,14 +433,25 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshAppsRows() {
-        hiddenValue?.text = formatNumber(app.settings.hiddenPackages.size)
-        hiddenRomsValue?.text = formatNumber(app.settings.hiddenRomIds.size)
+        val hiddenCount = app.settings.hiddenPackages.size
+        hiddenValue?.apply {
+            text = formatNumber(hiddenCount)
+            styleStatusBadge(this, active = hiddenCount > 0)
+        }
+        val hiddenRomsCount = app.settings.hiddenRomIds.size
+        hiddenRomsValue?.apply {
+            text = formatNumber(hiddenRomsCount)
+            styleStatusBadge(this, active = hiddenRomsCount > 0)
+        }
         val dock = app.settings.dockSlots.filterNotNull()
         dockValue?.text =
             if (dock.isEmpty()) getString(R.string.label_empty)
             else dock.joinToString(" · ", transform = ::dockEntryLabel)
         val yieldCount = app.settings.packageYield.count { it.value }
-        packageYieldValue?.text = formatNumber(yieldCount)
+        packageYieldValue?.apply {
+            text = formatNumber(yieldCount)
+            styleStatusBadge(this, active = yieldCount > 0)
+        }
         playHostHelperValue?.text = app.settings.playHostHelperPackage?.let { pkg ->
             appLabel(pkg)
         } ?: getString(R.string.action_none)
@@ -917,10 +940,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshSgdbRows() {
-        val hasKey = !app.settings.sgdbApiKey.isNullOrEmpty()
+        val hasKey = SettingsUiLogic.isConfiguredStatus(app.settings.sgdbApiKey)
         val job = app.scrapeJob
         val running = job.isRunning
-        sgdbKeyValue?.setText(if (hasKey) R.string.label_set else R.string.label_not_set)
+        sgdbKeyValue?.apply {
+            setText(if (hasKey) R.string.label_set else R.string.label_not_set)
+            styleStatusBadge(this, active = hasKey)
+        }
+        refreshArtHeaderStatusPill()
         if (running) {
             scrapeLabel?.setText(R.string.action_cancel)
             scrapeLabel?.setTextColor(UiDimens.COLOR_DESTRUCTIVE)
@@ -1354,15 +1381,56 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshRaRows() {
-        raUserValue?.text = app.settings.raUsername?.takeIf { it.isNotBlank() }
-            ?: getString(R.string.label_not_set)
-        raKeyValue?.setText(
-            if (!app.settings.raApiKey.isNullOrBlank()) {
-                R.string.label_set
-            } else {
-                R.string.label_not_set
-            },
+        val userSet = SettingsUiLogic.isConfiguredStatus(app.settings.raUsername)
+        val keySet = SettingsUiLogic.isConfiguredStatus(app.settings.raApiKey)
+        raUserValue?.apply {
+            text = app.settings.raUsername?.takeIf { it.isNotBlank() }
+                ?: getString(R.string.label_not_set)
+            styleStatusBadge(this, active = userSet)
+        }
+        raKeyValue?.apply {
+            setText(if (keySet) R.string.label_set else R.string.label_not_set)
+            styleStatusBadge(this, active = keySet)
+        }
+        refreshArtHeaderStatusPill()
+    }
+
+    private fun refreshArtHeaderStatusPill() {
+        val pill = artHeaderStatusPill ?: return
+        val ready = SettingsUiLogic.hasAnyArtCredentials(
+            sgdbKey = app.settings.sgdbApiKey,
+            raUsername = app.settings.raUsername,
+            raApiKey = app.settings.raApiKey,
         )
+        pill.setText(if (ready) R.string.label_set else R.string.label_not_set)
+        styleStatusBadge(pill, active = ready)
+    }
+
+    private fun drillChevron(): ImageView = ImageView(this).apply {
+        setImageResource(R.drawable.ic_chevron_right)
+        imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    private fun styleStatusBadge(view: TextView, active: Boolean) {
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        view.setTypeface(null, Typeface.BOLD)
+        view.useTabularNumerals()
+        view.setTextColor(if (active) accentOnSunken else UiDimens.ALPHA_MUTED)
+        view.background = if (active) {
+            TileBackgrounds.valueBadge(this, accent, cornerRadiusDp = UiDimens.RADIUS_SM)
+        } else {
+            TileBackgrounds.sunkenField(this, cornerRadiusDp = UiDimens.RADIUS_SM)
+        }
+        view.setPadding(dp(9), dp(3), dp(9), dp(3))
+    }
+
+    private fun statusPill(text: String, active: Boolean): TextView = TextView(this).apply {
+        this.text = text
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        styleStatusBadge(this, active)
     }
 
     private val accent get() = app.settings.accentColor
@@ -2083,6 +2151,7 @@ class SettingsActivity : AppCompatActivity() {
         pageDropdownLabel = null
         headerBackBtn = null
         headerSearchBtn = null
+        artHeaderStatusPill = null
 
         SettingsPage.entries.forEach { page ->
             pageBodies[page] = LinearLayout(this).apply {
@@ -2091,15 +2160,48 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        fun addSection(page: SettingsPage, title: String, card: LinearLayout) {
+        fun addSection(
+            page: SettingsPage,
+            title: String,
+            card: LinearLayout,
+            badgeText: String? = null,
+            badgeActive: Boolean = false,
+            onBadgeView: ((TextView) -> Unit)? = null,
+        ) {
             val root = pageBodies.getValue(page)
-            root.addView(sectionHeader(title), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                topMargin = dp(24)
-                bottomMargin = dp(10)
-            })
+            if (badgeText != null) {
+                val headerRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        sectionHeader(title),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginEnd = dp(8)
+                        },
+                    )
+                    val badge = statusPill(badgeText, badgeActive)
+                    onBadgeView?.invoke(badge)
+                    addView(badge)
+                }
+                root.addView(
+                    headerRow,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        topMargin = dp(24)
+                        bottomMargin = dp(10)
+                    },
+                )
+            } else {
+                root.addView(sectionHeader(title), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    topMargin = dp(24)
+                    bottomMargin = dp(10)
+                })
+            }
             root.addView(card, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2192,8 +2294,19 @@ class SettingsActivity : AppCompatActivity() {
             )
         }
 
-        fun addActionRow(card: LinearLayout, row: LinearLayout, heightDp: Int = 60) {
+        fun addActionRow(
+            card: LinearLayout,
+            row: LinearLayout,
+            heightDp: Int = 60,
+            showChevron: Boolean = false,
+        ) {
             addDividerIfNeeded(card)
+            if (showChevron) {
+                row.addView(
+                    drillChevron(),
+                    LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginStart = dp(6) },
+                )
+            }
             styleFocusableRow(row)
             card.addView(
                 row,
@@ -2352,7 +2465,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(if (s.themeCustomJson != null) accentOnCard else UiDimens.ALPHA_SUBTLE)
         })
-        addActionRow(displayCard, themeImportRow)
+        addActionRow(displayCard, themeImportRow, showChevron = true)
         val profileOptions = listOf(
             "auto" to getString(R.string.label_auto),
             "onex-sugar" to getString(R.string.label_sugar),
@@ -2435,7 +2548,19 @@ class SettingsActivity : AppCompatActivity() {
         resetDisplayRow.addView(rowLabel(getString(R.string.settings_reset_display_roles)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addActionRow(displayCard, resetDisplayRow)
-        addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_section_display), displayCard)
+        val liveSurface = app.displayConfig.mode
+        val displayModeBadge = getString(
+            R.string.format_dot_pair,
+            getString(if (liveSurface == SurfaceMode.DUAL) R.string.label_dual else R.string.label_single),
+            deviceProfileName(s.deviceProfileId),
+        )
+        addSection(
+            page = SettingsPage.DISPLAY_GRID,
+            title = getString(R.string.settings_section_display),
+            card = displayCard,
+            badgeText = displayModeBadge,
+            badgeActive = liveSurface == SurfaceMode.DUAL,
+        )
 
         if (app.displayConfig.mode != SurfaceMode.SINGLE) {
             val postureCard = sectionCard()
@@ -2714,7 +2839,7 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.END
         }, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f))
-        addActionRow(companionCard, pinRow)
+        addActionRow(companionCard, pinRow, showChevron = true)
         companionCard.addView(TextView(this).apply {
             setText(R.string.settings_pin_help)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -2854,7 +2979,7 @@ class SettingsActivity : AppCompatActivity() {
         wallpaperClear = clearView
         wallpaperRow.addView(clearView)
         refreshWallpaperRow()
-        addActionRow(gridCard, wallpaperRow)
+        addActionRow(gridCard, wallpaperRow, showChevron = true)
         addSection(SettingsPage.DISPLAY_GRID, getString(R.string.settings_grid_section), gridCard)
 
         val appsCard = sectionCard()
@@ -2870,7 +2995,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(accentOnCard)
         }
         hiddenRow.addView(hiddenValue)
-        addActionRow(appsCard, hiddenRow)
+        addActionRow(appsCard, hiddenRow, showChevron = true)
         val dockRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2887,7 +3012,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         dockRow.addView(dockValue, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
-        addActionRow(appsCard, dockRow)
+        addActionRow(appsCard, dockRow, showChevron = true)
         val packageYieldRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2902,7 +3027,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(accentOnCard)
         }
         packageYieldRow.addView(packageYieldValue)
-        addActionRow(appsCard, packageYieldRow)
+        addActionRow(appsCard, packageYieldRow, showChevron = true)
         val helperRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2928,9 +3053,21 @@ class SettingsActivity : AppCompatActivity() {
             playHostHelperValue,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f),
         )
-        addActionRow(appsCard, helperRow)
+        addActionRow(appsCard, helperRow, showChevron = true)
         refreshAppsRows()
-        addSection(SettingsPage.APPS, getString(R.string.settings_page_apps), appsCard)
+        val dockFilled = s.dockSlots.count { it != null }
+        val appsBadge = if (dockFilled > 0) {
+            resources.getQuantityString(R.plurals.count_items, dockFilled, dockFilled)
+        } else {
+            getString(R.string.label_empty)
+        }
+        addSection(
+            page = SettingsPage.APPS,
+            title = getString(R.string.settings_page_apps),
+            card = appsCard,
+            badgeText = appsBadge,
+            badgeActive = dockFilled > 0,
+        )
 
         val controlsCard = sectionCard()
         toggle(controlsCard, getString(R.string.settings_haptics), s.haptics) {
@@ -3123,7 +3260,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(accentOnCard)
             setTypeface(typeface, Typeface.BOLD)
         })
-        addActionRow(controlsCard, labRow)
+        addActionRow(controlsCard, labRow, showChevron = true)
         seek(
             controlsCard,
             getString(R.string.settings_stick_deadzone),
@@ -3182,12 +3319,12 @@ class SettingsActivity : AppCompatActivity() {
         hiddenRomsRow.addView(rowLabel(getString(R.string.settings_hidden_roms)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         hiddenRomsValue = TextView(this).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
-            text = formatNumber(app.settings.hiddenRomIds.size)
+            val count = app.settings.hiddenRomIds.size
+            text = formatNumber(count)
+            styleStatusBadge(this, active = count > 0)
         }
         hiddenRomsRow.addView(hiddenRomsValue)
-        addActionRow(libraryCard, hiddenRomsRow)
+        addActionRow(libraryCard, hiddenRomsRow, showChevron = true)
         val rescanLabel = rowLabel(getString(R.string.settings_rescan_library))
         fun startRescan(force: Boolean) {
             if (scanning) return
@@ -3288,11 +3425,11 @@ class SettingsActivity : AppCompatActivity() {
         collectionsRow.addView(rowLabel(getString(R.string.label_collections)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         collectionsRow.addView(TextView(this).apply {
-            text = formatNumber(app.settings.collections.size)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
+            val count = app.settings.collections.size
+            text = formatNumber(count)
+            styleStatusBadge(this, active = count > 0)
         })
-        addActionRow(libraryCard, collectionsRow)
+        addActionRow(libraryCard, collectionsRow, showChevron = true)
         val playersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3313,7 +3450,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accentOnCard)
         })
-        addActionRow(libraryCard, playersRow)
+        addActionRow(libraryCard, playersRow, showChevron = true)
         var raHandoffSaveRow: View? = null
         var raHandoffSaveSwitch: SwitchCompat? = null
         fun refreshRaHandoffSaveEnabled() {
@@ -3419,7 +3556,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accentOnCard)
         })
-        addActionRow(libraryCard, lensPackRow)
+        addActionRow(libraryCard, lensPackRow, showChevron = true)
         val raUserRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3436,10 +3573,10 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         raUserRow.addView(TextView(this).apply {
             raUserValue = this
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         })
-        addActionRow(artCard, raUserRow)
+        addActionRow(artCard, raUserRow, showChevron = true)
         val raKeyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3456,10 +3593,8 @@ class SettingsActivity : AppCompatActivity() {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         raKeyRow.addView(TextView(this).apply {
             raKeyValue = this
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
         })
-        addActionRow(artCard, raKeyRow)
+        addActionRow(artCard, raKeyRow, showChevron = true)
         refreshRaRows()
         if (BuildConfig.DEBUG) {
             val raSampleRow = LinearLayout(this).apply {
@@ -3490,13 +3625,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         keyRow.addView(rowLabel(getString(R.string.settings_sgdb_api_key)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val keyValue = TextView(this).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(accentOnCard)
-        }
+        val keyValue = TextView(this)
         sgdbKeyValue = keyValue
         keyRow.addView(keyValue)
-        addActionRow(artCard, keyRow)
+        addActionRow(artCard, keyRow, showChevron = true)
         val datRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3526,8 +3658,9 @@ class SettingsActivity : AppCompatActivity() {
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accentOnCard)
+            useTabularNumerals()
         })
-        addActionRow(artCard, datRow)
+        addActionRow(artCard, datRow, showChevron = true)
         val downloadRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3606,7 +3739,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         exportRow.addView(rowLabel(getString(R.string.settings_export)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addActionRow(artCard, exportRow)
+        addActionRow(artCard, exportRow, showChevron = true)
         val importRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3614,7 +3747,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         importRow.addView(rowLabel(getString(R.string.settings_import)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addActionRow(artCard, importRow)
+        addActionRow(artCard, importRow, showChevron = true)
         val exportArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3622,7 +3755,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         exportArtRow.addView(rowLabel(getString(R.string.settings_export_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addActionRow(artCard, exportArtRow)
+        addActionRow(artCard, exportArtRow, showChevron = true)
         val importArtRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3630,7 +3763,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         importArtRow.addView(rowLabel(getString(R.string.settings_import_art)), LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addActionRow(artCard, importArtRow)
+        addActionRow(artCard, importArtRow, showChevron = true)
         val packRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3663,7 +3796,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(accentOnCard)
         })
-        addActionRow(artCard, packRow)
+        addActionRow(artCard, packRow, showChevron = true)
         val bundledCount = listBundledPackAssets().size
         val examplePackRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -3681,7 +3814,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(accentOnCard)
         })
-        addActionRow(artCard, examplePackRow)
+        addActionRow(artCard, examplePackRow, showChevron = true)
         val setupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3714,8 +3847,28 @@ class SettingsActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         addActionRow(libraryCard, chromeDiscoverRow)
-        addSection(SettingsPage.LIBRARY, getString(R.string.settings_page_library), libraryCard)
-        addSection(SettingsPage.ART_DATA, getString(R.string.settings_page_art), artCard)
+        val visibleRoms = app.romEntries.count { it.visibleInUi }
+        val romsBadge = resources.getQuantityString(R.plurals.count_roms_found, visibleRoms, visibleRoms)
+        addSection(
+            page = SettingsPage.LIBRARY,
+            title = getString(R.string.settings_page_library),
+            card = libraryCard,
+            badgeText = romsBadge,
+            badgeActive = visibleRoms > 0,
+        )
+        val artCredsReady = SettingsUiLogic.hasAnyArtCredentials(
+            sgdbKey = s.sgdbApiKey,
+            raUsername = s.raUsername,
+            raApiKey = s.raApiKey,
+        )
+        addSection(
+            page = SettingsPage.ART_DATA,
+            title = getString(R.string.settings_page_art),
+            card = artCard,
+            badgeText = getString(if (artCredsReady) R.string.label_set else R.string.label_not_set),
+            badgeActive = artCredsReady,
+            onBadgeView = { artHeaderStatusPill = it },
+        )
 
         val statsCard = sectionCard()
         val most = com.visorcraft.ghostgalleon.library.LibraryStats.mostPlayed(

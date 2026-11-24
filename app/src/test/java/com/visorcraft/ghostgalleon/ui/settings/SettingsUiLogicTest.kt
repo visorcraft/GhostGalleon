@@ -121,4 +121,20 @@ class SettingsUiLogicTest {
         assertEquals(1f, SettingsUiLogic.scrapeProgressFraction(20, 20), 0.0001f)
         assertEquals(1f, SettingsUiLogic.scrapeProgressFraction(25, 20), 0.0001f)
     }
+
+    @Test
+    fun `credential readiness helpers detect SGDB and RetroAchievements configuration`() {
+        assertFalse(SettingsUiLogic.isConfiguredStatus(null))
+        assertFalse(SettingsUiLogic.isConfiguredStatus("   "))
+        assertTrue(SettingsUiLogic.isConfiguredStatus("abc"))
+
+        assertFalse(SettingsUiLogic.hasRaCredentials("user", null))
+        assertFalse(SettingsUiLogic.hasRaCredentials(null, "key"))
+        assertTrue(SettingsUiLogic.hasRaCredentials("user", "key"))
+
+        assertFalse(SettingsUiLogic.hasAnyArtCredentials(null, null, null))
+        assertFalse(SettingsUiLogic.hasAnyArtCredentials("", "user", ""))
+        assertTrue(SettingsUiLogic.hasAnyArtCredentials("sgdb-token", null, null))
+        assertTrue(SettingsUiLogic.hasAnyArtCredentials(null, "user", "ra-key"))
+    }
 }
