@@ -581,10 +581,46 @@ class GameDeck(
     private var multiSelectChipView: TextView? = null
     /** Last filter-chrome structure; equal → restyle chip colors only. */
     private var chromeStructureKey: String = ""
+    /** Reusable in-place-mutable interactive pill background (zero allocations on chip toggles). */
+    private class MutablePillBackground(
+        val ripple: RippleDrawable,
+        private val idleFill: GradientDrawable,
+        private val focusedFill: GradientDrawable,
+        private val stroke1Px: Int,
+        private val stroke2Px: Int,
+        initialRippleColor: Int,
+    ) {
+        private var lastRippleColor: Int = initialRippleColor
+
+        fun update(
+            fillColor: Int,
+            idleStrokeColor: Int?,
+            focusedStrokeColor: Int,
+            rippleColor: Int,
+        ) {
+            idleFill.setColor(fillColor)
+            if (idleStrokeColor != null) {
+                idleFill.setStroke(stroke1Px, idleStrokeColor)
+            } else {
+                idleFill.setStroke(0, Color.TRANSPARENT)
+            }
+            focusedFill.setColor(fillColor)
+            focusedFill.setStroke(stroke2Px, focusedStrokeColor)
+            if (lastRippleColor != rippleColor) {
+                ripple.setColor(ColorStateList.valueOf(rippleColor))
+                lastRippleColor = rippleColor
+            }
+        }
+    }
+
     private data class BrowseChipHandle(
         val view: TextView,
+        val pillBg: MutablePillBackground,
         var rawLabel: String,
         val selected: () -> Boolean,
+        val platformId: String? = null,
+        val platformDotDrawable: GradientDrawable? = null,
+        val hasContinueCue: Boolean = false,
         var paintedSelected: Boolean? = null,
         var paintedAccent: Int = 0,
     )
@@ -1108,26 +1144,28 @@ class GameDeck(
         scrollHorizontalToCenter(letterScrollView, active, smooth = smooth)
     }
 
-    private fun interactivePillBackground(
+    private fun buildMutablePillBackground(
         context: Context,
         fillColor: Int,
         idleStrokeColor: Int?,
         selected: Boolean,
         cornerRadiusDp: Int,
-    ): Drawable {
+    ): MutablePillBackground {
         val radiusPx = context.dpF(cornerRadiusDp)
+        val stroke1Px = context.strokePx(1)
+        val stroke2Px = context.strokePx(2)
         val idle = GradientDrawable().apply {
             setColor(fillColor)
             cornerRadius = radiusPx
             if (idleStrokeColor != null) {
-                setStroke(context.strokePx(1), idleStrokeColor)
+                setStroke(stroke1Px, idleStrokeColor)
             }
         }
         val focused = GradientDrawable().apply {
             setColor(fillColor)
             cornerRadius = radiusPx
             setStroke(
-                context.strokePx(2),
+                stroke2Px,
                 BrowseChipStyleLogic.focusStrokeColor(selected, settings.accentColor),
             )
         }
@@ -1139,14 +1177,35 @@ class GameDeck(
             setColor(Color.WHITE)
             cornerRadius = radiusPx
         }
-        return RippleDrawable(
-            ColorStateList.valueOf(
-                BrowseChipStyleLogic.rippleColor(selected, settings.accentColor),
-            ),
+        val initialRipple = BrowseChipStyleLogic.rippleColor(selected, settings.accentColor)
+        val ripple = RippleDrawable(
+            ColorStateList.valueOf(initialRipple),
             content,
             mask,
         )
+        return MutablePillBackground(
+            ripple = ripple,
+            idleFill = idle,
+            focusedFill = focused,
+            stroke1Px = stroke1Px,
+            stroke2Px = stroke2Px,
+            initialRippleColor = initialRipple,
+        )
     }
+
+    private fun interactivePillBackground(
+        context: Context,
+        fillColor: Int,
+        idleStrokeColor: Int?,
+        selected: Boolean,
+        cornerRadiusDp: Int,
+    ): Drawable = buildMutablePillBackground(
+        context = context,
+        fillColor = fillColor,
+        idleStrokeColor = idleStrokeColor,
+        selected = selected,
+        cornerRadiusDp = cornerRadiusDp,
+    ).ripple
 
     private fun styledBrowseChipLabel(rawLabel: String, selected: Boolean): CharSequence {
         val range = BrowseChipStyleLogic.countSuffixRange(rawLabel) ?: return rawLabel
@@ -1183,9 +1242,12 @@ class GameDeck(
     private fun paintChip(handle: BrowseChipHandle, selected: Boolean) {
         val tv = handle.view
         val context = tv.context
+        val accent = settings.accentColor
+        val chipIdle = TileBackgrounds.chipIdleColor(context)
+        val restingHairline = TileBackgrounds.hairlineDivider(context)
         tv.text = styledBrowseChipLabel(handle.rawLabel, selected)
         tv.setTextColor(
-            if (selected) ThemePack.onFillTextColor(settings.accentColor)
+            if (selected) ThemePack.onFillTextColor(accent)
             else UiDimens.ALPHA_PRIMARY,
         )
         tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
@@ -1196,20 +1258,45 @@ class GameDeck(
                 selected = selected,
             ),
         )
-        tv.background = interactivePillBackground(
-            context = context,
-            fillColor = if (selected) settings.accentColor else TileBackgrounds.chipIdleColor(context),
-            idleStrokeColor = if (selected) null else TileBackgrounds.hairlineDivider(context),
-            selected = selected,
-            cornerRadiusDp = 16,
+        val idleStroke = if (selected) {
+            null
+        } else {
+            BrowseChipStyleLogic.continueChipAccentBorder(
+                hasTarget = handle.hasContinueCue,
+                accent = accent,
+                restingHairline = restingHairline,
+            )
+        }
+        handle.pillBg.update(
+            fillColor = if (selected) accent else chipIdle,
+            idleStrokeColor = idleStroke,
+            focusedStrokeColor = BrowseChipStyleLogic.focusStrokeColor(selected, accent),
+            rippleColor = BrowseChipStyleLogic.rippleColor(selected, accent),
         )
+        val dot = handle.platformDotDrawable
+        val pid = handle.platformId
+        if (dot != null && pid != null) {
+            val platformAccent = PlatformLook.dotAccentForFilter(pid)
+                ?: PlatformLook.accentColor(pid)
+            dot.setColor(
+                BrowseChipStyleLogic.platformDotColor(
+                    platformAccent = platformAccent,
+                    selected = selected,
+                    themeAccent = accent,
+                    chipIdle = chipIdle,
+                ),
+            )
+        }
         handle.paintedSelected = selected
-        handle.paintedAccent = settings.accentColor
+        handle.paintedAccent = accent
     }
 
     private fun buildActiveFilterStrip(context: Context, dp: (Int) -> Int): View? {
         val active = GameDeckChromeLogic.activeFilters(state.libraryBrowse)
         if (active.isEmpty()) return null
+        val dm = context.resources.displayMetrics
+        val viewportWidthDp = (dm.widthPixels / dm.density.coerceAtLeast(0.5f)).toInt()
+        val maxFilterLabelPx = dp(GameDeckChromeLogic.maxFilterPillLabelWidthDp(viewportWidthDp))
         val surface = TileBackgrounds.surfaceColor(context)
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1271,6 +1358,7 @@ class GameDeck(
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
+                maxWidth = maxFilterLabelPx
                 includeFontPadding = false
             })
             pill.addView(
@@ -2171,28 +2259,82 @@ class GameDeck(
 
     // Browse chip row: All / Recent / Favorites + platform filters + search.
     private fun buildBrowseBar(context: Context, dp: (Int) -> Int): View {
+        val dm = context.resources.displayMetrics
+        val viewportWidthDp = (dm.widthPixels / dm.density.coerceAtLeast(0.5f)).toInt()
         val endPad = dp(
             GameDeckChromeLogic.browseBarEndPadDp(
                 showStatusPill && settings.browseChrome.deckStatusPill,
             ),
         )
+        val dividerColor = TileBackgrounds.hairlineDivider(context)
+        val dividerW = context.strokePx(BrowseChipStyleLogic.GROUP_DIVIDER_WIDTH_DP)
+        val dividerH = dp(BrowseChipStyleLogic.GROUP_DIVIDER_HEIGHT_DP)
+        val dividerMargin = dp(BrowseChipStyleLogic.GROUP_DIVIDER_MARGIN_H_DP)
+        val dotSizePx = dp(BrowseChipStyleLogic.PLATFORM_DOT_SIZE_DP)
+        val dotPadPx = dp(BrowseChipStyleLogic.PLATFORM_DOT_PADDING_DP)
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(8), endPad, dp(4))
         }
+        var lastGroup: BrowseChipStyleLogic.BrowseChipGroup? = null
+        fun addToGroup(group: BrowseChipStyleLogic.BrowseChipGroup, view: View) {
+            if (BrowseChipStyleLogic.shouldInsertGroupDivider(lastGroup, group)) {
+                row.addView(
+                    View(context).apply {
+                        setBackgroundColor(dividerColor)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(dividerW, dividerH).apply {
+                        marginStart = dividerMargin
+                        marginEnd = dividerMargin
+                    },
+                )
+            } else if (lastGroup != null) {
+                row.addView(View(context), LinearLayout.LayoutParams(dp(6), 1))
+            }
+            row.addView(view)
+            lastGroup = group
+        }
         fun chip(
             label: String,
             selected: () -> Boolean,
+            platformId: String? = null,
+            hasContinueCue: Boolean = false,
+            maxWidthPx: Int? = null,
             onLongClick: (() -> Unit)? = null,
             onClick: () -> Unit,
         ): TextView {
+            val initSelected = selected()
+            val pillBg = buildMutablePillBackground(
+                context = context,
+                fillColor = if (initSelected) settings.accentColor else TileBackgrounds.chipIdleColor(context),
+                idleStrokeColor = if (initSelected) null else TileBackgrounds.hairlineDivider(context),
+                selected = initSelected,
+                cornerRadiusDp = 16,
+            )
+            val dotDrawable = platformId?.let {
+                GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setBounds(0, 0, dotSizePx, dotSizePx)
+                }
+            }
             val tv = TextView(context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                gravity = Gravity.CENTER
+                gravity = Gravity.CENTER_VERTICAL or Gravity.CENTER_HORIZONTAL
+                maxLines = 1
                 includeFontPadding = false
                 minimumHeight = dp(BrowseChipStyleLogic.CHIP_MIN_HEIGHT_DP)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
+                background = pillBg.ripple
+                if (dotDrawable != null) {
+                    setCompoundDrawablesRelative(dotDrawable, null, null, null)
+                    compoundDrawablePadding = dotPadPx
+                }
+                if (maxWidthPx != null) {
+                    maxWidth = maxWidthPx
+                    ellipsize = TextUtils.TruncateAt.END
+                }
                 setOnClickListener { onClick() }
                 if (onLongClick != null) {
                     setOnLongClickListener {
@@ -2201,8 +2343,16 @@ class GameDeck(
                     }
                 }
             }
-            val handle = BrowseChipHandle(view = tv, rawLabel = label, selected = selected)
-            paintChip(handle, selected())
+            val handle = BrowseChipHandle(
+                view = tv,
+                pillBg = pillBg,
+                rawLabel = label,
+                selected = selected,
+                platformId = platformId,
+                platformDotDrawable = dotDrawable,
+                hasContinueCue = hasContinueCue,
+            )
+            paintChip(handle, initSelected)
             browseChipHandles.add(handle)
             return tv
         }
@@ -2226,7 +2376,8 @@ class GameDeck(
         // NDS selection centered made "All" look like a no-op (same cards still
         // on screen even though the filter was cleared). Long-press → sort order
         // (Name / Last / Top / Platform) for catalog rails — not always-on chrome.
-        row.addView(
+        addToGroup(
+            BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
             chip(
                 localized(LibraryBrowse.allChipLabel(q.sort)),
                 { LibraryBrowse.isAllChipSelected(state.libraryBrowse) },
@@ -2240,17 +2391,14 @@ class GameDeck(
                 if (firstKey != null) state.select(firstKey, force = true)
             },
         )
-        row.addView(View(context), LinearLayout.LayoutParams(dp(6), 1))
         val chrome = settings.browseChrome
-        fun addGap() {
-            row.addView(View(context), LinearLayout.LayoutParams(dp(6), 1))
-        }
         fun setBrowse(next: LibraryBrowse.BrowseQuery, force: Boolean = false) {
             val qNext = chrome.sanitize(next)
             setQuery(qNext, force = force)
             toastIfEmptyBrowse(qNext)
         }
-        row.addView(
+        addToGroup(
+            BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
             chip(
                 counted(
                     R.string.label_recent,
@@ -2271,8 +2419,8 @@ class GameDeck(
             },
         )
         if (chrome.todayRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_today,
@@ -2292,8 +2440,8 @@ class GameDeck(
             )
         }
         if (chrome.weekRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_week,
@@ -2313,8 +2461,8 @@ class GameDeck(
             )
         }
         if (chrome.monthRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_month,
@@ -2334,8 +2482,8 @@ class GameDeck(
             )
         }
         if (chrome.installedRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(R.string.label_installed, library.visible(settings).size),
                     { state.libraryBrowse.mode == LibraryBrowse.Mode.RECENTLY_INSTALLED },
@@ -2352,10 +2500,10 @@ class GameDeck(
             )
         }
         if (chrome.gamesRail) {
-            addGap()
             val gameApps = LibraryBrowse.filterGameApps(library.visible(settings)) { it.isGame }.size
             val romN = counts.listedRoms
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_games,
@@ -2375,8 +2523,8 @@ class GameDeck(
             )
         }
         if (chrome.topRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_top,
@@ -2395,7 +2543,6 @@ class GameDeck(
                 },
             )
         }
-        addGap()
         // Continue chip shows short target name when known (depth, not clutter).
         val contTargetKey = LibraryBrowse.continueKey(
             availableContinueKeys(settings),
@@ -2404,10 +2551,14 @@ class GameDeck(
         val contChipLabel = LibraryBrowse.continueChipLabel(
             contTargetKey?.let { continueLabel(it, settings) },
         )
-        row.addView(
+        val continueMaxWidthPx = dp(BrowseChipStyleLogic.maxContinueChipWidthDp(viewportWidthDp))
+        addToGroup(
+            BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
             chip(
                 localized(contChipLabel),
                 { false },
+                hasContinueCue = contTargetKey != null,
+                maxWidthPx = continueMaxWidthPx,
                 onLongClick = { showContinueHistory() },
             ) {
                 // Live settings: GameDeck holds a construction-time snapshot, so
@@ -2430,13 +2581,15 @@ class GameDeck(
             },
         )
         if (chrome.randomChip) {
-            addGap()
-            row.addView(chip(context.getString(R.string.label_random), { false }) {
-                pickRandomEntry()
-            })
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
+                chip(context.getString(R.string.label_random), { false }) {
+                    pickRandomEntry()
+                },
+            )
         }
-        addGap()
-        row.addView(
+        addToGroup(
+            BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
             chip(
                 counted(R.string.label_favorites_short, settings.favorites.size),
                 { state.libraryBrowse.mode == LibraryBrowse.Mode.FAVORITES },
@@ -2453,12 +2606,12 @@ class GameDeck(
             },
         )
         if (chrome.alphaRail) {
-            addGap()
             val alphaN = LibraryBrowse.alphaCatalogCount(
                 library.curated(settings).size,
                 counts.listedRoms,
             )
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(R.string.label_alpha_sort, alphaN),
                     { state.libraryBrowse.mode == LibraryBrowse.Mode.ALPHA },
@@ -2475,8 +2628,8 @@ class GameDeck(
             )
         }
         if (chrome.unplayedRail) {
-            addGap()
-            row.addView(
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.PRIMARY_RAILS,
                 chip(
                     counted(
                         R.string.label_new,
@@ -2498,9 +2651,9 @@ class GameDeck(
         if (chrome.collectionRails) {
             LibraryBrowse.presentCollectionRails(settings.collections).forEach { name ->
                 if (name.equals(CollectionsOps.FAVORITES_RAIL, ignoreCase = true)) return@forEach
-                addGap()
                 val members = settings.collections[name]?.size ?: 0
-                row.addView(
+                addToGroup(
+                    BrowseChipStyleLogic.BrowseChipGroup.COLLECTIONS,
                     chip(
                         counted(name, members),
                         {
@@ -2522,12 +2675,13 @@ class GameDeck(
         }
         if (chrome.platformChips) {
             counts.platforms.forEach { (pid, count) ->
-                addGap()
                 val short = Platforms.byId(pid)?.shortName ?: pid
-                row.addView(
+                addToGroup(
+                    BrowseChipStyleLogic.BrowseChipGroup.FILTERS,
                     chip(
                         counted(short, count),
                         { state.libraryBrowse.platformId == pid },
+                        platformId = pid,
                         onLongClick = { showPlatformChipMenu(pid, short, count) },
                     ) {
                         setBrowse(
@@ -2544,9 +2698,9 @@ class GameDeck(
         // Genre chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.genreChips) {
             counts.genres.forEach { (genre, count) ->
-                addGap()
                 val selected = q.genre?.equals(genre, ignoreCase = true) == true
-                row.addView(
+                addToGroup(
+                    BrowseChipStyleLogic.BrowseChipGroup.FILTERS,
                     chip(
                         counted(genre, count),
                         {
@@ -2567,9 +2721,9 @@ class GameDeck(
         // Developer chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.developerChips) {
             counts.developers.forEach { (dev, count) ->
-                addGap()
                 val selected = q.developer?.equals(dev, ignoreCase = true) == true
-                row.addView(
+                addToGroup(
+                    BrowseChipStyleLogic.BrowseChipGroup.FILTERS,
                     chip(
                         counted(dev, count),
                         {
@@ -2590,9 +2744,9 @@ class GameDeck(
         // Year decade chips (opt-in): gamelist meta, ROM-only filter + counts.
         if (chrome.yearChips) {
             counts.years.forEach { (decade, count) ->
-                addGap()
                 val selected = q.yearDecade?.equals(decade, ignoreCase = true) == true
-                row.addView(
+                addToGroup(
+                    BrowseChipStyleLogic.BrowseChipGroup.FILTERS,
                     chip(
                         counted(context.resolveText(LibraryBrowse.decadeText(decade)), count),
                         {
@@ -2611,13 +2765,14 @@ class GameDeck(
                 )
             }
         }
-        // Contextual only: appears when platform/genre/dev/year/search is set.
-        if (LibraryBrowse.hasActiveMetaFilters(q)) {
-            addGap()
-            val n = LibraryBrowse.activeMetaFilterCount(q)
-            row.addView(
+        // Gated so the active filter strip exclusively owns clear-all when >= 2 filters
+        // are active (and individual dismissible × pills cover 1 filter).
+        val activeMetaCount = GameDeckChromeLogic.activeFilters(q).size
+        if (GameDeckChromeLogic.showBrowseBarClearChip(activeMetaCount)) {
+            addToGroup(
+                BrowseChipStyleLogic.BrowseChipGroup.FILTERS,
                 chip(
-                    counted(R.string.browse_clear_filters, n),
+                    counted(R.string.browse_clear_filters, activeMetaCount),
                     { true },
                 ) {
                     setBrowse(LibraryBrowse.clearMetaFilters(q), true)
@@ -2629,8 +2784,8 @@ class GameDeck(
                 },
             )
         }
-        addGap()
-        row.addView(
+        addToGroup(
+            BrowseChipStyleLogic.BrowseChipGroup.ACTIONS,
             chip(
                 if (q.text.isBlank()) context.getString(R.string.action_search)
                 else context.getString(R.string.format_search_query, q.text),
@@ -2640,7 +2795,6 @@ class GameDeck(
                 openSearchDialog()
             },
         )
-        addGap()
         val selectChip = chip(
             if (state.multiSelectEnabled) {
                 context.getString(R.string.format_select_count, state.multiSelectKeys.size)
@@ -2657,7 +2811,7 @@ class GameDeck(
             }
         }
         multiSelectChipView = selectChip
-        row.addView(selectChip)
+        addToGroup(BrowseChipStyleLogic.BrowseChipGroup.ACTIONS, selectChip)
         // Horizontal scroll with fading edge so many platforms never crush the bar.
         val scroller = android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false

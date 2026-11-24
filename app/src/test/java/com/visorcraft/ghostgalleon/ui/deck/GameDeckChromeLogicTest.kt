@@ -350,4 +350,45 @@ class GameDeckChromeLogicTest {
         assertEquals(-1, GameDeckChromeLogic.firstIndexForLetter(items, 'M') { it })
         assertTrue(GameDeckChromeLogic.letterJumpBuckets(emptyList<String>()) { it }.isEmpty())
     }
+
+    @Test
+    fun `showBrowseBarClearChip and shouldShowStripClearAll are strictly mutually exclusive across filter counts`() {
+        for (count in listOf(0, 1, 2, 3, 5)) {
+            val browseClear = GameDeckChromeLogic.showBrowseBarClearChip(count)
+            val stripClear = GameDeckChromeLogic.shouldShowStripClearAll(count)
+            assertFalse(
+                "Duplicate Clear Filters pills for count=$count",
+                browseClear && stripClear,
+            )
+            // With active filter strip present, browse bar never shows redundant clear chip.
+            assertFalse("Primary browse bar should stay decluttered at count=$count", browseClear)
+            if (count >= 2) {
+                assertTrue("Strip must own Clear-All at count=$count", stripClear)
+            } else {
+                assertFalse("Strip must not show Clear-All at count=$count", stripClear)
+            }
+            // Even when filter strip is absent, 2+ never duplicates strip Clear-All.
+            val fallbackBrowse = GameDeckChromeLogic.showBrowseBarClearChip(count, hasActiveFilterStrip = false)
+            assertFalse(fallbackBrowse && stripClear)
+        }
+        assertTrue(GameDeckChromeLogic.showBrowseBarClearChip(1, hasActiveFilterStrip = false))
+        assertFalse(GameDeckChromeLogic.showBrowseBarClearChip(0, hasActiveFilterStrip = false))
+    }
+
+    @Test
+    fun `maxFilterPillLabelWidthDp stays bounded in 120 to 240dp and under 32 percent on narrow screens`() {
+        val narrowWidths = listOf(400, 480, 540)
+        for (w in narrowWidths) {
+            val labelMax = GameDeckChromeLogic.maxFilterPillLabelWidthDp(w)
+            assertTrue("Label max ($labelMax) out of [120, 240] for $w dp", labelMax in 120..240)
+            assertTrue(
+                "Label max ($labelMax) exceeded 32% of narrow screen $w dp",
+                labelMax <= w * 0.32f,
+            )
+        }
+        assertEquals(140, GameDeckChromeLogic.maxFilterPillLabelWidthDp(540))
+        assertEquals(220, GameDeckChromeLogic.maxFilterPillLabelWidthDp(960))
+        assertTrue(GameDeckChromeLogic.maxFilterPillLabelWidthDp(240) in 120..240)
+        assertTrue(GameDeckChromeLogic.maxFilterPillLabelWidthDp(1920) in 120..240)
+    }
 }

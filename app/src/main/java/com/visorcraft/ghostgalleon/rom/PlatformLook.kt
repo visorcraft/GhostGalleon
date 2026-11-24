@@ -38,4 +38,11 @@ object PlatformLook {
 
     fun hasFilter(platformId: String?): Boolean =
         !platformId.isNullOrBlank()
+
+    /**
+     * Resolve the base console identity accent for a non-blank platform chip
+     * id, or `null` when [platformId] is absent/blank.
+     */
+    fun dotAccentForFilter(platformId: String?): Int? =
+        platformId?.trim()?.takeIf { it.isNotEmpty() }?.let { accentColor(it) }
 }

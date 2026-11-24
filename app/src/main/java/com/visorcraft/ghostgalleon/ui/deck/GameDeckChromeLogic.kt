@@ -30,6 +30,10 @@ object GameDeckChromeLogic {
     /** Minimum simultaneous active filters before showing the inline Clear-All pill. */
     const val MIN_FILTERS_FOR_STRIP_CLEAR_ALL: Int = 2
 
+    /** Responsive label max-width bounds (dp) on active filter pills so `×` stays visible. */
+    const val MIN_FILTER_PILL_LABEL_WIDTH_DP: Int = 120
+    const val MAX_FILTER_PILL_LABEL_WIDTH_DP: Int = 220
+
     /** Minimum entries required before showing the carousel position indicator. */
     const val MIN_RAIL_COUNT_FOR_INDICATOR: Int = 2
 
@@ -130,6 +134,33 @@ object GameDeckChromeLogic {
     /** True when the active filter pill strip should append a quick Clear-All pill. */
     fun shouldShowStripClearAll(activeFilterCount: Int): Boolean =
         activeFilterCount >= MIN_FILTERS_FOR_STRIP_CLEAR_ALL
+
+    /**
+     * Whether the primary browse bar should render its own `"Clear filters"` chip.
+     * Mutually exclusive with [shouldShowStripClearAll]: when [hasActiveFilterStrip]
+     * is true (the standard Game Mode chrome), the active filter strip already
+     * provides individual dismissible `×` pills for 1 filter and owns the single
+     * Clear-All pill for `>= 2` filters, keeping the primary bar decluttered.
+     */
+    fun showBrowseBarClearChip(
+        activeFilterCount: Int,
+        hasActiveFilterStrip: Boolean = true,
+    ): Boolean {
+        if (activeFilterCount <= 0) return false
+        if (shouldShowStripClearAll(activeFilterCount)) return false
+        return !hasActiveFilterStrip
+    }
+
+    /**
+     * Responsive max width (dp) for an active filter pill's text label inside a
+     * HorizontalScrollView so long search queries or developer names never push
+     * the pill's dismiss `×` button off-screen (`140dp` on 540dp Sugar, `220dp`
+     * on Odin 2 Portal; always bounded in `[120, 240]dp`).
+     */
+    fun maxFilterPillLabelWidthDp(viewportWidthDp: Int): Int =
+        (viewportWidthDp.coerceAtLeast(1) * 0.26f)
+            .toInt()
+            .coerceIn(MIN_FILTER_PILL_LABEL_WIDTH_DP, MAX_FILTER_PILL_LABEL_WIDTH_DP)
 
     /** Descriptive TalkBack label for removing an individual active filter pill. */
     fun filterPillAccessibilityText(filterLabel: String): UiText =

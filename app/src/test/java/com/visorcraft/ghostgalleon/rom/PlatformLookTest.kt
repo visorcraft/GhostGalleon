@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.rom
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -35,5 +36,13 @@ class PlatformLookTest {
         assertTrue(PlatformLook.hasFilter("snes"))
         assertFalse(PlatformLook.hasFilter(null))
         assertFalse(PlatformLook.hasFilter(""))
+    }
+
+    @Test
+    fun `dotAccentForFilter resolves valid ids and returns null for blank`() {
+        assertEquals(PlatformLook.accentColor("snes"), PlatformLook.dotAccentForFilter("snes"))
+        assertEquals(PlatformLook.accentColor("gba"), PlatformLook.dotAccentForFilter(" gba "))
+        assertNull(PlatformLook.dotAccentForFilter(null))
+        assertNull(PlatformLook.dotAccentForFilter("   "))
     }
 }
