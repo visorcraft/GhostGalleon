@@ -1,29 +1,63 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
-import android.graphics.Color
+import android.graphics.Typeface
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.strokePx
 
 /**
- * Centered modal for a filled grid/dock tile (or Game Mode entry).
- *
- * Long option lists used to overflow the short Sugar panel with no scroll,
- * burying **Remove** off-screen. Rows are sectioned, scrollable, and
- * destructive actions (remove) are called out in accent red.
+ * Pure, host-tested navigation and destructive-item helpers for [SlotMenu].
+ */
+internal object SlotMenuNav {
+
+    const val PAGE_STEP = 5
+
+    /** Indices into [rows] that are actionable (never section headers). */
+    fun actionRowIndices(rows: List<SlotMenu.Row>): List<Int> =
+        rows.mapIndexedNotNull { index, row -> if (row is SlotMenu.Row.Item) index else null }
+
+    /** Move selection within `0 until actionCount`, supporting wrap & L1/R1 page jumps. */
+    fun move(selection: Int, actionCount: Int, action: Action): Int =
+        when (action) {
+            Action.NAV_UP, Action.NAV_DOWN ->
+                GridWrapNav.moveAction(selection, actionCount, columns = 1, action = action)
+            Action.PAGE_PREV ->
+                GridWrapNav.pageMove(selection, actionCount, pageSize = PAGE_STEP, deltaPages = -1)
+            Action.PAGE_NEXT ->
+                GridWrapNav.pageMove(selection, actionCount, pageSize = PAGE_STEP, deltaPages = 1)
+            else -> GridWrapNav.clampIndex(selection, actionCount)
+        }
+
+    fun isDestructive(item: SlotMenu.Row.Item): Boolean =
+        item.destructive ||
+            item.choice == SlotMenu.Choice.REMOVE ||
+            item.choice == SlotMenu.Choice.REMOVE_FROM_GRID ||
+            item.choice == SlotMenu.Choice.HIDE
+}
+
+/**
+ * Centered modal for a filled grid/dock tile, Game Mode entry, or picker
+ * confirm action. Uses [OverlayPrimitives] for flicker-free responsive framing
+ * and scrolling, optional item title banner, left-aligned sectioned rows,
+ * destructive red emphasis, and D-pad + L1/R1 page navigation.
  */
 class SlotMenu(
     private val context: Context,
     private val accentColor: Int,
     private val rows: List<Row>,
+    private val title: CharSequence? = null,
     private val onChoice: (Choice) -> Unit,
 ) {
     enum class Choice(val labelRes: Int) {
@@ -80,83 +114,123 @@ class SlotMenu(
         ) : Row()
     }
 
+    private data class BoundAction(
+        val view: TextView,
+        val item: Row.Item,
+        val destructive: Boolean,
+    )
+
     private var selection = 0
     /** Indices into [rows] that are actionable (not headers). */
-    private val actionRowIndices: List<Int> =
-        rows.mapIndexedNotNull { i, row -> if (row is Row.Item) i else null }
-    private val actionRows = mutableListOf<TextView>()
+    private val actionRowIndices: List<Int> = SlotMenuNav.actionRowIndices(rows)
+    private val actionRows = mutableListOf<BoundAction>()
+    private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
 
     val view: View by lazy {
-        val density = context.resources.displayMetrics.density
-        val screenH = context.resources.displayMetrics.heightPixels
-        // Leave room for system chrome; never cover the whole short panel.
-        val maxCardH = (screenH * 0.72f).toInt().coerceAtLeast((200 * density).toInt())
-        val cardW = (260 * density).toInt()
+        val overlay = OverlayPrimitives.modalBackdrop(context) { onChoice(Choice.CANCEL) }
+        val cardWidth = OverlayPrimitives.responsiveCardWidth(
+            context = context,
+            maxDp = 340,
+            widthFrac = 0.86f,
+            minMarginDp = UiDimens.SPACE_LG,
+        )
+        val headerTitle = title?.takeIf { it.isNotBlank() }
+        val card = OverlayPrimitives.modalCardContainer(
+            context = context,
+            padHorizontalDp = UiDimens.SPACE_MD,
+            padVerticalDp = 12,
+        )
 
-        val overlay = FrameLayout(context).apply {
-            setBackgroundColor(0x99000000.toInt())
-            isClickable = true
-            setOnClickListener { onChoice(Choice.CANCEL) }
+        if (headerTitle != null) {
+            card.addView(
+                OverlayPrimitives.modalHeader(
+                    context = context,
+                    title = headerTitle,
+                    gravity = Gravity.START,
+                    showDivider = true,
+                ).apply {
+                    setPadding(context.dp(UiDimens.SPACE_XS), 0, context.dp(UiDimens.SPACE_XS), context.dp(6))
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
         }
-        val card = LinearLayout(context).apply {
+
+        val surfaceColor = TileBackgrounds.surfaceColor(context)
+        val headerColor = ThemePack.accentTextColor(accentColor, surfaceColor)
+        val dividerColor = TileBackgrounds.hairlineDivider(context)
+        val locale = context.resources.configuration.locales[0]
+
+        val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            background = TileBackgrounds.card(context)
-            setPadding(context.dp(12), context.dp(10), context.dp(12), context.dp(10))
         }
         rows.forEachIndexed { index, row ->
             when (row) {
                 is Row.Header -> {
+                    if (index > 0) {
+                        list.addView(
+                            View(context).apply { setBackgroundColor(dividerColor) },
+                            LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                context.strokePx(1),
+                            ).apply {
+                                topMargin = context.dp(UiDimens.SPACE_SM)
+                                marginStart = context.dp(UiDimens.SPACE_SM)
+                                marginEnd = context.dp(UiDimens.SPACE_SM)
+                            },
+                        )
+                    }
                     val header = TextView(context).apply {
-                        setText(row.titleRes)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                        setTextColor(0x88FFFFFF.toInt())
+                        text = context.getString(row.titleRes).uppercase(locale)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                        setTextColor(headerColor)
+                        setTypeface(typeface, Typeface.BOLD)
+                        letterSpacing = 0.12f
                         gravity = Gravity.START or Gravity.CENTER_VERTICAL
                         setPadding(
-                            context.dp(12),
-                            context.dp(if (index == 0) 4 else 12),
-                            context.dp(12),
-                            context.dp(4),
+                            context.dp(UiDimens.SPACE_MD),
+                            context.dp(if (index == 0) 4 else 10),
+                            context.dp(UiDimens.SPACE_MD),
+                            context.dp(UiDimens.SPACE_XS),
                         )
                         isClickable = false
                         isFocusable = false
                     }
-                    card.addView(
+                    list.addView(
                         header,
                         LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
                         ),
                     )
                 }
                 is Row.Item -> {
                     val label = row.labelRes ?: row.choice.labelRes
-                    val isDestructive = row.destructive ||
-                        row.choice == Choice.REMOVE ||
-                        row.choice == Choice.REMOVE_FROM_GRID ||
-                        row.choice == Choice.HIDE
+                    val destructive = SlotMenuNav.isDestructive(row)
                     val actionTv = TextView(context).apply {
                         setText(label)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                        setTextColor(
-                            if (isDestructive) 0xFFFF8A80.toInt() else Color.WHITE,
-                        )
-                        gravity = Gravity.CENTER
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                        minHeight = context.dp(44)
                         setPadding(
-                            context.dp(20),
-                            context.dp(11),
-                            context.dp(20),
-                            context.dp(11),
+                            context.dp(UiDimens.SPACE_LG),
+                            context.dp(10),
+                            context.dp(UiDimens.SPACE_LG),
+                            context.dp(10),
                         )
                         setOnClickListener { onChoice(row.choice) }
-                        // Stop overlay cancel when tapping a row.
                         isClickable = true
                     }
-                    actionRows.add(actionTv)
-                    card.addView(
+                    actionRows.add(BoundAction(actionTv, row, destructive))
+                    list.addView(
                         actionTv,
                         LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
                         ).apply {
                             topMargin = context.dp(2)
                             bottomMargin = context.dp(2)
@@ -165,57 +239,79 @@ class SlotMenu(
                 }
             }
         }
-        paintRows()
 
-        val scroll = ScrollView(context).apply {
-            isVerticalScrollBarEnabled = true
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            // Don't let the overlay steal the first scroll touch.
+        val scroll = OverlayPrimitives.MaxHeightScrollView(
+            context = context,
+            maxHeightPx = OverlayPrimitives.maxModalHeight(
+                context = context,
+                heightFrac = if (headerTitle != null) 0.62f else 0.70f,
+                minDp = 180,
+            ),
+        ).apply {
             isClickable = true
-            setOnClickListener { /* swallow — card children handle taps */ }
             addView(
-                card,
+                list,
                 FrameLayout.LayoutParams(
-                    cardW,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
         }
-        overlay.addView(
+        scrollHost = scroll
+        card.addView(
             scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        card.addView(
+            OverlayPrimitives.modalHintFooter(context, R.string.deck_hint_folder_close),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        paintRows(scrollToFocused = false)
+        overlay.addView(
+            card,
             FrameLayout.LayoutParams(
-                cardW,
-                maxCardH,
+                cardWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER,
             ),
         )
-        // Size scroll height to content when short; cap when long.
-        scroll.post {
-            val contentH = card.height
-            val lp = scroll.layoutParams as FrameLayout.LayoutParams
-            lp.height = contentH.coerceAtMost(maxCardH)
-            scroll.layoutParams = lp
-        }
         overlay
     }
 
-    private fun paintRows() {
+    private fun paintRows(scrollToFocused: Boolean = true) {
         if (actionRows.isEmpty()) return
-        val sel = selection.coerceIn(0, actionRows.lastIndex)
-        actionRows.forEachIndexed { index, row ->
-            row.background = if (index == sel) {
+        val sel = GridWrapNav.clampIndex(selection, actionRows.size)
+        selection = sel
+        actionRows.forEachIndexed { index, bound ->
+            val selected = index == sel
+            bound.view.background = if (selected) {
                 TileBackgrounds.selected(context, accentColor)
             } else {
                 null
             }
-        }
-        // Keep focused row visible when d-pad navigating a long list.
-        actionRows.getOrNull(sel)?.let { focused ->
-            val scroll = (focused.parent as? View)?.parent as? ScrollView
-            scroll?.post {
-                val y = focused.top - scroll.height / 3
-                scroll.smoothScrollTo(0, y.coerceAtLeast(0))
+            val color = when {
+                bound.destructive -> UiDimens.COLOR_DESTRUCTIVE
+                bound.item.choice == Choice.CANCEL && !selected -> UiDimens.ALPHA_SECONDARY
+                else -> UiDimens.ALPHA_PRIMARY
             }
+            bound.view.setTextColor(color)
+            bound.view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        }
+        if (!scrollToFocused) return
+        val focused = actionRows.getOrNull(sel)?.view ?: return
+        val scroller = scrollHost ?: return
+        scroller.post {
+            val targetY = (focused.top - (scroller.height - focused.height) / 2)
+                .coerceAtLeast(0)
+            scroller.smoothScrollTo(0, targetY)
         }
     }
 
@@ -225,12 +321,8 @@ class SlotMenu(
             return true
         }
         when (action) {
-            Action.NAV_UP -> {
-                selection = (selection + actionRows.size - 1) % actionRows.size
-                paintRows()
-            }
-            Action.NAV_DOWN -> {
-                selection = (selection + 1) % actionRows.size
+            Action.NAV_UP, Action.NAV_DOWN, Action.PAGE_PREV, Action.PAGE_NEXT -> {
+                selection = SlotMenuNav.move(selection, actionRows.size, action)
                 paintRows()
             }
             Action.CONFIRM -> {
@@ -250,12 +342,14 @@ class SlotMenu(
             context: Context,
             accentColor: Int,
             choices: List<Choice>,
+            title: CharSequence? = null,
             onChoice: (Choice) -> Unit,
         ): SlotMenu = SlotMenu(
-            context,
-            accentColor,
-            choices.map { Row.Item(it) },
-            onChoice,
+            context = context,
+            accentColor = accentColor,
+            rows = choices.map { Row.Item(it) },
+            title = title,
+            onChoice = onChoice,
         )
 
         /** Build a sectioned grid tile menu (apps / ROMs). */

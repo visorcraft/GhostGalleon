@@ -1,9 +1,12 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
@@ -28,6 +31,88 @@ import com.visorcraft.ghostgalleon.rom.Platforms
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
+import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.strokePx
+
+/** Result of moving highlight inside [AppPicker] — O(1) changed indices only. */
+internal data class PickerHighlightMove(
+    val previous: Int,
+    val current: Int,
+    val changedPositions: List<Int>,
+)
+
+/**
+ * Pure, host-tested highlight-transition and result-count math for [AppPicker].
+ * Guarantees highlight never rests on a section header and emits only the
+ * changed positions (`<= 2`) so 6,384+ ROM lists never trigger O(N) rebinds.
+ */
+internal object AppPickerHighlight {
+
+    fun firstSelectable(items: List<PickerItem>): Int =
+        items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
+
+    fun selectableCount(items: List<PickerItem>): Int =
+        items.count { it !is PickerItem.Header }
+
+    fun move(items: List<PickerItem>, current: Int, delta: Int): PickerHighlightMove {
+        if (items.isEmpty() || delta == 0) {
+            val safe = if (items.isEmpty()) 0 else current.coerceIn(0, items.lastIndex)
+            return PickerHighlightMove(previous = safe, current = safe, changedPositions = emptyList())
+        }
+        val start = current.coerceIn(0, items.lastIndex)
+        var cursor = start
+        val step = if (delta > 0) 1 else -1
+        var remaining = kotlin.math.abs(delta)
+        var lastValid = if (items[start] !is PickerItem.Header) start else -1
+        while (remaining > 0) {
+            val candidate = cursor + step
+            if (candidate !in items.indices) break
+            cursor = candidate
+            if (items[cursor] !is PickerItem.Header) {
+                lastValid = cursor
+                remaining--
+            }
+        }
+        if (lastValid < 0 || lastValid == start) {
+            return PickerHighlightMove(previous = start, current = start, changedPositions = emptyList())
+        }
+        return PickerHighlightMove(
+            previous = start,
+            current = lastValid,
+            changedPositions = listOf(start, lastValid),
+        )
+    }
+
+    fun afterFilter(items: List<PickerItem>, previousKey: String?): Int {
+        if (items.isEmpty()) return 0
+        val kept = previousKey?.let { key ->
+            items.indexOfFirst { PickerItems.rowKey(it) == key }
+        } ?: -1
+        return if (kept >= 0) kept else firstSelectable(items)
+    }
+
+    /**
+     * Positions to notify with `PAYLOAD_HIGHLIGHT` after a list update when
+     * `DiffUtil` moved or kept rows whose highlight state flipped.
+     */
+    fun positionsToRefreshAfterFilter(
+        previousHighlight: Int,
+        nextHighlight: Int,
+        newSize: Int,
+    ): List<Int> {
+        if (newSize <= 0) return emptyList()
+        val out = ArrayList<Int>(2)
+        if (previousHighlight in 0 until newSize && previousHighlight != nextHighlight) {
+            out.add(previousHighlight)
+        }
+        if (nextHighlight in 0 until newSize) {
+            out.add(nextHighlight)
+        }
+        return out
+    }
+}
 
 // Full-screen picker overlay: centered dark card with a live-filter search
 // field above a two-section list — "Apps" (installed launchable, non-hidden)
@@ -70,8 +155,7 @@ class AppPicker(
         )
     private var items: List<PickerItem> = emptyQueryItems
     // The highlight only ever rests on data rows, never section headers.
-    private var highlight: Int =
-        items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
+    private var highlight: Int = AppPickerHighlight.firstSelectable(items)
     private var query = ""
     private var lastFilterQuery = ""
     private var lastFilterItems: List<PickerItem>? = null
@@ -79,12 +163,19 @@ class AppPicker(
     private var layoutManager: LinearLayoutManager? = null
     private var adapter: PickerAdapter? = null
     private var emptyView: TextView? = null
+    private var countBadge: TextView? = null
     private var overlayView: FrameLayout? = null
-    private var hideMenu: HideMenu? = null
+    private var hideMenu: SlotMenu? = null
     private val searchHandler = Handler(Looper.getMainLooper())
     private var pendingSearch: Runnable? = null
 
+    private fun cancelPendingSearch() {
+        pendingSearch?.let { searchHandler.removeCallbacks(it) }
+        pendingSearch = null
+    }
+
     private fun applySearch(next: String) {
+        val prevHighlight = highlight
         val prevKey = items.getOrNull(highlight)?.let { PickerItems.rowKey(it) }
         query = next
         items = if (query.isBlank()) {
@@ -100,76 +191,185 @@ class AppPicker(
         }
         lastFilterQuery = query
         lastFilterItems = items
-        val kept = prevKey?.let { key ->
-            items.indexOfFirst { PickerItems.rowKey(it) == key }
-        } ?: -1
-        highlight = if (kept >= 0) {
-            kept
-        } else {
-            items.indexOfFirst { it !is PickerItem.Header }.coerceAtLeast(0)
-        }
+        val kept = prevKey != null && items.any { PickerItems.rowKey(it) == prevKey }
+        highlight = AppPickerHighlight.afterFilter(items, prevKey)
         adapter?.submit(items)
+        AppPickerHighlight.positionsToRefreshAfterFilter(
+            previousHighlight = prevHighlight,
+            nextHighlight = highlight,
+            newSize = items.size,
+        ).forEach { pos ->
+            adapter?.notifyItemChanged(pos, PAYLOAD_HIGHLIGHT)
+        }
         refreshEmpty()
-        recycler?.scrollToPosition(if (kept >= 0) highlight else 0)
+        recycler?.scrollToPosition(if (kept) highlight else 0)
     }
 
     val view: View by lazy {
         val context: Context = activity
-        val density = context.resources.displayMetrics.density
-        fun dp(value: Int) = (value * density).toInt()
+        val surfaceColor = TileBackgrounds.surfaceColor(context)
+        val sunkenColor = TileBackgrounds.surfaceSunken(context)
+        val accentText = ThemePack.accentTextColor(accentColor, sunkenColor)
 
-        val overlay = FrameLayout(context).apply {
-            setBackgroundColor(0xCC000000.toInt())
-            isClickable = true
-            setOnClickListener { onClose() }
+        val overlay = OverlayPrimitives.modalBackdrop(context) {
+            cancelPendingSearch()
+            onClose()
+        }.apply {
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) {
+                    cancelPendingSearch()
+                }
+            })
         }
-        val card = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = TileBackgrounds.card(context)
-            setPadding(dp(20), dp(16), dp(20), dp(16))
-        }
-        card.addView(TextView(context).apply {
-            text = title ?: context.getString(R.string.action_add_to_grid)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            setTextColor(0xFFFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(12))
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        val cardWidth = OverlayPrimitives.responsiveCardWidth(
+            context = context,
+            maxDp = 600,
+            widthFrac = 0.86f,
+            minMarginDp = UiDimens.SPACE_LG,
+        )
+        val card = OverlayPrimitives.modalCardContainer(
+            context = context,
+            padHorizontalDp = UiDimens.SPACE_LG,
+            padVerticalDp = 14,
+        )
+
+        // Header row: modal title + live result-count pill + 1dp hairline divider.
+        val headerRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        headerRow.addView(
+            TextView(context).apply {
+                text = title ?: context.getString(R.string.action_add_to_grid)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setTextColor(UiDimens.ALPHA_PRIMARY)
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        val badge = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(accentText)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
+            setPadding(context.dp(10), context.dp(4), context.dp(10), context.dp(4))
+        }
+        countBadge = badge
+        headerRow.addView(
+            badge,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
+        )
+        card.addView(
+            headerRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        card.addView(
+            View(context).apply {
+                setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(1),
+            ).apply {
+                topMargin = context.dp(10)
+                bottomMargin = context.dp(10)
+            },
+        )
+
+        // Sunken search bar with leading ic_search and trailing ic_close clear trigger.
+        val searchBox = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 24)
+            minimumHeight = context.dp(44)
+            setPadding(context.dp(12), context.dp(2), context.dp(6), context.dp(2))
+        }
+        searchBox.addView(
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_search)
+                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                isFocusable = false
+            },
+            LinearLayout.LayoutParams(context.dp(20), context.dp(20)).apply {
+                marginEnd = context.dp(UiDimens.SPACE_SM)
+            },
+        )
+        lateinit var clearBtn: ImageView
         val search = EditText(context).apply {
             setHint(R.string.deck_search_apps_roms)
-            setHintTextColor(0x66FFFFFF)
-            setTextColor(0xFFFFFFFF.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setHintTextColor(UiDimens.ALPHA_SUBTLE)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
             setSingleLine()
-            // Darker than the card so the field reads as a field.
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFF101014.toInt())
-                cornerRadius = 28 * density
-                setStroke((1 * density).toInt(), 0x33FFFFFF)
-            }
-            setPadding(dp(16), dp(4), dp(16), dp(4))
+            background = null
+            setPadding(0, context.dp(6), 0, context.dp(6))
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
+                    val next = s?.toString().orEmpty()
+                    clearBtn.visibility = if (next.isNotEmpty()) View.VISIBLE else View.GONE
                     // Debounce: typing in a 6k-ROM library re-filters only,
                     // never re-sorts (see preSortedRoms).
-                    pendingSearch?.let { searchHandler.removeCallbacks(it) }
-                    val next = s?.toString().orEmpty()
+                    cancelPendingSearch()
                     val run = Runnable { applySearch(next) }
                     pendingSearch = run
                     searchHandler.postDelayed(run, SEARCH_DEBOUNCE_MS)
                 }
             })
         }
-        card.addView(search, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = dp(12)
-        })
+        searchBox.addView(
+            search,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        clearBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_SECONDARY)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = context.getString(R.string.action_clear)
+            isFocusable = false
+            visibility = View.GONE
+            val pad = context.dp(6)
+            setPadding(pad, pad, pad, pad)
+            setOnClickListener {
+                search.setText("")
+                cancelPendingSearch()
+                applySearch("")
+            }
+        }
+        searchBox.addView(
+            clearBtn,
+            LinearLayout.LayoutParams(context.dp(32), context.dp(32)).apply {
+                marginStart = context.dp(UiDimens.SPACE_XS)
+            },
+        )
+        card.addView(
+            searchBox,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = context.dp(10) },
+        )
 
-        val pickerAdapter = PickerAdapter(context, dp(40), dp(12), dp(10))
+        val pickerAdapter = PickerAdapter(
+            context = context,
+            iconSize = context.dp(40),
+            rowPadH = context.dp(UiDimens.SPACE_MD),
+            rowPadV = context.dp(10),
+            headerColor = ThemePack.accentTextColor(accentColor, surfaceColor),
+        )
         val list = RecyclerView(context).apply {
             val lm = LinearLayoutManager(context)
             layoutManager = lm
@@ -181,14 +381,25 @@ class AppPicker(
         // long-press listener (hide menu) makes rows consume touches.
         val empty = TextView(context).apply {
             setText(R.string.browse_no_matches_short)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(0x66FFFFFF)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(UiDimens.ALPHA_MUTED)
             gravity = Gravity.CENTER
         }
-        card.addView(list, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        card.addView(empty, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        card.addView(
+            list,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
+        card.addView(
+            empty,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
+        card.addView(
+            OverlayPrimitives.modalHintFooter(context, R.string.deck_hint_folder_close),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
 
         recycler = list
         layoutManager = list.layoutManager as LinearLayoutManager
@@ -200,12 +411,16 @@ class AppPicker(
         val metrics = context.resources.displayMetrics
         // Top-anchored. Slot pickers stay short so the IME does not cover
         // results; the swipe-up drawer uses a taller card and no auto-IME.
-        overlay.addView(card, FrameLayout.LayoutParams(
-            minOf(dp(600), (metrics.widthPixels * 0.85f).toInt()),
-            (metrics.heightPixels * heightFraction).toInt(),
-            Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-            topMargin = dp(16)
-        })
+        overlay.addView(
+            card,
+            FrameLayout.LayoutParams(
+                cardWidth,
+                (metrics.heightPixels * heightFraction).toInt(),
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL,
+            ).apply {
+                topMargin = context.dp(UiDimens.SPACE_LG)
+            },
+        )
         // Only auto-focus search when requested (slot "Add to …" pickers).
         // The all-apps drawer leaves focus on the list so the keyboard does
         // not flash open/closed on every swipe-up.
@@ -234,60 +449,96 @@ class AppPicker(
             Action.PAGE_PREV -> moveHighlight(-5)
             Action.PAGE_NEXT -> moveHighlight(5)
             Action.CONFIRM -> when (val item = items.getOrNull(highlight)) {
-                is PickerItem.App -> onPick(item.entry.packageName)
-                is PickerItem.Rom -> onPick(SlotKey.rom(item.entry.id))
+                is PickerItem.App -> {
+                    cancelPendingSearch()
+                    onPick(item.entry.packageName)
+                }
+                is PickerItem.Rom -> {
+                    cancelPendingSearch()
+                    onPick(SlotKey.rom(item.entry.id))
+                }
                 else -> {}
             }
-            Action.BACK -> onClose()
+            Action.BACK -> {
+                cancelPendingSearch()
+                onClose()
+            }
             else -> {}
         }
         return true // the modal swallows every action while open
     }
 
-    // The highlight only ever rests on data rows: section headers are
-    // skipped in both directions.
+    // The highlight only ever rests on data rows: section headers are skipped
+    // in both directions, and only the previous + next positions are notified.
     private fun moveHighlight(delta: Int) {
-        if (items.isEmpty()) return
-        var next = highlight
-        val step = if (delta > 0) 1 else -1
-        var remaining = kotlin.math.abs(delta)
-        while (remaining > 0) {
-            val candidate = next + step
-            if (candidate !in items.indices) break
-            next = candidate
-            if (items[next] !is PickerItem.Header) remaining--
+        val move = AppPickerHighlight.move(items, highlight, delta)
+        if (move.changedPositions.isEmpty()) return
+        highlight = move.current
+        move.changedPositions.forEach { pos ->
+            if (pos in items.indices) {
+                adapter?.notifyItemChanged(pos, PAYLOAD_HIGHLIGHT)
+            }
         }
-        if (next == highlight || items[next] is PickerItem.Header) return
-        highlight = next
-        adapter?.notifyItemRangeChanged(0, items.size, PAYLOAD_HIGHLIGHT)
         val list = recycler ?: return
         val lm = layoutManager
         val first = lm?.findFirstVisibleItemPosition() ?: 0
         val last = lm?.findLastVisibleItemPosition() ?: 0
-        if (next < first || next > last) {
-            list.smoothScrollToPosition(next)
+        if (move.current < first || move.current > last) {
+            list.smoothScrollToPosition(move.current)
         }
     }
 
-    // Moves the accent ring to the highlighted row by updating the visible
-    // rows in place; rows (re)attached while scrolling are bound with the
-    // current highlight by getView.
     private fun refreshEmpty() {
-        val none = items.isEmpty()
+        val selectable = AppPickerHighlight.selectableCount(items)
+        val none = selectable == 0
         emptyView?.visibility = if (none) View.VISIBLE else View.GONE
         recycler?.visibility = if (none) View.GONE else View.VISIBLE
+        countBadge?.text = activity.resources.getQuantityString(
+            R.plurals.count_items,
+            selectable,
+            selectable,
+        )
     }
 
-    // Long-press an app row opens the confirm menu ("Hide app" / "Cancel")
-    // for that entry; the menu sits on top of the picker overlay. ROM rows
-    // have no hide menu (hiding stays apps-only).
+    @Suppress("DEPRECATION") // Picker haptics intentionally override OS touch feedback.
+    private fun performPickHaptic(row: View) {
+        if (app.settings.haptics) {
+            row.performHapticFeedback(
+                HapticFeedbackConstants.VIRTUAL_KEY,
+                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+            )
+        }
+    }
+
+    // Long-press an app row opens a destructive SlotMenu ("Hide from library" /
+    // "Cancel") for that entry on top of the picker overlay. ROM rows stay
+    // apps-only for hide.
     private fun openHideMenu(entry: AppEntry) {
         if (hideMenu != null) return
         val overlay = overlayView ?: return
-        val menu = HideMenu(entry)
+        val menu = SlotMenu(
+            context = activity,
+            accentColor = accentColor,
+            rows = listOf(
+                SlotMenu.Row.Item(SlotMenu.Choice.HIDE, destructive = true),
+                SlotMenu.Row.Item(SlotMenu.Choice.CANCEL),
+            ),
+            title = entry.label,
+        ) { choice ->
+            closeHideMenu()
+            if (choice == SlotMenu.Choice.HIDE) {
+                cancelPendingSearch()
+                onHide(entry.packageName)
+            }
+        }
         hideMenu = menu
-        overlay.addView(menu.view, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        overlay.addView(
+            menu.view,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
     }
 
     private fun closeHideMenu() {
@@ -296,96 +547,8 @@ class AppPicker(
     }
 
     companion object {
-        private const val SEARCH_DEBOUNCE_MS = 110L
+        private const val SEARCH_DEBOUNCE_MS = 60L
         private const val PAYLOAD_HIGHLIGHT = "highlight"
-    }
-
-    // Confirm-style modal for a picker row: "Hide app" adds the package to
-    // settings.hiddenPackages (via onHide) so it leaves the picker and the
-    // all-apps lists; a grid slot that already holds it stays launchable.
-    private inner class HideMenu(private val entry: AppEntry) {
-        private val choices = intArrayOf(R.string.action_hide, R.string.action_cancel)
-        private var selection = 0
-        private val rows = mutableListOf<TextView>()
-
-        val view: View by lazy {
-            val density = activity.resources.displayMetrics.density
-            fun dp(value: Int) = (value * density).toInt()
-
-            val menuOverlay = FrameLayout(activity).apply {
-                setBackgroundColor(0x99000000.toInt())
-                isClickable = true
-                setOnClickListener { closeHideMenu() }
-            }
-            val card = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                background = TileBackgrounds.card(activity)
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-            }
-            card.addView(TextView(activity).apply {
-                text = entry.label
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(0x99FFFFFF.toInt())
-                gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(24), 0, dp(24), dp(4))
-            }, LinearLayout.LayoutParams(
-                dp(220), ViewGroup.LayoutParams.WRAP_CONTENT))
-            choices.forEachIndexed { index, labelRes ->
-                val row = TextView(activity).apply {
-                    setText(labelRes)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-                    setTextColor(0xFFFFFFFF.toInt())
-                    gravity = Gravity.CENTER
-                    setPadding(dp(24), dp(12), dp(24), dp(12))
-                    setOnClickListener { choose(index) }
-                }
-                rows.add(row)
-                card.addView(row, LinearLayout.LayoutParams(
-                    dp(220), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = dp(4); bottomMargin = dp(4)
-                })
-            }
-            paintRows()
-            menuOverlay.addView(card, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER))
-            menuOverlay
-        }
-
-        private fun choose(index: Int) {
-            closeHideMenu()
-            if (index == 0) onHide(entry.packageName)
-        }
-
-        private fun paintRows() {
-            rows.forEachIndexed { index, row ->
-                row.background = if (index == selection) {
-                    TileBackgrounds.selected(activity, accentColor)
-                } else {
-                    null
-                }
-            }
-        }
-
-        fun handleAction(action: Action): Boolean {
-            when (action) {
-                Action.NAV_UP -> {
-                    selection = (selection + choices.size - 1) % choices.size
-                    paintRows()
-                }
-                Action.NAV_DOWN -> {
-                    selection = (selection + 1) % choices.size
-                    paintRows()
-                }
-                Action.CONFIRM -> choose(selection)
-                Action.BACK -> closeHideMenu()
-                else -> {}
-            }
-            return true
-        }
     }
 
     // Row views are recycled (the ROM section can hold thousands of rows):
@@ -409,8 +572,10 @@ class AppPicker(
         private val iconSize: Int,
         private val rowPadH: Int,
         private val rowPadV: Int,
+        private val headerColor: Int,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var rows: List<PickerItem> = emptyList()
+        private val locale = context.resources.configuration.locales[0]
 
         init {
             setHasStableIds(true)
@@ -432,16 +597,17 @@ class AppPicker(
             if (rows[position] is PickerItem.Header) 0 else 1
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-            val density = context.resources.displayMetrics.density
-            fun dp(value: Int) = (value * density).toInt()
             if (viewType == 0) {
                 val header = TextView(context).apply {
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    setTextColor(0x66FFFFFF)
-                    setPadding(rowPadH, dp(10), rowPadH, dp(2))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextColor(headerColor)
+                    setTypeface(typeface, Typeface.BOLD)
+                    letterSpacing = 0.12f
+                    setPadding(rowPadH, context.dp(12), rowPadH, context.dp(UiDimens.SPACE_XS))
                     layoutParams = RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT)
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    )
                 }
                 return HeaderVH(header)
             }
@@ -451,27 +617,34 @@ class AppPicker(
                 setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT)
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
             }
             val thumb = FrameLayout(context)
             row.addView(thumb, LinearLayout.LayoutParams(iconSize, iconSize))
             val name = TextView(context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_PRIMARY)
                 maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(12), 0, dp(8), 0)
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(context.dp(UiDimens.SPACE_MD), 0, context.dp(UiDimens.SPACE_SM), 0)
             }
-            row.addView(name, LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(
+                name,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
             val tag = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(0x66FFFFFF)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextColor(UiDimens.ALPHA_MUTED)
                 maxLines = 1
             }
-            row.addView(tag, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT))
+            row.addView(
+                tag,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
             return RowVH(row, RowHolder(thumb, name, tag))
         }
 
@@ -487,14 +660,15 @@ class AppPicker(
             onBindViewHolder(holder, position)
         }
 
-        @Suppress("DEPRECATION") // Picker haptics intentionally override OS touch feedback.
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val item = rows[position]
             if (holder is HeaderVH && item is PickerItem.Header) {
-                holder.text.setText(
-                    if (item.section == PickerItem.Header.Section.APPS) R.string.label_apps
-                    else R.string.label_roms,
-                )
+                val res = if (item.section == PickerItem.Header.Section.APPS) {
+                    R.string.label_apps
+                } else {
+                    R.string.label_roms
+                }
+                holder.text.text = context.getString(res).uppercase(locale)
                 holder.text.background = null
                 return
             }
@@ -519,11 +693,8 @@ class AppPicker(
                     cells.name.text = item.entry.label
                     cells.tag.text = ""
                     row.setOnClickListener {
-                        if (app.settings.haptics) {
-                            row.performHapticFeedback(
-                                HapticFeedbackConstants.VIRTUAL_KEY,
-                                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING)
-                        }
+                        performPickHaptic(row)
+                        cancelPendingSearch()
                         onPick(item.entry.packageName)
                     }
                     row.setOnLongClickListener {
@@ -549,7 +720,11 @@ class AppPicker(
                     cells.thumb.tag = "r:$pid"
                     cells.name.text = item.entry.name
                     cells.tag.text = Platforms.byId(pid)?.displayName ?: pid
-                    row.setOnClickListener { onPick(SlotKey.rom(item.entry.id)) }
+                    row.setOnClickListener {
+                        performPickHaptic(row)
+                        cancelPendingSearch()
+                        onPick(SlotKey.rom(item.entry.id))
+                    }
                     row.setOnLongClickListener(null)
                     row.isLongClickable = false
                 }
