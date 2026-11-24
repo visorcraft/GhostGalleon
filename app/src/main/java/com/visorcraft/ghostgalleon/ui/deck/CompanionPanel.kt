@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
@@ -15,6 +16,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -25,6 +27,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -120,6 +123,7 @@ object CompanionPanel {
     private const val TAG_HERO_METADATA = "hero_metadata"
     private const val TAG_HERO_PLAYER = "hero_player"
     private const val TAG_HERO_RA = "hero_ra"
+    private const val TAG_HERO_RA_BAR = "hero_ra_bar"
     private const val TAG_HERO_DESC = "hero_desc"
     private const val TAG_HERO_SHOT = "hero_shot"
     private const val TAG_HERO_VIDEO = "hero_video"
@@ -740,6 +744,7 @@ object CompanionPanel {
         ) {
             return hit
         }
+        val (focalColor, ambientColor) = CompanionHeroStyle.panelGlowColors(glowColor)
         val gradient = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(
@@ -748,22 +753,90 @@ object CompanionPanel {
                 0xFF000000.toInt(),
             ),
         )
-        val glow = GradientDrawable().apply {
+        val ambientGlow = GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
-            colors = intArrayOf(
-                (glowColor and 0x00FFFFFF) or (0x2E shl 24),
-                Color.TRANSPARENT,
-            )
+            colors = intArrayOf(ambientColor, Color.TRANSPARENT)
             setGradientCenter(0.5f, 0.45f)
             gradientRadius = maxOf(w, h) * 0.8f
         }
-        return LayerDrawable(arrayOf(gradient, glow)).also {
+        val focalHalo = GradientDrawable().apply {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            colors = intArrayOf(focalColor, Color.TRANSPARENT)
+            setGradientCenter(0.5f, 0.34f)
+            gradientRadius = minOf(w, h) * 0.46f
+        }
+        return LayerDrawable(arrayOf(gradient, ambientGlow, focalHalo)).also {
             cachedPanelGlow = glowColor
             cachedPanelLift = lift
             cachedPanelW = w
             cachedPanelH = h
             cachedPanelBg = it
         }
+    }
+
+    private val heroSettleInterpolator = DecelerateInterpolator()
+
+    /**
+     * Frame rectangular hero cover art with rounded elevation shadow (platform-tinted
+     * on API 28+) and a crisp 1dp specular hairline foreground rim. Updates strictly
+     * in-place without interfering with [ArtTile] background backing.
+     */
+    private fun applyHeroArtFrame(
+        target: View,
+        accentColor: Int,
+        elevationDp: Float,
+        cornerRadiusDp: Int = CompanionHeroStyle.ART_CORNER_RADIUS_DP,
+    ) {
+        val context = target.context
+        val radiusPx = context.dpF(cornerRadiusDp)
+        target.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+            }
+        }
+        target.elevation = context.dpF(elevationDp)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val shadow = CompanionHeroStyle.artShadowColor(accentColor)
+            target.outlineSpotShadowColor = shadow
+            target.outlineAmbientShadowColor = shadow
+        }
+        val rimColor = CompanionHeroStyle.artRimColor(accentColor)
+        val rim = (target.foreground as? GradientDrawable)?.mutate() as? GradientDrawable
+            ?: GradientDrawable().also { target.foreground = it }
+        rim.setColor(Color.TRANSPARENT)
+        rim.cornerRadius = radiusPx
+        rim.setStroke(context.strokePx(1), rimColor)
+    }
+
+    private fun animateHeroTextSettle(view: View, density: Float) {
+        view.animate().cancel()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            view.alpha = 1f
+            view.translationY = 0f
+            return
+        }
+        view.alpha = CompanionHeroStyle.HERO_START_ALPHA
+        view.translationY = CompanionHeroStyle.HERO_SETTLE_TRANSLATION_DP * density
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(CompanionHeroStyle.HERO_CROSSFADE_MS)
+            .setInterpolator(heroSettleInterpolator)
+            .start()
+    }
+
+    private fun animateHeroArtSettle(view: View) {
+        view.animate().cancel()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            view.alpha = 1f
+            return
+        }
+        view.alpha = CompanionHeroStyle.ART_START_ALPHA
+        view.animate()
+            .alpha(1f)
+            .setDuration(CompanionHeroStyle.HERO_CROSSFADE_MS)
+            .setInterpolator(heroSettleInterpolator)
+            .start()
     }
 
     // Cheap Palette stand-in: draw the icon at 16x16 and average the opaque
@@ -901,17 +974,21 @@ object CompanionPanel {
                 rom.id,
                 artGen,
             )
+            val dens = context.resources.displayMetrics.density
+            val hDp = context.resources.displayMetrics.heightPixels / dens
+            val heroSpec = CompanionHeroMetrics.forPanel(hDp)
+            val platformAccent = PlatformLook.accentColor(rom.platformId)
+            val previousName = name.text
             if (!alreadyBound) {
                 PlatformTile.restyle(tile, context, rom.platformId)
             }
             // Rebind the art chain only when the ROM or cache generation
             // changed (NAV same-title skip; scrape / SET_ART still refresh).
             if (!alreadyBound) {
-                val dens = context.resources.displayMetrics.density
-                val hDp = context.resources.displayMetrics.heightPixels / dens
-                val artPx = (
-                    CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens
-                    ).toInt()
+                val artPx = (heroSpec.artSizeDp * dens).toInt()
+                val artElevation = CompanionHeroStyle.artElevationDp(heroSpec.artSizeDp)
+                applyHeroArtFrame(tileFrame, platformAccent, artElevation)
+                applyHeroArtFrame(banner, platformAccent, artElevation)
                 bindRomHeroArt(
                     banner,
                     tileFrame,
@@ -920,6 +997,7 @@ object CompanionPanel {
                     settings.artOverrides,
                     artPx,
                 )
+                animateHeroArtSettle(tileFrame)
                 bindHeroLogo(
                     view.findViewWithTag(TAG_HERO_LOGO),
                     cache,
@@ -928,9 +1006,15 @@ object CompanionPanel {
             }
             name.setTag(R.id.hero_bound_id, rom.id)
             name.setTag(R.id.hero_art_gen, artGen)
-            name.text = com.visorcraft.ghostgalleon.settings.RomNames.display(
+            val nextName = com.visorcraft.ghostgalleon.settings.RomNames.display(
                 rom, settings.romNames,
             )
+            val animateText = CompanionHeroStyle.shouldAnimateSelection(
+                alreadyBound = alreadyBound,
+                previousText = previousName,
+                nextText = nextName,
+            )
+            name.text = nextName
             val platform = Platforms.byId(rom.platformId)
             val installed = { pkg: String -> context.packageManager.isInstalled(pkg) }
             val preferred = RomProfiles.preferredPlayerId(
@@ -944,14 +1028,22 @@ object CompanionPanel {
                 romMetaLine(settings, SlotKey.rom(rom.id)),
                 HeroDetail.playerShortName(platform, preferred, installed),
             ))
+            if (animateText) {
+                animateHeroTextSettle(name, dens)
+                animateHeroTextSettle(sub, dens)
+            }
             view.findViewWithTag<TextView>(TAG_HERO_META)?.visibility = View.GONE
             view.findViewWithTag<TextView>(TAG_HERO_PLAYER)?.visibility = View.GONE
             bindMetadataLine(view.findViewWithTag(TAG_HERO_METADATA), rom)
             val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
+            val raProgress = appCtx.raProgressFor(rom.id)
+            val hasRaCreds = !settings.raApiKey.isNullOrBlank()
             bindRaLine(
-                view.findViewWithTag(TAG_HERO_RA),
-                appCtx.raProgressFor(rom.id),
-                !settings.raApiKey.isNullOrBlank(),
+                tv = view.findViewWithTag(TAG_HERO_RA),
+                bar = view.findViewWithTag(TAG_HERO_RA_BAR),
+                progress = raProgress,
+                hasCreds = hasRaCreds,
+                accentColor = settings.accentColor,
             )
             val desc = HeroDetail.descriptionText(rom.description)
             view.findViewWithTag<TextView>(TAG_HERO_DESC)?.let { tv ->
@@ -973,7 +1065,7 @@ object CompanionPanel {
             }
             if (!alreadyBound) {
                 view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background =
-                    panelBackground(context, PlatformLook.accentColor(rom.platformId))
+                    panelBackground(context, platformAccent)
                 appCtx.requestRaProgress(rom.id, rom.name)
             }
             val romKey = SlotKey.rom(rom.id)
@@ -1007,14 +1099,20 @@ object CompanionPanel {
         val hDp = context.resources.displayMetrics.heightPixels / dens
         val targetPx = (CompanionHeroMetrics.forPanel(hDp).artSizeDp * dens).toInt()
         val appCtx = app ?: (context.applicationContext as GhostGalleonApp)
-        if (name.getTag(R.id.hero_bound_id) != entry.packageName) {
+        val appAlreadyBound = name.getTag(R.id.hero_bound_id) == entry.packageName
+        val previousAppName = name.text
+        if (!appAlreadyBound) {
             CustomIcon.bind(
                 icon, iconLoader(context),
                 appCtx.artCache,
                 settings, entry.packageName, targetPx)
+            animateHeroArtSettle(icon)
         }
         name.setTag(R.id.hero_bound_id, entry.packageName)
         name.text = entry.label
+        if (CompanionHeroStyle.shouldAnimateSelection(appAlreadyBound, previousAppName, entry.label)) {
+            animateHeroTextSettle(name, dens)
+        }
         // Cached glow (no PM + 16×16 average every NAV).
         view.findViewWithTag<View>(TAG_PANEL_ROOT)?.background = panelBackground(
             context,
@@ -1179,15 +1277,57 @@ object CompanionPanel {
         }
     }
 
-    private fun bindRaLine(tv: TextView?, progress: com.visorcraft.ghostgalleon.library.RaProgress?, hasCreds: Boolean) {
-        if (tv == null) return
-        val line = RetroAchievements.heroLine(progress, hasCreds)
-        if (line != null) {
-            tv.visibility = View.VISIBLE
-            tv.text = tv.context.resolveText(line)
-        } else {
-            tv.visibility = View.GONE
-            tv.text = ""
+    private fun bindRaLine(
+        tv: TextView?,
+        bar: MeterBarView?,
+        progress: com.visorcraft.ghostgalleon.library.RaProgress?,
+        hasCreds: Boolean,
+        accentColor: Int,
+    ) {
+        if (tv != null) {
+            val line = RetroAchievements.heroLine(progress, hasCreds)
+            if (line != null) {
+                tv.visibility = View.VISIBLE
+                tv.text = tv.context.resolveText(line)
+                val meter = CompanionHeroStyle.raMeterState(
+                    progress = progress,
+                    hasCredentials = hasCreds,
+                    accentColor = accentColor,
+                    surfaceColor = TileBackgrounds.surfaceColor(tv.context),
+                )
+                tv.setTextColor(meter.fillColor)
+            } else {
+                tv.visibility = View.GONE
+                tv.text = ""
+            }
+        }
+        bindRaMeter(bar, progress, hasCreds, accentColor)
+    }
+
+    private fun bindRaMeter(
+        bar: MeterBarView?,
+        progress: com.visorcraft.ghostgalleon.library.RaProgress?,
+        hasCreds: Boolean,
+        accentColor: Int,
+    ) {
+        if (bar == null) return
+        val sunken = TileBackgrounds.surfaceSunken(bar.context)
+        val meter = CompanionHeroStyle.raMeterState(
+            progress = progress,
+            hasCredentials = hasCreds,
+            accentColor = accentColor,
+            surfaceColor = sunken,
+        )
+        if (meter.visible) {
+            bar.setProgress(
+                fraction = meter.fraction,
+                fillColor = meter.fillColor,
+                trackColor = sunken,
+                borderColor = TileBackgrounds.hairlineDivider(bar.context),
+            )
+            if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
+        } else if (bar.visibility != View.GONE) {
+            bar.visibility = View.GONE
         }
     }
 
@@ -2029,7 +2169,11 @@ object CompanionPanel {
             // otherwise the square tile — cached grid art over the platform
             // placeholder — then ROM name and platform label.
             val cache = (activity.application as GhostGalleonApp).artCache
-            val banner = bannerFrame(context)
+            val platformAccent = PlatformLook.accentColor(selectedRom.platformId)
+            val artElevation = CompanionHeroStyle.artElevationDp(heroSpec.artSizeDp)
+            val banner = bannerFrame(context).also {
+                applyHeroArtFrame(it, platformAccent, artElevation)
+            }
             val bannerH = CompanionHeroMetrics.bannerHeightPx(dm.heightPixels, heroSpec)
             hero.addView(banner, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2045,6 +2189,7 @@ object CompanionPanel {
                 // decode that the rebind immediately obsoletes.
                 bindNow = false,
             ) as FrameLayout
+            applyHeroArtFrame(artFrame, platformAccent, artElevation)
             // updateSelection finds the placeholder tile by this tag for
             // in-place restyle; the art overlay sits next to it in the frame.
             artFrame.children.filterIsInstance<TextView>().first().tag = TAG_HERO_ICON
@@ -2141,25 +2286,39 @@ object CompanionPanel {
                 tag = TAG_HERO_PLAYER
                 visibility = View.GONE
             })
-            val raLine = RetroAchievements.heroLine(
-                app.raProgressFor(selectedRom.id),
-                !settings.raApiKey.isNullOrBlank(),
-            )
-            hero.addView(TextView(context).apply {
+            val raProgress = app.raProgressFor(selectedRom.id)
+            val hasRaCreds = !settings.raApiKey.isNullOrBlank()
+            val raTv = TextView(context).apply {
                 tag = TAG_HERO_RA
-                text = raLine?.let(context::resolveText).orEmpty()
-                visibility = if (raLine != null) View.VISIBLE else View.GONE
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(
-                    ThemePack.accentTextColor(
-                        settings.accentColor,
-                        TileBackgrounds.surfaceColor(context),
-                    ),
-                )
                 gravity = Gravity.CENTER
                 maxLines = 1
+                fontFeatureSettings = "tnum"
                 setPadding(0, dp(2), 0, 0)
-            })
+            }
+            hero.addView(raTv)
+            val raBar = MeterBarView(context).apply {
+                tag = TAG_HERO_RA_BAR
+                visibility = View.GONE
+            }
+            val compactHero = panelHeightDp < 600f
+            hero.addView(
+                raBar,
+                LinearLayout.LayoutParams(
+                    dp(CompanionHeroStyle.raBarWidthDp(compactHero)),
+                    dp(CompanionHeroStyle.RA_BAR_HEIGHT_DP),
+                ).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(3)
+                },
+            )
+            bindRaLine(
+                tv = raTv,
+                bar = raBar,
+                progress = raProgress,
+                hasCreds = hasRaCreds,
+                accentColor = settings.accentColor,
+            )
             val descText = HeroDetail.descriptionText(selectedRom.description)
             hero.addView(TextView(context).apply {
                 tag = TAG_HERO_DESC

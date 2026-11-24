@@ -165,4 +165,20 @@ object CompanionHeroMetrics {
     /** Column span for item [index] in a 2-column PERF_HUD metric card grid. */
     fun perfCardColumnSpan(index: Int, totalCount: Int): Int =
         if (totalCount > 0 && totalCount % 2 == 1 && index == totalCount - 1) 2 else 1
+
+    /**
+     * Conservative vertical budget estimate (dp) for the companion hero stack
+     * (role bar + art + 2-line title + compact subline + RA line/meter + quick
+     * chips + hint bar) so short ~540dp Sugar panels never clip mid-glyph.
+     */
+    fun estimatedHeroStackDp(spec: Spec, includeRaBar: Boolean = true): Int {
+        val roleBarAndTopPad = 56
+        val titleLinesDp = (spec.nameSp * 1.25f * spec.nameMaxLines).toInt() + spec.nameTopPadDp + 4
+        val sublineDp = 24
+        val raDp = if (includeRaBar) 24 else 18
+        val quickChipsDp = if (spec.showQuickChips) 44 else 0
+        val hintBarDp = 36
+        return roleBarAndTopPad + spec.artSizeDp + titleLinesDp + sublineDp + raDp +
+            quickChipsDp + hintBarDp
+    }
 }
