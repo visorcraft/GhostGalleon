@@ -159,4 +159,60 @@ class PlayHudMetricsTest {
             )
         }
     }
+
+    @Test
+    fun `theaterBorderColor prioritizes gold on ticker or mastery and formatCheevoLine appends points`() {
+        val hairline = ThemePack.HAIRLINE_LIGHT
+        assertEquals(
+            PlayHudMetrics.THEATER_GOLD_BORDER,
+            PlayHudMetrics.theaterBorderColor(tickerOn = true, mastered = false, restingHairline = hairline),
+        )
+        assertEquals(
+            PlayHudMetrics.THEATER_GOLD_BORDER,
+            PlayHudMetrics.theaterBorderColor(tickerOn = false, mastered = true, restingHairline = hairline),
+        )
+        assertEquals(
+            PlayHudMetrics.THEATER_GOLD_BORDER,
+            PlayHudMetrics.theaterBorderColor(tickerOn = true, mastered = true, restingHairline = hairline),
+        )
+        assertEquals(
+            hairline,
+            PlayHudMetrics.theaterBorderColor(tickerOn = false, mastered = false, restingHairline = hairline),
+        )
+
+        assertEquals("First Boss · 10", PlayHudMetrics.formatCheevoLine("First Boss", 10))
+        assertEquals("First Boss", PlayHudMetrics.formatCheevoLine("First Boss", 0))
+        assertEquals("First Boss", PlayHudMetrics.formatCheevoLine("  First Boss  ", -5))
+        assertEquals("", PlayHudMetrics.formatCheevoLine("   ", 25))
+    }
+
+    @Test
+    fun `sessionPillNeedsRestyle detects state flips and compact horizontal header fits within 120dp`() {
+        assertEquals(true, PlayHudMetrics.sessionPillNeedsRestyle(prevActive = null, nextActive = true))
+        assertEquals(true, PlayHudMetrics.sessionPillNeedsRestyle(prevActive = true, nextActive = false))
+        assertEquals(true, PlayHudMetrics.sessionPillNeedsRestyle(prevActive = false, nextActive = true))
+        assertEquals(false, PlayHudMetrics.sessionPillNeedsRestyle(prevActive = true, nextActive = true))
+        assertEquals(false, PlayHudMetrics.sessionPillNeedsRestyle(prevActive = false, nextActive = false))
+
+        val compactBudget = PlayHudMetrics.compactHeaderHeightBudgetDp()
+        assertTrue(
+            "Compact horizontal Play HUD header ($compactBudget dp) must stay <= 120dp",
+            compactBudget <= 120,
+        )
+    }
+
+    @Test
+    fun `handleStyle distinguishes expanded accent tint from collapsed translucent pill`() {
+        for (pack in ThemePack.BUILTINS) {
+            val expanded = PlayHudMetrics.handleStyle(expanded = true, accentColor = pack.accentColor)
+            val collapsed = PlayHudMetrics.handleStyle(expanded = false, accentColor = pack.accentColor)
+            assertEquals(pack.accentColor and 0x00FFFFFF, expanded.color and 0x00FFFFFF)
+            assertEquals(PlayHudMetrics.HUD_HANDLE_COLLAPSED_COLOR, collapsed.color)
+            assertTrue(expanded.alpha > collapsed.alpha)
+            assertNotEquals(expanded.color, collapsed.color)
+        }
+        assertTrue(PlayHudMetrics.HUD_HANDLE_TOUCH_HEIGHT_DP >= 44)
+        assertEquals(28, PlayHudMetrics.HUD_HANDLE_WIDTH_DP)
+        assertEquals(4, PlayHudMetrics.HUD_HANDLE_HEIGHT_DP)
+    }
 }

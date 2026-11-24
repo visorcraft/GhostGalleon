@@ -139,4 +139,58 @@ class PerfHudMetricsTest {
         assertEquals(PerfHudMetrics.COLOR_WARN, PerfHudMetrics.valueTextColor(Severity.WARN))
         assertEquals(PerfHudMetrics.COLOR_CRITICAL, PerfHudMetrics.valueTextColor(Severity.CRITICAL))
     }
+
+    @Test
+    fun `shouldAnimateMeterDelta lerpFraction and shouldDrawLeadingCap gate MeterBarView smoothly`() {
+        // First bind, reduced motion, detached, and sub-1% noise deltas all bypass animation.
+        assertEquals(
+            false,
+            PerfHudMetrics.shouldAnimateMeterDelta(0f, 0.5f, hasInitialized = false, animatorsEnabled = true, attached = true),
+        )
+        assertEquals(
+            false,
+            PerfHudMetrics.shouldAnimateMeterDelta(0.2f, 0.5f, hasInitialized = true, animatorsEnabled = false, attached = true),
+        )
+        assertEquals(
+            false,
+            PerfHudMetrics.shouldAnimateMeterDelta(0.2f, 0.5f, hasInitialized = true, animatorsEnabled = true, attached = false),
+        )
+        assertEquals(
+            false,
+            PerfHudMetrics.shouldAnimateMeterDelta(0.50f, 0.505f, hasInitialized = true, animatorsEnabled = true, attached = true),
+        )
+        assertEquals(
+            true,
+            PerfHudMetrics.shouldAnimateMeterDelta(0.50f, 0.55f, hasInitialized = true, animatorsEnabled = true, attached = true),
+        )
+
+        assertEquals(0.2f, PerfHudMetrics.lerpFraction(0.2f, 0.8f, -0.5f), 0.001f)
+        assertEquals(0.5f, PerfHudMetrics.lerpFraction(0.2f, 0.8f, 0.5f), 0.001f)
+        assertEquals(0.8f, PerfHudMetrics.lerpFraction(0.2f, 0.8f, 1.5f), 0.001f)
+        assertEquals(1.0f, PerfHudMetrics.lerpFraction(0.5f, 1.4f, 1.0f), 0.001f)
+
+        assertEquals(false, PerfHudMetrics.shouldDrawLeadingCap(0f))
+        assertEquals(false, PerfHudMetrics.shouldDrawLeadingCap(0.04f))
+        assertEquals(true, PerfHudMetrics.shouldDrawLeadingCap(0.05f))
+        assertEquals(true, PerfHudMetrics.shouldDrawLeadingCap(0.50f))
+        assertEquals(true, PerfHudMetrics.shouldDrawLeadingCap(0.99f))
+        assertEquals(false, PerfHudMetrics.shouldDrawLeadingCap(1.0f))
+    }
+
+    @Test
+    fun `cardBorderColor tints warn and critical cards while preserving resting hairline for nominal rows`() {
+        val hairline = ThemePack.HAIRLINE_LIGHT
+        assertEquals(hairline, PerfHudMetrics.cardBorderColor(null, hairline))
+        assertEquals(hairline, PerfHudMetrics.cardBorderColor(Severity.GOOD, hairline))
+
+        val warnBorder = PerfHudMetrics.cardBorderColor(Severity.WARN, hairline)
+        assertEquals(PerfHudMetrics.CARD_WARN_BORDER_ALPHA, (warnBorder ushr 24) and 0xFF)
+        assertEquals(PerfHudMetrics.COLOR_WARN and 0x00FFFFFF, warnBorder and 0x00FFFFFF)
+
+        val critBorder = PerfHudMetrics.cardBorderColor(Severity.CRITICAL, hairline)
+        assertEquals(PerfHudMetrics.CARD_CRITICAL_BORDER_ALPHA, (critBorder ushr 24) and 0xFF)
+        assertEquals(PerfHudMetrics.COLOR_CRITICAL and 0x00FFFFFF, critBorder and 0x00FFFFFF)
+        assertTrue(PerfHudMetrics.SKELETON_CARD_COUNT >= 4)
+        assertTrue(PerfHudMetrics.SCROLL_FADE_EDGE_DP >= 16)
+    }
 }

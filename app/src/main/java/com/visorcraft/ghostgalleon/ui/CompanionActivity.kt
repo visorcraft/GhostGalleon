@@ -402,6 +402,7 @@ internal fun tickPlayHudClock(root: View?, app: GhostGalleonApp, activity: Conte
     if (PlayHostPolicy.playHudClockNeedsWrite(clock.text, next)) {
         clock.text = next
     }
+    CompanionPanel.syncPlayHudSessionPill(clock, session.isActive)
     CompanionPanel.tickPlayHudRa(root, app, activity)
     if (PlayHostPolicy.seatChromeTickAllowed(app.hostSurface)) {
         CompanionPanel.applySeatChrome(root, app)

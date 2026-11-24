@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.system.SystemReadings
 import com.visorcraft.ghostgalleon.ui.UiDimens
 
@@ -52,6 +53,32 @@ object PerfHudMetrics {
 
     /** Diameter (dp) of the subtle semantic status dot in metered card headers. */
     const val STATUS_DOT_DP: Int = 6
+
+    /** Duration (ms) for smooth allocation-free [MeterBarView] progress interpolation. */
+    const val METER_ANIM_MS: Long = 180L
+
+    /** Minimum fraction delta (1%) required to animate [MeterBarView] changes. */
+    const val METER_MIN_ANIM_DELTA: Float = 0.01f
+
+    /** Active partial-fill range showing the crisp leading-edge specular cap. */
+    const val METER_CAP_MIN_FRACTION: Float = 0.05f
+    const val METER_CAP_MAX_FRACTION: Float = 0.99f
+
+    /** Width (dp) of the leading-edge specular cap on active partial meters. */
+    const val METER_CAP_WIDTH_DP: Float = 1.5f
+
+    /** Bright translucent sheen for the leading-edge cap on partial meters. */
+    const val METER_CAP_COLOR: Int = 0xB3FFFFFF.toInt()
+
+    /** Vertical fading-edge length (dp) on `PERF_HUD`'s ScrollView. */
+    const val SCROLL_FADE_EDGE_DP: Int = 16
+
+    /** Calm skeleton card count shown before the first off-UI `PERF_HUD` collection lands. */
+    const val SKELETON_CARD_COUNT: Int = 4
+
+    /** Alpha for elevated warning / critical severity card border tints. */
+    const val CARD_WARN_BORDER_ALPHA: Int = 0x66
+    const val CARD_CRITICAL_BORDER_ALPHA: Int = 0x88
 
     /** Resolve an optional visual meter for a [SystemInfoFormat.rows] entry by its label resource id. */
     fun meterForRow(label: UiText, readings: SystemReadings): MeterSpec? {
@@ -132,4 +159,45 @@ object PerfHudMetrics {
         Severity.CRITICAL -> COLOR_CRITICAL
         Severity.GOOD, null -> UiDimens.ALPHA_PRIMARY
     }
+
+    /**
+     * Severity-aware card border color for `PERF_HUD` metric cards:
+     * warm amber tint on [Severity.WARN], coral tint on [Severity.CRITICAL],
+     * and the theme's [restingHairline] when nominal or non-metered.
+     */
+    fun cardBorderColor(severity: Severity?, restingHairline: Int): Int = when (severity) {
+        Severity.WARN -> ThemePack.withAlpha(COLOR_WARN, CARD_WARN_BORDER_ALPHA)
+        Severity.CRITICAL -> ThemePack.withAlpha(COLOR_CRITICAL, CARD_CRITICAL_BORDER_ALPHA)
+        Severity.GOOD, null -> restingHairline
+    }
+
+    /**
+     * Gate for smooth [MeterBarView] progress interpolation: skips first bind,
+     * detached views, reduced motion, and sub-1% noise deltas.
+     */
+    fun shouldAnimateMeterDelta(
+        fromFraction: Float,
+        toFraction: Float,
+        hasInitialized: Boolean,
+        animatorsEnabled: Boolean,
+        attached: Boolean,
+    ): Boolean {
+        if (!hasInitialized) return false
+        if (!MotionPolicy.shouldAnimate(METER_ANIM_MS, animatorsEnabled, attached)) return false
+        val from = fromFraction.coerceIn(0f, 1f)
+        val to = toFraction.coerceIn(0f, 1f)
+        return kotlin.math.abs(to - from) >= METER_MIN_ANIM_DELTA
+    }
+
+    /** Clamped linear interpolation for [MeterBarView] progress updates. */
+    fun lerpFraction(from: Float, to: Float, t: Float): Float {
+        val f = from.coerceIn(0f, 1f)
+        val g = to.coerceIn(0f, 1f)
+        val u = t.coerceIn(0f, 1f)
+        return (f + (g - f) * u).coerceIn(0f, 1f)
+    }
+
+    /** True when the meter bar is in an active partial fill showing the leading specular cap. */
+    fun shouldDrawLeadingCap(displayedFraction: Float): Boolean =
+        displayedFraction in METER_CAP_MIN_FRACTION..METER_CAP_MAX_FRACTION
 }

@@ -65,6 +65,83 @@ object PlayHudMetrics {
     /** Height (dp) of the Achievement Theater horizontal progress meter. */
     const val THEATER_METER_HEIGHT_DP: Int = 4
 
+    /** Luminous gold border tint framing Achievement Theater on unlock ticker or 100% mastery. */
+    const val THEATER_GOLD_BORDER: Int = 0x99FFD54F.toInt()
+
+    /** Calm breathing pulse cycle duration (ms) for the live-session indicator dot. */
+    const val SESSION_DOT_PULSE_MS: Long = 1_600L
+
+    /** Alpha bounds (`0..255`) for the live-session indicator dot breathing pulse. */
+    const val SESSION_DOT_ALPHA_MIN: Int = 128
+    const val SESSION_DOT_ALPHA_MAX: Int = 255
+
+    /** Dimensions (dp) for the touch-accessible Play HUD expand/collapse pill handle. */
+    const val HUD_HANDLE_WIDTH_DP: Int = 28
+    const val HUD_HANDLE_HEIGHT_DP: Int = 4
+    const val HUD_HANDLE_TOUCH_HEIGHT_DP: Int = 44
+
+    /** Duration (ms) for smooth Play HUD action strip expand/collapse fade. */
+    const val HUD_ACTIONS_FADE_MS: Long = 120L
+
+    /** Neutral translucent handle tint when Play HUD controls are collapsed. */
+    const val HUD_HANDLE_COLLAPSED_COLOR: Int = 0x55FFFFFF
+
+    /**
+     * Border color for the Achievement Theater card: luminous gold during an
+     * active unlock ticker or 100% mastery, otherwise [restingHairline].
+     */
+    fun theaterBorderColor(
+        tickerOn: Boolean,
+        mastered: Boolean,
+        restingHairline: Int,
+    ): Int = if (tickerOn || mastered) THEATER_GOLD_BORDER else restingHairline
+
+    /**
+     * Format an Achievement Theater next-achievement line with optional points
+     * (`"Title · 10"` when `points > 0`, `"Title"` when `points <= 0`, `""` when blank).
+     */
+    fun formatCheevoLine(title: String, points: Int): String {
+        val clean = title.trim()
+        if (clean.isEmpty()) return ""
+        return if (points > 0) "$clean · $points" else clean
+    }
+
+    /** True when the Play HUD session pill's painted live/paused state differs from [nextActive]. */
+    fun sessionPillNeedsRestyle(prevActive: Boolean?, nextActive: Boolean): Boolean =
+        prevActive != nextActive
+
+    /**
+     * Conservative vertical height budget (dp) for the compact horizontal Play HUD
+     * header (art beside stacked eyebrow + title + player + clock pill), reclaiming
+     * ~64dp+ vertical space on `< 500dp` panels (`<= 120dp`).
+     */
+    fun compactHeaderHeightBudgetDp(spec: HeaderSpec = headerSpec(compact = true)): Int {
+        val eyebrowDp = 13
+        val titleDp = (spec.titleSp * 1.20f).toInt()
+        val playerDp = (spec.playerSp * 1.20f).toInt() + 2
+        val clockPillDp = 28
+        val metaStackDp = eyebrowDp + titleDp + playerDp + clockPillDp
+        return maxOf(spec.artDp, metaStackDp) + spec.padVerticalDp * 2
+    }
+
+    data class HandleStyle(
+        val color: Int,
+        val alpha: Float,
+    )
+
+    /** Visual tint & alpha for the centered Play HUD collapse/expand handle pill. */
+    fun handleStyle(expanded: Boolean, accentColor: Int): HandleStyle = if (expanded) {
+        HandleStyle(
+            color = ThemePack.withAlpha(accentColor, 0xCC),
+            alpha = 1f,
+        )
+    } else {
+        HandleStyle(
+            color = HUD_HANDLE_COLLAPSED_COLOR,
+            alpha = 0.72f,
+        )
+    }
+
     /** Alpha for inactive RAM tracker pills (readable pill silhouette, clearly dimmed). */
     const val TRACKER_OFF_ALPHA: Float = 0.42f
 

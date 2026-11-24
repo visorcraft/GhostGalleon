@@ -184,6 +184,7 @@ object CompanionPanel {
     private const val TAG_PLAY_HUD_THEATER_BADGE = "play_hud_theater_badge"
     private const val TAG_PLAY_HUD_THEATER_LETTER = "play_hud_theater_letter"
     private const val TAG_PLAY_HUD_ACTIONS = "play_hud_actions"
+    const val TAG_PLAY_HUD_HANDLE = "play_hud_handle"
     private const val TAG_PLAY_HUD_SWITCHER = "play_hud_switcher"
     private const val TAG_PLAY_HUD_RA = "play_hud_ra"
     private const val TAG_PLAY_HUD_PAUSE = "play_hud_pause"
@@ -4303,6 +4304,8 @@ object CompanionPanel {
         }
         val scroll = ScrollView(context).apply {
             isVerticalScrollBarEnabled = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(PerfHudMetrics.SCROLL_FADE_EDGE_DP))
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             addView(
                 grid,
@@ -4320,28 +4323,82 @@ object CompanionPanel {
                 1f,
             ),
         )
+        val restingHairline = TileBackgrounds.hairlineDivider(context)
+        val cardStrokePx = context.strokePx(1)
         class PerfRowHolder(
             val card: View,
+            val cardBg: GradientDrawable?,
+            var lastBorderColor: Int,
             val valueTv: TextView,
             val bar: MeterBarView,
             val dot: View,
         )
         val rowHolders = ArrayList<PerfRowHolder>(12)
+        var showingSkeleton = false
+
+        fun showSkeletonCards() {
+            if (showingSkeleton || rowHolders.isNotEmpty()) return
+            showingSkeleton = true
+            val placeholderBarColor = ThemePack.withAlpha(0xFFFFFFFF.toInt(), 0x16)
+            val placeholderRadius = context.dpF(4)
+            repeat(PerfHudMetrics.SKELETON_CARD_COUNT) {
+                val skeletonCard = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 16)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    minimumHeight = dp(64)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                }
+                skeletonCard.addView(
+                    View(context).apply {
+                        background = GradientDrawable().apply {
+                            setColor(placeholderBarColor)
+                            cornerRadius = placeholderRadius
+                        }
+                    },
+                    LinearLayout.LayoutParams(dp(56), dp(8)),
+                )
+                skeletonCard.addView(
+                    View(context).apply {
+                        background = GradientDrawable().apply {
+                            setColor(placeholderBarColor)
+                            cornerRadius = placeholderRadius
+                        }
+                    },
+                    LinearLayout.LayoutParams(dp(92), dp(14)).apply { topMargin = dp(8) },
+                )
+                grid.addView(
+                    skeletonCard,
+                    GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        setMargins(dp(4), dp(4), dp(4), dp(4))
+                    },
+                )
+            }
+        }
 
         fun ensureRows(readings: com.visorcraft.ghostgalleon.system.SystemReadings) {
             // Build static 2-column metric cards once from the already-collected readings;
             // ticks only mutate values & meters in place via direct rowHolders references.
             if (rowHolders.isNotEmpty()) return
+            if (showingSkeleton) {
+                grid.removeAllViews()
+                showingSkeleton = false
+            }
             val rows = SystemInfoFormat.rows(readings)
             val dotPx = dp(PerfHudMetrics.STATUS_DOT_DP)
             val meterHeightPx = dp(PerfHudMetrics.METER_HEIGHT_DP)
             rows.forEachIndexed { index, (label, value) ->
                 val resolvedLabel = context.resolveText(label)
                 val resolvedValue = context.resolveText(value)
+                val cardBgDrawable = TileBackgrounds.card(context)
+                val mutableCardBg = cardBgDrawable.mutate() as? GradientDrawable
                 val card = LinearLayout(context).apply {
                     tag = TAG_PERF_CARD_PREFIX + index
                     orientation = LinearLayout.VERTICAL
-                    background = TileBackgrounds.card(context)
+                    background = mutableCardBg ?: cardBgDrawable
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                     contentDescription = CompanionA11y.metricCardDescription(
@@ -4436,7 +4493,16 @@ object CompanionPanel {
                         setMargins(dp(4), dp(4), dp(4), dp(4))
                     },
                 )
-                rowHolders.add(PerfRowHolder(card = card, valueTv = valueTv, bar = bar, dot = dot))
+                rowHolders.add(
+                    PerfRowHolder(
+                        card = card,
+                        cardBg = mutableCardBg,
+                        lastBorderColor = restingHairline,
+                        valueTv = valueTv,
+                        bar = bar,
+                        dot = dot,
+                    ),
+                )
             }
         }
         fun applyReadings(readings: com.visorcraft.ghostgalleon.system.SystemReadings) {
@@ -4455,6 +4521,11 @@ object CompanionPanel {
                 val meter = PerfHudMetrics.meterForRow(label, readings)
                 val nextTextColor = PerfHudMetrics.valueTextColor(meter?.severity)
                 if (tv.currentTextColor != nextTextColor) tv.setTextColor(nextTextColor)
+                val nextBorder = PerfHudMetrics.cardBorderColor(meter?.severity, hairline)
+                if (holder.lastBorderColor != nextBorder) {
+                    holder.cardBg?.setStroke(cardStrokePx, nextBorder)
+                    holder.lastBorderColor = nextBorder
+                }
                 val bar = holder.bar
                 val dot = holder.dot
                 if (meter != null) {
@@ -4476,9 +4547,14 @@ object CompanionPanel {
             }
         }
 
-        // Paint cached readings immediately (0 ms UI cost) when returning to PERF_HUD;
-        // actual SystemInfoCollector.collect() ALWAYS runs off the UI thread on perfHudExecutor.
-        lastPerfReadings?.let { applyReadings(it) }
+        // Paint cached readings immediately (0 ms UI cost) when returning to PERF_HUD,
+        // or show 4 calm skeleton cards until the first off-UI SystemInfoCollector tick lands.
+        val cachedReadings = lastPerfReadings
+        if (cachedReadings != null) {
+            applyReadings(cachedReadings)
+        } else {
+            showSkeletonCards()
+        }
 
         val appContext = context.applicationContext ?: context
         val handler = Handler(Looper.getMainLooper())
@@ -4904,6 +4980,64 @@ object CompanionPanel {
         }
     }
 
+    private class SessionPillState(
+        var isActive: Boolean,
+        val dot: GradientDrawable,
+        val bg: GradientDrawable,
+        var pulseAnimator: ValueAnimator? = null,
+    )
+
+    private fun updateSessionDotPulse(tv: TextView, state: SessionPillState) {
+        val shouldPulse = state.isActive && MotionPolicy.shouldAnimate(
+            PlayHudMetrics.SESSION_DOT_PULSE_MS,
+            ValueAnimator.areAnimatorsEnabled(),
+            tv.isAttachedToWindow,
+        )
+        if (!shouldPulse) {
+            state.pulseAnimator?.cancel()
+            if (state.dot.alpha != PlayHudMetrics.SESSION_DOT_ALPHA_MAX) {
+                state.dot.alpha = PlayHudMetrics.SESSION_DOT_ALPHA_MAX
+                tv.invalidate()
+            }
+            return
+        }
+        val anim = state.pulseAnimator ?: ValueAnimator.ofInt(
+            PlayHudMetrics.SESSION_DOT_ALPHA_MAX,
+            PlayHudMetrics.SESSION_DOT_ALPHA_MIN,
+        ).apply {
+            duration = PlayHudMetrics.SESSION_DOT_PULSE_MS
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+            addUpdateListener { a ->
+                if (!tv.isAttachedToWindow) {
+                    a.cancel()
+                    return@addUpdateListener
+                }
+                state.dot.alpha = a.animatedValue as Int
+                tv.invalidate()
+            }
+        }.also { state.pulseAnimator = it }
+        if (!anim.isStarted) anim.start()
+    }
+
+    /**
+     * In-place sync for the Play HUD session pill when `session.isActive` flips
+     * between live and paused on 1s clock ticks. No-ops in O(1) when unchanged.
+     */
+    internal fun syncPlayHudSessionPill(clock: TextView, isActive: Boolean) {
+        val state = clock.getTag(R.id.status_chrome) as? SessionPillState ?: return
+        if (!PlayHudMetrics.sessionPillNeedsRestyle(state.isActive, isActive)) return
+        state.isActive = isActive
+        val context = clock.context
+        val sunken = TileBackgrounds.surfaceSunken(context)
+        state.dot.setColor(PlayHudMetrics.sessionStatusColor(isActive))
+        state.dot.alpha = PlayHudMetrics.SESSION_DOT_ALPHA_MAX
+        state.bg.setStroke(context.strokePx(1), PlayHudMetrics.sessionPillBorderColor(isActive))
+        clock.setTextColor(PlayHudMetrics.sessionTimerTextColor(isActive, sunken))
+        updateSessionDotPulse(clock, state)
+    }
+
     private fun applySessionTimerPillStyle(
         tv: TextView,
         isActive: Boolean,
@@ -4918,6 +5052,11 @@ object CompanionPanel {
             setColor(PlayHudMetrics.sessionStatusColor(isActive))
             setBounds(0, 0, dotSize, dotSize)
         }
+        val bg = GradientDrawable().apply {
+            setColor(sunken)
+            cornerRadius = context.dpF(16)
+            setStroke(context.strokePx(1), PlayHudMetrics.sessionPillBorderColor(isActive))
+        }
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 13f else 15f)
         tv.setTextColor(PlayHudMetrics.sessionTimerTextColor(isActive, sunken))
         tv.fontFeatureSettings = "tnum"
@@ -4925,12 +5064,98 @@ object CompanionPanel {
         tv.gravity = Gravity.CENTER
         tv.setCompoundDrawablesRelative(dot, null, null, null)
         tv.compoundDrawablePadding = dp(7)
-        tv.background = GradientDrawable().apply {
-            setColor(sunken)
-            cornerRadius = context.dpF(16)
-            setStroke(context.strokePx(1), PlayHudMetrics.sessionPillBorderColor(isActive))
-        }
+        tv.background = bg
         tv.setPadding(dp(12), dp(5), dp(12), dp(5))
+        val state = SessionPillState(isActive = isActive, dot = dot, bg = bg)
+        tv.setTag(R.id.status_chrome, state)
+        tv.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                updateSessionDotPulse(tv, state)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                state.pulseAnimator?.removeAllUpdateListeners()
+                state.pulseAnimator?.cancel()
+                state.pulseAnimator = null
+                state.dot.alpha = PlayHudMetrics.SESSION_DOT_ALPHA_MAX
+            }
+        })
+        if (tv.isAttachedToWindow) updateSessionDotPulse(tv, state)
+    }
+
+    private fun updatePlayHudHandleVisual(
+        handleWrapper: View?,
+        expanded: Boolean,
+        accentColor: Int,
+    ) {
+        val bar = (handleWrapper as? ViewGroup)?.getChildAt(0) ?: return
+        val style = PlayHudMetrics.handleStyle(expanded, accentColor)
+        ((bar.background as? GradientDrawable)?.mutate() as? GradientDrawable)
+            ?.setColor(style.color)
+        bar.alpha = style.alpha
+    }
+
+    /**
+     * Unified in-place Play HUD expand/collapse path shared by gamepad
+     * `TOGGLE_PLAY_HUD` and tapping the centered `28×4dp` pill handle: updates
+     * handle accent state, hides open save slots, and crossfades `play_hud_actions`
+     * over `120ms` (`MotionPolicy`-gated).
+     */
+    internal fun applyPlayHudExpanded(
+        root: View?,
+        expanded: Boolean,
+        accentColor: Int,
+        animate: Boolean = true,
+    ) {
+        if (root == null) return
+        root.findViewWithTag<View>(TAG_PLAY_HUD_SLOTS)?.let { slots ->
+            if (slots.visibility != View.GONE) slots.visibility = View.GONE
+        }
+        updatePlayHudHandleVisual(
+            handleWrapper = root.findViewWithTag(TAG_PLAY_HUD_HANDLE),
+            expanded = expanded,
+            accentColor = accentColor,
+        )
+        val actions = root.findViewWithTag<View>(TAG_PLAY_HUD_ACTIONS) ?: return
+        ensureHeroDetachReset(actions)
+        actions.animate().cancel()
+        val shouldAnim = animate && MotionPolicy.shouldAnimate(
+            PlayHudMetrics.HUD_ACTIONS_FADE_MS,
+            ValueAnimator.areAnimatorsEnabled(),
+            actions.isAttachedToWindow,
+        )
+        if (expanded) {
+            if (actions.visibility != View.VISIBLE) {
+                actions.visibility = View.VISIBLE
+                if (shouldAnim) {
+                    actions.alpha = 0f
+                    actions.animate()
+                        .alpha(1f)
+                        .setDuration(PlayHudMetrics.HUD_ACTIONS_FADE_MS)
+                        .setInterpolator(heroSettleInterpolator)
+                        .start()
+                } else {
+                    actions.alpha = 1f
+                }
+            } else {
+                actions.alpha = 1f
+            }
+        } else if (actions.visibility == View.VISIBLE) {
+            if (shouldAnim) {
+                actions.animate()
+                    .alpha(0f)
+                    .setDuration(PlayHudMetrics.HUD_ACTIONS_FADE_MS)
+                    .setInterpolator(heroSettleInterpolator)
+                    .withEndAction {
+                        actions.visibility = View.GONE
+                        actions.alpha = 1f
+                    }
+                    .start()
+            } else {
+                actions.visibility = View.GONE
+                actions.alpha = 1f
+            }
+        }
     }
 
     private fun buildFramedSessionArt(
@@ -5219,81 +5444,153 @@ object CompanionPanel {
                 dp(hdr.padVerticalDp),
             )
         }
-        hud.addView(TextView(activity).apply {
+        val eyebrowTv = TextView(activity).apply {
             setText(R.string.label_now_playing)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.accentTextColor(settings.accentColor, cardSurface))
             letterSpacing = 0.12f
-            gravity = Gravity.CENTER
+            gravity = if (compact) Gravity.START else Gravity.CENTER
             includeFontPadding = false
             ViewCompat.setAccessibilityHeading(this, true)
-        })
+        }
         val artPx = dp(hdr.artDp)
-        hud.addView(
-            buildFramedSessionArt(
-                activity = activity,
-                app = app,
-                roms = roms,
-                settings = settings,
-                slotKey = surface.key,
-                fallbackPackage = surface.packageName,
-                artPx = artPx,
-                viewTag = TAG_PLAY_HUD_ART,
-            ),
-            LinearLayout.LayoutParams(artPx, artPx).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(8)
-                bottomMargin = dp(8)
-            },
+        val artView = buildFramedSessionArt(
+            activity = activity,
+            app = app,
+            roms = roms,
+            settings = settings,
+            slotKey = surface.key,
+            fallbackPackage = surface.packageName,
+            artPx = artPx,
+            viewTag = TAG_PLAY_HUD_ART,
         )
         val label = resumeLabel(surface.key, library, roms, settings, app)
-        hud.addView(TextView(activity).apply {
+        val titleTv = TextView(activity).apply {
             tag = TAG_PLAY_HUD_TITLE
             text = label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, hdr.titleSp)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            gravity = if (compact) Gravity.START else Gravity.CENTER
             maxLines = if (compact) 1 else 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
-        })
+        }
         val playerName = Platforms.ALL.flatMap { it.players }
             .firstOrNull { it.id == surface.playerId }
             ?.displayName
             .orEmpty()
-        hud.addView(TextView(activity).apply {
+        val playerTv = TextView(activity).apply {
             text = playerName
             visibility = if (playerName.isEmpty()) View.GONE else View.VISIBLE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, hdr.playerSp)
             setTextColor(UiDimens.ALPHA_SECONDARY)
-            gravity = Gravity.CENTER
+            gravity = if (compact) Gravity.START else Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(2) })
+        }
         val elapsed = SessionTracker.activeElapsedMs(session, System.currentTimeMillis())
-        hud.addView(
-            TextView(activity).apply {
-                tag = TAG_PLAY_HUD_CLOCK
-                text = activity.getString(
-                    if (session.isActive) R.string.format_session else R.string.format_session_paused,
-                    activity.resolveText(SessionMath.formatPlaytime(elapsed)),
-                )
-                applySessionTimerPillStyle(this, session.isActive, compact, dp)
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(6)
-            },
-        )
+        val clockTv = TextView(activity).apply {
+            tag = TAG_PLAY_HUD_CLOCK
+            text = activity.getString(
+                if (session.isActive) R.string.format_session else R.string.format_session_paused,
+                activity.resolveText(SessionMath.formatPlaytime(elapsed)),
+            )
+            applySessionTimerPillStyle(this, session.isActive, compact, dp)
+        }
+        if (compact) {
+            // Compact <500dp header: art beside meta stack reclaims ~64dp+ vertical space
+            // so Tracker, RA Theater, and action controls remain comfortably visible.
+            val headerRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                clipChildren = false
+                clipToPadding = false
+            }
+            headerRow.addView(
+                artView,
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    marginEnd = dp(12)
+                },
+            )
+            val metaCol = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            }
+            metaCol.addView(
+                eyebrowTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            metaCol.addView(
+                titleTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) },
+            )
+            metaCol.addView(
+                playerTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) },
+            )
+            metaCol.addView(
+                clockTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(4) },
+            )
+            headerRow.addView(
+                metaCol,
+                LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f,
+                ),
+            )
+            hud.addView(
+                headerRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        } else {
+            hud.addView(eyebrowTv)
+            hud.addView(
+                artView,
+                LinearLayout.LayoutParams(artPx, artPx).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                },
+            )
+            hud.addView(titleTv)
+            hud.addView(
+                playerTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) },
+            )
+            hud.addView(
+                clockTv,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(6)
+                },
+            )
+        }
         hud.addView(TextView(activity).apply {
             tag = TAG_PLAY_HUD_OWNER
             visibility = View.GONE
@@ -5642,6 +5939,51 @@ object CompanionPanel {
                     ),
                 )
             }
+        // Touch-accessible 28×4dp pill handle inside a 44dp touch wrapper tapping directly
+        // into the existing in-place Play HUD expand/collapse path.
+        val handleStyle = PlayHudMetrics.handleStyle(app.playHudExpanded, settings.accentColor)
+        val handleBar = View(activity).apply {
+            background = GradientDrawable().apply {
+                setColor(handleStyle.color)
+                cornerRadius = activity.dpF(PlayHudMetrics.HUD_HANDLE_HEIGHT_DP) * 0.5f
+            }
+            alpha = handleStyle.alpha
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val handleWrapper = FrameLayout(activity).apply {
+            tag = TAG_PLAY_HUD_HANDLE
+            contentDescription = activity.getString(R.string.label_now_playing)
+            isClickable = true
+            isFocusable = true
+            markAccessibleButton(this)
+            addView(
+                handleBar,
+                FrameLayout.LayoutParams(
+                    dp(PlayHudMetrics.HUD_HANDLE_WIDTH_DP),
+                    dp(PlayHudMetrics.HUD_HANDLE_HEIGHT_DP),
+                    Gravity.CENTER,
+                ),
+            )
+            setOnClickListener {
+                app.playHudExpanded = !app.playHudExpanded
+                app.playSfx(SoundCue.FILTER_SELECT)
+                applyPlayHudExpanded(
+                    root = hud,
+                    expanded = app.playHudExpanded,
+                    accentColor = app.settings.accentColor,
+                    animate = true,
+                )
+            }
+        }
+        hud.addView(
+            handleWrapper,
+            LinearLayout.LayoutParams(
+                dp(PlayHudMetrics.HUD_HANDLE_WIDTH_DP * 3),
+                dp(PlayHudMetrics.HUD_HANDLE_TOUCH_HEIGHT_DP),
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            },
+        )
         if (cockpit) {
             val imeHost = EditText(activity).apply {
                 isSingleLine = true
@@ -6344,17 +6686,32 @@ object CompanionPanel {
             hasCreds = true,
             accentColor = app.settings.accentColor,
         )
-        val nextTitle = snap.nextLocked?.title.orEmpty()
-        if (nextTv != null && nextTv.text?.toString() != nextTitle) {
-            nextTv.text = nextTitle
+        val nextLine = snap.nextLocked?.let {
+            PlayHudMetrics.formatCheevoLine(it.title, it.points)
+        }.orEmpty()
+        if (nextTv != null && nextTv.text?.toString() != nextLine) {
+            nextTv.text = nextLine
         }
         if (nextTv != null) {
-            val vis = if (nextTitle.isEmpty()) View.GONE else View.VISIBLE
+            val vis = if (nextLine.isEmpty()) View.GONE else View.VISIBLE
             if (nextTv.visibility != vis) nextTv.visibility = vis
         }
         val now = SystemClock.elapsedRealtime()
         val tickerTitle = app.theaterTickerTitle
         val tickerOn = !tickerTitle.isNullOrBlank() && now < app.theaterTickerUntilMs
+        val mastered = snap.progress.numPossible > 0 &&
+            snap.progress.numAwarded >= snap.progress.numPossible
+        val highlightGold = tickerOn || mastered
+        if (block.isActivated != highlightGold) {
+            block.isActivated = highlightGold
+            val borderColor = PlayHudMetrics.theaterBorderColor(
+                tickerOn = tickerOn,
+                mastered = mastered,
+                restingHairline = TileBackgrounds.hairlineDivider(activity),
+            )
+            ((block.background as? GradientDrawable)?.mutate() as? GradientDrawable)
+                ?.setStroke(activity.strokePx(if (highlightGold) 2 else 1), borderColor)
+        }
         if (tickerTv != null) {
             if (tickerOn) {
                 val line = activity.getString(R.string.play_hud_theater, tickerTitle)
@@ -6401,36 +6758,58 @@ object CompanionPanel {
             if (letter.visibility != View.GONE) letter.visibility = View.GONE
             return
         }
-        if (bound == "$key!") {
+        val inFlightToken = "$key?"
+        if (bound == "$key!" || bound == inFlightToken) {
             val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
             if (badge.visibility != View.GONE) badge.visibility = View.GONE
             if (letter.visibility != letterVis) letter.visibility = letterVis
             return
         }
-        if (!app.artCache.diskHas(key)) {
-            if (badge.visibility != View.GONE) badge.visibility = View.GONE
-            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
-            if (letter.visibility != letterVis) letter.visibility = letterVis
-            return
-        }
-        val bytes = app.artCache.readDiskBytes(key)
-        val bmp = if (bytes != null && bytes.isNotEmpty()) {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        } else {
-            null
-        }
-        if (bmp != null) {
-            badge.setTag(R.id.theater_badge_key, key)
-            ArtCache.showDisplayed(badge, bmp)
-            if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
-            if (letter.visibility != View.GONE) letter.visibility = View.GONE
-        } else {
-            ArtCache.dropDisplayed(badge)
-            badge.setImageDrawable(null)
-            badge.setTag(R.id.theater_badge_key, "$key!")
-            if (badge.visibility != View.GONE) badge.visibility = View.GONE
-            val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
-            if (letter.visibility != letterVis) letter.visibility = letterVis
+        if (badge.visibility != View.GONE) badge.visibility = View.GONE
+        val letterVis = if (initial.isEmpty()) View.GONE else View.VISIBLE
+        if (letter.visibility != letterVis) letter.visibility = letterVis
+        if (!badge.isAttachedToWindow) return
+        // Dispatch disk read + PNG decode strictly off the UI thread with attach+token guard.
+        badge.setTag(R.id.theater_badge_key, inFlightToken)
+        animDecodeExecutor.execute {
+            val diskExisted = app.artCache.diskHas(key)
+            val bmp = if (diskExisted) {
+                val bytes = app.artCache.readDiskBytes(key)
+                if (bytes != null && bytes.isNotEmpty()) {
+                    runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+            animMainHandler.post {
+                if (!shouldApplyDecodedAnim(
+                        isAttached = badge.isAttachedToWindow,
+                        currentToken = badge.getTag(R.id.theater_badge_key),
+                        expectedToken = inFlightToken,
+                    )
+                ) {
+                    if (badge.getTag(R.id.theater_badge_key) == inFlightToken) {
+                        badge.setTag(R.id.theater_badge_key, null)
+                    }
+                    bmp?.recycle()
+                    return@post
+                }
+                if (bmp != null) {
+                    badge.setTag(R.id.theater_badge_key, key)
+                    ArtCache.showDisplayed(badge, bmp)
+                    if (badge.visibility != View.VISIBLE) badge.visibility = View.VISIBLE
+                    if (letter.visibility != View.GONE) letter.visibility = View.GONE
+                } else {
+                    ArtCache.dropDisplayed(badge)
+                    badge.setImageDrawable(null)
+                    badge.setTag(R.id.theater_badge_key, if (diskExisted) "$key!" else null)
+                    if (badge.visibility != View.GONE) badge.visibility = View.GONE
+                    val fallbackVis = if (letter.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+                    if (letter.visibility != fallbackVis) letter.visibility = fallbackVis
+                }
+            }
         }
     }
 

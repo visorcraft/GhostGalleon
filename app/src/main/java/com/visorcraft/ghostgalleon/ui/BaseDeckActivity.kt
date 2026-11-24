@@ -1497,11 +1497,12 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                 )
                 if (allowed) {
                     app.playHudExpanded = !app.playHudExpanded
-                    val root = window.decorView
-                    root.findViewWithTag<View>("play_hud_actions")
-                        ?.visibility = if (app.playHudExpanded) View.VISIBLE else View.GONE
-                    root.findViewWithTag<View>("play_hud_slots")
-                        ?.visibility = View.GONE
+                    CompanionPanel.applyPlayHudExpanded(
+                        root = window.decorView,
+                        expanded = app.playHudExpanded,
+                        accentColor = app.settings.accentColor,
+                        animate = true,
+                    )
                 }
             }
             true
