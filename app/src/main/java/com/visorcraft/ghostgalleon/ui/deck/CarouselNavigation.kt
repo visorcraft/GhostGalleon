@@ -31,4 +31,31 @@ class CarouselNavigation(private val itemCount: Int) {
             else -> 0
         }
     }
+
+    companion object {
+        /** Matches `RecyclerView.SCROLL_STATE_IDLE` for pure-JVM testing. */
+        const val SCROLL_STATE_IDLE: Int = 0
+
+        /** Matches `RecyclerView.SCROLL_STATE_DRAGGING` for pure-JVM testing. */
+        const val SCROLL_STATE_DRAGGING: Int = 1
+
+        /** Matches `RecyclerView.SCROLL_STATE_SETTLING` for pure-JVM testing. */
+        const val SCROLL_STATE_SETTLING: Int = 2
+
+        /**
+         * True only when a genuine user touch drag/fling has settled to
+         * [SCROLL_STATE_IDLE] on a valid snapped card whose key differs from
+         * [currentKey]. Programmatic D-pad / browse scrolls never set
+         * [wasUserDrag], avoiding selection echo loops.
+         */
+        fun shouldCommitSnapSelection(
+            wasUserDrag: Boolean,
+            scrollState: Int,
+            snappedKey: String?,
+            currentKey: String?,
+        ): Boolean = wasUserDrag &&
+            scrollState == SCROLL_STATE_IDLE &&
+            !snappedKey.isNullOrEmpty() &&
+            snappedKey != currentKey
+    }
 }

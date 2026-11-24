@@ -148,4 +148,60 @@ class CarouselCardBadgesTest {
             ),
         )
     }
+
+    @Test
+    fun `cardRippleColor adapts cleanly across dark built-in themes, OLED, and light surfaces`() {
+        for (pack in ThemePack.BUILTINS) {
+            val surface = ThemePack.cardFill(pack)
+            val ripple = CarouselCardBadges.cardRippleColor(surface, pack.accentColor)
+            val alpha = (ripple ushr 24) and 0xFF
+            assertTrue("Ripple alpha out of range for ${pack.id}: $alpha", alpha in 0x20..0x44)
+            // Opaque tint on dark surfaces remains distinctly bright against dark cards.
+            val opaqueTint = (0xFF shl 24) or (ripple and 0x00FFFFFF)
+            assertTrue(
+                "Ripple tint too dark on ${pack.id}",
+                ThemePack.relativeLuminance(opaqueTint) > 0.5,
+            )
+        }
+        // OLED bright accent uses damped alpha compared to Ghost.
+        val ghostRipple = CarouselCardBadges.cardRippleColor(
+            ThemePack.cardFill(ThemePack.GHOST),
+            ThemePack.GHOST.accentColor,
+        )
+        val oledRipple = CarouselCardBadges.cardRippleColor(
+            ThemePack.cardFill(ThemePack.OLED),
+            ThemePack.OLED.accentColor,
+        )
+        assertTrue(((oledRipple ushr 24) and 0xFF) < ((ghostRipple ushr 24) and 0xFF))
+
+        // Light custom card surface switches to a subtle dark ripple.
+        val lightRipple = CarouselCardBadges.cardRippleColor(
+            surfaceFill = 0xFFF2F2F5.toInt(),
+            accent = ThemePack.GHOST.accentColor,
+        )
+        assertEquals(0x000000, lightRipple and 0x00FFFFFF)
+        assertEquals(CarouselCardBadges.CARD_RIPPLE_LIGHT_SURFACE_ALPHA, (lightRipple ushr 24) and 0xFF)
+    }
+
+    @Test
+    fun `cardForegroundPolicy keeps touch ripple mounted beneath multi-select overlay`() {
+        val hidden = CarouselCardBadges.cardForegroundPolicy(
+            CarouselMultiSelectLogic.CardCheckStyle.HIDDEN,
+        )
+        val unchecked = CarouselCardBadges.cardForegroundPolicy(
+            CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED,
+        )
+        val checked = CarouselCardBadges.cardForegroundPolicy(
+            CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+        )
+
+        for (policy in listOf(hidden, unchecked, checked)) {
+            assertEquals(0, policy.rippleLayerIndex)
+            assertEquals(1, policy.multiSelectLayerIndex)
+            assertTrue(policy.rippleLayerIndex < policy.multiSelectLayerIndex)
+        }
+        assertFalse(hidden.showMultiSelectOverlay)
+        assertFalse(unchecked.showMultiSelectOverlay)
+        assertTrue(checked.showMultiSelectOverlay)
+    }
 }

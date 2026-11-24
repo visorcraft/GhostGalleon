@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import kotlin.math.abs
 
 /**
@@ -50,6 +51,12 @@ object CarouselDepthMetrics {
 
     /** Minimum concentric inner art corner radius (dp) when outer radius allows. */
     const val MIN_INNER_ART_RADIUS_DP: Int = 6
+
+    /** Base alpha for API 28+ tinted spot/ambient spotlight shadows on focused cards. */
+    const val FOCUSED_SHADOW_ALPHA: Int = 0xCC
+
+    /** Neutral black shadow used for non-focused carousel cards. */
+    const val UNFOCUSED_SHADOW_COLOR: Int = 0xFF000000.toInt()
 
     data class CardDepthStyle(
         val scale: Float,
@@ -141,5 +148,30 @@ object CarouselDepthMetrics {
         val outer = outerCardRadiusDp.coerceAtLeast(0)
         val pad = cellPaddingDp.coerceAtLeast(0)
         return (outer - pad).coerceAtLeast(minOf(MIN_INNER_ART_RADIUS_DP, outer))
+    }
+
+    /**
+     * WCAG 2.1 SC 1.4.11 (`>= 3.0:1`) accessible focus-ring stroke color for
+     * carousel cards over [surfaceFill]. Preserves accents that already clear
+     * the threshold and lifts darker accents (such as Ghost indigo `#3F51B5`
+     * or dark custom colors) cleanly.
+     */
+    fun accessibleCardFocusStroke(accentColor: Int, surfaceFill: Int): Int =
+        DeckThemeContrast.accessibleFocusStroke(accentColor, surfaceFill)
+
+    /**
+     * API 28+ tinted spot/ambient spotlight shadow color for carousel cards.
+     * Focused ROM cards cast a console-tinted halo; focused app cards cast a
+     * theme-tinted halo; bright accents (such as OLED `#E0E0E0`) are luminance-
+     * damped so dark OLED backdrops never glare; unfocused cards stay neutral black.
+     */
+    fun cardFocusShadowColor(
+        focused: Boolean,
+        platformAccent: Int?,
+        themeAccent: Int,
+    ): Int {
+        if (!focused) return UNFOCUSED_SHADOW_COLOR
+        val baseTint = platformAccent ?: themeAccent
+        return ThemePack.accentGlowColor(baseTint, FOCUSED_SHADOW_ALPHA)
     }
 }

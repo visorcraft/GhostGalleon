@@ -103,4 +103,72 @@ class CarouselDepthMetricsTest {
         assertEquals(4, CarouselDepthMetrics.opticalInnerArtRadiusDp(4, 8))
         assertEquals(0, CarouselDepthMetrics.opticalInnerArtRadiusDp(0, 8))
     }
+
+    @Test
+    fun `accessibleCardFocusStroke guarantees WCAG 3 to 1 non-text contrast across all themes`() {
+        for (pack in ThemePack.BUILTINS) {
+            for (surface in listOf(ThemePack.cardFill(pack), ThemePack.surfaceElevated(pack))) {
+                val stroke = CarouselDepthMetrics.accessibleCardFocusStroke(pack.accentColor, surface)
+                val ratio = ThemePack.contrastRatio(stroke, surface)
+                assertTrue(
+                    "Pack ${pack.id} focus stroke contrast too low ($ratio) on surface ${Integer.toHexString(surface)}",
+                    ratio >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+                )
+            }
+        }
+        // Dark custom accent on Ghost elevated card surface is lifted cleanly above 3.0:1.
+        val darkCustom = 0xFF1A1E44.toInt()
+        val ghostElevated = ThemePack.surfaceElevated(ThemePack.GHOST)
+        val lifted = CarouselDepthMetrics.accessibleCardFocusStroke(darkCustom, ghostElevated)
+        assertTrue(
+            ThemePack.contrastRatio(lifted, ghostElevated) >= DeckThemeContrast.MIN_NON_TEXT_CONTRAST,
+        )
+    }
+
+    @Test
+    fun `cardFocusShadowColor tints focused ROMs and apps while damping bright OLED accents`() {
+        val snesAccent = 0xFF7E57C2.toInt()
+        val ghostAccent = ThemePack.GHOST.accentColor
+        val oledAccent = ThemePack.OLED.accentColor
+
+        // Unfocused cards always stay neutral black shadow.
+        assertEquals(
+            CarouselDepthMetrics.UNFOCUSED_SHADOW_COLOR,
+            CarouselDepthMetrics.cardFocusShadowColor(
+                focused = false,
+                platformAccent = snesAccent,
+                themeAccent = ghostAccent,
+            ),
+        )
+
+        // Focused ROM uses platform accent hue at full focused shadow alpha.
+        val romShadow = CarouselDepthMetrics.cardFocusShadowColor(
+            focused = true,
+            platformAccent = snesAccent,
+            themeAccent = ghostAccent,
+        )
+        assertEquals(snesAccent and 0x00FFFFFF, romShadow and 0x00FFFFFF)
+        assertEquals(CarouselDepthMetrics.FOCUSED_SHADOW_ALPHA, (romShadow ushr 24) and 0xFF)
+
+        // Focused App falls back to theme accent hue.
+        val appShadow = CarouselDepthMetrics.cardFocusShadowColor(
+            focused = true,
+            platformAccent = null,
+            themeAccent = ghostAccent,
+        )
+        assertEquals(ghostAccent and 0x00FFFFFF, appShadow and 0x00FFFFFF)
+        assertEquals(CarouselDepthMetrics.FOCUSED_SHADOW_ALPHA, (appShadow ushr 24) and 0xFF)
+
+        // High-luminance OLED accent damps spotlight shadow alpha so dark OLED never glares.
+        val oledShadow = CarouselDepthMetrics.cardFocusShadowColor(
+            focused = true,
+            platformAccent = null,
+            themeAccent = oledAccent,
+        )
+        val oledAlpha = (oledShadow ushr 24) and 0xFF
+        assertTrue(
+            "Expected OLED shadow alpha ($oledAlpha) damped below ${CarouselDepthMetrics.FOCUSED_SHADOW_ALPHA}",
+            oledAlpha in 1 until CarouselDepthMetrics.FOCUSED_SHADOW_ALPHA,
+        )
+    }
 }

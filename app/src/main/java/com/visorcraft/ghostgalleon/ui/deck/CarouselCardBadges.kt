@@ -34,6 +34,36 @@ object CarouselCardBadges {
     /** Height fraction of cover art covered by the subtle bottom gradient scrim. */
     const val ART_SCRIM_HEIGHT_FRAC: Float = 0.38f
 
+    /** Surface luminance threshold separating dark themes from light custom surfaces. */
+    const val LIGHT_SURFACE_LUMINANCE: Double = 0.35
+
+    /** Tactile touch-ripple alpha on dark built-in themes (Ghost, Teal, Neon). */
+    const val CARD_RIPPLE_DARK_ALPHA: Int = 0x38
+
+    /** Luminance-damped ripple alpha for bright accents (e.g. OLED `#E0E0E0`). */
+    const val CARD_RIPPLE_HIGH_LUMA_ALPHA: Int = 0x26
+
+    /** Subtle dark ripple alpha over custom light card surfaces. */
+    const val CARD_RIPPLE_LIGHT_SURFACE_ALPHA: Int = 0x26
+
+    /** Fraction of lifted accent blended into white ripples on dark cards. */
+    const val CARD_RIPPLE_ACCENT_BLEND: Float = 0.28f
+
+    /** Persistent foreground layer order on carousel card frames (bottom → top). */
+    enum class CardForegroundLayer {
+        TOUCH_RIPPLE,
+        MULTI_SELECT_OVERLAY,
+    }
+
+    /** Declarative layering contract for [GameDeck]'s persistent card foreground. */
+    data class CardForegroundPolicy(
+        val layers: List<CardForegroundLayer>,
+        val showMultiSelectOverlay: Boolean,
+    ) {
+        val rippleLayerIndex: Int get() = layers.indexOf(CardForegroundLayer.TOUCH_RIPPLE)
+        val multiSelectLayerIndex: Int get() = layers.indexOf(CardForegroundLayer.MULTI_SELECT_OVERLAY)
+    }
+
     data class CardOverlaySpec(
         val platformBadgeText: String?,
         val platformDotColor: Int?,
@@ -79,6 +109,45 @@ object CarouselCardBadges {
 
     /** Pure vertical gradient stops for the bottom cover-art vignette scrim. */
     fun artBottomScrimColors(): IntArray = intArrayOf(ART_SCRIM_TOP, ART_SCRIM_BOTTOM)
+
+    /**
+     * Surface- and accent-adaptive touch ripple color for carousel cards.
+     * Uses an accent-tinted light highlight on dark surfaces (luminance-damped
+     * for high-luminance accents like OLED `#E0E0E0`) and a subtle dark ripple
+     * on custom light card surfaces.
+     */
+    fun cardRippleColor(surfaceFill: Int, accent: Int): Int {
+        if (ThemePack.relativeLuminance(surfaceFill) >= LIGHT_SURFACE_LUMINANCE) {
+            return ThemePack.withAlpha(0xFF000000.toInt(), CARD_RIPPLE_LIGHT_SURFACE_ALPHA)
+        }
+        val liftedAccent = ThemePack.accentTextColor(accent, surfaceFill)
+        val tinted = ThemePack.blendColors(
+            base = 0xFFFFFFFF.toInt(),
+            overlay = liftedAccent,
+            overlayFraction = CARD_RIPPLE_ACCENT_BLEND,
+        )
+        val alpha = if (ThemePack.isHighLuminanceAccent(accent)) {
+            CARD_RIPPLE_HIGH_LUMA_ALPHA
+        } else {
+            CARD_RIPPLE_DARK_ALPHA
+        }
+        return ThemePack.withAlpha(tinted, alpha)
+    }
+
+    /**
+     * Foreground layering policy for carousel card frames: keeps the rounded
+     * touch ripple persistently mounted beneath the multi-select overlay so
+     * checking/unchecking mutates layer 1 in-place with zero drawable swaps.
+     */
+    fun cardForegroundPolicy(
+        checkStyle: CarouselMultiSelectLogic.CardCheckStyle,
+    ): CardForegroundPolicy = CardForegroundPolicy(
+        layers = listOf(
+            CardForegroundLayer.TOUCH_RIPPLE,
+            CardForegroundLayer.MULTI_SELECT_OVERLAY,
+        ),
+        showMultiSelectOverlay = checkStyle == CarouselMultiSelectLogic.CardCheckStyle.CHECKED,
+    )
 
     /**
      * Localized TalkBack description combining card title, optional platform

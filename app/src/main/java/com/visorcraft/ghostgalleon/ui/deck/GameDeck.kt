@@ -1,5 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
@@ -14,6 +17,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.graphics.drawable.TransitionDrawable
+import android.os.Build
 import android.text.Editable
 import android.text.SpannableString
 import android.text.Spanned
@@ -128,6 +132,35 @@ class GameDeck(
     private var fallbackRomById: Map<String, RomEntry>? = null
     /** Single snap helper for the carousel (never re-alloc on NAV). */
     private val snapHelper = LinearSnapHelper()
+    /** True while a touch drag/fling is active so snap-idle commits selection once without D-pad echoes. */
+    private var userDraggingCarousel: Boolean = false
+    private val carouselSnapScrollListener = object : RecyclerView.OnScrollListener() {
+        override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+            when (newState) {
+                RecyclerView.SCROLL_STATE_DRAGGING -> userDraggingCarousel = true
+                RecyclerView.SCROLL_STATE_IDLE -> {
+                    val wasDrag = userDraggingCarousel
+                    userDraggingCarousel = false
+                    if (!wasDrag) return
+                    val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                    val snapView = snapHelper.findSnapView(lm) ?: return
+                    val pos = lm.getPosition(snapView)
+                    val snappedKey = entries.getOrNull(pos)?.key
+                    if (CarouselNavigation.shouldCommitSnapSelection(
+                            wasUserDrag = wasDrag,
+                            scrollState = newState,
+                            snappedKey = snappedKey,
+                            currentKey = state.selectedKey,
+                        )
+                    ) {
+                        val fromIdx = selectedIndex()
+                        playAudio(DeckAudioLogic.carouselCardFocusEvent(fromIdx, pos))
+                        state.select(snappedKey)
+                    }
+                }
+            }
+        }
+    }
     private var entriesMemoKey: String? = null
     private var entriesMemo: List<CarouselEntry> = emptyList()
 
@@ -689,40 +722,96 @@ class GameDeck(
         }
     }
 
-    private fun computeResponsiveMetrics(context: Context): Triple<Int, Int, Int> {
+    private data class ResponsiveMetrics(
+        val cardSizePx: Int,
+        val cardSpacingPx: Int,
+        val edgePadPx: Int,
+        val cardTypography: CarouselLayoutMetrics.CardTypography,
+    )
+
+    private fun computeResponsiveMetrics(context: Context): ResponsiveMetrics {
         val dm = context.resources.displayMetrics
         val density = dm.density.coerceAtLeast(0.5f)
         val viewportWidthDp = (dm.widthPixels / density).toInt()
         val viewportHeightDp = (dm.heightPixels / density).toInt()
+        val themeTokens = ThemePack.resolve(settings)
+        val chromeReserveDp = CarouselLayoutMetrics.verticalChromeReserveDp(
+            hasMultiSelect = state.multiSelectEnabled,
+            hasActiveFilters = GameDeckChromeLogic.activeFilters(state.libraryBrowse).isNotEmpty(),
+            hasLetterJump = GameDeckChromeLogic.supportsLetterJump(state.libraryBrowse.mode) &&
+                entries.isNotEmpty(),
+            showHints = settings.showHints,
+        )
+        val initialSizeDp = CarouselLayoutMetrics.effectiveCardSizeDp(
+            requestedCardSizeDp = settings.cardSizeDp,
+            viewportWidthDp = viewportWidthDp,
+            viewportHeightDp = viewportHeightDp,
+            chromeVerticalReserveDp = chromeReserveDp,
+        )
+        val initialTypography = CarouselLayoutMetrics.cardTypography(
+            cardSizeDp = initialSizeDp,
+            viewportHeightDp = viewportHeightDp,
+            fontScale = themeTokens.fontScale,
+        )
         val effectiveSizeDp = CarouselLayoutMetrics.effectiveCardSizeDp(
             requestedCardSizeDp = settings.cardSizeDp,
             viewportWidthDp = viewportWidthDp,
             viewportHeightDp = viewportHeightDp,
+            chromeVerticalReserveDp = chromeReserveDp,
+            cardTextHeightDp = initialTypography.estimatedTextHeightDp,
+        )
+        val typography = CarouselLayoutMetrics.cardTypography(
+            cardSizeDp = effectiveSizeDp,
+            viewportHeightDp = viewportHeightDp,
+            fontScale = themeTokens.fontScale,
         )
         val spacingDp = CarouselLayoutMetrics.cardSpacingDp(viewportWidthDp)
         val cardWidthDp = effectiveSizeDp + CELL_PADDING_DP * 2
         val edgePadDp = CarouselLayoutMetrics.horizontalEdgePaddingDp(viewportWidthDp, cardWidthDp)
-        return Triple(
-            (effectiveSizeDp * density).toInt().coerceAtLeast(1),
-            (spacingDp * density).toInt().coerceAtLeast(1),
-            (edgePadDp * density).toInt().coerceAtLeast(1),
+        return ResponsiveMetrics(
+            cardSizePx = (effectiveSizeDp * density).toInt().coerceAtLeast(1),
+            cardSpacingPx = (spacingDp * density).toInt().coerceAtLeast(1),
+            edgePadPx = (edgePadDp * density).toInt().coerceAtLeast(1),
+            cardTypography = typography,
         )
     }
 
     private fun animateEdgeBump(direction: Int) {
-        if (!ValueAnimator.areAnimatorsEnabled()) return
         val rv = recycler ?: return
         val holder = rv.findViewHolderForAdapterPosition(selectedIndex()) as? CardAdapter.CardHolder
             ?: return
         val cardFrame = holder.cardFrame
+        if (!DeckMotionPolicy.shouldAnimate(
+                animatorsEnabled = DeckMotionPolicy.areSystemAnimatorsEnabled(),
+                isLaidOut = cardFrame.isLaidOut,
+            )
+        ) {
+            return
+        }
         val nudgePx = direction * rv.context.dpF(CarouselLayoutMetrics.EDGE_BUMP_DP)
+        holder.cancelEdgeBump()
         cardFrame.animate().cancel()
-        cardFrame.translationX = nudgePx
-        cardFrame.animate()
-            .translationX(0f)
-            .setDuration(CarouselLayoutMetrics.EDGE_BUMP_MS)
-            .setInterpolator(FOCUS_INTERPOLATOR)
-            .start()
+        val anim = ObjectAnimator.ofFloat(cardFrame, View.TRANSLATION_X, 0f, nudgePx, 0f).apply {
+            duration = CarouselLayoutMetrics.EDGE_BUMP_MS
+            interpolator = FOCUS_INTERPOLATOR
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (holder.edgeBumpAnimator === animation) {
+                        holder.edgeBumpAnimator = null
+                    }
+                    cardFrame.translationX = 0f
+                }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    if (holder.edgeBumpAnimator === animation) {
+                        holder.edgeBumpAnimator = null
+                    }
+                    cardFrame.translationX = 0f
+                }
+            })
+        }
+        holder.edgeBumpAnimator = anim
+        anim.start()
     }
 
     /**
@@ -749,7 +838,11 @@ class GameDeck(
             chromeStructureKey = nextChrome
         }
 
-        val (nextSize, nextSpacing, edgePadPx) = computeResponsiveMetrics(context)
+        val metrics = computeResponsiveMetrics(context)
+        val nextSize = metrics.cardSizePx
+        val nextSpacing = metrics.cardSpacingPx
+        val edgePadPx = metrics.edgePadPx
+        val nextTypography = metrics.cardTypography
         val nextPad = cellPaddingPx.coerceAtLeast(dp(CELL_PADDING_DP))
         cardSizePx = nextSize
         cardSpacingPx = nextSpacing
@@ -767,7 +860,8 @@ class GameDeck(
             existing.cardSize == nextSize &&
             existing.cardSpacing == nextSpacing &&
             existing.cellPadding == nextPad &&
-            existing.cardRadiusDp == nextCardRadiusDp
+            existing.cardRadiusDp == nextCardRadiusDp &&
+            existing.cardTypography == nextTypography
         if (entries === oldEntries && adapterCompatible && existing != null) {
             existing.paintedSelectionKey = state.selectedKey
             existing.paintedDockFocused = state.dockSlot != null
@@ -791,7 +885,7 @@ class GameDeck(
                 }
             }
         } else {
-            CardAdapter(context, nextSize, nextSpacing, nextPad, nextCardRadiusDp).also {
+            CardAdapter(context, nextSize, nextSpacing, nextPad, nextCardRadiusDp, nextTypography).also {
                 rv.adapter = it
             }
         }
@@ -1612,9 +1706,11 @@ class GameDeck(
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
         installEntries(buildEntries())
-        val (effectiveCardPx, spacingPx, edgePadPx) = computeResponsiveMetrics(context)
-        cardSizePx = effectiveCardPx
-        cardSpacingPx = spacingPx
+        val metrics = computeResponsiveMetrics(context)
+        cardSizePx = metrics.cardSizePx
+        cardSpacingPx = metrics.cardSpacingPx
+        val edgePadPx = metrics.edgePadPx
+        val cardTypography = metrics.cardTypography
         cellPaddingPx = dp(CELL_PADDING_DP)
 
         // FrameLayout root so modals (dock slot menu, app picker) can sit
@@ -1656,6 +1752,7 @@ class GameDeck(
                 cardSpacingPx,
                 cellPaddingPx,
                 ThemePack.resolve(settings).cardRadiusDp,
+                cardTypography,
             )
             // Fixed card metrics for this paint; chrome card-size rebuilds the RV.
             setHasFixedSize(true)
@@ -1665,6 +1762,8 @@ class GameDeck(
             // fades those cells on every D-pad tick.
             itemAnimator = null
             snapHelper.attachToRecyclerView(this)
+            userDraggingCarousel = false
+            addOnScrollListener(carouselSnapScrollListener)
             val vertPad = dp(CarouselLayoutMetrics.MIN_EDGE_PAD_DP)
             setPadding(edgePadPx, vertPad, edgePadPx, vertPad)
             clipChildren = false
@@ -1749,6 +1848,7 @@ class GameDeck(
     // the residual distance (instant — NavRepeater must not queue smooth
     // animators that fight the next D-pad tick).
     private fun scrollSelectionToCenter(rv: RecyclerView) {
+        userDraggingCarousel = false
         rv.stopScroll()
         if (entries.isEmpty()) return
         val lm = rv.layoutManager as? LinearLayoutManager ?: return
@@ -4592,20 +4692,27 @@ class GameDeck(
         val cardSpacing: Int,
         val cellPadding: Int,
         val cardRadiusDp: Int,
+        val cardTypography: CarouselLayoutMetrics.CardTypography,
     ) : RecyclerView.Adapter<CardAdapter.CardHolder>() {
 
         /** Last selection key/dock-focus we painted (for partial updates). */
         var paintedSelectionKey: String? = null
         var paintedDockFocused: Boolean = false
-        private var multiSelectFgKey: Pair<Int, Int>? = null
-        private var multiSelectFgTemplate: GradientDrawable? = null
         private var cachedCheckAccent: Int = 0
         private var cachedCheckTint: Int = 0
         private var hasCachedCheckTint: Boolean = false
+        private var cachedFocusAccent: Int = 0
+        private var cachedFocusSurface: Int = 0
+        private var cachedFocusStroke: Int = 0
+        private var hasCachedFocusStroke: Boolean = false
+        private var cachedRippleColor: Int = 0
+        private var cachedRippleColorList: ColorStateList? = null
         private val platformDotColors = HashMap<String, Int>(16)
 
         private val artCache: ArtCache = (activity.application as GhostGalleonApp).artCache
         private val cardWidthPx: Int = GameDeckChromeLogic.carouselCardWidthPx(cardSize, cellPadding)
+        private val outerCardRadiusPx: Float = context.dpF(cardRadiusDp)
+        private val multiSelectStrokePx: Int = context.strokePx(2)
         private val innerArtRadiusDp: Int = CarouselDepthMetrics.opticalInnerArtRadiusDp(
             outerCardRadiusDp = cardRadiusDp,
             cellPaddingDp = CELL_PADDING_DP,
@@ -4644,6 +4751,8 @@ class GameDeck(
         inner class CardHolder(
             val root: LinearLayout,
             val cardFrame: FrameLayout,
+            val rippleForeground: RippleDrawable,
+            val multiSelectOverlay: GradientDrawable,
             val romArtFrame: FrameLayout,
             val romPlaceholder: TextView,
             val romOverlay: ImageView,
@@ -4662,17 +4771,49 @@ class GameDeck(
             var boundPlatformId: String? = null
             var paintedFocused: Boolean? = null
             var paintedAccent: Int = 0
+            var paintedRippleColor: Int = 0
+            var paintedShadowColor: Int = CarouselDepthMetrics.UNFOCUSED_SHADOW_COLOR
             var paintedCheckStyle: CarouselMultiSelectLogic.CardCheckStyle? = null
             var paintedCheckAccent: Int = 0
             var paintedSelectionKey: String? = null
             var paintedDockFocused: Boolean = false
             var paintedMultiSelectEnabled: Boolean = false
             var paintedMultiSelected: Boolean = false
+            var edgeBumpAnimator: ObjectAnimator? = null
+
+            fun cancelEdgeBump() {
+                edgeBumpAnimator?.let { anim ->
+                    edgeBumpAnimator = null
+                    anim.cancel()
+                }
+                if (cardFrame.translationX != 0f) {
+                    cardFrame.translationX = 0f
+                }
+            }
         }
 
         private fun cloneDrawable(template: GradientDrawable): GradientDrawable =
             template.constantState?.newDrawable(context.resources)?.mutate() as? GradientDrawable
                 ?: template
+
+        private fun accessibleFocusStroke(accent: Int, surfaceFill: Int): Int {
+            if (!hasCachedFocusStroke || cachedFocusAccent != accent || cachedFocusSurface != surfaceFill) {
+                cachedFocusAccent = accent
+                cachedFocusSurface = surfaceFill
+                cachedFocusStroke = CarouselDepthMetrics.accessibleCardFocusStroke(accent, surfaceFill)
+                hasCachedFocusStroke = true
+            }
+            return cachedFocusStroke
+        }
+
+        private fun rippleColorStateList(rippleColor: Int): ColorStateList {
+            val cached = cachedRippleColorList
+            if (cached != null && cachedRippleColor == rippleColor) return cached
+            return ColorStateList.valueOf(rippleColor).also {
+                cachedRippleColor = rippleColor
+                cachedRippleColorList = it
+            }
+        }
 
         private fun checkTint(accent: Int): Int {
             if (!hasCachedCheckTint || cachedCheckAccent != accent) {
@@ -4728,15 +4869,17 @@ class GameDeck(
 
         override fun onViewDetachedFromWindow(holder: CardHolder) {
             super.onViewDetachedFromWindow(holder)
+            holder.cancelEdgeBump()
             holder.cardFrame.animate().cancel()
-            holder.cardFrame.translationX = 0f
+            holder.rippleForeground.jumpToCurrentState()
             holder.romOverlay.animate().cancel()
         }
 
         override fun onViewRecycled(holder: CardHolder) {
             super.onViewRecycled(holder)
+            holder.cancelEdgeBump()
             holder.cardFrame.animate().cancel()
-            holder.cardFrame.translationX = 0f
+            holder.rippleForeground.jumpToCurrentState()
             holder.romOverlay.animate().cancel()
         }
 
@@ -4756,9 +4899,30 @@ class GameDeck(
                 marginStart = cardSpacing / 2
                 marginEnd = cardSpacing / 2
             }
+            val initialRippleColor = CarouselCardBadges.cardRippleColor(
+                surfaceFill = TileBackgrounds.surfaceColor(context),
+                accent = settings.accentColor,
+            )
+            val rippleMask = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = outerCardRadiusPx
+            }
+            val rippleForeground = RippleDrawable(
+                rippleColorStateList(initialRippleColor),
+                null,
+                rippleMask,
+            )
+            val multiSelectOverlay = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = outerCardRadiusPx
+                setStroke(0, Color.TRANSPARENT)
+            }
             val cardFrame = FrameLayout(context).apply {
                 clipChildren = false
                 clipToPadding = false
+                isDuplicateParentStateEnabled = true
+                // Persistent foreground: layer 0 = touch ripple, layer 1 = multi-select overlay.
+                foreground = LayerDrawable(arrayOf(rippleForeground, multiSelectOverlay))
             }
             val body = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -4886,11 +5050,16 @@ class GameDeck(
             )
             body.addView(artContainer, LinearLayout.LayoutParams(cardSize, cardSize))
             val titleTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, cardTypography.titleSp)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
                 setTypeface(typeface, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                maxLines = 1
+                gravity = if (cardTypography.titleMaxLines > 1) {
+                    Gravity.CENTER_HORIZONTAL or Gravity.TOP
+                } else {
+                    Gravity.CENTER
+                }
+                minLines = cardTypography.titleMinLines
+                maxLines = cardTypography.titleMaxLines
                 ellipsize = TextUtils.TruncateAt.END
                 includeFontPadding = false
             }
@@ -4899,11 +5068,11 @@ class GameDeck(
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = context.dp(6) },
+                ).apply { topMargin = context.dp(cardTypography.titleTopMarginDp) },
             )
             val metaTv = TextView(context).apply {
                 tag = "card_meta"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, cardTypography.metaSp)
                 setTextColor(UiDimens.ALPHA_MUTED)
                 gravity = Gravity.CENTER
                 maxLines = 1
@@ -4915,7 +5084,7 @@ class GameDeck(
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = context.dp(2) },
+                ).apply { topMargin = context.dp(cardTypography.metaTopMarginDp) },
             )
             cardFrame.addView(
                 body,
@@ -4957,6 +5126,8 @@ class GameDeck(
             val holder = CardHolder(
                 root = slot,
                 cardFrame = cardFrame,
+                rippleForeground = rippleForeground,
+                multiSelectOverlay = multiSelectOverlay,
                 romArtFrame = romArtFrame,
                 romPlaceholder = romPlaceholder,
                 romOverlay = romOverlay,
@@ -4969,7 +5140,9 @@ class GameDeck(
                 metaView = metaTv,
                 multiBadge = checkBadge,
                 checkBadgeBg = checkBadgeBg,
-            )
+            ).apply {
+                paintedRippleColor = initialRippleColor
+            }
             slot.setOnClickListener {
                 val entry = holder.boundEntry ?: return@setOnClickListener
                 if (state.multiSelectEnabled) {
@@ -5063,22 +5236,6 @@ class GameDeck(
             onBindViewHolder(holder, position)
         }
 
-        private fun multiSelectForeground(): GradientDrawable {
-            val accent = settings.accentColor
-            val key = cardRadiusDp to accent
-            val template = multiSelectFgTemplate?.takeIf { multiSelectFgKey == key } ?: run {
-                GradientDrawable().apply {
-                    setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
-                    cornerRadius = context.dpF(cardRadiusDp)
-                    setStroke(context.strokePx(2), accent)
-                }.also {
-                    multiSelectFgKey = key
-                    multiSelectFgTemplate = it
-                }
-            }
-            return cloneDrawable(template)
-        }
-
         /** Mutate ring/depth-scale/alpha/Y-lift/Z-elevation/multi-select only; false → full rebind needed. */
         private fun applySelectionVisuals(
             holder: CardHolder,
@@ -5100,23 +5257,46 @@ class GameDeck(
                 dockFocused = dockFocused,
                 multiSelected = multiSelected,
             )
+            val surfaceFill = TileBackgrounds.surfaceColor(context)
+            val selectedSurfaceFill = TileBackgrounds.surfaceElevated(context)
             val accent = settings.accentColor
-            if (holder.paintedFocused != focused || holder.paintedAccent != accent) {
+            val focusStroke = accessibleFocusStroke(accent, selectedSurfaceFill)
+            if (holder.paintedFocused != focused || holder.paintedAccent != focusStroke) {
                 cardFrame.background = if (focused) {
-                    TileBackgrounds.selected(context, accent)
+                    TileBackgrounds.selected(context, focusStroke)
                 } else {
                     TileBackgrounds.card(context)
                 }
                 holder.paintedFocused = focused
-                holder.paintedAccent = accent
+                holder.paintedAccent = focusStroke
+            }
+            val rippleColor = CarouselCardBadges.cardRippleColor(surfaceFill, accent)
+            if (holder.paintedRippleColor != rippleColor) {
+                holder.rippleForeground.setColor(rippleColorStateList(rippleColor))
+                holder.paintedRippleColor = rippleColor
             }
             holder.titleView.setTextColor(
                 if (focused || multiSelected) UiDimens.ALPHA_PRIMARY else UiDimens.ALPHA_SECONDARY,
             )
             val targetLiftY = context.dpF(depthStyle.translationYDp)
-            holder.root.translationZ = context.dpF(depthStyle.translationZDp)
+            val targetElevationPx = context.dpF(depthStyle.translationZDp)
+            holder.root.translationZ = targetElevationPx
+            cardFrame.elevation = targetElevationPx
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val platformAccent = entry.rom?.platformId?.let { PlatformLook.accentColor(it) }
+                val shadowColor = CarouselDepthMetrics.cardFocusShadowColor(
+                    focused = focused,
+                    platformAccent = platformAccent,
+                    themeAccent = focusStroke,
+                )
+                if (holder.paintedShadowColor != shadowColor) {
+                    cardFrame.outlineSpotShadowColor = shadowColor
+                    cardFrame.outlineAmbientShadowColor = shadowColor
+                    holder.paintedShadowColor = shadowColor
+                }
+            }
+            holder.cancelEdgeBump()
             cardFrame.animate().cancel()
-            cardFrame.translationX = 0f
             if (animate && cardFrame.isLaidOut && ValueAnimator.areAnimatorsEnabled()) {
                 cardFrame.animate()
                     .scaleX(depthStyle.scale)
@@ -5146,11 +5326,18 @@ class GameDeck(
             )
             if (holder.paintedCheckStyle != checkStyle ||
                 (checkStyle == CarouselMultiSelectLogic.CardCheckStyle.CHECKED &&
-                    holder.paintedCheckAccent != accent)
+                    holder.paintedCheckAccent != focusStroke)
             ) {
+                val fgPolicy = CarouselCardBadges.cardForegroundPolicy(checkStyle)
+                if (fgPolicy.showMultiSelectOverlay) {
+                    holder.multiSelectOverlay.setColor((accent and 0x00FFFFFF) or (0x38 shl 24))
+                    holder.multiSelectOverlay.setStroke(multiSelectStrokePx, focusStroke)
+                } else {
+                    holder.multiSelectOverlay.setColor(Color.TRANSPARENT)
+                    holder.multiSelectOverlay.setStroke(0, Color.TRANSPARENT)
+                }
                 when (checkStyle) {
                     CarouselMultiSelectLogic.CardCheckStyle.CHECKED -> {
-                        cardFrame.foreground = multiSelectForeground()
                         holder.multiBadge.apply {
                             setImageResource(R.drawable.ic_check_circle)
                             setColorFilter(checkTint(accent), PorterDuff.Mode.SRC_IN)
@@ -5159,7 +5346,6 @@ class GameDeck(
                         holder.checkBadgeBg.setColor(0xCC000000.toInt())
                     }
                     CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED -> {
-                        cardFrame.foreground = null
                         holder.multiBadge.apply {
                             setImageResource(R.drawable.ic_radio_unchecked)
                             setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
@@ -5168,12 +5354,11 @@ class GameDeck(
                         holder.checkBadgeBg.setColor(0x99000000.toInt())
                     }
                     CarouselMultiSelectLogic.CardCheckStyle.HIDDEN -> {
-                        cardFrame.foreground = null
                         holder.multiBadge.visibility = View.GONE
                     }
                 }
                 holder.paintedCheckStyle = checkStyle
-                holder.paintedCheckAccent = accent
+                holder.paintedCheckAccent = focusStroke
             }
             holder.favBadge.visibility =
                 if (overlay.showFavoriteBadge) View.VISIBLE else View.GONE
@@ -5224,8 +5409,8 @@ class GameDeck(
                 scheduleNeighborPrefetch(position)
                 return
             }
+            holder.cancelEdgeBump()
             holder.cardFrame.animate().cancel()
-            holder.cardFrame.translationX = 0f
             holder.root.setTag(R.id.carousel_entry_key, entry.key)
             paintedSelectionKey = state.selectedKey
             paintedDockFocused = state.dockSlot != null
@@ -5272,6 +5457,7 @@ class GameDeck(
                     settings,
                     entry.appPackage!!,
                     cardSize,
+                    cornerRadiusPx = innerArtRadiusPx,
                 )
             }
             holder.titleView.text = entry.label
