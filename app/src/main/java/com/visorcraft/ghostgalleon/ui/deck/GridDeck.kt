@@ -124,6 +124,7 @@ class GridDeck(
     private var pagePrevButton: ImageView? = null
     private var pageNextButton: ImageView? = null
     private val pageDotAnimators = mutableListOf<ValueAnimator>()
+    private var feedbackAnimator: AnimatorSet? = null
     private var lastPaintedPage: Int = -1
     private var pageGeometry: PageGeometry? = null
     private var dockBar: DockBar? = null
@@ -206,15 +207,94 @@ class GridDeck(
         pageDotAnimators.clear()
     }
 
+    private fun cancelFeedbackAnimator() {
+        feedbackAnimator?.cancel()
+        feedbackAnimator = null
+        gridView?.translationY = 0f
+        pagerScroll?.translationX = 0f
+        pageDotsView?.translationX = 0f
+        pagePrevButton?.apply {
+            scaleX = 1f
+            scaleY = 1f
+        }
+        pageNextButton?.apply {
+            scaleX = 1f
+            scaleY = 1f
+        }
+    }
+
     private fun cancelAllAnimations() {
         cancelPulseAnimator()
         cancelPageDotAnimators()
+        cancelFeedbackAnimator()
         pagePrevButton?.animate()?.cancel()
         pageNextButton?.animate()?.cancel()
         forEachAttachedCell { frame, _, _ ->
             frame.animate().cancel()
             frame.translationY = 0f
             frame.alpha = 1f
+        }
+    }
+
+    private fun triggerScrollFeedback(cue: GridScrollFeedback.Cue) {
+        when (cue) {
+            GridScrollFeedback.Cue.None -> return
+            is GridScrollFeedback.Cue.PageFlipped -> {
+                val strip = pageDotsView?.takeIf { it.visibility == View.VISIBLE } ?: return
+                cancelFeedbackAnimator()
+                val dir = if (cue.direction >= 0) 1f else -1f
+                val nudgePx = strip.dpF(GridScrollFeedback.STRIP_NUDGE_DP) * dir
+                val stripAnim = ObjectAnimator.ofFloat(strip, View.TRANSLATION_X, 0f, nudgePx, 0f)
+                val chevron = if (cue.direction >= 0) pageNextButton else pagePrevButton
+                val anims = mutableListOf<android.animation.Animator>(stripAnim)
+                if (chevron != null) {
+                    anims.add(
+                        ObjectAnimator.ofFloat(
+                            chevron, View.SCALE_X,
+                            1f, GridScrollFeedback.CHEVRON_PULSE_SCALE, 1f,
+                        ),
+                    )
+                    anims.add(
+                        ObjectAnimator.ofFloat(
+                            chevron, View.SCALE_Y,
+                            1f, GridScrollFeedback.CHEVRON_PULSE_SCALE, 1f,
+                        ),
+                    )
+                }
+                feedbackAnimator = AnimatorSet().apply {
+                    playTogether(anims)
+                    duration = GridScrollFeedback.BUMP_OUT_MS + GridScrollFeedback.BUMP_BACK_MS
+                    interpolator = FOCUS_INTERPOLATOR
+                    start()
+                }
+            }
+            is GridScrollFeedback.Cue.EdgeBump -> {
+                cancelFeedbackAnimator()
+                val dir = if (cue.direction >= 0) 1f else -1f
+                val anims = mutableListOf<android.animation.Animator>()
+                val target: View? = if (isHorizontal) pagerScroll else gridView
+                if (target != null) {
+                    if (isHorizontal) {
+                        val dx = -dir * target.dpF(GridScrollFeedback.EDGE_BUMP_HORIZONTAL_DP)
+                        anims.add(ObjectAnimator.ofFloat(target, View.TRANSLATION_X, 0f, dx, 0f))
+                    } else {
+                        val dy = -dir * target.dpF(GridScrollFeedback.EDGE_BUMP_VERTICAL_DP)
+                        anims.add(ObjectAnimator.ofFloat(target, View.TRANSLATION_Y, 0f, dy, 0f))
+                    }
+                }
+                pageDotsView?.takeIf { it.visibility == View.VISIBLE }?.let { strip ->
+                    val dx = dir * strip.dpF(GridScrollFeedback.STRIP_NUDGE_DP)
+                    anims.add(ObjectAnimator.ofFloat(strip, View.TRANSLATION_X, 0f, dx, 0f))
+                }
+                if (anims.isNotEmpty()) {
+                    feedbackAnimator = AnimatorSet().apply {
+                        playTogether(anims)
+                        duration = GridScrollFeedback.BUMP_OUT_MS + GridScrollFeedback.BUMP_BACK_MS
+                        interpolator = FOCUS_INTERPOLATOR
+                        start()
+                    }
+                }
+            }
         }
     }
 
@@ -663,6 +743,10 @@ class GridDeck(
             slotCount = slotCount,
             cellsPerPage = geometry.cellsPerPage,
         )
+        val action = if (deltaPages < 0) Action.PAGE_PREV else Action.PAGE_NEXT
+        triggerScrollFeedback(
+            GridScrollFeedback.classify(action, current, target, geometry.cellsPerPage, slotCount),
+        )
         applyPageJumpSlot(current, target)
     }
 
@@ -911,6 +995,9 @@ class GridDeck(
             setPadding(gridPadH, gridPadTop, gridPadH, gridPadV)
             clipChildren = false
             clipToPadding = false
+            isVerticalFadingEdgeEnabled = true
+            isScrollbarFadingEnabled = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
             // Items stay non-focusable so d-pad routing is unchanged.
             onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
@@ -933,6 +1020,9 @@ class GridDeck(
             override fun onGlobalLayout() {
                 if (grid.height == 0 || grid.height == lastHeight) return
                 lastHeight = grid.height
+                grid.setFadingEdgeLength(
+                    dp(GridScrollFeedback.fadingEdgeLengthDp(grid.height, density)),
+                )
                 val cellWidth =
                     (grid.width - gridPadH * 2 - spacing * (columns - 1)) / columns
                 val guessIconSize = GridIconMetrics.iconSizePx(
@@ -1796,6 +1886,11 @@ class GridDeck(
             Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
             Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 val to = nav.move(from, action)
+                pageGeometry?.let { geo ->
+                    triggerScrollFeedback(
+                        GridScrollFeedback.classify(action, from, to, geo.cellsPerPage, slotCount),
+                    )
+                }
                 if (to != from) {
                     // 3DS behavior: the lifted tile swaps contents with
                     // whatever is in the target slot.
@@ -1934,11 +2029,17 @@ class GridDeck(
             Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 // NAV DOWN on the last row leaves the grid and focuses the
                 // dock (same column, clamped into the dock row).
-                if (action == Action.NAV_DOWN && dockNav.isLastRow(selectedIndex())) {
-                    state.focusDock(dockNav.enterFromGrid(selectedIndex()))
+                val current = selectedIndex()
+                if (action == Action.NAV_DOWN && dockNav.isLastRow(current)) {
+                    state.focusDock(dockNav.enterFromGrid(current))
                     return true
                 }
-                val target = nav.move(selectedIndex(), action)
+                val target = nav.move(current, action)
+                pageGeometry?.let { geo ->
+                    triggerScrollFeedback(
+                        GridScrollFeedback.classify(action, current, target, geo.cellsPerPage, slotCount),
+                    )
+                }
                 state.selectSlot(target, settings.gridSlots.getOrNull(target))
                 true
             }
