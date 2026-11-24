@@ -1615,7 +1615,7 @@ class SettingsActivity : AppCompatActivity() {
             notify = false,
         )
         app.soundEngine.clearCustomSoundPackCacheAsync()
-        app.playSfx(SoundCue.DESTRUCTIVE)
+        app.soundEngine.audition(SoundCue.DESTRUCTIVE)
         refreshCustomSoundPackCard()
     }
 

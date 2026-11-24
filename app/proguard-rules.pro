@@ -19,6 +19,11 @@
     public static ** valueOf(java.lang.String);
 }
 
+# SoundCue enum constant names are used for stable WAV cache keys and custom SAF pack matching.
+-keep enum com.visorcraft.ghostgalleon.audio.SoundCue {
+    <fields>;
+}
+
 # View tags / ids are resource ints — no keep needed.
 # org.json is platform; no reflection on our Settings data class fields
 # (SettingsStore uses explicit JSONObject put/get).
