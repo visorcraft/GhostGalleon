@@ -46,6 +46,10 @@ object StatusBattery {
         else -> 4
     }
 
+    /** Continuous 0..1 charge fill fraction for progress/meter visuals. */
+    fun batteryFillFraction(percent: Int): Float =
+        if (percent <= 0) 0f else (percent / 100f).coerceIn(0f, 1f)
+
     /**
      * Sign of a discharging CURRENT_NOW sample, or null when the reading is
      * too small to trust. Call only while unplugged.

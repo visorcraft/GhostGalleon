@@ -22,6 +22,15 @@ class StatusBatteryTest {
     }
 
     @Test
+    fun `batteryFillFraction clamps continuous percent cleanly`() {
+        assertEquals(0f, StatusBattery.batteryFillFraction(-5), 0.001f)
+        assertEquals(0f, StatusBattery.batteryFillFraction(0), 0.001f)
+        assertEquals(0.42f, StatusBattery.batteryFillFraction(42), 0.001f)
+        assertEquals(1f, StatusBattery.batteryFillFraction(100), 0.001f)
+        assertEquals(1f, StatusBattery.batteryFillFraction(140), 0.001f)
+    }
+
+    @Test
     fun `unplugged is always the battery glyph`() {
         assertEquals(
             StatusBattery.Glyph.BATTERY,

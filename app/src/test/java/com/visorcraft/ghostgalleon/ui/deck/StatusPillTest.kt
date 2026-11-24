@@ -195,4 +195,75 @@ class StatusPillTest {
             StatusPill.batteryIconTint(5, StatusBattery.Glyph.CHARGING),
         )
     }
+
+    @Test
+    fun `pillBorderColor reflects charging, net-drain, low, critical, and resting states`() {
+        assertEquals(
+            StatusPill.DEFAULT_BORDER_COLOR,
+            StatusPill.pillBorderColor(65, StatusBattery.Glyph.BATTERY),
+        )
+        assertEquals(
+            StatusPill.LOW_BATTERY_WARN and 0x00FFFFFF,
+            StatusPill.pillBorderColor(15, StatusBattery.Glyph.BATTERY) and 0x00FFFFFF,
+        )
+        assertEquals(
+            StatusPill.LOW_BATTERY_CRITICAL and 0x00FFFFFF,
+            StatusPill.pillBorderColor(8, StatusBattery.Glyph.BATTERY) and 0x00FFFFFF,
+        )
+        assertEquals(
+            StatusPill.CHARGING_BOLT and 0x00FFFFFF,
+            StatusPill.pillBorderColor(45, StatusBattery.Glyph.CHARGING) and 0x00FFFFFF,
+        )
+        assertEquals(
+            StatusPill.NET_DRAIN_BOLT and 0x00FFFFFF,
+            StatusPill.pillBorderColor(45, StatusBattery.Glyph.NET_DRAIN) and 0x00FFFFFF,
+        )
+    }
+
+    @Test
+    fun `accessibilitySummary combines localized battery description with live time`() {
+        assertEquals(
+            "Battery 72 percent, charging, Clock 8:15 PM",
+            StatusPill.accessibilitySummary("Battery 72 percent, charging", "8:15 PM", "Clock", "Status"),
+        )
+        assertEquals(
+            "Clock 8:15 PM",
+            StatusPill.accessibilitySummary(null, "8:15 PM", "Clock", "Status"),
+        )
+        assertEquals(
+            "Status",
+            StatusPill.accessibilitySummary("", "  ", "Clock", "Status"),
+        )
+    }
+
+    @Test
+    fun `metricsFor scales compact and large status pills cleanly`() {
+        val compact = StatusPill.metricsFor(compact = true)
+        val large = StatusPill.metricsFor(compact = false)
+        assertTrue(compact.textSp < large.textSp)
+        assertTrue(compact.iconDp < large.iconDp)
+        assertTrue(compact.padHorizontalDp < large.padHorizontalDp)
+        assertTrue(compact.dividerHeightDp < large.dividerHeightDp)
+    }
+
+    @Test
+    fun `all status pill foreground tints meet WCAG AA contrast across every built-in theme`() {
+        val tints = listOf(
+            StatusPill.NORMAL_COLOR,
+            StatusPill.CHARGING_BOLT,
+            StatusPill.NET_DRAIN_BOLT,
+            StatusPill.LOW_BATTERY_WARN,
+            StatusPill.LOW_BATTERY_CRITICAL,
+        )
+        for (pack in com.visorcraft.ghostgalleon.settings.ThemePack.BUILTINS) {
+            val pillSurface = com.visorcraft.ghostgalleon.settings.ThemePack.cardFill(pack)
+            for (fg in tints) {
+                val ratio = com.visorcraft.ghostgalleon.settings.ThemePack.contrastRatio(fg, pillSurface)
+                assertTrue(
+                    "StatusPill tint #${Integer.toHexString(fg)} on ${pack.id} must be >= 4.5, was $ratio",
+                    ratio >= com.visorcraft.ghostgalleon.settings.ThemePack.MIN_TEXT_CONTRAST,
+                )
+            }
+        }
+    }
 }

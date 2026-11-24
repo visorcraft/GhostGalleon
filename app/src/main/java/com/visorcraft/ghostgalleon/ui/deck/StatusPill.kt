@@ -1,11 +1,16 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ArgbEvaluator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PorterDuff
+import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -17,8 +22,10 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
+import java.util.WeakHashMap
 
 /**
  * Compact battery + clock chrome for immersive decks (system status bar is
@@ -58,7 +65,90 @@ object StatusPill {
     /** Warning red tint for unplugged <= 10% battery. */
     const val LOW_BATTERY_CRITICAL = 0xFFFF5252.toInt()
 
+    /** Subtle resting hairline border matching [TileBackgrounds.statusPill]. */
+    const val DEFAULT_BORDER_COLOR = 0x28FFFFFF
+
+    /** Duration (ms) for cancelable in-place battery state tint crossfade. */
+    const val TINT_TRANSITION_MS = 180L
+
     internal const val PLUGGED_POLL_MS = 1_500L
+
+    private val activeTintAnimators = WeakHashMap<View, ValueAnimator>()
+    private val colorEvaluator = ArgbEvaluator()
+
+    data class Metrics(
+        val textSp: Float,
+        val padHorizontalDp: Int,
+        val padVerticalDp: Int,
+        val gapDp: Int,
+        val iconDp: Int,
+        val glyphGapDp: Int,
+        val dividerHeightDp: Int,
+        val elevationDp: Float,
+    )
+
+    /** Pure typography, padding, and optical alignment tokens for compact vs large pills. */
+    fun metricsFor(compact: Boolean): Metrics = if (compact) {
+        Metrics(
+            textSp = 13f,
+            padHorizontalDp = 12,
+            padVerticalDp = 5,
+            gapDp = 7,
+            iconDp = 16,
+            glyphGapDp = 4,
+            dividerHeightDp = 12,
+            elevationDp = 4f,
+        )
+    } else {
+        Metrics(
+            textSp = 19f,
+            padHorizontalDp = 16,
+            padVerticalDp = 7,
+            gapDp = 9,
+            iconDp = 20,
+            glyphGapDp = 5,
+            dividerHeightDp = 16,
+            elevationDp = 6f,
+        )
+    }
+
+    /** Semantic hairline border tint reflecting charging, net-drain, or low/critical battery. */
+    fun pillBorderColor(percent: Int, glyph: StatusBattery.Glyph): Int = when (glyph) {
+        StatusBattery.Glyph.CHARGING -> (0x58 shl 24) or (CHARGING_BOLT and 0x00FFFFFF)
+        StatusBattery.Glyph.NET_DRAIN -> (0x66 shl 24) or (NET_DRAIN_BOLT and 0x00FFFFFF)
+        StatusBattery.Glyph.BATTERY -> when {
+            percent in 0..CRITICAL_BATTERY_PERCENT ->
+                (0x66 shl 24) or (LOW_BATTERY_CRITICAL and 0x00FFFFFF)
+            percent in 0..LOW_BATTERY_PERCENT ->
+                (0x58 shl 24) or (LOW_BATTERY_WARN and 0x00FFFFFF)
+            else -> DEFAULT_BORDER_COLOR
+        }
+    }
+
+    /**
+     * Pure TalkBack summary combining localized battery state and current clock
+     * reading without hardcoding words.
+     */
+    fun accessibilitySummary(
+        batteryDescription: String?,
+        clockText: CharSequence?,
+        clockLabel: String,
+        fallbackLabel: String,
+    ): String {
+        val b = batteryDescription?.trim().orEmpty()
+        val c = clockText?.toString()?.trim().orEmpty()
+        val clockPart = when {
+            c.isNotEmpty() && clockLabel.isNotBlank() -> "$clockLabel $c"
+            c.isNotEmpty() -> c
+            else -> ""
+        }
+        return when {
+            b.isNotEmpty() && clockPart.isNotEmpty() -> "$b, $clockPart"
+            b.isNotEmpty() -> b
+            clockPart.isNotEmpty() -> clockPart
+            else -> fallbackLabel
+        }
+    }
 
     /** Learned CURRENT_NOW discharge sign. Shared by both pills. */
     internal var dischargeSign: Int = StatusBattery.AOSP_DISCHARGE_SIGN
@@ -103,32 +193,34 @@ object StatusPill {
      * uses smaller type for overlay on the interactive deck / TOP_STRIP.
      */
     fun build(context: Context, compact: Boolean = true): View {
-        val textSp = if (compact) 13f else 20f
-        val padH = if (compact) 12 else 18
-        val padV = if (compact) 4 else 8
-        val gap = if (compact) 6 else 10
-        val iconDp = if (compact) 16 else 20
-        val glyphPad = if (compact) 3 else 5
-        val dividerH = if (compact) 12 else 18
+        val m = metricsFor(compact)
 
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             isBaselineAligned = false
             background = TileBackgrounds.statusPill(context)
-            setPadding(context.dp(padH), context.dp(padV), context.dp(padH), context.dp(padV))
+            elevation = context.dpF(m.elevationDp)
+            setPadding(
+                context.dp(m.padHorizontalDp),
+                context.dp(m.padVerticalDp),
+                context.dp(m.padHorizontalDp),
+                context.dp(m.padVerticalDp),
+            )
             tag = TAG
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             contentDescription = context.getString(R.string.deck_status)
         }
 
         val batteryView = TextView(context).apply {
             tag = TAG_BATTERY
             visibility = View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, m.textSp)
             setTextColor(Color.WHITE)
             fontFeatureSettings = "tnum"
             includeFontPadding = false
-            setPadding(0, 0, context.dp(glyphPad), 0)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setPadding(0, 0, context.dp(m.glyphGapDp), 0)
         }
         val icon = ImageView(context).apply {
             tag = TAG_BATTERY_ICON
@@ -137,7 +229,7 @@ object StatusPill {
             setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
             scaleType = ImageView.ScaleType.FIT_CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            val size = context.dp(iconDp)
+            val size = context.dp(m.iconDp)
             layoutParams = LinearLayout.LayoutParams(size, size)
         }
         val divider = View(context).apply {
@@ -147,27 +239,36 @@ object StatusPill {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             layoutParams = LinearLayout.LayoutParams(
                 context.strokePx(1),
-                context.dp(dividerH),
+                context.dp(m.dividerHeightDp),
             ).apply {
-                marginStart = context.dp(gap)
-                marginEnd = context.dp(gap)
+                marginStart = context.dp(m.gapDp)
+                marginEnd = context.dp(m.gapDp)
             }
         }
-        pill.addView(batteryView)
-        pill.addView(icon)
-        pill.addView(divider)
-        pill.addView(TextClock(context).apply {
+        val clock = TextClock(context).apply {
             val locale = context.resources.configuration.locales[0]
             format12Hour = android.text.format.DateFormat.getBestDateTimePattern(locale, "hm")
             format24Hour = android.text.format.DateFormat.getBestDateTimePattern(locale, "Hm")
             tag = TAG_CLOCK
-            contentDescription = context.getString(R.string.deck_clock)
             fontFeatureSettings = "tnum"
             includeFontPadding = false
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, m.textSp)
             setTextColor(Color.WHITE)
+        }
+        clock.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                syncPillAccessibility(pill)
+            }
         })
+        pill.addView(batteryView)
+        pill.addView(icon)
+        pill.addView(divider)
+        pill.addView(clock)
         applyBattery(pill, readBattery(context))
+        syncPillAccessibility(pill)
         wireLiveBattery(pill)
         return pill
     }
@@ -267,6 +368,9 @@ object StatusPill {
         val percent: Int,
         val glyph: StatusBattery.Glyph,
         val bars: Int,
+        val textColor: Int,
+        val iconTint: Int,
+        val borderColor: Int,
     )
 
     internal fun applyBattery(pill: View, snapshot: BatterySnapshot) {
@@ -275,10 +379,14 @@ object StatusPill {
         val divider = pill.findViewWithTag<View>(TAG_DIVIDER)
         val ctx = pill.context
         val label = formatBatteryLabel(snapshot.percent) ?: run {
+            cancelTintTransition(pill)
             tv.visibility = View.GONE
+            tv.contentDescription = null
             icon?.visibility = View.GONE
             divider?.visibility = View.GONE
+            applyPillBorder(pill, DEFAULT_BORDER_COLOR)
             pill.setTag(R.id.status_chrome, null)
+            syncPillAccessibility(pill)
             return
         }
         val prev = pill.getTag(R.id.status_chrome) as? AppliedChrome
@@ -295,8 +403,10 @@ object StatusPill {
             return
         }
         val resolved = ctx.resolveText(label)
+        val nextTextColor = batteryTextColor(snapshot.percent, snapshot.glyph)
+        val nextIconTint = batteryIconTint(snapshot.percent, snapshot.glyph)
+        val nextBorderColor = pillBorderColor(snapshot.percent, snapshot.glyph)
         tv.text = resolved
-        tv.setTextColor(batteryTextColor(snapshot.percent, snapshot.glyph))
         tv.contentDescription = when (snapshot.glyph) {
             StatusBattery.Glyph.CHARGING ->
                 ctx.getString(R.string.format_battery_charging_accessibility, snapshot.percent)
@@ -317,15 +427,91 @@ object StatusPill {
             ) {
                 icon.setImageLevel(snapshot.bars)
             }
-            icon.setColorFilter(
-                batteryIconTint(snapshot.percent, snapshot.glyph),
-                PorterDuff.Mode.SRC_IN,
-            )
             icon.visibility = View.VISIBLE
+        }
+        val tintsChanged = prev != null && (
+            prev.textColor != nextTextColor ||
+                prev.iconTint != nextIconTint ||
+                prev.borderColor != nextBorderColor
+            )
+        if (tintsChanged && pill.isAttachedToWindow && ValueAnimator.areAnimatorsEnabled()) {
+            animateTintTransition(
+                pill = pill,
+                tv = tv,
+                icon = icon,
+                fromText = prev!!.textColor,
+                toText = nextTextColor,
+                fromIcon = prev.iconTint,
+                toIcon = nextIconTint,
+                fromBorder = prev.borderColor,
+                toBorder = nextBorderColor,
+            )
+        } else {
+            cancelTintTransition(pill)
+            tv.setTextColor(nextTextColor)
+            icon?.setColorFilter(nextIconTint, PorterDuff.Mode.SRC_IN)
+            applyPillBorder(pill, nextBorderColor)
         }
         pill.setTag(
             R.id.status_chrome,
-            AppliedChrome(snapshot.percent, snapshot.glyph, snapshot.bars),
+            AppliedChrome(
+                percent = snapshot.percent,
+                glyph = snapshot.glyph,
+                bars = snapshot.bars,
+                textColor = nextTextColor,
+                iconTint = nextIconTint,
+                borderColor = nextBorderColor,
+            ),
+        )
+        syncPillAccessibility(pill)
+    }
+
+    private fun applyPillBorder(pill: View, color: Int) {
+        val bg = (pill.background as? GradientDrawable)?.mutate() as? GradientDrawable ?: return
+        bg.setStroke(pill.context.strokePx(1), color)
+    }
+
+    private fun cancelTintTransition(pill: View) {
+        activeTintAnimators.remove(pill)?.cancel()
+    }
+
+    private fun animateTintTransition(
+        pill: View,
+        tv: TextView,
+        icon: ImageView?,
+        fromText: Int,
+        toText: Int,
+        fromIcon: Int,
+        toIcon: Int,
+        fromBorder: Int,
+        toBorder: Int,
+    ) {
+        cancelTintTransition(pill)
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = TINT_TRANSITION_MS
+            addUpdateListener { anim ->
+                val f = anim.animatedValue as Float
+                tv.setTextColor(colorEvaluator.evaluate(f, fromText, toText) as Int)
+                icon?.setColorFilter(
+                    colorEvaluator.evaluate(f, fromIcon, toIcon) as Int,
+                    PorterDuff.Mode.SRC_IN,
+                )
+                applyPillBorder(pill, colorEvaluator.evaluate(f, fromBorder, toBorder) as Int)
+            }
+        }
+        activeTintAnimators[pill] = animator
+        animator.start()
+    }
+
+    private fun syncPillAccessibility(pill: View) {
+        val tv = pill.findViewWithTag<View>(TAG_BATTERY) as? TextView
+        val clock = pill.findViewWithTag<View>(TAG_CLOCK) as? TextView
+        val batteryDesc = tv?.takeIf { it.visibility == View.VISIBLE }?.contentDescription?.toString()
+        pill.contentDescription = accessibilitySummary(
+            batteryDescription = batteryDesc,
+            clockText = clock?.text,
+            clockLabel = pill.context.getString(R.string.deck_clock),
+            fallbackLabel = pill.context.getString(R.string.deck_status),
         )
     }
 
@@ -353,6 +539,7 @@ object StatusPill {
             }
 
             override fun onViewDetachedFromWindow(v: View) {
+                cancelTintTransition(v)
                 StatusBatteryWatch.detach(v)
             }
         })
