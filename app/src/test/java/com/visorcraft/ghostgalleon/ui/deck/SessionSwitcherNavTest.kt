@@ -5,8 +5,10 @@ import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.ThemePack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -99,5 +101,51 @@ class SessionSwitcherNavTest {
             SessionSwitcherNav.metadataParts("  ", "Just now"),
         )
         assertTrue(SessionSwitcherNav.metadataParts("", null).isEmpty())
+    }
+
+    @Test
+    fun `rowVisual separates active from background rows and meets WCAG AA across all themes`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val activeIdle = SessionSwitcherNav.rowVisual(
+                isActive = true,
+                selected = false,
+                accent = tokens.accentColor,
+                tokens = tokens,
+            )
+            val bgIdle = SessionSwitcherNav.rowVisual(
+                isActive = false,
+                selected = false,
+                accent = tokens.accentColor,
+                tokens = tokens,
+            )
+            assertNotEquals(
+                "Active session row should visually separate from background on ${tokens.id}",
+                bgIdle.fillColor,
+                activeIdle.fillColor,
+            )
+
+            for (isActive in listOf(false, true)) {
+                for (selected in listOf(false, true)) {
+                    val visual = SessionSwitcherNav.rowVisual(
+                        isActive = isActive,
+                        selected = selected,
+                        accent = tokens.accentColor,
+                        tokens = tokens,
+                    )
+                    val titleFg = SlotMenuNav.blendOverOpaque(visual.titleColor, visual.fillColor)
+                    val titleRatio = ThemePack.contrastRatio(titleFg, visual.fillColor)
+                    assertTrue(
+                        "Low title contrast $titleRatio on theme=${tokens.id} active=$isActive selected=$selected",
+                        titleRatio >= ThemePack.MIN_TEXT_CONTRAST,
+                    )
+                    val subFg = SlotMenuNav.blendOverOpaque(visual.subtitleColor, visual.fillColor)
+                    val subRatio = ThemePack.contrastRatio(subFg, visual.fillColor)
+                    assertTrue(
+                        "Low subtitle contrast $subRatio on theme=${tokens.id} active=$isActive selected=$selected",
+                        subRatio >= ThemePack.MIN_TEXT_CONTRAST,
+                    )
+                }
+            }
+        }
     }
 }
