@@ -171,18 +171,32 @@ object CompanionHeroMetrics {
     /**
      * Right-side padding (dp) on [CompanionPanel]'s role chip row so chips never
      * collide with the top-end large [StatusPill] on narrow companion panels
-     * (e.g. Sugar ~540dp). Zero when StatusPill is hidden or panel is wide.
+     * (e.g. Sugar ~540dp). Clamped to 40% of ultra-narrow panels; zero when
+     * StatusPill is hidden or panel is wide.
      */
     fun roleBarEndClearanceDp(hasStatusPill: Boolean, panelWidthDp: Float): Int =
         if (hasStatusPill && panelWidthDp < ROLE_BAR_WIDE_PANEL_DP) {
-            ROLE_BAR_STATUS_CLEARANCE_DP
+            minOf(
+                ROLE_BAR_STATUS_CLEARANCE_DP,
+                (panelWidthDp.coerceAtLeast(0f) * 0.40f).toInt(),
+            )
         } else {
             0
         }
 
-    /** Column span for item [index] in a 2-column PERF_HUD metric card grid. */
-    fun perfCardColumnSpan(index: Int, totalCount: Int): Int =
-        if (totalCount > 0 && totalCount % 2 == 1 && index == totalCount - 1) 2 else 1
+    /** Responsive horizontal content padding (dp) scaling across ultra-narrow, Sugar, and wide panels. */
+    fun panelHorizontalPaddingDp(panelWidthDp: Float): Int = when {
+        panelWidthDp < 420f -> 14
+        panelWidthDp < 600f -> 20
+        else -> 24
+    }
+
+    /** Column count for PERF_HUD metric cards: 2 normally, gracefully collapsing to 1 under 360dp. */
+    fun perfGridColumns(panelWidthDp: Float): Int = if (panelWidthDp < 360f) 1 else 2
+
+    /** Column span for item [index] in a [columns]-column PERF_HUD metric card grid. */
+    fun perfCardColumnSpan(index: Int, totalCount: Int, columns: Int = 2): Int =
+        if (columns >= 2 && totalCount > 0 && totalCount % 2 == 1 && index == totalCount - 1) 2 else 1
 
     /**
      * Conservative vertical budget estimate (dp) for the companion hero stack

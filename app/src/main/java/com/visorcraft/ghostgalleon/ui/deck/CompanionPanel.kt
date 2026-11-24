@@ -2341,10 +2341,11 @@ object CompanionPanel {
             }
             return root
         }
+        val sidePad = dp(CompanionHeroMetrics.panelHorizontalPaddingDp(panelWidthDp))
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             tag = TAG_PANEL_ROOT
-            setPadding(dp(24), dp(8), dp(24), 0)
+            setPadding(sidePad, dp(8), sidePad, 0)
             clipChildren = false
             clipToPadding = false
         }
@@ -2413,10 +2414,13 @@ object CompanionPanel {
 
         when (effectiveRole) {
             CompanionRole.PERF_HUD -> {
-                content.addView(buildPerfHud(context, settings, toDp), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ))
+                content.addView(
+                    buildPerfHud(context, settings, panelWidthDp, toDp),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
                 content.background = panelBackground(context, settings.accentColor)
                 root.addView(content, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3448,9 +3452,11 @@ object CompanionPanel {
     private fun buildPerfHud(
         context: Context,
         settings: Settings,
+        panelWidthDp: Float,
         dp: (Int) -> Int,
     ): View {
         val surface = TileBackgrounds.surfaceColor(context)
+        val gridCols = CompanionHeroMetrics.perfGridColumns(panelWidthDp)
         val col = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -3474,7 +3480,7 @@ object CompanionPanel {
             setPadding(0, dp(4), 0, dp(10))
         })
         val grid = GridLayout(context).apply {
-            columnCount = 2
+            columnCount = gridCols
             useDefaultMargins = false
         }
         val scroll = ScrollView(context).apply {
@@ -3584,7 +3590,7 @@ object CompanionPanel {
                         meterHeightPx,
                     ).apply { topMargin = dp(7) },
                 )
-                val span = CompanionHeroMetrics.perfCardColumnSpan(index, rows.size)
+                val span = CompanionHeroMetrics.perfCardColumnSpan(index, rows.size, gridCols)
                 grid.addView(
                     card,
                     GridLayout.LayoutParams().apply {
