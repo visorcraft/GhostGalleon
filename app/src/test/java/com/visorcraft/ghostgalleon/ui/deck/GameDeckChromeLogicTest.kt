@@ -161,4 +161,71 @@ class GameDeckChromeLogicTest {
             GameDeckChromeLogic.browseChipAccessibilityText("Fav · 4", selected = false),
         )
     }
+
+    @Test
+    fun `emptyVisualKind and emptyStateConfirmResets map every browse state cleanly`() {
+        assertEquals(
+            GameDeckChromeLogic.EmptyVisualKind.SEARCH_OR_FILTER,
+            GameDeckChromeLogic.emptyVisualKind(LibraryBrowse.BrowseQuery(text = "zelda")),
+        )
+        assertEquals(
+            GameDeckChromeLogic.EmptyVisualKind.SEARCH_OR_FILTER,
+            GameDeckChromeLogic.emptyVisualKind(LibraryBrowse.BrowseQuery(platformId = "snes")),
+        )
+        assertEquals(
+            GameDeckChromeLogic.EmptyVisualKind.FAVORITES,
+            GameDeckChromeLogic.emptyVisualKind(LibraryBrowse.BrowseQuery(mode = LibraryBrowse.Mode.FAVORITES)),
+        )
+        assertEquals(
+            GameDeckChromeLogic.EmptyVisualKind.COLLECTION,
+            GameDeckChromeLogic.emptyVisualKind(
+                LibraryBrowse.BrowseQuery(mode = LibraryBrowse.Mode.COLLECTION, collectionName = "RPGs"),
+            ),
+        )
+        assertEquals(
+            GameDeckChromeLogic.EmptyVisualKind.LIBRARY,
+            GameDeckChromeLogic.emptyVisualKind(LibraryBrowse.BrowseQuery()),
+        )
+
+        val filtered = LibraryBrowse.BrowseQuery(text = "nomatch")
+        assertTrue(GameDeckChromeLogic.emptyStateConfirmResets(entriesEmpty = true, query = filtered))
+        assertFalse(GameDeckChromeLogic.emptyStateConfirmResets(entriesEmpty = false, query = filtered))
+        assertFalse(
+            GameDeckChromeLogic.emptyStateConfirmResets(
+                entriesEmpty = true,
+                query = LibraryBrowse.BrowseQuery(),
+            ),
+        )
+    }
+
+    @Test
+    fun `railProgressState and responsive track width behave across panel sizes`() {
+        val single = GameDeckChromeLogic.railProgressState(selectedIndex = 0, itemCount = 1)
+        assertFalse(single.visible)
+        assertEquals(0f, single.fraction, 0.001f)
+
+        val empty = GameDeckChromeLogic.railProgressState(selectedIndex = 0, itemCount = 0)
+        assertFalse(empty.visible)
+
+        val first = GameDeckChromeLogic.railProgressState(selectedIndex = 0, itemCount = 10)
+        assertTrue(first.visible)
+        assertEquals(1, first.currentOneBased)
+        assertEquals(10, first.total)
+        assertEquals(0.1f, first.fraction, 0.001f)
+
+        val last = GameDeckChromeLogic.railProgressState(selectedIndex = 99, itemCount = 10)
+        assertEquals(10, last.currentOneBased)
+        assertEquals(1.0f, last.fraction, 0.001f)
+
+        assertEquals(
+            text(R.string.format_progress, 3, 42),
+            GameDeckChromeLogic.railPositionText(3, 42),
+        )
+
+        val sugarTrack = GameDeckChromeLogic.railTrackWidthDp(screenWidthDp = 540)
+        val odinTrack = GameDeckChromeLogic.railTrackWidthDp(screenWidthDp = 960)
+        assertTrue("Sugar track width out of bounds: $sugarTrack", sugarTrack in 72..148)
+        assertTrue("Odin track width out of bounds: $odinTrack", odinTrack in 72..148)
+        assertTrue("Widescreen track should be at least as wide as compact", odinTrack >= sugarTrack)
+    }
 }

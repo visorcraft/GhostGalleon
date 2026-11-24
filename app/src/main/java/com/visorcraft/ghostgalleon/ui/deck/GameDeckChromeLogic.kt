@@ -30,6 +30,23 @@ object GameDeckChromeLogic {
     /** Minimum simultaneous active filters before showing the inline Clear-All pill. */
     const val MIN_FILTERS_FOR_STRIP_CLEAR_ALL: Int = 2
 
+    /** Minimum entries required before showing the carousel position indicator. */
+    const val MIN_RAIL_COUNT_FOR_INDICATOR: Int = 2
+
+    enum class EmptyVisualKind {
+        SEARCH_OR_FILTER,
+        FAVORITES,
+        COLLECTION,
+        LIBRARY,
+    }
+
+    data class RailProgressState(
+        val visible: Boolean,
+        val currentOneBased: Int,
+        val total: Int,
+        val fraction: Float,
+    )
+
     sealed class ActiveFilter {
         data class Platform(val platformId: String) : ActiveFilter()
         data class Genre(val value: String) : ActiveFilter()
@@ -115,4 +132,50 @@ object GameDeckChromeLogic {
         } else {
             dynamicText(chipLabel)
         }
+
+    /** Pick contextual empty-state icon framing matching the active browse query. */
+    fun emptyVisualKind(query: LibraryBrowse.BrowseQuery): EmptyVisualKind = when {
+        LibraryBrowse.hasActiveMetaFilters(query) -> EmptyVisualKind.SEARCH_OR_FILTER
+        query.mode == LibraryBrowse.Mode.FAVORITES -> EmptyVisualKind.FAVORITES
+        query.mode == LibraryBrowse.Mode.COLLECTION -> EmptyVisualKind.COLLECTION
+        else -> EmptyVisualKind.LIBRARY
+    }
+
+    /**
+     * True when gamepad CONFIRM/BACK on an empty carousel should reset filters
+     * back to the unrestricted catalog instead of trying to launch a stale key.
+     */
+    fun emptyStateConfirmResets(
+        entriesEmpty: Boolean,
+        query: LibraryBrowse.BrowseQuery,
+    ): Boolean = entriesEmpty && shouldShowResetAction(query)
+
+    /** Pure position & progress fraction for the carousel rail indicator. */
+    fun railProgressState(selectedIndex: Int, itemCount: Int): RailProgressState {
+        val safeTotal = itemCount.coerceAtLeast(0)
+        if (safeTotal < MIN_RAIL_COUNT_FOR_INDICATOR) {
+            return RailProgressState(
+                visible = false,
+                currentOneBased = 0,
+                total = safeTotal,
+                fraction = 0f,
+            )
+        }
+        val clamped = selectedIndex.coerceIn(0, safeTotal - 1)
+        val oneBased = clamped + 1
+        return RailProgressState(
+            visible = true,
+            currentOneBased = oneBased,
+            total = safeTotal,
+            fraction = (oneBased.toFloat() / safeTotal.toFloat()).coerceIn(0f, 1f),
+        )
+    }
+
+    /** Localized `current/total` rail counter text. */
+    fun railPositionText(currentOneBased: Int, total: Int): UiText =
+        text(R.string.format_progress, currentOneBased, total)
+
+    /** Responsive rail progress track width (dp) for compact and widescreen panels. */
+    fun railTrackWidthDp(screenWidthDp: Int): Int =
+        (screenWidthDp.coerceAtLeast(1) * 0.20f).toInt().coerceIn(72, 148)
 }

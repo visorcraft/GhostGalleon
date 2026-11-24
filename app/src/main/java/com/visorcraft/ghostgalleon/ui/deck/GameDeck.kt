@@ -469,8 +469,14 @@ class GameDeck(
         DockSlots.visibleCount(dockMove.working ?: settings.dockSlots), 0, 1)
     private var recycler: RecyclerView? = null
     private var emptyStateView: View? = null
+    private var emptyIconMedallion: FrameLayout? = null
+    private var emptyIconImage: ImageView? = null
+    private var emptyIconGlyph: TextView? = null
     private var emptyMessageView: TextView? = null
     private var emptyResetButton: TextView? = null
+    private var railIndicatorRow: LinearLayout? = null
+    private var railCountView: TextView? = null
+    private var railProgressFill: View? = null
     private var dockBar: DockBar? = null
     private var hintView: TextView? = null
     private var rootView: FrameLayout? = null
@@ -519,16 +525,86 @@ class GameDeck(
             rv.visibility = View.GONE
             emptyHost.visibility = View.VISIBLE
             val q = state.libraryBrowse
+            val surface = TileBackgrounds.surfaceColor(context)
+            val accentText = ThemePack.accentTextColor(settings.accentColor, surface)
+            val kind = GameDeckChromeLogic.emptyVisualKind(q)
+            val medallionFill: Int
+            val medallionStroke: Int
+            when (kind) {
+                GameDeckChromeLogic.EmptyVisualKind.FAVORITES -> {
+                    emptyIconImage?.visibility = View.GONE
+                    emptyIconGlyph?.visibility = View.VISIBLE
+                    emptyIconGlyph?.setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
+                    medallionFill = 0x24FFD54F
+                    medallionStroke = 0x55FFD54F
+                }
+                GameDeckChromeLogic.EmptyVisualKind.COLLECTION -> {
+                    emptyIconGlyph?.visibility = View.GONE
+                    emptyIconImage?.visibility = View.VISIBLE
+                    emptyIconImage?.setImageResource(R.drawable.ic_folder)
+                    emptyIconImage?.setColorFilter(accentText, PorterDuff.Mode.SRC_IN)
+                    medallionFill = (accentText and 0x00FFFFFF) or (0x22 shl 24)
+                    medallionStroke = (accentText and 0x00FFFFFF) or (0x55 shl 24)
+                }
+                GameDeckChromeLogic.EmptyVisualKind.SEARCH_OR_FILTER -> {
+                    emptyIconGlyph?.visibility = View.GONE
+                    emptyIconImage?.visibility = View.VISIBLE
+                    emptyIconImage?.setImageResource(R.drawable.ic_search)
+                    emptyIconImage?.setColorFilter(accentText, PorterDuff.Mode.SRC_IN)
+                    medallionFill = (accentText and 0x00FFFFFF) or (0x22 shl 24)
+                    medallionStroke = (accentText and 0x00FFFFFF) or (0x55 shl 24)
+                }
+                GameDeckChromeLogic.EmptyVisualKind.LIBRARY -> {
+                    emptyIconGlyph?.visibility = View.GONE
+                    emptyIconImage?.visibility = View.VISIBLE
+                    emptyIconImage?.setImageResource(R.drawable.ic_search)
+                    emptyIconImage?.setColorFilter(UiDimens.ALPHA_MUTED, PorterDuff.Mode.SRC_IN)
+                    medallionFill = TileBackgrounds.surfaceSunken(context)
+                    medallionStroke = TileBackgrounds.hairlineDivider(context)
+                }
+            }
+            emptyIconMedallion?.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(medallionFill)
+                setStroke(context.strokePx(1), medallionStroke)
+            }
             emptyMessageView?.text = context.resolveText(GameDeckChromeLogic.emptyStateMessage(q))
             val showReset = GameDeckChromeLogic.shouldShowResetAction(q)
             emptyResetButton?.let { btn ->
                 btn.visibility = if (showReset) View.VISIBLE else View.GONE
                 btn.setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-                btn.background = TileBackgrounds.accentPill(context, settings.accentColor)
+                btn.background = TileBackgrounds.focusableRow(
+                    context = context,
+                    accent = settings.accentColor,
+                    idleBackground = TileBackgrounds.accentPill(context, settings.accentColor),
+                    cornerRadiusDp = 20,
+                    strokeDp = 2,
+                )
             }
         } else {
             emptyHost.visibility = View.GONE
             rv.visibility = View.VISIBLE
+        }
+        syncRailIndicator(context)
+    }
+
+    private fun syncRailIndicator(context: Context) {
+        val row = railIndicatorRow ?: return
+        val progress = GameDeckChromeLogic.railProgressState(selectedIndex(), entries.size)
+        if (!progress.visible) {
+            row.visibility = View.GONE
+            return
+        }
+        row.visibility = View.VISIBLE
+        railCountView?.text = context.resolveText(
+            GameDeckChromeLogic.railPositionText(progress.currentOneBased, progress.total),
+        )
+        railProgressFill?.let { fill ->
+            fill.pivotX = 0f
+            fill.scaleX = progress.fraction
+            (fill.background as? GradientDrawable)?.setColor(
+                ThemePack.accentTextColor(settings.accentColor, Color.BLACK),
+            )
         }
     }
 
@@ -969,18 +1045,47 @@ class GameDeck(
         ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
         }
+        val iconImg = ImageView(context).apply {
+            setImageResource(R.drawable.ic_search)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setColorFilter(UiDimens.ALPHA_MUTED, PorterDuff.Mode.SRC_IN)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        emptyIconImage = iconImg
+        val iconGlyph = TextView(context).apply {
+            setText(R.string.glyph_favorite)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            setTextColor(CarouselCardBadges.FAVORITE_BADGE_TINT)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            visibility = View.GONE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        emptyIconGlyph = iconGlyph
+        val medallion = FrameLayout(context).apply {
+            addView(
+                iconImg,
+                FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER),
+            )
+            addView(
+                iconGlyph,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ),
+            )
+        }
+        emptyIconMedallion = medallion
         card.addView(
-            ImageView(context).apply {
-                setImageResource(R.drawable.ic_search)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setColorFilter(UiDimens.ALPHA_SUBTLE, PorterDuff.Mode.SRC_IN)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            LinearLayout.LayoutParams(dp(32), dp(32)).apply { bottomMargin = dp(8) },
+            medallion,
+            LinearLayout.LayoutParams(dp(52), dp(52)).apply { bottomMargin = dp(12) },
         )
         val msg = TextView(context).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
@@ -998,10 +1103,17 @@ class GameDeck(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(ThemePack.onFillTextColor(settings.accentColor))
-            background = TileBackgrounds.accentPill(context, settings.accentColor)
+            background = TileBackgrounds.focusableRow(
+                context = context,
+                accent = settings.accentColor,
+                idleBackground = TileBackgrounds.accentPill(context, settings.accentColor),
+                cornerRadiusDp = 20,
+                strokeDp = 2,
+            )
             gravity = Gravity.CENTER
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+            setPadding(dp(20), dp(10), dp(20), dp(10))
             isClickable = true
+            isFocusable = true
             setOnClickListener { resetToAllBrowse() }
         }
         emptyResetButton = resetBtn
@@ -1026,6 +1138,64 @@ class GameDeck(
         )
         emptyStateView = host
         return host
+    }
+
+    private fun buildRailIndicator(context: Context, dp: (Int) -> Int): View {
+        val dm = context.resources.displayMetrics
+        val screenWidthDp = (dm.widthPixels / dm.density.coerceAtLeast(0.5f)).toInt()
+        val trackWidthPx = dp(GameDeckChromeLogic.railTrackWidthDp(screenWidthDp))
+        val trackHeightPx = dp(3).coerceAtLeast(2)
+        val fillView = View(context).apply {
+            background = GradientDrawable().apply {
+                setColor(ThemePack.accentTextColor(settings.accentColor, Color.BLACK))
+                cornerRadius = trackHeightPx / 2f
+            }
+            pivotX = 0f
+            scaleX = 0f
+        }
+        railProgressFill = fillView
+        val track = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                setColor(0x33FFFFFF)
+                cornerRadius = trackHeightPx / 2f
+            }
+            addView(
+                fillView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        val counter = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            includeFontPadding = false
+        }
+        railCountView = counter
+        val pill = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(0x99101016.toInt())
+                cornerRadius = context.dpF(12)
+                setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+            }
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            visibility = View.GONE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            addView(
+                track,
+                LinearLayout.LayoutParams(trackWidthPx, trackHeightPx).apply {
+                    marginEnd = dp(8)
+                },
+            )
+            addView(counter)
+        }
+        railIndicatorRow = pill
+        return pill
     }
 
     override fun primaryView(context: Context): View {
@@ -1098,6 +1268,14 @@ class GameDeck(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
+            )
+            addView(
+                buildRailIndicator(context, ::dp),
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+                ).apply { bottomMargin = dp(2) },
             )
         }
         syncEmptyState(context)
@@ -1190,6 +1368,7 @@ class GameDeck(
         )
         scrollSelectionToCenter(rv)
         paintLetterJumpSelection()
+        syncRailIndicator(rv.context)
         dockBar?.updateFocus(state.dockSlot, dockMove.index)
         hintView?.text = if (dockMove.active) {
             HintBar.moveText(activity)
@@ -1237,6 +1416,15 @@ class GameDeck(
         state.dockSlot?.let { return handleDockAction(action, it) }
         return when (action) {
             Action.CONFIRM -> {
+                if (GameDeckChromeLogic.emptyStateConfirmResets(
+                        entriesEmpty = entries.isEmpty(),
+                        query = state.libraryBrowse,
+                    )
+                ) {
+                    resetToAllBrowse()
+                    return true
+                }
+                if (entries.isEmpty()) return true
                 // Launch the DeckState selection, not merely carousel index 0
                 // when selectedKey is outside the current filter (Random /
                 // Continue / chip changes can select a key not in entries).
@@ -1248,6 +1436,18 @@ class GameDeck(
                     )
                 }
                 true
+            }
+            Action.BACK -> {
+                if (GameDeckChromeLogic.emptyStateConfirmResets(
+                        entriesEmpty = entries.isEmpty(),
+                        query = state.libraryBrowse,
+                    )
+                ) {
+                    resetToAllBrowse()
+                    true
+                } else {
+                    false
+                }
             }
             Action.NAV_LEFT, Action.NAV_RIGHT, Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 // Select only — updateSelection → scrollSelectionToCenter once.
