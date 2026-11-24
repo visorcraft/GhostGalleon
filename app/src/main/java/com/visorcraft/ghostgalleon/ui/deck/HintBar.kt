@@ -27,15 +27,6 @@ import kotlin.math.roundToInt
 
 object HintBar {
 
-    /** Subtle frosted fill behind inline button keycaps on dark/OLED panels. */
-    private const val KEYCAP_FILL = 0x26FFFFFF
-
-    /** Crisp hairline outline framing inline button keycaps. */
-    private const val KEYCAP_STROKE = 0x48FFFFFF
-
-    /** Muted color for `·` and `-` hint separators. */
-    private const val SEPARATOR_COLOR = 0x55FFFFFF
-
     /** SINGLE has no second display: X cannot swap, so the hint omits it. */
     private fun isSingleDisplay(context: Context): Boolean =
         (context.applicationContext as? GhostGalleonApp)
@@ -60,15 +51,21 @@ object HintBar {
         val span = SpannableString(raw)
         val density = context.resources.displayMetrics.density
         val strokeWidthPx = density.coerceAtLeast(1f)
-        val prefixColor = resolvePrefixColor(context)
+        val app = context.applicationContext as? GhostGalleonApp
+        val themeTokens = app?.let { ThemePack.resolve(it.settings) } ?: ThemePack.GHOST
+        val keycapTheme = CompanionThemeAudit.hintKeycapTheme(themeTokens.id)
+        val prefixColor = ThemePack.accentTextColor(
+            app?.settings?.accentColor ?: themeTokens.accentColor,
+            TileBackgrounds.surfaceColor(context),
+        )
         for (token in tokens) {
             when (token.kind) {
                 HintBarFormat.TokenKind.KEYCAP -> {
                     span.setSpan(
                         KeycapBadgeSpan(
-                            fillColor = KEYCAP_FILL,
-                            strokeColor = KEYCAP_STROKE,
-                            textColor = Color.WHITE,
+                            fillColor = keycapTheme.fillColor,
+                            strokeColor = keycapTheme.strokeColor,
+                            textColor = keycapTheme.textColor,
                             strokeWidthPx = strokeWidthPx,
                         ),
                         token.start,
@@ -92,7 +89,7 @@ object HintBar {
                 }
                 HintBarFormat.TokenKind.SEPARATOR -> {
                     span.setSpan(
-                        ForegroundColorSpan(SEPARATOR_COLOR),
+                        ForegroundColorSpan(keycapTheme.separatorColor),
                         token.start,
                         token.end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -104,12 +101,6 @@ object HintBar {
             }
         }
         return span
-    }
-
-    private fun resolvePrefixColor(context: Context): Int {
-        val app = context.applicationContext as? GhostGalleonApp
-        val accent = app?.settings?.accentColor ?: ThemePack.GHOST.accentColor
-        return ThemePack.accentTextColor(accent, TileBackgrounds.surfaceColor(context))
     }
 
     fun build(context: Context): View {

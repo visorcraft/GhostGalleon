@@ -544,6 +544,7 @@ object CompanionPanel {
                 base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = true,
             )
             gravity = Gravity.CENTER
             setSingleLine()
@@ -600,6 +601,7 @@ object CompanionPanel {
                 base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = true,
             )
             gravity = Gravity.CENTER
             setSingleLine()
@@ -621,7 +623,7 @@ object CompanionPanel {
                 tag = TAG_PLAY_HUD_SEAT_HINT
                 setText(R.string.seat_need_assist)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-                setTextColor(0xBBFFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.CENTER
                 setPadding(0, dp(12), 0, dp(8))
             },
@@ -2508,6 +2510,7 @@ object CompanionPanel {
                     accent = settings.accentColor,
                     cornerRadiusDp = 22,
                     verticalInsetDp = 0,
+                    filled = true,
                 )
                 elevation = context.dpF(6)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -2629,7 +2632,7 @@ object CompanionPanel {
                     TypedValue.COMPLEX_UNIT_SP,
                     if (heroSpec.artSizeDp < 180) 13f else 15f,
                 )
-                setTextColor(0xB3FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.CENTER
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -2652,7 +2655,7 @@ object CompanionPanel {
                     View.GONE
                 }
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(0x88FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_MUTED)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -2708,7 +2711,7 @@ object CompanionPanel {
                     View.GONE
                 }
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(0xA0FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.CENTER
                 maxLines = if (heroSpec.showExtraMedia) 4 else 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -2970,7 +2973,7 @@ object CompanionPanel {
                     TypedValue.COMPLEX_UNIT_SP,
                     if (heroSpec.artSizeDp < 180) 13f else 15f,
                 )
-                setTextColor(0xB3FFFFFF.toInt())
+                setTextColor(UiDimens.ALPHA_SECONDARY)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -3166,10 +3169,20 @@ object CompanionPanel {
         accent: Int,
         cornerRadiusDp: Int,
         verticalInsetDp: Int = CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP,
+        filled: Boolean = false,
     ): Drawable {
+        val surface = TileBackgrounds.chipIdleColor(context)
+        val focusRing = CompanionThemeAudit.focusRingColorForFill(
+            filled = filled,
+            accentColor = accent,
+            surfaceColor = surface,
+        )
+        val rippleColor = CompanionThemeAudit.rippleColorForFill(
+            if (filled) accent else surface,
+        )
         val focusable = TileBackgrounds.focusableRow(
             context = context,
-            accent = accent,
+            accent = focusRing,
             idleBackground = base,
             cornerRadiusDp = cornerRadiusDp,
             strokeDp = 2,
@@ -3179,7 +3192,7 @@ object CompanionPanel {
             cornerRadius = context.dpF(cornerRadiusDp)
         }
         val ripple = RippleDrawable(
-            ColorStateList.valueOf(0x33FFFFFF),
+            ColorStateList.valueOf(rippleColor),
             focusable,
             mask,
         )
@@ -3313,6 +3326,7 @@ object CompanionPanel {
                     base = basePill,
                     accent = settings.accentColor,
                     cornerRadiusDp = 17,
+                    filled = selected,
                 )
                 gravity = Gravity.CENTER
                 setPadding(dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP), dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP))
@@ -3877,6 +3891,7 @@ object CompanionPanel {
                 base = base,
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = filled,
             )
             setPadding(dp(18), insetV, dp(18), insetV)
             gravity = Gravity.CENTER
@@ -4157,6 +4172,7 @@ object CompanionPanel {
                 base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = true,
             )
             gravity = Gravity.CENTER
             setPadding(dp(16), insetV, dp(16), insetV)
@@ -4322,6 +4338,7 @@ object CompanionPanel {
                 base = TileBackgrounds.accentPill(activity, settings.accentColor, cornerRadiusDp = 18),
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = true,
             )
             setPadding(dp(16), postureInsetV, dp(16), postureInsetV)
             gravity = Gravity.CENTER
@@ -4590,6 +4607,7 @@ object CompanionPanel {
                 base = basePill,
                 accent = settings.accentColor,
                 cornerRadiusDp = 18,
+                filled = filled,
             )
             gravity = Gravity.CENTER
             setSingleLine()
@@ -4703,7 +4721,7 @@ object CompanionPanel {
                     TextView(activity).apply {
                         setText(R.string.cockpit_need_assist)
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13f)
-                        setTextColor(0xBBFFFFFF.toInt())
+                        setTextColor(UiDimens.ALPHA_SECONDARY)
                         gravity = Gravity.CENTER
                         setPadding(0, dp(8), 0, dp(4))
                     },
