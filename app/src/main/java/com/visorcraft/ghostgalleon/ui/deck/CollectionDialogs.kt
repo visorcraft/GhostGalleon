@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import androidx.annotation.StringRes
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.library.CollectionsOps
@@ -43,6 +44,35 @@ internal object CollectionDialogRows {
     /** Trim and reject blank collection names. */
     fun normalizeCollectionName(raw: String): String? =
         raw.trim().takeIf { it.isNotEmpty() }
+
+    enum class MemberAction(
+        @StringRes val labelRes: Int,
+        @StringRes val feedbackRes: Int?,
+    ) {
+        MOVE_TO_TOP(R.string.action_move_to_top, R.string.deck_moved_top),
+        MOVE_UP(R.string.action_move_up, R.string.deck_moved_up),
+        MOVE_DOWN(R.string.action_move_down, R.string.deck_moved_down),
+        MOVE_TO_END(R.string.action_move_to_end, R.string.deck_moved_end),
+        REMOVE(R.string.action_remove, null),
+    }
+
+    /**
+     * Context-aware member actions that omit no-op and redundant moves
+     * (e.g. no Move-Up on index 0, no separate Move-to-Top on index 1, no
+     * Move-Down on the last item, and Remove-only for single-item collections).
+     */
+    fun availableMemberActions(index: Int, totalCount: Int): List<MemberAction> {
+        if (totalCount <= 1 || index !in 0 until totalCount) {
+            return listOf(MemberAction.REMOVE)
+        }
+        return buildList(5) {
+            if (index > 1) add(MemberAction.MOVE_TO_TOP)
+            if (index > 0) add(MemberAction.MOVE_UP)
+            if (index < totalCount - 1) add(MemberAction.MOVE_DOWN)
+            if (index < totalCount - 2) add(MemberAction.MOVE_TO_END)
+            add(MemberAction.REMOVE)
+        }
+    }
 }
 
 /** Shared “Add to collection” picker for Grid and Game decks. */
@@ -146,35 +176,55 @@ object CollectionDialogs {
             return
         }
         val labels = members.map { labelOf(it) }.toTypedArray()
+        val listTitle = context.getString(
+            R.string.format_dot_pair,
+            name,
+            context.resources.getQuantityString(R.plurals.count_items, members.size, members.size),
+        )
         DeckDialogs.chooseItem(
             context = context,
-            title = name,
+            title = listTitle,
             items = labels,
             negativeRes = R.string.action_close,
         ) { which ->
             val key = members.getOrNull(which) ?: return@chooseItem
+            val actions = CollectionDialogRows.availableMemberActions(which, members.size)
+            val actionLabels = actions.map { context.getString(it.labelRes) }.toTypedArray()
+            val memberTitle = context.getString(
+                R.string.format_dot_pair,
+                labelOf(key),
+                context.getString(R.string.format_progress, which + 1, members.size),
+            )
             DeckDialogs.chooseItem(
                 context = context,
-                title = labelOf(key),
-                items = arrayOf(
-                    context.getString(R.string.action_move_to_top),
-                    context.getString(R.string.action_move_up),
-                    context.getString(R.string.action_move_down),
-                    context.getString(R.string.action_move_to_end),
-                    context.getString(R.string.action_remove),
-                ),
+                title = memberTitle,
+                items = actionLabels,
                 negativeRes = R.string.action_close,
-            ) { action ->
-                val live = app.settings.collections
-                val next = when (action) {
-                    0 -> CollectionsOps.moveMemberToEdge(live, name, key, toFront = true)
-                    1 -> CollectionsOps.moveMemberBy(live, name, key, -1)
-                    2 -> CollectionsOps.moveMemberBy(live, name, key, 1)
-                    3 -> CollectionsOps.moveMemberToEdge(live, name, key, toFront = false)
-                    else -> CollectionsOps.removeFromCollection(live, name, key)
+            ) { actionIndex ->
+                val chosen = actions.getOrNull(actionIndex)
+                if (chosen != null) {
+                    val live = app.settings.collections
+                    val next = when (chosen) {
+                        CollectionDialogRows.MemberAction.MOVE_TO_TOP ->
+                            CollectionsOps.moveMemberToEdge(live, name, key, toFront = true)
+                        CollectionDialogRows.MemberAction.MOVE_UP ->
+                            CollectionsOps.moveMemberBy(live, name, key, -1)
+                        CollectionDialogRows.MemberAction.MOVE_DOWN ->
+                            CollectionsOps.moveMemberBy(live, name, key, 1)
+                        CollectionDialogRows.MemberAction.MOVE_TO_END ->
+                            CollectionsOps.moveMemberToEdge(live, name, key, toFront = false)
+                        CollectionDialogRows.MemberAction.REMOVE ->
+                            CollectionsOps.removeFromCollection(live, name, key)
+                    }
+                    commitCollection(app, next, name)
+                    onChanged?.invoke()
+                    val feedback = chosen.feedbackRes
+                    if (feedback != null) {
+                        context.toast(feedback)
+                    } else {
+                        context.toast(R.string.format_removed_from_named, name)
+                    }
                 }
-                commitCollection(app, next, name)
-                onChanged?.invoke()
             }
         }
     }
