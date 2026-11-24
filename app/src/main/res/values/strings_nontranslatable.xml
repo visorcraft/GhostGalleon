@@ -16,8 +16,6 @@
     <string name="glyph_favorite" translatable="false">★</string>
     <string name="glyph_back" translatable="false">←</string>
     <string name="glyph_dropdown" translatable="false">▾</string>
-    <string name="glyph_check_prefix" translatable="false">✓ </string>
-    <string name="glyph_open_prefix" translatable="false">○ </string>
     <string name="glyph_ellipsis" translatable="false">…</string>
     <string name="glyph_dash" translatable="false">—</string>
     <string name="glyph_bolt" translatable="false">⚡</string>

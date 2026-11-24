@@ -167,7 +167,6 @@
     <string name="format_keycode">keycode %1$d</string>
     <string name="format_theme">Theme: %1$s</string>
     <string name="format_label_value">%1$s: %2$s</string>
-    <string name="format_prefixed">%1$s%2$s</string>
     <string name="clipboard_title_label">title</string>
     <string name="clipboard_titles_label">titles</string>
     <string name="format_hidden_named">Hidden: %1$s</string>

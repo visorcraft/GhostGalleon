@@ -154,7 +154,6 @@
     <string name="format_keycode">código de tecla %1$d</string>
     <string name="format_theme">Tema: %1$s</string>
     <string name="format_label_value">%1$s: %2$s</string>
-    <string name="format_prefixed">%1$s%2$s</string>
     <string name="clipboard_title_label">título</string>
     <string name="clipboard_titles_label">títulos</string>
     <string name="format_hidden_named">Oculto: %1$s</string>

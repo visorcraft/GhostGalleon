@@ -871,7 +871,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         return true
     }
 
-    private var setupOverlay: View? = null
+    private var setupOverlay: SetupCard? = null
 
     private fun setupSnapshot(): SetupNeeds.Snapshot {
         val installed = { pkg: String -> packageManager.isInstalled(pkg) }
@@ -888,8 +888,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
         val content = findViewById<ViewGroup>(android.R.id.content) ?: return
         // Replace any stale overlay (e.g. after checklist refresh).
-        setupOverlay?.let { content.removeView(it) }
-        val card = SetupCard.build(
+        setupOverlay?.let { content.removeView(it.view) }
+        val card = SetupCard(
             this,
             settings.accentColor,
             snap,
@@ -936,7 +936,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         setupOverlay = card
         app.setupBlockingInput = true
         content.addView(
-            card,
+            card.view,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1022,7 +1022,7 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     private fun dismissSetup() {
         val overlay = setupOverlay
         if (overlay != null) {
-            findViewById<ViewGroup>(android.R.id.content)?.removeView(overlay)
+            findViewById<ViewGroup>(android.R.id.content)?.removeView(overlay.view)
         }
         setupOverlay = null
         app.setupBlockingInput = false
@@ -1031,6 +1031,18 @@ abstract class BaseDeckActivity : AppCompatActivity() {
     /** Cross-activity dismiss when BACK lands on the non-host display. */
     fun dismissSetupPublic() {
         dismissSetup()
+    }
+
+    /** Feed a gamepad action into this activity's open setup card (cross-display). */
+    fun routeSetupAction(action: Action): Boolean {
+        val overlay = setupOverlay ?: return false
+        overlay.handleAction(action)
+        when (action) {
+            Action.NAV_UP, Action.NAV_DOWN, Action.PAGE_PREV, Action.PAGE_NEXT, Action.CONFIRM ->
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+            else -> {}
+        }
+        return true
     }
 
     private fun routeSessionSwitcherAction(action: Action): Boolean {
@@ -1051,7 +1063,15 @@ abstract class BaseDeckActivity : AppCompatActivity() {
 
     protected open fun handleAction(action: Action): Boolean {
         // First-run setup: primary hosts the card; input may land elsewhere.
-        if (setupOverlay != null || app.setupBlockingInput) {
+        if (setupOverlay != null) {
+            return routeSetupAction(action)
+        }
+        if (app.setupBlockingInput) {
+            val host = app.primaryDeckActivity()?.takeIf { it !== this }
+            if (host != null && host.setupOverlay != null) {
+                host.runOnUiThread { host.routeSetupAction(action) }
+                return true
+            }
             if (action == Action.BACK) {
                 val snap = setupSnapshot()
                 val live = app.settings
@@ -1063,12 +1083,8 @@ abstract class BaseDeckActivity : AppCompatActivity() {
                     },
                     notify = false,
                 )
-                // Dismiss on the host activity if we own the overlay.
                 dismissSetup()
-                // If companion received BACK, ask primary to drop the card.
-                app.primaryDeckActivity()?.let { host ->
-                    if (host !== this) host.runOnUiThread { host.dismissSetupPublic() }
-                }
+                host?.runOnUiThread { host.dismissSetupPublic() }
             }
             return true
         }

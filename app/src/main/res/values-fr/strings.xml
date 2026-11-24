@@ -154,7 +154,6 @@
     <string name="format_keycode">code de touche %1$d</string>
     <string name="format_theme">Thème : %1$s</string>
     <string name="format_label_value">%1$s : %2$s</string>
-    <string name="format_prefixed">%1$s%2$s</string>
     <string name="clipboard_title_label">titre</string>
     <string name="clipboard_titles_label">titres</string>
     <string name="format_hidden_named">Masqué : %1$s</string>

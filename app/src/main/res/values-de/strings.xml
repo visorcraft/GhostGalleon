@@ -154,7 +154,6 @@
     <string name="format_keycode">Tastencode %1$d</string>
     <string name="format_theme">Design: %1$s</string>
     <string name="format_label_value">%1$s: %2$s</string>
-    <string name="format_prefixed">%1$s%2$s</string>
     <string name="clipboard_title_label">Titel</string>
     <string name="clipboard_titles_label">Titel</string>
     <string name="format_hidden_named">Ausgeblendet: %1$s</string>
