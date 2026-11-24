@@ -91,6 +91,13 @@ object DeckWallpaper {
     /** Clamp requested wallpaper opacity cleanly to `[0f, 1f]`. */
     internal fun clampAlpha(alpha: Float): Float = alpha.coerceIn(0f, 1f)
 
+    /** Pure safety guard rejecting recycled or zero-dimension bitmaps before draw/cache. */
+    internal fun isBitmapUsable(recycled: Boolean, width: Int, height: Int): Boolean =
+        !recycled && width > 0 && height > 0
+
+    private fun isUsable(bitmap: Bitmap?): Boolean =
+        bitmap != null && isBitmapUsable(bitmap.isRecycled, bitmap.width, bitmap.height)
+
     /** Pure gradient color stops for the wallpaper top/bottom vignette scrim. */
     internal fun scrimColors(): IntArray = intArrayOf(SCRIM_TOP, SCRIM_CENTER, SCRIM_BOTTOM)
 
@@ -114,7 +121,7 @@ object DeckWallpaper {
         val uri = uriString?.takeIf { it.isNotBlank() } ?: return
         val safeAlpha = clampAlpha(alpha)
         val hasWarmHit = cachedBitmap
-            ?.takeIf { !it.isRecycled && cacheSatisfies(cachedUri, uri) } != null
+            ?.takeIf { isUsable(it) && cacheSatisfies(cachedUri, uri) } != null
         val wallpaperView = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             this.alpha = if (hasWarmHit) safeAlpha else 0f
@@ -158,7 +165,7 @@ object DeckWallpaper {
         targetAlpha: Float = 0.35f,
     ) {
         val safeAlpha = clampAlpha(targetAlpha)
-        val hit = cachedBitmap?.takeIf { !it.isRecycled && cacheSatisfies(cachedUri, uriString) }
+        val hit = cachedBitmap?.takeIf { isUsable(it) && cacheSatisfies(cachedUri, uriString) }
         if (hit != null) {
             target.animate().cancel()
             target.alpha = safeAlpha
@@ -166,13 +173,13 @@ object DeckWallpaper {
             return
         }
         EXECUTOR.execute {
-            val bitmap = decode(context, uriString) ?: return@execute
+            val bitmap = decode(context, uriString)?.takeIf { isUsable(it) } ?: return@execute
             cachedUri = uriString
             cachedBitmap = bitmap
             target.post {
                 val app = context.applicationContext as? GhostGalleonApp
                 val current = app?.settings?.wallpaperUri
-                if (target.isAttachedToWindow && current == uriString && !bitmap.isRecycled) {
+                if (target.isAttachedToWindow && current == uriString && isUsable(bitmap)) {
                     target.animate().cancel()
                     target.setImageBitmap(bitmap)
                     if (shouldFadeIn(wasCacheHit = false, isAttached = target.isAttachedToWindow)) {

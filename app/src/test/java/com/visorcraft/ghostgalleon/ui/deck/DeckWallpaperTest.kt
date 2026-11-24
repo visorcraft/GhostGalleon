@@ -52,4 +52,13 @@ class DeckWallpaperTest {
         assertEquals(0.35f, DeckWallpaper.clampAlpha(0.35f), 0.001f)
         assertEquals(1f, DeckWallpaper.clampAlpha(2.0f), 0.001f)
     }
+
+    @Test
+    fun `isBitmapUsable rejects recycled or empty dimensions`() {
+        assertTrue(DeckWallpaper.isBitmapUsable(recycled = false, width = 1920, height = 1080))
+        assertFalse(DeckWallpaper.isBitmapUsable(recycled = true, width = 1920, height = 1080))
+        assertFalse(DeckWallpaper.isBitmapUsable(recycled = false, width = 0, height = 1080))
+        assertFalse(DeckWallpaper.isBitmapUsable(recycled = false, width = 1920, height = 0))
+        assertFalse(DeckWallpaper.isBitmapUsable(recycled = false, width = -4, height = 100))
+    }
 }
