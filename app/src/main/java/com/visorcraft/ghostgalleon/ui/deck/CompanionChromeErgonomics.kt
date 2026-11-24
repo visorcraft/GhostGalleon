@@ -1,0 +1,72 @@
+package com.visorcraft.ghostgalleon.ui.deck
+
+/**
+ * Pure ergonomics, auto-scroll, touch-target, and tactile-feedback policy for
+ * Companion chrome controls (role switcher, quick-action chips, Resume CTA,
+ * and floating chrome icon buttons). Host-tested.
+ */
+object CompanionChromeErgonomics {
+
+    /** Minimum accessible touch target edge (dp) for handheld tap ergonomics. */
+    const val MIN_TOUCH_TARGET_DP: Int = 44
+
+    /** Visual pill height (dp) inside a 44dp touch-height role or quick chip. */
+    const val CHIP_VISUAL_HEIGHT_DP: Int = 34
+
+    /** Top/bottom transparent inset (dp) expanding a 34dp visual pill to a 44dp hit target. */
+    const val CHIP_TOUCH_INSET_V_DP: Int = (MIN_TOUCH_TARGET_DP - CHIP_VISUAL_HEIGHT_DP) / 2
+
+    /** Tactile press scale for pill chips. */
+    const val CHIP_PRESS_SCALE: Float = 0.95f
+
+    /** Gamepad focus lift scale for pill chips. */
+    const val CHIP_FOCUS_SCALE: Float = 1.04f
+
+    /** Tactile press scale for circular chrome icon buttons. */
+    const val ICON_PRESS_SCALE: Float = 0.92f
+
+    /** Gamepad focus lift scale for circular chrome icon buttons. */
+    const val ICON_FOCUS_SCALE: Float = 1.08f
+
+    /** Duration (ms) for tactile press/focus micro-scale animations. */
+    const val SCALE_ANIM_MS: Long = 90L
+
+    /**
+     * Compute the target `scrollX` to bring `[chipLeft, chipRight]` comfortably
+     * into view inside a [android.widget.HorizontalScrollView] whose usable width
+     * is `viewportWidth - endClearancePx`.
+     *
+     * Returns `null` when content fits without scrolling or the chip is already
+     * fully inside the usable viewport.
+     */
+    fun horizontalScrollTarget(
+        chipLeft: Int,
+        chipRight: Int,
+        viewportWidth: Int,
+        endClearancePx: Int,
+        contentWidth: Int,
+        currentScrollX: Int,
+    ): Int? {
+        if (viewportWidth <= 0 || contentWidth <= 0 || chipRight <= chipLeft) return null
+        val usableWidth = (viewportWidth - endClearancePx.coerceAtLeast(0)).coerceAtLeast(1)
+        val maxScroll = (contentWidth - usableWidth).coerceAtLeast(0)
+        if (maxScroll <= 0) return null
+        val visibleStart = currentScrollX.coerceIn(0, maxScroll)
+        val visibleEnd = visibleStart + usableWidth
+        if (chipLeft >= visibleStart && chipRight <= visibleEnd) return null
+        val chipCenter = (chipLeft + chipRight) / 2
+        return (chipCenter - usableWidth / 2).coerceIn(0, maxScroll)
+    }
+
+    /** Compute resting scale given current pressed and focused states. */
+    fun targetScale(
+        pressed: Boolean,
+        focused: Boolean,
+        pressScale: Float = CHIP_PRESS_SCALE,
+        focusScale: Float = CHIP_FOCUS_SCALE,
+    ): Float = when {
+        pressed -> pressScale
+        focused -> focusScale
+        else -> 1f
+    }
+}

@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -13,7 +14,9 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.RippleDrawable
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -2019,7 +2022,7 @@ object CompanionPanel {
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             tag = TAG_PANEL_ROOT
-            setPadding(dp(24), dp(12), dp(24), 0)
+            setPadding(dp(24), dp(8), dp(24), 0)
             clipChildren = false
             clipToPadding = false
         }
@@ -2060,7 +2063,7 @@ object CompanionPanel {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(8) },
+            ).apply { bottomMargin = dp(4) },
         )
 
         val surface = app.sessionSurface
@@ -2751,6 +2754,84 @@ object CompanionPanel {
         )
     }
 
+    private fun buildInteractivePillBackground(
+        context: Context,
+        base: Drawable,
+        accent: Int,
+        cornerRadiusDp: Int,
+        verticalInsetDp: Int = CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP,
+    ): Drawable {
+        val focusable = TileBackgrounds.focusableRow(
+            context = context,
+            accent = accent,
+            idleBackground = base,
+            cornerRadiusDp = cornerRadiusDp,
+            strokeDp = 2,
+        )
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = context.dpF(cornerRadiusDp)
+        }
+        val ripple = RippleDrawable(
+            ColorStateList.valueOf(0x33FFFFFF),
+            focusable,
+            mask,
+        )
+        val insetPx = (verticalInsetDp * context.resources.displayMetrics.density).toInt()
+        return if (insetPx > 0) InsetDrawable(ripple, 0, insetPx, 0, insetPx) else ripple
+    }
+
+    private fun attachChipTactileFeedback(
+        view: View,
+        onFocused: (() -> Unit)? = null,
+    ) {
+        var pressed = false
+        var focused = false
+        fun updateScale() {
+            val scale = CompanionChromeErgonomics.targetScale(pressed, focused)
+            view.animate().cancel()
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                view.scaleX = scale
+                view.scaleY = scale
+                return
+            }
+            view.animate()
+                .scaleX(scale)
+                .scaleY(scale)
+                .setDuration(CompanionChromeErgonomics.SCALE_ANIM_MS)
+                .setInterpolator(heroSettleInterpolator)
+                .start()
+        }
+        view.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressed = true
+                    updateScale()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (pressed) {
+                        pressed = false
+                        updateScale()
+                    }
+                }
+            }
+            false
+        }
+        view.setOnFocusChangeListener { _, hasFocus ->
+            focused = hasFocus
+            updateScale()
+            if (hasFocus) onFocused?.invoke()
+        }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) {
+                v.animate().cancel()
+                v.scaleX = 1f
+                v.scaleY = 1f
+            }
+        })
+    }
+
     private fun roleChipRow(
         context: Context,
         settings: Settings,
@@ -2764,6 +2845,7 @@ object CompanionPanel {
             hasStatusPill = hasStatusPill,
             panelWidthDp = panelWidthDp,
         )
+        val endClearancePx = dp(endClearanceDp)
         val row = LinearLayout(context).apply {
             tag = TAG_ROLE_CHIPS
             orientation = LinearLayout.HORIZONTAL
@@ -2773,6 +2855,29 @@ object CompanionPanel {
                 Gravity.CENTER
             }
             isBaselineAligned = false
+            clipChildren = false
+            clipToPadding = false
+        }
+        val scroll = HorizontalScrollView(context).apply {
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(18))
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            clipChildren = false
+            clipToPadding = false
+            if (endClearancePx > 0) setPadding(0, 0, endClearancePx, 0)
+        }
+        fun scrollChipIntoView(chip: View, smooth: Boolean) {
+            val target = CompanionChromeErgonomics.horizontalScrollTarget(
+                chipLeft = chip.left,
+                chipRight = chip.right,
+                viewportWidth = scroll.width,
+                endClearancePx = endClearancePx,
+                contentWidth = row.width,
+                currentScrollX = scroll.scrollX,
+            ) ?: return
+            if (smooth) scroll.smoothScrollTo(target, 0) else scroll.scrollTo(target, 0)
         }
         val roles = listOf(
             CompanionRole.HERO to R.string.role_hero,
@@ -2780,8 +2885,15 @@ object CompanionPanel {
             CompanionRole.PERF_HUD to R.string.label_perf,
             CompanionRole.PINNED_APP to R.string.label_pin,
         )
+        var selectedChip: View? = null
+        val chipTouchHeight = dp(CompanionChromeErgonomics.MIN_TOUCH_TARGET_DP)
         roles.forEachIndexed { index, (role, labelRes) ->
             val selected = current == role
+            val basePill = if (selected) {
+                TileBackgrounds.chipSelected(context, settings.accentColor, cornerRadiusDp = 17)
+            } else {
+                TileBackgrounds.chipIdle(context, cornerRadiusDp = 17)
+            }
             val tv = TextView(context).apply {
                 setText(labelRes)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -2790,45 +2902,44 @@ object CompanionPanel {
                     if (selected) ThemePack.onFillTextColor(settings.accentColor)
                     else UiDimens.ALPHA_PRIMARY,
                 )
-                TileBackgrounds.applyChipState(
-                    view = this,
-                    selected = selected,
+                background = buildInteractivePillBackground(
+                    context = context,
+                    base = basePill,
                     accent = settings.accentColor,
-                    cornerRadiusDp = 16,
+                    cornerRadiusDp = 17,
                 )
                 gravity = Gravity.CENTER
-                setPadding(dp(12), 0, dp(12), 0)
+                setPadding(dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP), dp(12), dp(CompanionChromeErgonomics.CHIP_TOUCH_INSET_V_DP))
                 setSingleLine()
+                isSelected = selected
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { onPick(role) }
             }
+            attachChipTactileFeedback(tv) { scrollChipIntoView(tv, smooth = true) }
+            if (selected) selectedChip = tv
             row.addView(
                 tv,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                    dp(32),
+                    chipTouchHeight,
                 ).apply {
                     if (index < roles.lastIndex) marginEnd = dp(6)
                 },
             )
         }
-        return HorizontalScrollView(context).apply {
-            isFillViewport = true
-            isHorizontalScrollBarEnabled = false
-            isHorizontalFadingEdgeEnabled = true
-            setFadingEdgeLength(dp(16))
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            if (endClearanceDp > 0) setPadding(0, 0, dp(endClearanceDp), 0)
-            addView(
-                row,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    if (endClearanceDp > 0) Gravity.START else Gravity.CENTER_HORIZONTAL,
-                ),
-            )
+        scroll.addView(
+            row,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                if (endClearanceDp > 0) Gravity.START else Gravity.CENTER_HORIZONTAL,
+            ),
+        )
+        selectedChip?.let { active ->
+            scroll.post { scrollChipIntoView(active, smooth = false) }
         }
+        return scroll
     }
 
     private fun buildPerfHud(
