@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
@@ -30,6 +31,8 @@ import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
  */
 object ArtTile {
 
+    private val FADE_INTERPOLATOR = DecelerateInterpolator()
+
     /**
      * ROM tile art view: placeholder + overlay. [targetPx] is the decode
      * target (the view's pixel size); it only matters on the first decode —
@@ -47,7 +50,11 @@ object ArtTile {
         bindNow: Boolean = true,
         artOverrides: Map<String, String> = emptyMap(),
     ): View {
-        val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
+        val radiusPx = ArtTileMetrics.clampedCornerRadiusPx(
+            cornerRadiusDp = cornerRadiusDp,
+            density = context.resources.displayMetrics.density,
+            targetPx = targetPx,
+        )
         val frame = FrameLayout(context)
         frame.addView(
             PlatformTile.view(context, rom.platformId, cornerRadiusDp),
@@ -89,8 +96,18 @@ object ArtTile {
         artOverrides: Map<String, String> = emptyMap(),
     ) {
         val context = overlay.context
-        val radiusPx = cornerRadiusDp * context.resources.displayMetrics.density
-        if (overlay.tag == rom.id && overlay.drawable != null) return
+        val radiusPx = ArtTileMetrics.clampedCornerRadiusPx(
+            cornerRadiusDp = cornerRadiusDp,
+            density = context.resources.displayMetrics.density,
+            targetPx = targetPx,
+        )
+        if (overlay.tag == rom.id && overlay.drawable != null) {
+            overlay.animate().cancel()
+            overlay.alpha = 1f
+            return
+        }
+        overlay.animate().cancel()
+        overlay.alpha = 1f
         releaseDisplayed(overlay)
         overlay.setImageDrawable(null)
         showPlaceholder(overlay)
@@ -110,7 +127,11 @@ object ArtTile {
                 return@onGrid
             }
             if (bitmap != null) {
-                applyRounded(overlay, context, bitmap, radiusPx)
+                val mode = ArtTileMetrics.revealMode(
+                    wasSyncMemoryHit = syncGrid,
+                    isAttached = overlay.isAttachedToWindow,
+                )
+                applyRounded(overlay, context, bitmap, radiusPx, mode)
                 return@onGrid
             }
             // Logo fallback on the decode thread (no main-thread disk stat).
@@ -124,7 +145,11 @@ object ArtTile {
                     return@onLogo
                 }
                 if (logoBmp != null) {
-                    applyRounded(overlay, context, logoBmp, radiusPx)
+                    val mode = ArtTileMetrics.revealMode(
+                        wasSyncMemoryHit = syncLogo,
+                        isAttached = overlay.isAttachedToWindow,
+                    )
+                    applyRounded(overlay, context, logoBmp, radiusPx, mode)
                     return@onLogo
                 }
                 val logo = HeroDetail.logoUri(rom) ?: return@onLogo
@@ -139,7 +164,11 @@ object ArtTile {
                     if (local != null && overlay.tag == rom.id &&
                         (syncLocal || overlay.isAttachedToWindow)
                     ) {
-                        applyRounded(overlay, context, local, radiusPx)
+                        val mode = ArtTileMetrics.revealMode(
+                            wasSyncMemoryHit = syncLocal,
+                            isAttached = overlay.isAttachedToWindow,
+                        )
+                        applyRounded(overlay, context, local, radiusPx, mode)
                     }
                 }
                 syncLocal = false
@@ -166,9 +195,14 @@ object ArtTile {
         // lookup stability (e.g. CompanionPanel TAG_HERO_ICON).
         placeholderOf(overlay)?.visibility = View.INVISIBLE
         val parent = overlay.parent as? View ?: return
+        val density = context.resources.displayMetrics.density
         parent.background = GradientDrawable().apply {
             setColor(TileBackgrounds.surfaceSunken(context))
             cornerRadius = radiusPx
+            setStroke(
+                ArtTileMetrics.backingStrokePx(density),
+                TileBackgrounds.hairlineDivider(context),
+            )
         }
     }
 
@@ -184,7 +218,9 @@ object ArtTile {
         context: Context,
         bitmap: Bitmap,
         radiusPx: Float,
+        revealMode: ArtTileMetrics.RevealMode,
     ) {
+        overlay.animate().cancel()
         releaseDisplayed(overlay)
         ArtCache.acquireDisplay(bitmap)
         overlay.setImageDrawable(
@@ -192,6 +228,17 @@ object ArtTile {
                 .apply { cornerRadius = radiusPx },
         )
         hidePlaceholderWithBacking(overlay, context, radiusPx)
+        val durationMs = ArtTileMetrics.revealDurationMs(revealMode)
+        if (durationMs > 0L) {
+            overlay.alpha = 0f
+            overlay.animate()
+                .alpha(1f)
+                .setDuration(durationMs)
+                .setInterpolator(FADE_INTERPOLATOR)
+                .start()
+        } else {
+            overlay.alpha = 1f
+        }
     }
 
     private fun releaseDisplayed(overlay: ImageView) {
