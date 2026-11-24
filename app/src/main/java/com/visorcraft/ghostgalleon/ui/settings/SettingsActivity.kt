@@ -156,6 +156,41 @@ internal object SettingsUiLogic {
         val tint = if (ThemePack.relativeLuminance(accent) > 0.55) 0.08f else 0.14f
         return ThemePack.blendColors(base, accent, tint)
     }
+
+    /**
+     * Compact locale-neutral hardware keycap notation for common gamepad and
+     * navigation keycodes, or `null` when callers should fall back to localized
+     * `R.string.format_keycode`. Pure; host-tested.
+     */
+    fun friendlyKeycap(keyCode: Int): String? = when (keyCode) {
+        KeyEvent.KEYCODE_BUTTON_A -> "A"
+        KeyEvent.KEYCODE_BUTTON_B -> "B"
+        KeyEvent.KEYCODE_BUTTON_X -> "X"
+        KeyEvent.KEYCODE_BUTTON_Y -> "Y"
+        KeyEvent.KEYCODE_BUTTON_L1 -> "L1"
+        KeyEvent.KEYCODE_BUTTON_R1 -> "R1"
+        KeyEvent.KEYCODE_BUTTON_L2 -> "L2"
+        KeyEvent.KEYCODE_BUTTON_R2 -> "R2"
+        KeyEvent.KEYCODE_BUTTON_THUMBL -> "L3"
+        KeyEvent.KEYCODE_BUTTON_THUMBR -> "R3"
+        KeyEvent.KEYCODE_BUTTON_START -> "START"
+        KeyEvent.KEYCODE_BUTTON_SELECT -> "SELECT"
+        KeyEvent.KEYCODE_BUTTON_MODE -> "HOME"
+        KeyEvent.KEYCODE_DPAD_UP -> "\u25B2"
+        KeyEvent.KEYCODE_DPAD_DOWN -> "\u25BC"
+        KeyEvent.KEYCODE_DPAD_LEFT -> "\u25C0"
+        KeyEvent.KEYCODE_DPAD_RIGHT -> "\u25B6"
+        KeyEvent.KEYCODE_DPAD_CENTER -> "OK"
+        KeyEvent.KEYCODE_ENTER -> "\u21B5"
+        KeyEvent.KEYCODE_BACK -> "BACK"
+        KeyEvent.KEYCODE_ESCAPE -> "ESC"
+        KeyEvent.KEYCODE_SPACE -> "SPACE"
+        else -> null
+    }
+
+    /** Resolve the first keycode currently mapped to [action], or null if unbound. */
+    fun boundKeyCodeFor(action: Action, keyMap: Map<Int, Action>): Int? =
+        keyMap.entries.firstOrNull { it.value == action }?.key
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -205,6 +240,7 @@ class SettingsActivity : AppCompatActivity() {
     private var captureTarget: Action? = null
     private var captureLabel: TextView? = null
     private var capturePulse: ObjectAnimator? = null
+    private val keyChipsByAction = mutableMapOf<Action, TextView>()
 
     private var scanning = false
 
@@ -1307,6 +1343,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        cancelKeyCapture()
         app.scrapeJob.removeListener(scrapeListener)
         super.onPause()
     }
@@ -1584,14 +1621,70 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    /** Bound-key chip: sunken theme pill, WCAG-lifted accent text. */
-    private fun keyChip(bound: String): TextView = TextView(this).apply {
-        text = bound
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        setTextColor(accentOnSunken)
+    /** Bound-key keycap pill: recessed sunken cap with accent border when bound. */
+    private fun keyChip(keyCode: Int?): TextView = TextView(this).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
         setTypeface(typeface, Typeface.BOLD)
-        background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+        useTabularNumerals()
+        gravity = Gravity.CENTER
+        minWidth = dp(56)
         setPadding(dp(12), dp(6), dp(12), dp(6))
+        bindKeyChip(this, keyCode)
+    }
+
+    private fun bindKeyChip(chip: TextView, keyCode: Int?) {
+        chip.alpha = 1f
+        if (keyCode != null) {
+            chip.text = SettingsUiLogic.friendlyKeycap(keyCode)
+                ?: getString(R.string.format_keycode, keyCode)
+            chip.contentDescription = getString(R.string.format_keycode, keyCode)
+            chip.setTextColor(accentOnSunken)
+            chip.background = TileBackgrounds.valueBadge(
+                context = this@SettingsActivity,
+                accent = accent,
+                cornerRadiusDp = UiDimens.RADIUS_SM,
+            )
+        } else {
+            chip.setText(R.string.settings_unbound)
+            chip.contentDescription = getString(R.string.settings_unbound)
+            chip.setTextColor(UiDimens.ALPHA_MUTED)
+            chip.background = TileBackgrounds.sunkenField(
+                context = this@SettingsActivity,
+                cornerRadiusDp = UiDimens.RADIUS_SM,
+            )
+        }
+    }
+
+    private fun cancelKeyCapture() {
+        val prevTarget = captureTarget
+        val prevChip = captureLabel
+        capturePulse?.cancel()
+        capturePulse = null
+        captureTarget = null
+        captureLabel = null
+        if (prevTarget != null && prevChip != null) {
+            bindKeyChip(prevChip, SettingsUiLogic.boundKeyCodeFor(prevTarget, app.settings.keyMap))
+        }
+    }
+
+    private fun startKeyCapture(action: Action, chip: TextView) {
+        if (captureTarget == action) {
+            cancelKeyCapture()
+            return
+        }
+        cancelKeyCapture()
+        captureTarget = action
+        captureLabel = chip
+        chip.setText(R.string.settings_press_button)
+        chip.contentDescription = getString(R.string.settings_press_button)
+        chip.setTextColor(onAccentFill)
+        chip.background = pillDrawable(accent, UiDimens.RADIUS_SM, activeFocusRing)
+        capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.45f).apply {
+            duration = 520
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            start()
+        }
     }
 
     /** Wide layout (top Sugar panel / docked): left nav blade. Narrow: dropdown. */
@@ -1918,7 +2011,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun buildContent(): View {
         val s = app.settings
         val wide = isWideSettings()
+        cancelKeyCapture()
         navItems.clear()
+        keyChipsByAction.clear()
         pageDropdownRow = null
         pageDropdownIcon = null
         pageDropdownLabel = null
@@ -2976,32 +3071,17 @@ class SettingsActivity : AppCompatActivity() {
             app.updateSettings(app.settings.copy(stickDeadzone = n), notify = false)
         }
         remappable.forEach { action ->
-            val bound = app.settings.keyMap.entries
-                .firstOrNull { it.value == action }?.key?.let {
-                    getString(R.string.format_keycode, it)
-                } ?: getString(R.string.settings_unbound)
+            val boundCode = SettingsUiLogic.boundKeyCodeFor(action, app.settings.keyMap)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
             row.addView(rowLabel(resolveText(action.label())), LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val chip = keyChip(bound)
+            val chip = keyChip(boundCode)
+            keyChipsByAction[action] = chip
             row.addView(chip)
-            row.setOnClickListener {
-                captureTarget = action
-                captureLabel = chip
-                chip.setText(R.string.settings_press_button)
-                chip.setTextColor(onAccentFill)
-                chip.background = pillDrawable(accent, 14)
-                capturePulse?.cancel()
-                capturePulse = ObjectAnimator.ofFloat(chip, View.ALPHA, 1f, 0.35f).apply {
-                    duration = 500
-                    repeatMode = ValueAnimator.REVERSE
-                    repeatCount = ValueAnimator.INFINITE
-                    start()
-                }
-            }
+            row.setOnClickListener { startKeyCapture(action, chip) }
             addActionRow(controlsCard, row)
         }
         addSection(SettingsPage.CONTROLS, getString(R.string.settings_page_controls), controlsCard)
@@ -3775,16 +3855,17 @@ class SettingsActivity : AppCompatActivity() {
             }
             return super.onKeyDown(keyCode, event)
         }
+        val displaced = app.settings.keyMap[keyCode]
         val withoutTarget = app.settings.keyMap.filterValues { it != target }
         val newMap = withoutTarget + (keyCode to target)
         app.updateSettings(app.settings.copy(keyMap = newMap))
         capturePulse?.cancel()
         capturePulse = null
-        captureLabel?.apply {
-            alpha = 1f
-            text = getString(R.string.format_keycode, keyCode)
-            setTextColor(accentOnSunken)
-            background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+        captureLabel?.let { bindKeyChip(it, keyCode) }
+        if (displaced != null && displaced != target) {
+            keyChipsByAction[displaced]?.let { otherChip ->
+                bindKeyChip(otherChip, SettingsUiLogic.boundKeyCodeFor(displaced, newMap))
+            }
         }
         captureTarget = null
         captureLabel = null

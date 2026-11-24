@@ -1,7 +1,11 @@
 package com.visorcraft.ghostgalleon.ui.settings
 
+import android.view.KeyEvent
+import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -92,5 +96,19 @@ class SettingsUiLogicTest {
                 iconContrast >= ThemePack.MIN_TEXT_CONTRAST,
             )
         }
+    }
+
+    @Test
+    fun `friendlyKeycap formats standard gamepad keys and returns null for unknown keycodes`() {
+        assertEquals("A", SettingsUiLogic.friendlyKeycap(KeyEvent.KEYCODE_BUTTON_A))
+        assertEquals("L1", SettingsUiLogic.friendlyKeycap(KeyEvent.KEYCODE_BUTTON_L1))
+        assertEquals("L3", SettingsUiLogic.friendlyKeycap(KeyEvent.KEYCODE_BUTTON_THUMBL))
+        assertEquals("START", SettingsUiLogic.friendlyKeycap(KeyEvent.KEYCODE_BUTTON_START))
+        assertEquals("\u25B2", SettingsUiLogic.friendlyKeycap(KeyEvent.KEYCODE_DPAD_UP))
+        assertNull(SettingsUiLogic.friendlyKeycap(999))
+
+        val map = mapOf(KeyEvent.KEYCODE_BUTTON_A to Action.CONFIRM)
+        assertEquals(KeyEvent.KEYCODE_BUTTON_A, SettingsUiLogic.boundKeyCodeFor(Action.CONFIRM, map))
+        assertNull(SettingsUiLogic.boundKeyCodeFor(Action.SWAP_SCREENS, map))
     }
 }
