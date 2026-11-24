@@ -68,6 +68,25 @@ object OverlayPrimitives {
     fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
         (if (canScrollUp) 1f else 0f) to (if (canScrollDown) 1f else 0f)
 
+    /** WCAG 2.1 non-text UI contrast floor (1.4.11) for modal focus rings. */
+    const val MIN_FOCUS_STROKE_CONTRAST: Double = 3.0
+
+    /**
+     * Pure focus-ring stroke color ensuring at least `3.0:1` contrast over
+     * [surface] (WCAG 1.4.11). Preserves vibrant accents unchanged and lifts
+     * darker accents (e.g. Ghost `#3F51B5` or custom dark themes) via
+     * [ThemePack.accentTextColor]. Host-tested.
+     */
+    fun accessibleFocusStroke(accent: Int, surface: Int): Int {
+        val opaqueAccent = (0xFF shl 24) or (accent and 0x00FFFFFF)
+        val opaqueSurface = (0xFF shl 24) or (surface and 0x00FFFFFF)
+        return if (ThemePack.contrastRatio(opaqueAccent, opaqueSurface) >= MIN_FOCUS_STROKE_CONTRAST) {
+            opaqueAccent
+        } else {
+            ThemePack.accentTextColor(opaqueAccent, opaqueSurface)
+        }
+    }
+
     /** Accent-tinted translucent scroll-overflow bar color with WCAG-lifted RGB hue. */
     fun scrollCueTint(accent: Int, surface: Int): Int {
         val lifted = ThemePack.accentTextColor(accent, surface)

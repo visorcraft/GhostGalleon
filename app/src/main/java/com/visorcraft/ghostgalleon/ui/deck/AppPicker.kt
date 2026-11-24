@@ -473,7 +473,15 @@ class AppPicker(
             setTextColor(QuickPanelNav.accessibleOnAccent(accentColor))
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = TileBackgrounds.accentPill(context, accentColor, cornerRadiusDp = 16)
+            background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = TileBackgrounds.accentPill(context, accentColor, cornerRadiusDp = 16),
+                cornerRadiusDp = 16,
+                rippleColor = QuickPanelNav.tileRippleColor(
+                    QuickPanelNav.TileRole.PRIMARY,
+                    accentColor,
+                ),
+            )
             setPadding(context.dp(18), context.dp(8), context.dp(18), context.dp(8))
             isClickable = true
             visibility = View.GONE

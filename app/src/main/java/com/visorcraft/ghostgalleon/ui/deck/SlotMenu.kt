@@ -110,6 +110,7 @@ internal object SlotMenuNav {
         tokens: ThemeTokens,
     ): RowVisualSpec {
         val surface = ThemePack.cardFill(tokens)
+        val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, surface)
         return when (tone) {
             RowTone.DESTRUCTIVE -> if (selected) {
                 val fill = blendOverOpaque(DESTRUCTIVE_WASH_SELECTED, surface)
@@ -136,7 +137,7 @@ internal object SlotMenuNav {
                 RowVisualSpec(
                     fillColor = surface,
                     effectiveSurface = surface,
-                    strokeColor = accent,
+                    strokeColor = focusStroke,
                     strokeDp = 3,
                     textColor = UiDimens.ALPHA_PRIMARY,
                     rippleColor = STANDARD_RIPPLE,
@@ -155,7 +156,7 @@ internal object SlotMenuNav {
                 RowVisualSpec(
                     fillColor = surface,
                     effectiveSurface = surface,
-                    strokeColor = accent,
+                    strokeColor = focusStroke,
                     strokeDp = 3,
                     textColor = UiDimens.ALPHA_PRIMARY,
                     rippleColor = STANDARD_RIPPLE,

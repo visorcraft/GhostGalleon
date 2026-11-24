@@ -193,7 +193,10 @@ object DeckDialogs {
 
         fun styleButton(which: Int, textColor: Int) {
             val btn = dialog.getButton(which) ?: return
-            val focusColor = DeckDialogTokens.buttonFocusStrokeColor(which, destructivePositive, accent)
+            val focusColor = OverlayPrimitives.accessibleFocusStroke(
+                DeckDialogTokens.buttonFocusStrokeColor(which, destructivePositive, accent),
+                palette.surfaceFill,
+            )
             val rippleColor = DeckDialogTokens.buttonRippleColor(which, destructivePositive)
             btn.setTextColor(textColor)
             btn.setTypeface(btn.typeface, Typeface.BOLD)
@@ -522,11 +525,13 @@ object DeckDialogs {
         val hInset = context.dp(UiDimens.SPACE_SM)
         val vInset = context.dp(2)
         val radiusPx = context.dpF(10)
+        val focusedFill = DeckDialogTokens.listFocusedFill(accent, tokens)
+        val focusedStroke = OverlayPrimitives.accessibleFocusStroke(accent, focusedFill)
         val focused = InsetDrawable(
             GradientDrawable().apply {
-                setColor(DeckDialogTokens.listFocusedFill(accent, tokens))
+                setColor(focusedFill)
                 cornerRadius = radiusPx
-                setStroke(context.strokePx(2), accent)
+                setStroke(context.strokePx(2), focusedStroke)
             },
             hInset,
             vInset,

@@ -81,10 +81,11 @@ internal object SessionSwitcherNav {
                 (ACTIVE_WASH_ALPHA shl 24) or (accent and 0x00FFFFFF),
                 surface,
             )
+            val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, activeFill)
             val strokeColor = if (selected) {
-                accent
+                focusStroke
             } else {
-                (ACTIVE_IDLE_STROKE_ALPHA shl 24) or (accent and 0x00FFFFFF)
+                (ACTIVE_IDLE_STROKE_ALPHA shl 24) or (focusStroke and 0x00FFFFFF)
             }
             RowVisual(
                 fillColor = activeFill,
@@ -97,7 +98,7 @@ internal object SessionSwitcherNav {
         } else if (selected) {
             RowVisual(
                 fillColor = surface,
-                strokeColor = accent,
+                strokeColor = OverlayPrimitives.accessibleFocusStroke(accent, surface),
                 strokeDp = 3,
                 titleColor = UiDimens.ALPHA_PRIMARY,
                 subtitleColor = UiDimens.ALPHA_SECONDARY,
