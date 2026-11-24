@@ -3,10 +3,13 @@ package com.visorcraft.ghostgalleon.ui.deck
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import com.visorcraft.ghostgalleon.library.AppEntry
+import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -119,5 +122,152 @@ class AppPickerMatchTest {
             ),
         )
         assertFalse(AppPickerMatch.isSearchLaunchAction(EditorInfo.IME_ACTION_NEXT))
+    }
+
+    @Test
+    fun `rowVisual applies WCAG 1-4-11 stroke, 8 percent wash, accent bar, and bold lift across all accents`() {
+        val customAccents = listOf(
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+            0xFFFFEE00.toInt(),
+            0xFF101840.toInt(),
+            0xFF00FF88.toInt(),
+        )
+        for (tokens in ThemePack.BUILTINS) {
+            val idle = AppPickerHighlight.rowVisual(false, tokens.accentColor, tokens)
+            assertEquals(0, idle.fillColor)
+            assertEquals(0, idle.strokeDp)
+            assertFalse(idle.showAccentBar)
+            assertFalse(idle.boldTitle)
+
+            for (accent in listOf(tokens.accentColor) + customAccents) {
+                val active = AppPickerHighlight.rowVisual(true, accent, tokens)
+                assertTrue(active.showAccentBar)
+                assertTrue(active.boldTitle)
+                assertEquals(3, active.strokeDp)
+                assertTrue(
+                    "Highlight stroke contrast too low on ${tokens.id} accent=${Integer.toHexString(accent)}",
+                    ThemePack.contrastRatio(active.strokeColor, active.effectiveSurface) >=
+                        OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+                )
+                assertTrue(
+                    "Highlighted title contrast too low on ${tokens.id} accent=${Integer.toHexString(accent)}",
+                    ThemePack.contrastRatio(UiDimens.ALPHA_PRIMARY, active.effectiveSurface) >=
+                        ThemePack.MIN_TEXT_CONTRAST,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `searchBarStrokeState and clearButtonVisible respond to focus and query state`() {
+        assertEquals(
+            AppPickerMatch.SearchStrokeState.IDLE,
+            AppPickerMatch.searchBarStrokeState(hasFocus = false, query = ""),
+        )
+        assertEquals(
+            AppPickerMatch.SearchStrokeState.IDLE,
+            AppPickerMatch.searchBarStrokeState(hasFocus = false, query = "   "),
+        )
+        assertEquals(
+            AppPickerMatch.SearchStrokeState.ACTIVE_QUERY,
+            AppPickerMatch.searchBarStrokeState(hasFocus = false, query = "zelda"),
+        )
+        assertEquals(
+            AppPickerMatch.SearchStrokeState.FOCUSED,
+            AppPickerMatch.searchBarStrokeState(hasFocus = true, query = ""),
+        )
+        assertEquals(
+            AppPickerMatch.SearchStrokeState.FOCUSED,
+            AppPickerMatch.searchBarStrokeState(hasFocus = true, query = "mario"),
+        )
+        assertFalse(AppPickerMatch.clearButtonVisible(null))
+        assertFalse(AppPickerMatch.clearButtonVisible(""))
+        assertTrue(AppPickerMatch.clearButtonVisible(" "))
+        assertTrue(AppPickerMatch.clearButtonVisible("snes"))
+
+        for (tokens in ThemePack.BUILTINS) {
+            val (focusColor, focusDp) = AppPickerMatch.searchBarStroke(
+                AppPickerMatch.SearchStrokeState.FOCUSED,
+                tokens.accentColor,
+                tokens,
+            )
+            assertEquals(2, focusDp)
+            assertTrue(
+                ThemePack.contrastRatio(focusColor, ThemePack.surfaceSunken(tokens)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            val (_, idleDp) = AppPickerMatch.searchBarStroke(
+                AppPickerMatch.SearchStrokeState.IDLE,
+                tokens.accentColor,
+                tokens,
+            )
+            assertEquals(1, idleDp)
+        }
+    }
+
+    @Test
+    fun `pageStep scales across library size tiers and centeredOffsetPx keeps look-ahead context`() {
+        assertEquals(5, AppPickerHighlight.pageStep(0))
+        assertEquals(5, AppPickerHighlight.pageStep(40))
+        assertEquals(10, AppPickerHighlight.pageStep(41))
+        assertEquals(10, AppPickerHighlight.pageStep(200))
+        assertEquals(25, AppPickerHighlight.pageStep(201))
+        assertEquals(25, AppPickerHighlight.pageStep(6500))
+
+        assertEquals(0, AppPickerHighlight.centeredOffsetPx(viewportH = 0, rowH = 120))
+        assertEquals(0, AppPickerHighlight.centeredOffsetPx(viewportH = 100, rowH = 140))
+        assertEquals(140, AppPickerHighlight.centeredOffsetPx(viewportH = 400, rowH = 120))
+    }
+
+    @Test
+    fun `platformPillBorderColor preserves platform RGB hue at 0x66 alpha`() {
+        val snes = PlatformTile.colorFor("snes")
+        val border = AppPickerMatch.platformPillBorderColor(snes)
+        assertEquals(0x66, (border ushr 24) and 0xFF)
+        assertEquals(snes and 0x00FFFFFF, border and 0x00FFFFFF)
+        assertNotEquals(
+            AppPickerMatch.platformPillBorderColor(PlatformTile.colorFor("gba")),
+            border,
+        )
+    }
+
+    @Test
+    fun `emptyClearFocusRing stays high-contrast across OLED, dark, and bright accents`() {
+        assertEquals(44, AppPickerMatch.EMPTY_CLEAR_MIN_HEIGHT_DP)
+        val brightAccents = listOf(
+            ThemePack.OLED.accentColor,
+            0xFFFFFFFF.toInt(),
+            0xFFFFEE00.toInt(),
+            0xFF00FF88.toInt(),
+        )
+        for (bright in brightAccents) {
+            val ring = AppPickerMatch.emptyClearFocusRing(bright)
+            assertNotEquals(UiDimens.ALPHA_PRIMARY, ring)
+            assertTrue(
+                "Bright accent ring must contrast against fill=${Integer.toHexString(bright)}",
+                ThemePack.contrastRatio(ring, bright) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            assertTrue(
+                "Bright accent ring must contrast against OLED card",
+                ThemePack.contrastRatio(ring, ThemePack.cardFill(ThemePack.OLED)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+        }
+        val darkAccents = listOf(
+            ThemePack.GHOST.accentColor,
+            ThemePack.THREEDS.accentColor,
+            ThemePack.NEON.accentColor,
+            0xFF000000.toInt(),
+            0xFF101840.toInt(),
+        )
+        for (dark in darkAccents) {
+            val ring = AppPickerMatch.emptyClearFocusRing(dark)
+            assertEquals(UiDimens.ALPHA_PRIMARY, ring)
+            assertTrue(
+                ThemePack.contrastRatio(ring, ThemePack.cardFill(ThemePack.GHOST)) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+        }
     }
 }

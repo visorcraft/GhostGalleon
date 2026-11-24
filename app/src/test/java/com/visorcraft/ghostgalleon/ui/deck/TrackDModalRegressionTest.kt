@@ -59,6 +59,22 @@ class TrackDModalRegressionTest {
                 ThemePack.contrastRatio(AppPickerMatch.badgeHighlightColor(accent, tokens), sunken) >=
                     ThemePack.MIN_TEXT_CONTRAST,
             )
+            val pickerHighlight = AppPickerHighlight.rowVisual(highlighted = true, accent = accent, tokens = tokens)
+            assertTrue(
+                "Low AppPicker row highlight stroke contrast on $tag",
+                ThemePack.contrastRatio(pickerHighlight.strokeColor, pickerHighlight.effectiveSurface) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            assertTrue(
+                "Low AppPicker highlighted row title contrast on $tag",
+                ThemePack.contrastRatio(UiDimens.ALPHA_PRIMARY, pickerHighlight.effectiveSurface) >=
+                    ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Low AppPicker empty Clear focus ring contrast on $tag",
+                ThemePack.contrastRatio(AppPickerMatch.emptyClearFocusRing(accent), surface) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
 
             // SlotMenu row text >= 4.5:1 & focused stroke >= 3.0:1.
             for (tone in SlotMenuNav.RowTone.entries) {

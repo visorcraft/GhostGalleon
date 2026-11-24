@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -20,6 +21,7 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -44,10 +46,12 @@ import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 
 /** Result of moving highlight inside [AppPicker] — O(1) changed indices only. */
 internal data class PickerHighlightMove(
@@ -56,8 +60,19 @@ internal data class PickerHighlightMove(
     val changedPositions: List<Int>,
 )
 
+/** Pure visual tokens for an [AppPicker] row in highlighted vs idle state. */
+internal data class PickerRowVisual(
+    val fillColor: Int,
+    val effectiveSurface: Int,
+    val strokeColor: Int,
+    val strokeDp: Int,
+    val accentBarColor: Int,
+    val showAccentBar: Boolean,
+    val boldTitle: Boolean,
+)
+
 /**
- * Pure, host-tested highlight-transition and result-count math for [AppPicker].
+ * Pure, host-tested highlight-transition, row-visual, and result-count math for [AppPicker].
  * Guarantees highlight never rests on a section header and emits only the
  * changed positions (`<= 2`) so 6,384+ ROM lists never trigger O(N) rebinds.
  */
@@ -69,6 +84,71 @@ internal object AppPickerHighlight {
      * directly (never used on NAV highlight moves, which notify <= 2 rows).
      */
     const val MAX_SYNC_DIFF_ITEMS: Int = 512
+
+    /** Subtle 8% accent wash alpha blended over the card surface on highlighted rows. */
+    internal const val HIGHLIGHT_WASH_ALPHA: Int = 0x14
+
+    const val PAGE_STEP_SMALL: Int = 5
+    const val PAGE_STEP_MEDIUM: Int = 10
+    const val PAGE_STEP_LARGE: Int = 25
+
+    /**
+     * Precomputed WCAG 1.4.11 focus stroke, subtle 8% accent wash fill, leading
+     * accent bar color, and bold title lift for [AppPicker] rows. Host-tested.
+     */
+    fun rowVisual(
+        highlighted: Boolean,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): PickerRowVisual {
+        val surface = ThemePack.cardFill(tokens)
+        if (!highlighted) {
+            return PickerRowVisual(
+                fillColor = 0,
+                effectiveSurface = surface,
+                strokeColor = 0,
+                strokeDp = 0,
+                accentBarColor = 0,
+                showAccentBar = false,
+                boldTitle = false,
+            )
+        }
+        val fill = SlotMenuNav.blendOverOpaque(
+            (HIGHLIGHT_WASH_ALPHA shl 24) or (accent and 0x00FFFFFF),
+            surface,
+        )
+        val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, fill)
+        return PickerRowVisual(
+            fillColor = fill,
+            effectiveSurface = fill,
+            strokeColor = focusStroke,
+            strokeDp = 3,
+            accentBarColor = focusStroke,
+            showAccentBar = true,
+            boldTitle = true,
+        )
+    }
+
+    /**
+     * Library-scaled L1/R1 page-jump stride (`5` for `<= 40`, `10` for `41..200`,
+     * `25` for `> 200`) so large ROM libraries traverse quickly. Host-tested.
+     */
+    fun pageStep(selectableCount: Int): Int = when {
+        selectableCount <= 40 -> PAGE_STEP_SMALL
+        selectableCount <= 200 -> PAGE_STEP_MEDIUM
+        else -> PAGE_STEP_LARGE
+    }
+
+    /**
+     * Vertical top offset (px) for `LinearLayoutManager.scrollToPositionWithOffset`
+     * centering a focused row inside [viewportH] with 1–2 rows of look-ahead context.
+     * Host-tested.
+     */
+    fun centeredOffsetPx(viewportH: Int, rowH: Int): Int {
+        if (viewportH <= 0) return 0
+        val safeRowH = rowH.coerceAtLeast(0)
+        return ((viewportH - safeRowH) / 2).coerceAtLeast(0)
+    }
 
     fun shouldUseDiffUtil(oldSize: Int, newSize: Int): Boolean {
         val safeOld = oldSize.coerceAtLeast(0).toLong()
@@ -191,9 +271,15 @@ class AppPicker(
     private var items: List<PickerItem> = emptyQueryItems
     // The highlight only ever rests on data rows, never section headers.
     private var highlight: Int = AppPickerHighlight.firstSelectable(items)
+    private var selectableCount: Int = AppPickerHighlight.selectableCount(items)
     private var query = ""
     private var lastFilterQuery = ""
     private var lastFilterItems: List<PickerItem>? = null
+    private var listViewport: FrameLayout? = null
+    private var topScrollCue: View? = null
+    private var bottomScrollCue: View? = null
+    private var lastTopCueAlpha: Float = -1f
+    private var lastBottomCueAlpha: Float = -1f
     private var recycler: RecyclerView? = null
     private var layoutManager: LinearLayoutManager? = null
     private var adapter: PickerAdapter? = null
@@ -253,7 +339,50 @@ class AppPicker(
             }
         }
         refreshEmpty()
-        recycler?.scrollToPosition(if (kept) highlight else 0)
+        if (kept) {
+            scrollToCentered(highlight)
+        } else {
+            recycler?.scrollToPosition(0)
+        }
+        recycler?.post { syncScrollCues() }
+    }
+
+    private fun applyScrollCueAlpha(cue: View?, target: Float, previous: Float): Float {
+        if (cue == null || target == previous) return previous
+        cue.animate().cancel()
+        val durationMs = OverlayPrimitives.scrollCueTransitionMs(ValueAnimator.areAnimatorsEnabled())
+        if (durationMs > 0L && cue.isAttachedToWindow && previous >= 0f) {
+            cue.animate()
+                .alpha(target)
+                .setDuration(durationMs)
+                .setInterpolator(CUE_INTERPOLATOR)
+                .start()
+        } else {
+            cue.alpha = target
+        }
+        return target
+    }
+
+    private fun syncScrollCues() {
+        val rv = recycler ?: return
+        val visible = rv.visibility == View.VISIBLE && listViewport?.visibility == View.VISIBLE
+        val canUp = visible && rv.canScrollVertically(-1)
+        val canDown = visible && rv.canScrollVertically(1)
+        val (topAlpha, bottomAlpha) = OverlayPrimitives.scrollCueAlphas(canUp, canDown)
+        lastTopCueAlpha = applyScrollCueAlpha(topScrollCue, topAlpha, lastTopCueAlpha)
+        lastBottomCueAlpha = applyScrollCueAlpha(bottomScrollCue, bottomAlpha, lastBottomCueAlpha)
+        OverlayPrimitives.updateKeycapFooterScrollable(keycapFooter, isScrollable = canUp || canDown)
+    }
+
+    private fun scrollToCentered(position: Int) {
+        val list = recycler ?: return
+        val lm = layoutManager ?: return
+        val viewportH = list.height - list.paddingTop - list.paddingBottom
+        val sampleRowH = lm.findViewByPosition(position)?.height
+            ?: list.getChildAt(0)?.height
+            ?: activity.dp(60)
+        val offset = AppPickerHighlight.centeredOffsetPx(viewportH, sampleRowH)
+        lm.scrollToPositionWithOffset(position, offset)
     }
 
     val view: View by lazy {
@@ -274,6 +403,8 @@ class AppPicker(
                 override fun onViewAttachedToWindow(v: View) = Unit
                 override fun onViewDetachedFromWindow(v: View) {
                     cancelPendingSearch()
+                    topScrollCue?.animate()?.cancel()
+                    bottomScrollCue?.animate()?.cancel()
                 }
             })
         }
@@ -316,6 +447,7 @@ class AppPicker(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(accentText)
             setTypeface(typeface, Typeface.BOLD)
+            useTabularNumerals()
             maxLines = 1
             background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
             setPadding(context.dp(10), context.dp(4), context.dp(10), context.dp(4))
@@ -350,13 +482,26 @@ class AppPicker(
             },
         )
 
-        // Sunken search bar with leading ic_search and trailing ic_close clear trigger.
+        // Reactive sunken search bar with persistent GradientDrawable focus ring & 44dp Clear.
+        val searchBoxBg = GradientDrawable().apply {
+            setColor(sunkenColor)
+            cornerRadius = context.dpF(24)
+        }
+        var searchFocused = false
+        var searchDraftText = ""
+        fun syncSearchBoxStroke() {
+            val state = AppPickerMatch.searchBarStrokeState(searchFocused, searchDraftText)
+            val (strokeColor, strokeDp) = AppPickerMatch.searchBarStroke(state, accentColor, tokens)
+            searchBoxBg.setStroke(context.strokePx(strokeDp), strokeColor)
+        }
+        syncSearchBoxStroke()
+
         val searchBox = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 24)
-            minimumHeight = context.dp(44)
-            setPadding(context.dp(12), context.dp(2), context.dp(6), context.dp(2))
+            background = searchBoxBg
+            minimumHeight = context.dp(UiDimens.TOUCH_MIN_DP)
+            setPaddingRelative(context.dp(14), context.dp(2), context.dp(4), context.dp(2))
         }
         searchBox.addView(
             ImageView(context).apply {
@@ -380,6 +525,10 @@ class AppPicker(
             imeOptions = EditorInfo.IME_ACTION_GO
             background = null
             setPadding(0, context.dp(6), 0, context.dp(6))
+            setOnFocusChangeListener { _, hasFocus ->
+                searchFocused = hasFocus
+                syncSearchBoxStroke()
+            }
             setOnEditorActionListener { _, actionId, event ->
                 if (AppPickerMatch.isSearchLaunchAction(actionId, event?.keyCode, event?.action)) {
                     if (pendingSearch != null) {
@@ -397,7 +546,13 @@ class AppPicker(
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
                     val next = s?.toString().orEmpty()
-                    clearBtn.visibility = if (next.isNotEmpty()) View.VISIBLE else View.GONE
+                    searchDraftText = next
+                    clearBtn.visibility = if (AppPickerMatch.clearButtonVisible(next)) {
+                        View.VISIBLE
+                    } else {
+                        View.GONE
+                    }
+                    syncSearchBoxStroke()
                     // Debounce: typing in a 6k-ROM library re-filters only,
                     // never re-sorts (see preSortedRoms).
                     cancelPendingSearch()
@@ -412,21 +567,28 @@ class AppPicker(
             search,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
+        val clearTouchPx = context.dp(UiDimens.TOUCH_MIN_DP)
         clearBtn = ImageView(context).apply {
             setImageResource(R.drawable.ic_close)
             imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_SECONDARY)
-            scaleType = ImageView.ScaleType.FIT_CENTER
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
             contentDescription = context.getString(R.string.action_clear)
             isFocusable = false
+            isClickable = true
             visibility = View.GONE
-            val pad = context.dp(6)
+            background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = null,
+                cornerRadiusDp = 22,
+            )
+            val pad = context.dp(12)
             setPadding(pad, pad, pad, pad)
             setOnClickListener { clearSearch() }
         }
         searchBox.addView(
             clearBtn,
-            LinearLayout.LayoutParams(context.dp(32), context.dp(32)).apply {
-                marginStart = context.dp(UiDimens.SPACE_XS)
+            LinearLayout.LayoutParams(clearTouchPx, clearTouchPx).apply {
+                marginStart = context.dp(2)
             },
         )
         card.addView(
@@ -443,10 +605,12 @@ class AppPicker(
             rowPadH = context.dp(UiDimens.SPACE_MD),
             rowPadV = context.dp(10),
             headerColor = ThemePack.accentTextColor(accentColor, surfaceColor),
-            surfaceColor = surfaceColor,
+            sunkenColor = sunkenColor,
+            hairlineColor = TileBackgrounds.hairlineDivider(context),
             matchTitleColor = matchTitleColor,
             matchBadgeColor = matchBadgeColor,
             rowCornerRadiusDp = tokens.cardRadiusDp,
+            highlightedVisual = AppPickerHighlight.rowVisual(true, accentColor, tokens),
         )
         val list = RecyclerView(context).apply {
             val lm = LinearLayoutManager(context)
@@ -461,6 +625,53 @@ class AppPicker(
             clipToPadding = false
             setPadding(0, 0, 0, context.dp(UiDimens.SPACE_XS))
         }
+        val scrollCueColor = OverlayPrimitives.scrollCueTint(accentColor, surfaceColor)
+        val topCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = true,
+            surfaceColor = surfaceColor,
+        )
+        val bottomCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = false,
+            surfaceColor = surfaceColor,
+        )
+        topScrollCue = topCue
+        bottomScrollCue = bottomCue
+        val cueHeightPx = context.dp(OverlayPrimitives.SCROLL_CUE_HEIGHT_DP)
+        val viewport = FrameLayout(context).apply {
+            addView(
+                list,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                topCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    cueHeightPx,
+                    Gravity.TOP,
+                ),
+            )
+            addView(
+                bottomCue,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    cueHeightPx,
+                    Gravity.BOTTOM,
+                ),
+            )
+        }
+        listViewport = viewport
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                syncScrollCues()
+            }
+        })
         // Row taps are handled by each row's own OnClickListener: the
         // long-press listener (hide menu) makes rows consume touches.
         val emptyBox = LinearLayout(context).apply {
@@ -473,15 +684,33 @@ class AppPicker(
                 context.dp(UiDimens.SPACE_LG),
             )
         }
+        val medallionSize = context.dp(AppPickerMatch.EMPTY_MEDALLION_SIZE_DP)
+        val medallionIconSize = context.dp(AppPickerMatch.EMPTY_MEDALLION_ICON_DP)
+        val emptyMedallion = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(sunkenColor)
+                setStroke(
+                    context.strokePx(1),
+                    TileBackgrounds.hairlineDivider(context),
+                    context.dpF(4),
+                    context.dpF(3),
+                )
+            }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            addView(
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_search)
+                    imageTintList = ColorStateList.valueOf(accentText)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                },
+                FrameLayout.LayoutParams(medallionIconSize, medallionIconSize, Gravity.CENTER),
+            )
+        }
         emptyBox.addView(
-            ImageView(context).apply {
-                setImageResource(R.drawable.ic_search)
-                imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_SUBTLE)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },
-            LinearLayout.LayoutParams(context.dp(32), context.dp(32)).apply {
-                bottomMargin = context.dp(10)
+            emptyMedallion,
+            LinearLayout.LayoutParams(medallionSize, medallionSize).apply {
+                bottomMargin = context.dp(UiDimens.SPACE_MD)
             },
         )
         val emptyText = TextView(context).apply {
@@ -500,22 +729,29 @@ class AppPicker(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
+        val clearPillBg = GradientDrawable().apply {
+            setColor(accentColor)
+            cornerRadius = context.dpF(22)
+            setStroke(context.strokePx(2), AppPickerMatch.emptyClearFocusRing(accentColor))
+        }
         val clearEmptyAction = TextView(context).apply {
             setText(R.string.action_clear)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(QuickPanelNav.accessibleOnAccent(accentColor))
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
+            minimumHeight = context.dp(AppPickerMatch.EMPTY_CLEAR_MIN_HEIGHT_DP)
+            minWidth = context.dp(120)
             background = OverlayPrimitives.roundedRipple(
                 context = context,
-                content = TileBackgrounds.accentPill(context, accentColor, cornerRadiusDp = 16),
-                cornerRadiusDp = 16,
+                content = clearPillBg,
+                cornerRadiusDp = 22,
                 rippleColor = QuickPanelNav.tileRippleColor(
                     QuickPanelNav.TileRole.PRIMARY,
                     accentColor,
                 ),
             )
-            setPadding(context.dp(18), context.dp(8), context.dp(18), context.dp(8))
+            setPadding(context.dp(22), context.dp(10), context.dp(22), context.dp(10))
             isClickable = true
             visibility = View.GONE
             setOnClickListener { clearSearch() }
@@ -528,7 +764,7 @@ class AppPicker(
             ).apply { topMargin = context.dp(UiDimens.SPACE_MD) },
         )
         card.addView(
-            list,
+            viewport,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
         card.addView(
@@ -556,11 +792,8 @@ class AppPicker(
             isScrollable = items.size > 6,
         )
         keycapFooter = footer
-        list.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-            OverlayPrimitives.updateKeycapFooterScrollable(
-                footer,
-                isScrollable = v.canScrollVertically(-1) || v.canScrollVertically(1),
-            )
+        list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            syncScrollCues()
         }
         card.addView(
             footer,
@@ -642,8 +875,8 @@ class AppPicker(
         when (action) {
             Action.NAV_UP -> moveHighlight(-1)
             Action.NAV_DOWN -> moveHighlight(1)
-            Action.PAGE_PREV -> moveHighlight(-5)
-            Action.PAGE_NEXT -> moveHighlight(5)
+            Action.PAGE_PREV -> moveHighlight(-AppPickerHighlight.pageStep(selectableCount))
+            Action.PAGE_NEXT -> moveHighlight(AppPickerHighlight.pageStep(selectableCount))
             Action.CONFIRM -> confirmHighlighted()
             Action.BACK -> {
                 app.playSfx(SoundCue.MODAL_CLOSE)
@@ -692,30 +925,28 @@ class AppPicker(
                 adapter?.notifyItemChanged(pos, PAYLOAD_HIGHLIGHT)
             }
         }
-        val list = recycler ?: return
-        val lm = layoutManager
-        val first = lm?.findFirstVisibleItemPosition() ?: 0
-        val last = lm?.findLastVisibleItemPosition() ?: 0
-        if (move.current < first || move.current > last) {
-            list.smoothScrollToPosition(move.current)
+        val lm = layoutManager ?: return
+        val firstComplete = lm.findFirstCompletelyVisibleItemPosition()
+        val lastComplete = lm.findLastCompletelyVisibleItemPosition()
+        val nearEdge = firstComplete == RecyclerView.NO_POSITION ||
+            move.current <= firstComplete ||
+            move.current >= lastComplete
+        if (nearEdge) {
+            scrollToCentered(move.current)
         }
     }
 
     private fun refreshEmpty() {
         val selectable = AppPickerHighlight.selectableCount(items)
+        selectableCount = selectable
         val none = selectable == 0
         emptyContainer?.visibility = if (none) View.VISIBLE else View.GONE
+        listViewport?.visibility = if (none) View.GONE else View.VISIBLE
         recycler?.visibility = if (none) View.GONE else View.VISIBLE
         if (none) {
-            OverlayPrimitives.updateKeycapFooterScrollable(keycapFooter, isScrollable = false)
+            syncScrollCues()
         } else {
-            recycler?.post {
-                val rv = recycler ?: return@post
-                OverlayPrimitives.updateKeycapFooterScrollable(
-                    keycapFooter,
-                    isScrollable = rv.canScrollVertically(-1) || rv.canScrollVertically(1),
-                )
-            }
+            recycler?.post { syncScrollCues() }
         }
         if (none) {
             val trimmed = query.trim()
@@ -788,6 +1019,7 @@ class AppPicker(
         private const val PAYLOAD_HIGHLIGHT = "highlight"
         private const val PAYLOAD_QUERY = "query"
         private const val ROW_RIPPLE_COLOR = 0x26FFFFFF
+        private val CUE_INTERPOLATOR = DecelerateInterpolator()
     }
 
     private fun styledMatchText(text: String, activeQuery: String, color: Int): CharSequence {
@@ -815,12 +1047,14 @@ class AppPicker(
     // persistent app icon + ROM platform tile children toggle visibility in
     // place with zero thumb.removeAllViews() and reusable row/ripple drawables.
     private class RowHolder(
+        val accentBar: View,
         val thumb: FrameLayout,
         val appIcon: ImageView,
         val romTile: TextView,
         val appThumbBg: Drawable,
         val name: TextView,
         val tag: TextView,
+        val tagBg: GradientDrawable,
     )
 
     private inner class HeaderVH(val text: TextView) : RecyclerView.ViewHolder(text)
@@ -833,6 +1067,7 @@ class AppPicker(
         var boundItem: PickerItem? = null
         var boundIsApp: Boolean? = null
         var boundThumbKey: String? = null
+        var boundPlatformId: String? = null
         var paintedHighlighted: Boolean? = null
     }
 
@@ -842,10 +1077,12 @@ class AppPicker(
         private val rowPadH: Int,
         private val rowPadV: Int,
         private val headerColor: Int,
-        private val surfaceColor: Int,
+        private val sunkenColor: Int,
+        private val hairlineColor: Int,
         private val matchTitleColor: Int,
         private val matchBadgeColor: Int,
         private val rowCornerRadiusDp: Int,
+        private val highlightedVisual: PickerRowVisual,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var rows: List<PickerItem> = emptyList()
         private var sectionCounts: PickerSectionCounts = PickerSectionCounts(0, 0)
@@ -855,7 +1092,13 @@ class AppPicker(
         private val innerIconSizePx = (iconSize - iconPadPx * 2).coerceAtLeast(1)
         private val thumbClipRadiusPx = context.dpF(10)
         private val rowCornerRadiusPx = context.dpF(rowCornerRadiusDp)
-        private val selectedStrokePx = context.strokePx(4)
+        private val selectedStrokePx = context.strokePx(highlightedVisual.strokeDp)
+        private val tagStrokePx = context.strokePx(1)
+        private val tagCornerRadiusPx = context.dpF(8)
+        private val barWidthPx = context.dp(3)
+        private val barHeightPx = context.dp(24)
+        private val barGapPx = context.dp(8)
+        private val rowStartPadPx = context.dp(8)
 
         init {
             setHasStableIds(true)
@@ -906,6 +1149,7 @@ class AppPicker(
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTextColor(headerColor)
                     setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
                     letterSpacing = 0.12f
                     setPadding(rowPadH, context.dp(12), rowPadH, context.dp(UiDimens.SPACE_XS))
                     OverlayPrimitives.markHeading(this)
@@ -929,12 +1173,27 @@ class AppPicker(
                     cornerRadiusDp = rowCornerRadiusDp,
                     rippleColor = ROW_RIPPLE_COLOR,
                 )
-                setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
+                setPaddingRelative(rowStartPadPx, rowPadV, rowPadH, rowPadV)
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
             }
+            val accentBar = View(context).apply {
+                background = TileBackgrounds.activeAccentBar(
+                    context = context,
+                    accent = highlightedVisual.accentBarColor,
+                    cornerRadiusDp = 2,
+                )
+                visibility = View.INVISIBLE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            row.addView(
+                accentBar,
+                LinearLayout.LayoutParams(barWidthPx, barHeightPx).apply {
+                    marginEnd = barGapPx
+                },
+            )
             val appThumbBg = TileBackgrounds.sunkenField(context, cornerRadiusDp = 10)
             val appIcon = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER
@@ -969,13 +1228,18 @@ class AppPicker(
                 name,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
+            val tagBg = GradientDrawable().apply {
+                setColor(sunkenColor)
+                cornerRadius = tagCornerRadiusPx
+                setStroke(tagStrokePx, hairlineColor)
+            }
             val tag = TextView(context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
                 setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                background = TileBackgrounds.sunkenField(context, cornerRadiusDp = 8)
+                background = tagBg
                 setPadding(context.dp(8), context.dp(3), context.dp(8), context.dp(3))
                 visibility = View.GONE
             }
@@ -989,7 +1253,7 @@ class AppPicker(
             val holder = RowVH(
                 row = row,
                 rowBg = rowBg,
-                cells = RowHolder(thumb, appIcon, romTile, appThumbBg, name, tag),
+                cells = RowHolder(accentBar, thumb, appIcon, romTile, appThumbBg, name, tag, tagBg),
             )
             row.setOnClickListener {
                 when (val bound = holder.boundItem) {
@@ -1130,6 +1394,13 @@ class AppPicker(
                     }
                     val pid = item.entry.platformId
                     PlatformTile.restyle(cells.romTile, context, pid, cornerRadiusDp = 12)
+                    if (holder.boundPlatformId != pid) {
+                        holder.boundPlatformId = pid
+                        cells.tagBg.setStroke(
+                            tagStrokePx,
+                            AppPickerMatch.platformPillBorderColor(PlatformTile.colorFor(pid)),
+                        )
+                    }
                     holder.boundThumbKey = "r:$pid"
                     bindRowText(holder, item)
                     row.isLongClickable = false
@@ -1144,9 +1415,11 @@ class AppPicker(
             if (holder.paintedHighlighted == isHighlighted) return
             holder.paintedHighlighted = isHighlighted
             holder.row.isSelected = isHighlighted
+            holder.cells.accentBar.visibility = if (isHighlighted) View.VISIBLE else View.INVISIBLE
+            holder.cells.name.setTypeface(null, if (isHighlighted) Typeface.BOLD else Typeface.NORMAL)
             if (isHighlighted) {
-                holder.rowBg.setColor(surfaceColor)
-                holder.rowBg.setStroke(selectedStrokePx, accentColor)
+                holder.rowBg.setColor(highlightedVisual.fillColor)
+                holder.rowBg.setStroke(selectedStrokePx, highlightedVisual.strokeColor)
             } else {
                 holder.rowBg.setColor(Color.TRANSPARENT)
                 holder.rowBg.setStroke(0, Color.TRANSPARENT)
