@@ -4,6 +4,7 @@ import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -12,6 +13,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
 import android.widget.AdapterView
@@ -1808,7 +1810,9 @@ class GridDeck(
             val folderId = SlotKey.folderId(key)
             val spec = folderId?.let { settings.folders[it] }
             val name = spec?.name ?: folderId ?: context.getString(R.string.label_folder)
-            val count = spec?.members?.size ?: 0
+            val members = spec?.members.orEmpty()
+            val count = members.size
+            val previewKeys = FolderMosaicMetrics.previewMembers(members)
             val countLabel = context.resources.getQuantityString(
                 R.plurals.count_items,
                 count,
@@ -1820,35 +1824,65 @@ class GridDeck(
                 setPadding(cellPadding, cellPadding, cellPadding, cellPadding)
                 contentDescription = listOf(name, countLabel).joinToString(", ")
             }
+            val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
             val innerRadiusDp = innerArtRadiusDp()
+            val innerRadiusPx = context.dpF(innerRadiusDp)
             val sunkenFill = TileBackgrounds.surfaceSunken(context)
+            val mosaic = FolderMosaicMetrics.compute(
+                iconSizePx = iconSize,
+                outerCornerRadiusPx = innerRadiusPx,
+                density = density,
+            )
+            val isEmpty = previewKeys.isEmpty()
+            val showMosaic = !isEmpty && mosaic.showMosaic
             val iconBox = FrameLayout(context).apply {
                 background = GradientDrawable().apply {
                     setColor(sunkenFill)
-                    cornerRadius = context.dpF(innerRadiusDp)
-                    setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+                    cornerRadius = innerRadiusPx
+                    if (isEmpty) {
+                        setStroke(
+                            context.strokePx(1),
+                            TileBackgrounds.hairlineDivider(context),
+                            context.dpF(4),
+                            context.dpF(3),
+                        )
+                    } else {
+                        setStroke(context.strokePx(1), TileBackgrounds.hairlineDivider(context))
+                    }
                 }
             }
-            val vectorSize = (iconSize * 0.54f).toInt().coerceAtLeast(context.dp(20))
-            val folderIcon = ImageView(context).apply {
-                setImageResource(R.drawable.ic_folder)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setColorFilter(
-                    ThemePack.accentTextColor(settings.accentColor, sunkenFill),
-                    PorterDuff.Mode.SRC_IN,
+            if (showMosaic) {
+                iconBox.addView(
+                    buildFolderMosaic(previewKeys, mosaic),
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            } else {
+                val vectorSize = (iconSize * 0.50f).toInt().coerceAtLeast(context.dp(20))
+                val folderIcon = ImageView(context).apply {
+                    setImageResource(R.drawable.ic_folder)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    alpha = if (isEmpty) 0.72f else 1f
+                    setColorFilter(
+                        ThemePack.accentTextColor(settings.accentColor, sunkenFill),
+                        PorterDuff.Mode.SRC_IN,
+                    )
+                }
+                iconBox.addView(
+                    folderIcon,
+                    FrameLayout.LayoutParams(vectorSize, vectorSize, Gravity.CENTER),
                 )
             }
-            iconBox.addView(
-                folderIcon,
-                FrameLayout.LayoutParams(vectorSize, vectorSize, Gravity.CENTER),
-            )
             // Compact dark-scrimmed count pill inside the folder box corner so
             // the folder title fits cleanly in the single-line label budget.
             val countBadge = TextView(context).apply {
-                text = count.toString()
+                text = FolderMosaicMetrics.countBadgeText(count)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                setTextColor(UiDimens.ALPHA_PRIMARY)
+                setTextColor(if (isEmpty) UiDimens.ALPHA_MUTED else UiDimens.ALPHA_PRIMARY)
                 setTypeface(typeface, Typeface.BOLD)
+                fontFeatureSettings = "tnum"
                 gravity = Gravity.CENTER
                 includeFontPadding = false
                 minWidth = context.dp(18)
@@ -1875,6 +1909,117 @@ class GridDeck(
                 cell.addView(buildCellLabel(name), labelParams())
             }
             return cell
+        }
+
+        private fun buildFolderMosaic(
+            previewKeys: List<String>,
+            mosaic: FolderMosaicMetrics.Spec,
+        ): View {
+            val container = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(mosaic.innerPadPx, mosaic.innerPadPx, mosaic.innerPadPx, mosaic.innerPadPx)
+            }
+            val tilePx = mosaic.miniTilePx
+            for (rowIndex in 0 until FolderMosaicMetrics.GRID_COLUMNS) {
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                }
+                for (colIndex in 0 until FolderMosaicMetrics.GRID_COLUMNS) {
+                    val slotIdx = rowIndex * FolderMosaicMetrics.GRID_COLUMNS + colIndex
+                    val memberKey = previewKeys.getOrNull(slotIdx)
+                    val quadrant = buildFolderMiniTile(memberKey, mosaic)
+                    row.addView(
+                        quadrant,
+                        LinearLayout.LayoutParams(tilePx, tilePx).apply {
+                            if (colIndex > 0) marginStart = mosaic.gapPx
+                        },
+                    )
+                }
+                container.addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        if (rowIndex > 0) topMargin = mosaic.gapPx
+                    },
+                )
+            }
+            return container
+        }
+
+        private fun buildFolderMiniTile(
+            memberKey: String?,
+            mosaic: FolderMosaicMetrics.Spec,
+        ): View {
+            if (memberKey == null) {
+                return View(context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(FOLDER_GHOST_WELL_FILL)
+                        cornerRadius = mosaic.miniCornerRadiusPx
+                        setStroke(context.strokePx(1), FOLDER_GHOST_WELL_STROKE)
+                    }
+                }
+            }
+            val app = activity.application as GhostGalleonApp
+            val rom = memberKey.takeIf(SlotKey::isRom)?.let { romByKey[it] }
+            if (rom != null) {
+                return ArtTile.view(
+                    context = context,
+                    cache = app.artCache,
+                    rom = rom,
+                    targetPx = mosaic.miniTilePx,
+                    cornerRadiusDp = mosaic.miniCornerRadiusDp,
+                    artOverrides = settings.artOverrides,
+                )
+            }
+            if (SlotKey.isRom(memberKey)) {
+                return PlatformTile.view(
+                    context = context,
+                    platformId = SlotKey.platformIdOf(memberKey) ?: "rom",
+                    cornerRadiusDp = mosaic.miniCornerRadiusDp,
+                ).apply { alpha = 0.45f }
+            }
+            if (SlotKey.isFolder(memberKey)) {
+                return FrameLayout(context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(FOLDER_GHOST_WELL_FILL)
+                        cornerRadius = mosaic.miniCornerRadiusPx
+                    }
+                    val glyphSize = (mosaic.miniTilePx * 0.65f).toInt().coerceAtLeast(context.dp(10))
+                    addView(
+                        ImageView(context).apply {
+                            setImageResource(R.drawable.ic_folder)
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            setColorFilter(
+                                ThemePack.accentTextColor(settings.accentColor),
+                                PorterDuff.Mode.SRC_IN,
+                            )
+                        },
+                        FrameLayout.LayoutParams(glyphSize, glyphSize, Gravity.CENTER),
+                    )
+                }
+            }
+            val radiusPx = mosaic.miniCornerRadiusPx
+            return ImageView(context).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
+                    }
+                }
+                CustomIcon.bind(
+                    this,
+                    iconLoader,
+                    app.artCache,
+                    settings,
+                    memberKey,
+                    mosaic.miniTilePx,
+                )
+            }
         }
 
         // ROM tile: cached artwork over the platform placeholder (async
@@ -1955,5 +2100,7 @@ class GridDeck(
         const val BLANK_PLUS_IDLE_COLOR = 0x3DFFFFFF
         const val BADGE_SCRIM_FILL = 0xB3000000.toInt()
         const val BADGE_SCRIM_STROKE = 0x26FFFFFF
+        const val FOLDER_GHOST_WELL_FILL = 0x12FFFFFF
+        const val FOLDER_GHOST_WELL_STROKE = 0x10FFFFFF
     }
 }
