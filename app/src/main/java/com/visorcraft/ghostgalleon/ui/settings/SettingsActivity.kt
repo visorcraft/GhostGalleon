@@ -219,6 +219,20 @@ internal object SettingsUiLogic {
 
     /** Target rotation degrees for the collapsible Browse Chrome chevron. */
     fun chevronRotationDegrees(expanded: Boolean): Float = if (expanded) 180f else 0f
+
+    internal enum class ModalChipTone { NEUTRAL, ACCENT, DESTRUCTIVE }
+
+    /**
+     * WCAG AA foreground text color for Settings management dialog chips
+     * across [ModalChipTone.NEUTRAL] (`chipIdle`), [ModalChipTone.ACCENT]
+     * (`accent`), and [ModalChipTone.DESTRUCTIVE] (`surfaceSunken`).
+     */
+    fun modalChipTextColor(tone: ModalChipTone, accent: Int, tokens: ThemeTokens): Int =
+        when (tone) {
+            ModalChipTone.ACCENT -> accessibleOnAccent(accent)
+            ModalChipTone.DESTRUCTIVE -> UiDimens.COLOR_DESTRUCTIVE
+            ModalChipTone.NEUTRAL -> ThemePack.accentTextColor(accent, tokens.chipIdle)
+        }
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -468,7 +482,12 @@ class SettingsActivity : AppCompatActivity() {
         } ?: getString(R.string.action_none)
     }
 
-    private fun modalRow(label: String, chip: String, onChip: () -> Unit): View =
+    private fun modalRow(
+        label: String,
+        chip: String,
+        tone: SettingsUiLogic.ModalChipTone = SettingsUiLogic.ModalChipTone.NEUTRAL,
+        onChip: () -> Unit,
+    ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -476,21 +495,38 @@ class SettingsActivity : AppCompatActivity() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(10)
+            })
+            val idleBg = when (tone) {
+                SettingsUiLogic.ModalChipTone.ACCENT -> pillDrawable(accent, 14)
+                SettingsUiLogic.ModalChipTone.DESTRUCTIVE ->
+                    TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+                SettingsUiLogic.ModalChipTone.NEUTRAL ->
+                    TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14)
+            }
+            val focusColor = if (tone == SettingsUiLogic.ModalChipTone.ACCENT) {
+                activeFocusRing
+            } else {
+                accent
+            }
             addView(TextView(this@SettingsActivity).apply {
                 text = chip
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(accentOnCard)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                setTextColor(SettingsUiLogic.modalChipTextColor(tone, accent, themeTokens))
                 setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                minWidth = dp(72)
+                minHeight = dp(38)
                 isFocusable = true
-                background = TileBackgrounds.focusableRow(
+                background = TileBackgrounds.pressableRow(
                     context = this@SettingsActivity,
-                    accent = accent,
-                    idleBackground = TileBackgrounds.chipIdle(this@SettingsActivity, cornerRadiusDp = 14),
+                    accent = focusColor,
+                    idleBackground = idleBg,
                     cornerRadiusDp = 14,
                     strokeDp = 2,
                 )
-                val hp = dp(12); val vp = dp(6)
+                val hp = dp(14); val vp = dp(6)
                 setPadding(hp, vp, hp, vp)
                 setOnClickListener { onChip() }
             })
@@ -498,11 +534,13 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun modalEmpty(text: String): View = TextView(this).apply {
         this.text = text
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        setTextColor(UiDimens.ALPHA_SUBTLE)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setTextColor(UiDimens.ALPHA_MUTED)
         gravity = Gravity.CENTER
-        val v = dp(16)
-        setPadding(0, v, 0, v)
+        background = TileBackgrounds.sunkenField(this@SettingsActivity, cornerRadiusDp = 14)
+        val h = dp(16)
+        val v = dp(18)
+        setPadding(h, v, h, v)
     }
 
     private fun showHiddenAppsDialog() {
@@ -518,7 +556,8 @@ class SettingsActivity : AppCompatActivity() {
             if (hidden.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_no_hidden_apps)))
             } else {
-                hidden.forEach { pkg ->
+                hidden.forEachIndexed { index, pkg ->
+                    if (index > 0) addDivider(list)
                     list.addView(modalRow(appLabel(pkg), getString(R.string.action_unhide)) {
                         app.updateSettings(app.settings.copy(
                             hiddenPackages = app.settings.hiddenPackages - pkg))
@@ -546,7 +585,11 @@ class SettingsActivity : AppCompatActivity() {
                 heightFrac = 0.56f,
                 minDp = 140,
             ),
-        ).apply { addView(content) }
+        ).apply {
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(14))
+            addView(content)
+        }
 
     private fun showHiddenRomsDialog() {
         val list = LinearLayout(this).apply {
@@ -565,7 +608,8 @@ class SettingsActivity : AppCompatActivity() {
             if (hidden.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_no_hidden_roms)))
             } else {
-                hidden.forEach { id ->
+                hidden.forEachIndexed { index, id ->
+                    if (index > 0) addDivider(list)
                     list.addView(modalRow(romLabel(id), getString(R.string.action_unhide)) {
                         val next = com.visorcraft.ghostgalleon.library.HiddenRoms
                             .unhide(app.settings.hiddenRomIds, id)
@@ -657,16 +701,24 @@ class SettingsActivity : AppCompatActivity() {
             if (dock.isEmpty()) {
                 list.addView(modalEmpty(getString(R.string.settings_dock_empty)))
             } else {
-                dock.forEach { key ->
-                    list.addView(modalRow(dockEntryLabel(key), getString(R.string.action_remove)) {
-                        app.updateSettings(app.settings.copy(
-                            dockSlots = app.settings.dockSlots.map {
-                                if (it == key) null else it
-                            }))
-                        refreshAppsRows()
-                        rebuild()
-                    }, LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+                dock.forEachIndexed { index, key ->
+                    if (index > 0) addDivider(list)
+                    list.addView(
+                        modalRow(
+                            label = dockEntryLabel(key),
+                            chip = getString(R.string.action_remove),
+                            tone = SettingsUiLogic.ModalChipTone.DESTRUCTIVE,
+                        ) {
+                            app.updateSettings(app.settings.copy(
+                                dockSlots = app.settings.dockSlots.map {
+                                    if (it == key) null else it
+                                }))
+                            refreshAppsRows()
+                            rebuild()
+                        },
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)),
+                    )
                 }
             }
         }
@@ -696,11 +748,20 @@ class SettingsActivity : AppCompatActivity() {
                 list.addView(modalEmpty(getString(R.string.settings_no_apps)))
                 return
             }
-            apps.forEach { entry ->
+            apps.forEachIndexed { index, entry ->
+                if (index > 0) addDivider(list)
                 val pkg = entry.packageName
                 val on = app.settings.packageYield[pkg] == true
                 list.addView(
-                    modalRow(entry.label, yieldChip(on)) {
+                    modalRow(
+                        label = entry.label,
+                        chip = yieldChip(on),
+                        tone = if (on) {
+                            SettingsUiLogic.ModalChipTone.ACCENT
+                        } else {
+                            SettingsUiLogic.ModalChipTone.NEUTRAL
+                        },
+                    ) {
                         val live = app.settings
                         val next = if (live.packageYield[pkg] == true) {
                             live.packageYield - pkg
@@ -1624,8 +1685,10 @@ class SettingsActivity : AppCompatActivity() {
 
         fun restyle() {
             pills.forEach { (value, pill) ->
-                if (value == selected) {
-                    pill.background = TileBackgrounds.focusableRow(
+                val active = value == selected
+                pill.isSelected = active
+                if (active) {
+                    pill.background = TileBackgrounds.pressableRow(
                         context = this@SettingsActivity,
                         accent = activeFocusRing,
                         idleBackground = pillDrawable(accent, 17),
@@ -1634,7 +1697,7 @@ class SettingsActivity : AppCompatActivity() {
                     )
                     pill.setTextColor(onAccentFill)
                 } else {
-                    pill.background = TileBackgrounds.focusableRow(
+                    pill.background = TileBackgrounds.pressableRow(
                         context = this@SettingsActivity,
                         accent = accent,
                         cornerRadiusDp = 17,
@@ -1645,8 +1708,10 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+        val orderedPills = mutableListOf<TextView>()
         options.forEach { (value, text) ->
             val pill = TextView(this).apply {
+                id = View.generateViewId()
                 this.text = text
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 typeface = Typeface.DEFAULT_BOLD
@@ -1668,8 +1733,13 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             pills[value] = pill
+            orderedPills.add(pill)
             track.addView(pill, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
+        }
+        orderedPills.forEachIndexed { index, pill ->
+            if (index > 0) pill.nextFocusLeftId = orderedPills[index - 1].id
+            if (index < orderedPills.lastIndex) pill.nextFocusRightId = orderedPills[index + 1].id
         }
         restyle()
         bindSelected?.invoke { value ->
@@ -2752,7 +2822,7 @@ class SettingsActivity : AppCompatActivity() {
             setOnClickListener {
                 powerHost.visibility =
                     if (powerHost.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                updatePowerExpanderMeta?.invoke(app.settings.browseChrome, true)
+                updatePowerExpanderMeta.invoke(app.settings.browseChrome, true)
             }
         }
         expander.addView(rowLabel(getString(R.string.settings_chrome_power_rails)), LinearLayout.LayoutParams(

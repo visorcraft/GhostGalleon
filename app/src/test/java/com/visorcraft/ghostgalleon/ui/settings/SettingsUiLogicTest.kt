@@ -155,4 +155,35 @@ class SettingsUiLogicTest {
         assertEquals(0f, SettingsUiLogic.chevronRotationDegrees(false), 0.001f)
         assertEquals(180f, SettingsUiLogic.chevronRotationDegrees(true), 0.001f)
     }
+
+    @Test
+    fun `modalChipTextColor meets WCAG AA contrast across all tones and built-in themes`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val accent = tokens.accentColor
+
+            val accentFg = SettingsUiLogic.modalChipTextColor(
+                SettingsUiLogic.ModalChipTone.ACCENT, accent, tokens,
+            )
+            assertTrue(
+                "Modal ACCENT chip contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(accentFg, accent) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+
+            val neutralFg = SettingsUiLogic.modalChipTextColor(
+                SettingsUiLogic.ModalChipTone.NEUTRAL, accent, tokens,
+            )
+            assertTrue(
+                "Modal NEUTRAL chip contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(neutralFg, tokens.chipIdle) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+
+            val destructiveFg = SettingsUiLogic.modalChipTextColor(
+                SettingsUiLogic.ModalChipTone.DESTRUCTIVE, accent, tokens,
+            )
+            assertTrue(
+                "Modal DESTRUCTIVE chip contrast too low on ${tokens.id}",
+                ThemePack.contrastRatio(destructiveFg, ThemePack.surfaceSunken(tokens)) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }
