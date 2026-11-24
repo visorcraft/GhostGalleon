@@ -30,24 +30,44 @@ class NavRepeater(
     }
 
     private val repeatTasks = mutableMapOf<Action, Runnable>()
+    private val streaks = mutableMapOf<Action, Int>()
+
+    /**
+     * Consecutive hold-repeat count for the active dispatch (`0` on fresh press,
+     * `1, 2, 3...` on consecutive scheduled repeats; resets to `0` on release,
+     * [cancelAll], or pressing a fresh action).
+     */
+    var repeatStreak: Int = 0
+        private set
+
+    /** Live repeat streak for a specific held [action], or `0` if not repeating. */
+    fun streakFor(action: Action): Int = streaks[action] ?: 0
 
     fun onPress(action: Action) {
+        cancelTaskOnly(action)
+        streaks[action] = 0
+        repeatStreak = 0
         move(action)
-        cancel(action)
         scheduleRepeat(action, HoldRepeat.INITIAL_DELAY_MS)
     }
 
     fun onRelease(action: Action) {
         cancel(action)
+        repeatStreak = 0
     }
 
     fun cancelAll() {
         repeatTasks.keys.toList().forEach(::cancel)
+        streaks.clear()
+        repeatStreak = 0
     }
 
     private fun scheduleRepeat(action: Action, delayMs: Long) {
         val task = Runnable {
             repeatTasks.remove(action)
+            val nextStreak = (streaks[action] ?: 0) + 1
+            streaks[action] = nextStreak
+            repeatStreak = nextStreak
             move(action)
             scheduleRepeat(action, HoldRepeat.REPEAT_INTERVAL_MS)
         }
@@ -56,6 +76,11 @@ class NavRepeater(
     }
 
     private fun cancel(action: Action) {
+        cancelTaskOnly(action)
+        streaks.remove(action)
+    }
+
+    private fun cancelTaskOnly(action: Action) {
         repeatTasks.remove(action)?.let { scheduler.cancel(it) }
     }
 }

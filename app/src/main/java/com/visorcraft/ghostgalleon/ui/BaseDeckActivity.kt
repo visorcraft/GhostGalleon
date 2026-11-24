@@ -321,6 +321,13 @@ abstract class BaseDeckActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Live hold-repeat streak (`0` on fresh press/tap, `1+` during held repeats)
+     * for deck navigation velocity/pitch shaping.
+     */
+    fun currentNavRepeatStreak(action: Action? = null): Int =
+        if (action != null) navRepeater.streakFor(action) else navRepeater.repeatStreak
+
     // True after onStop until the next onResume. Used to distinguish
     // "still on home" HOME redelivery (open drawer) from returning from
     // another app (land on grid). Does NOT force a UI rebuild by itself.

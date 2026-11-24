@@ -45,6 +45,7 @@ import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.i18n.dynamicText
 import com.visorcraft.ghostgalleon.i18n.text
 import com.visorcraft.ghostgalleon.art.ArtTile
+import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.BrowseFeedback
 import com.visorcraft.ghostgalleon.library.CollectionsOps
@@ -76,6 +77,7 @@ import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.state.DeckState
+import com.visorcraft.ghostgalleon.ui.BaseDeckActivity
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
 import com.visorcraft.ghostgalleon.ui.HelperEmbedPolicy
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -545,11 +547,31 @@ class GameDeck(
     private fun romLabel(rom: RomEntry): String =
         com.visorcraft.ghostgalleon.settings.RomNames.display(rom, settings.romNames)
 
+    private fun playAudio(event: DeckAudioLogic.SoundEvent?) {
+        if (event == null) return
+        app().playSfx(
+            cue = event.cue,
+            pan = event.pan,
+            repeatStreak = event.repeatStreak,
+        )
+    }
+
+    private fun playCue(cue: SoundCue, pan: Float = 0f, repeatStreak: Int = 0) {
+        app().playSfx(cue = cue, pan = pan, repeatStreak = repeatStreak)
+    }
+
+    private fun navStreak(action: Action): Int =
+        (activity as? BaseDeckActivity)?.currentNavRepeatStreak(action) ?: 0
+
+    private fun dockVisibleCount(): Int =
+        DockSlots.visibleCount(settings.dockSlots)
+
     private fun resetToAllBrowse() {
         val live = app().settings
         val firstKey = library.curated(live).firstOrNull()?.packageName
             ?: HiddenRoms.listed(roms, settings.hiddenRomIds)
                 .firstOrNull()?.let { SlotKey.rom(it.id) }
+        playCue(SoundCue.FILTER_SELECT)
         state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
         if (firstKey != null) state.select(firstKey, force = true)
     }
@@ -1122,6 +1144,7 @@ class GameDeck(
                     GameDeckChromeLogic.filterPillAccessibilityText(label),
                 )
                 setOnClickListener {
+                    playCue(SoundCue.FILTER_SELECT)
                     val next = GameDeckChromeLogic.clearFilter(state.libraryBrowse, filter)
                     state.setLibraryBrowse(next, force = true)
                 }
@@ -1170,6 +1193,7 @@ class GameDeck(
                     isClickable = true
                     contentDescription = clearAllLabel
                     setOnClickListener {
+                        playCue(SoundCue.FILTER_SELECT)
                         state.setLibraryBrowse(
                             LibraryBrowse.clearMetaFilters(state.libraryBrowse),
                             force = true,
@@ -1284,6 +1308,7 @@ class GameDeck(
                 View.GONE
             }
             setOnClickListener {
+                playCue(SoundCue.CONFIRM)
                 val railKeys = entries.map { it.key }
                 val all = com.visorcraft.ghostgalleon.library.MultiSelectOps.selectAll(railKeys)
                 state.setMultiSelectKeys(all)
@@ -1337,7 +1362,10 @@ class GameDeck(
             background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 12)
             setPadding(dp(10), dp(5), dp(10), dp(5))
             isClickable = true
-            setOnClickListener { state.clearMultiSelect() }
+            setOnClickListener {
+                playCue(SoundCue.BACK)
+                state.clearMultiSelect()
+            }
         }
         banner.addView(cancelBtn)
         return banner
@@ -1837,7 +1865,10 @@ class GameDeck(
             )
         ) {
             CarouselMultiSelectLogic.GamepadActionOutcome.TOGGLE_CURRENT_CARD -> {
-                focusedEntry?.let { state.toggleMultiSelectKey(it.key) }
+                focusedEntry?.let {
+                    state.toggleMultiSelectKey(it.key)
+                    playAudio(DeckAudioLogic.multiSelectToggleEvent(it.key in state.multiSelectKeys))
+                }
                 return true
             }
             CarouselMultiSelectLogic.GamepadActionOutcome.OPEN_BULK_ACTIONS -> {
@@ -1845,6 +1876,7 @@ class GameDeck(
                 return true
             }
             CarouselMultiSelectLogic.GamepadActionOutcome.EXIT_MULTI_SELECT -> {
+                playCue(SoundCue.BACK)
                 state.clearMultiSelect()
                 return true
             }
@@ -1891,15 +1923,34 @@ class GameDeck(
                 val currentIdx = selectedIndex()
                 val bump = nav.edgeBumpDirection(currentIdx, action)
                 if (bump != 0) {
+                    // Fire edge-bump SFX outside animateEdgeBump so reduced-motion still hears it.
+                    playAudio(
+                        DeckAudioLogic.carouselNavigationEvent(
+                            action = action,
+                            fromIndex = currentIdx,
+                            toIndex = currentIdx,
+                            bumpDirection = bump,
+                        ),
+                    )
                     animateEdgeBump(bump)
                 } else {
                     val newIndex = nav.move(currentIdx, action)
+                    playAudio(
+                        DeckAudioLogic.carouselNavigationEvent(
+                            action = action,
+                            fromIndex = currentIdx,
+                            toIndex = newIndex,
+                            bumpDirection = 0,
+                            repeatStreak = navStreak(action),
+                        ),
+                    )
                     entries.getOrNull(newIndex)?.let { state.select(it.key) }
                 }
                 true
             }
             // NAV DOWN leaves the carousel and focuses the dock.
             Action.NAV_DOWN -> {
+                playAudio(DeckAudioLogic.dockEnterEvent(0, dockVisibleCount()))
                 state.focusDock(0)
                 true
             }
@@ -1967,6 +2018,7 @@ class GameDeck(
                 setOnClickListener {
                     val idx = LibraryBrowse.firstIndexForLetter(labels, letter)
                     val key = entries.getOrNull(idx)?.key ?: return@setOnClickListener
+                    playCue(SoundCue.FILTER_SELECT)
                     state.select(key, force = true)
                     Toast.makeText(activity, chipLabel, Toast.LENGTH_SHORT).show()
                 }
@@ -2038,6 +2090,7 @@ class GameDeck(
         val nowMs = System.currentTimeMillis()
         val counts = app().browseChipSnapshot(roms, settings, nowMs)
         fun setQuery(next: LibraryBrowse.BrowseQuery, force: Boolean = false) {
+            playCue(SoundCue.FILTER_SELECT)
             state.setLibraryBrowse(next, force = force)
         }
         // All = full reset: clear platform/genre/search/collection/sort AND
@@ -2471,6 +2524,7 @@ class GameDeck(
             if (state.multiSelectEnabled) {
                 showBulkActions()
             } else {
+                playCue(SoundCue.CONFIRM)
                 state.setMultiSelectEnabled(true)
             }
         }
@@ -3003,6 +3057,7 @@ class GameDeck(
     ) {
         // RECENT rail puts cont at the front after rebuild. force on both
         // sides so re-tapping still scrolls/rebinds when already selected.
+        playCue(SoundCue.FILTER_SELECT)
         state.setLibraryBrowse(
             LibraryBrowse.BrowseQuery(mode = LibraryBrowse.Mode.RECENT),
             force = true,
@@ -3132,6 +3187,7 @@ class GameDeck(
             // Full library view so the selection is present after rebuild.
             state.setLibraryBrowse(LibraryBrowse.BrowseQuery(), force = true)
         }
+        playCue(SoundCue.FILTER_SELECT)
         state.select(key, force = true)
         val scope = activity.getString(
             if (filtered.isNotEmpty()) R.string.browse_random_filtered
@@ -3232,6 +3288,7 @@ class GameDeck(
     private fun applySearch(raw: String) {
         val text = SearchDialogLogic.normalizeQuery(raw)
         val next = state.libraryBrowse.copy(text = text)
+        playCue(SoundCue.FILTER_SELECT)
         state.setLibraryBrowse(next)
         if (text.isNotEmpty()) {
             val live = app().settings
@@ -4372,6 +4429,7 @@ class GameDeck(
 
     private fun startDockMove(index: Int) {
         dockMove.start(index, settings.dockSlots)
+        playAudio(DeckAudioLogic.movePickupEvent(DeckAudioLogic.panForDockSlot(index, dockVisibleCount())))
         hintView?.text = HintBar.moveText(activity)
         state.focusDock(index)
         dockBar?.updateFocus(index, moving = index)
@@ -4380,12 +4438,28 @@ class GameDeck(
     private fun handleDockMoveAction(action: Action, from: Int): Boolean {
         when (action) {
             Action.NAV_LEFT, Action.NAV_RIGHT -> {
+                val visible = dockVisibleCount()
                 val to = dockNav.move(from, action)
                 if (to != from) {
-                    val next = dockMove.swap(from, to) ?: return true
+                    val next = dockMove.swap(from, to)
+                    if (next == null) {
+                        playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, from, visible))
+                        return true
+                    }
+                    playAudio(
+                        DeckAudioLogic.dockMoveStepEvent(
+                            action = action,
+                            fromIndex = from,
+                            toIndex = next,
+                            visibleCount = visible,
+                            repeatStreak = navStreak(action),
+                        ),
+                    )
                     dockBar?.rebind()
                     state.focusDock(next)
                     dockBar?.updateFocus(next, moving = next)
+                } else {
+                    playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, to, visible))
                 }
             }
             Action.CONFIRM -> dropDockMove()
@@ -4397,12 +4471,19 @@ class GameDeck(
 
     private fun dropDockMove(tapSlot: Int? = null) {
         val result = dockMove.drop(tapSlot) ?: return
+        playAudio(
+            DeckAudioLogic.moveDropEvent(
+                DeckAudioLogic.panForDockSlot(result.focusIndex, dockVisibleCount()),
+            ),
+        )
         hintView?.text = HintBar.textFor(activity, state.dockSlot != null)
         updateDockSlots(result.compacted)
         state.focusDock(result.focusIndex)
     }
 
     private fun cancelDockMove() {
+        val pan = state.dockSlot?.let { DeckAudioLogic.panForDockSlot(it, dockVisibleCount()) } ?: 0f
+        playAudio(DeckAudioLogic.moveCancelEvent(pan))
         dockMove.clear()
         hintView?.text = HintBar.textFor(activity, state.dockSlot != null)
         dockBar?.rebind()
@@ -4411,10 +4492,23 @@ class GameDeck(
 
     private fun handleDockAction(action: Action, dockIndex: Int): Boolean {
         when (action) {
-            Action.NAV_LEFT, Action.NAV_RIGHT ->
-                state.focusDock(dockNav.move(dockIndex, action))
-            Action.NAV_UP, Action.BACK ->
+            Action.NAV_LEFT, Action.NAV_RIGHT -> {
+                val next = dockNav.move(dockIndex, action)
+                playAudio(
+                    DeckAudioLogic.dockNavigationEvent(
+                        action = action,
+                        fromIndex = dockIndex,
+                        toIndex = next,
+                        visibleCount = dockVisibleCount(),
+                        repeatStreak = navStreak(action),
+                    ),
+                )
+                state.focusDock(next)
+            }
+            Action.NAV_UP, Action.BACK -> {
+                playAudio(DeckAudioLogic.dockExitEvent(dockIndex, dockVisibleCount()))
                 state.select(entries.getOrNull(selectedIndex())?.key ?: state.selectedKey)
+            }
             Action.CONFIRM -> {
                 val bar = dockBar
                 if (bar == null || bar.isBlank(dockIndex)) {
@@ -4985,17 +5079,22 @@ class GameDeck(
             holder.root.setOnClickListener {
                 if (state.multiSelectEnabled) {
                     state.toggleMultiSelectKey(entry.key)
+                    playAudio(DeckAudioLogic.multiSelectToggleEvent(entry.key in state.multiSelectKeys))
                     return@setOnClickListener
                 }
                 if (state.selectedKey == entry.key && state.dockSlot == null) {
                     launch(entry)
                 } else {
+                    val fromIdx = selectedIndex()
+                    val toIdx = entryIndexByKey[entry.key] ?: fromIdx
+                    playAudio(DeckAudioLogic.carouselCardFocusEvent(fromIdx, toIdx))
                     state.select(entry.key)
                 }
             }
             holder.root.setOnLongClickListener {
                 if (state.multiSelectEnabled) {
                     state.toggleMultiSelectKey(entry.key)
+                    playAudio(DeckAudioLogic.multiSelectToggleEvent(entry.key in state.multiSelectKeys))
                 } else {
                     state.select(entry.key)
                     openEntryMenu(entry)

@@ -145,4 +145,65 @@ class HoldRepeatTest {
         f.scheduler.advanceBy(10_000)
         assertEquals(2, f.moves.size)
     }
+
+    @Test
+    fun `repeatStreak starts at zero, increments on consecutive repeats, and resets cleanly`() {
+        val scheduler = FakeScheduler()
+        val observed = mutableListOf<Pair<Action, Int>>()
+        lateinit var repeater: NavRepeater
+        repeater = NavRepeater(scheduler) { action ->
+            observed += action to repeater.repeatStreak
+        }
+
+        // Fresh press -> streak 0
+        repeater.onPress(Action.NAV_RIGHT)
+        assertEquals(0, repeater.repeatStreak)
+        assertEquals(0, repeater.streakFor(Action.NAV_RIGHT))
+
+        // Consecutive hold repeats -> 1, 2, 3
+        scheduler.advanceBy(HoldRepeat.INITIAL_DELAY_MS)
+        assertEquals(1, repeater.repeatStreak)
+        assertEquals(1, repeater.streakFor(Action.NAV_RIGHT))
+
+        scheduler.advanceBy(HoldRepeat.REPEAT_INTERVAL_MS)
+        assertEquals(2, repeater.repeatStreak)
+
+        scheduler.advanceBy(HoldRepeat.REPEAT_INTERVAL_MS)
+        assertEquals(3, repeater.repeatStreak)
+
+        // Release resets streak to 0
+        repeater.onRelease(Action.NAV_RIGHT)
+        assertEquals(0, repeater.repeatStreak)
+        assertEquals(0, repeater.streakFor(Action.NAV_RIGHT))
+
+        // Action change resets fresh press to 0, then increments independently
+        repeater.onPress(Action.NAV_LEFT)
+        assertEquals(0, repeater.repeatStreak)
+        scheduler.advanceBy(HoldRepeat.INITIAL_DELAY_MS)
+        assertEquals(1, repeater.repeatStreak)
+
+        // Pressing a second direction starts that direction at 0
+        repeater.onPress(Action.NAV_DOWN)
+        assertEquals(0, repeater.repeatStreak)
+        assertEquals(0, repeater.streakFor(Action.NAV_DOWN))
+
+        // cancelAll clears every streak back to 0
+        repeater.cancelAll()
+        assertEquals(0, repeater.repeatStreak)
+        assertEquals(0, repeater.streakFor(Action.NAV_LEFT))
+        assertEquals(0, repeater.streakFor(Action.NAV_DOWN))
+
+        assertEquals(
+            listOf(
+                Action.NAV_RIGHT to 0,
+                Action.NAV_RIGHT to 1,
+                Action.NAV_RIGHT to 2,
+                Action.NAV_RIGHT to 3,
+                Action.NAV_LEFT to 0,
+                Action.NAV_LEFT to 1,
+                Action.NAV_DOWN to 0,
+            ),
+            observed,
+        )
+    }
 }

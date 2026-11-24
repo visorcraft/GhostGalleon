@@ -88,6 +88,21 @@ class GridDeck(
     // Navigation, page dots, and ensure-visible all use this padded count.
     private val slotCount get() =
         GridSlots.paddedCount(settings.gridSlots.size, settings.gridColumns)
+
+    private fun playAudio(event: DeckAudioLogic.SoundEvent?) {
+        if (event == null) return
+        (activity.application as? GhostGalleonApp)?.playSfx(
+            cue = event.cue,
+            pan = event.pan,
+            repeatStreak = event.repeatStreak,
+        )
+    }
+
+    private fun navStreak(action: Action): Int =
+        (activity as? BaseDeckActivity)?.currentNavRepeatStreak(action) ?: 0
+
+    private fun dockVisibleCount(): Int =
+        DockSlots.visibleCount(settings.dockSlots)
     private val isHorizontal get() = settings.gridDirection == "horizontal"
     private val nav get() = GridNavigation(
         slotCount, settings.gridColumns, pageGeometry?.visibleRows ?: 1)
@@ -867,6 +882,14 @@ class GridDeck(
             slotCount = slotCount,
             cellsPerPage = geometry.cellsPerPage,
         )
+        playAudio(
+            DeckAudioLogic.gridPageJumpEvent(
+                fromSlot = current,
+                toSlot = target,
+                cellsPerPage = geometry.cellsPerPage,
+                slotCount = slotCount,
+            ),
+        )
         applyPageJumpSlot(current, target)
     }
 
@@ -882,6 +905,15 @@ class GridDeck(
         val action = if (deltaPages < 0) Action.PAGE_PREV else Action.PAGE_NEXT
         triggerScrollFeedback(
             GridScrollFeedback.classify(action, current, target, geometry.cellsPerPage, slotCount),
+        )
+        playAudio(
+            DeckAudioLogic.gridPageJumpEvent(
+                fromSlot = current,
+                toSlot = target,
+                cellsPerPage = geometry.cellsPerPage,
+                slotCount = slotCount,
+                deltaDirection = if (deltaPages < 0) -1 else +1,
+            ),
         )
         applyPageJumpSlot(current, target)
     }
@@ -925,8 +957,10 @@ class GridDeck(
                     )
                 }
             }
-            else -> state.selectSlot(
-                position, settings.gridSlots.getOrNull(position))
+            else -> {
+                playAudio(DeckAudioLogic.gridSlotFocusEvent(position, settings.gridColumns))
+                state.selectSlot(position, settings.gridSlots.getOrNull(position))
+            }
         }
     }
 
@@ -1408,6 +1442,7 @@ class GridDeck(
 
     private fun startDockMove(index: Int) {
         dockMove.start(index, settings.dockSlots)
+        playAudio(DeckAudioLogic.movePickupEvent(DeckAudioLogic.panForDockSlot(index, dockVisibleCount())))
         hintView?.text = HintBar.moveText(activity)
         state.focusDock(index)
         dockBar?.updateFocus(index, moving = index)
@@ -1416,12 +1451,28 @@ class GridDeck(
     private fun handleDockMoveAction(action: Action, from: Int): Boolean {
         when (action) {
             Action.NAV_LEFT, Action.NAV_RIGHT -> {
+                val visible = dockVisibleCount()
                 val to = dockNav.move(from, action)
                 if (to != from) {
-                    val next = dockMove.swap(from, to) ?: return true
+                    val next = dockMove.swap(from, to)
+                    if (next == null) {
+                        playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, from, visible))
+                        return true
+                    }
+                    playAudio(
+                        DeckAudioLogic.dockMoveStepEvent(
+                            action = action,
+                            fromIndex = from,
+                            toIndex = next,
+                            visibleCount = visible,
+                            repeatStreak = navStreak(action),
+                        ),
+                    )
                     dockBar?.rebind()
                     state.focusDock(next)
                     dockBar?.updateFocus(next, moving = next)
+                } else {
+                    playAudio(DeckAudioLogic.dockMoveStepEvent(action, from, to, visible))
                 }
             }
             Action.CONFIRM -> dropDockMove()
@@ -1433,12 +1484,19 @@ class GridDeck(
 
     private fun dropDockMove(tapSlot: Int? = null) {
         val result = dockMove.drop(tapSlot) ?: return
+        playAudio(
+            DeckAudioLogic.moveDropEvent(
+                DeckAudioLogic.panForDockSlot(result.focusIndex, dockVisibleCount()),
+            ),
+        )
         hintView?.text = HintBar.textFor(activity, state.dockSlot != null)
         updateDockSlots(result.compacted)
         state.focusDock(result.focusIndex)
     }
 
     private fun cancelDockMove() {
+        val pan = state.dockSlot?.let { DeckAudioLogic.panForDockSlot(it, dockVisibleCount()) } ?: 0f
+        playAudio(DeckAudioLogic.moveCancelEvent(pan))
         dockMove.clear()
         hintView?.text = HintBar.textFor(activity, state.dockSlot != null)
         dockBar?.rebind()
@@ -1447,9 +1505,21 @@ class GridDeck(
 
     private fun handleDockAction(action: Action, dockIndex: Int): Boolean {
         when (action) {
-            Action.NAV_LEFT, Action.NAV_RIGHT ->
-                state.focusDock(dockNav.move(dockIndex, action))
+            Action.NAV_LEFT, Action.NAV_RIGHT -> {
+                val next = dockNav.move(dockIndex, action)
+                playAudio(
+                    DeckAudioLogic.dockNavigationEvent(
+                        action = action,
+                        fromIndex = dockIndex,
+                        toIndex = next,
+                        visibleCount = dockVisibleCount(),
+                        repeatStreak = navStreak(action),
+                    ),
+                )
+                state.focusDock(next)
+            }
             Action.NAV_UP, Action.BACK -> {
+                playAudio(DeckAudioLogic.dockExitEvent(dockIndex, dockVisibleCount()))
                 val target = dockNav.exitToGrid(dockIndex)
                 state.selectSlot(target, settings.gridSlots.getOrNull(target))
             }
@@ -2022,6 +2092,7 @@ class GridDeck(
         // The working copy covers the PADDED slot range so the lifted tile
         // can swap into a padded blank; dropping persists the extension.
         moveWorking = MutableList(slotCount) { settings.gridSlots.getOrNull(it) }
+        playAudio(DeckAudioLogic.movePickupEvent(DeckAudioLogic.panForGridSlot(slot, settings.gridColumns)))
         dockBar?.showMoveHint(true)
         rebindVisibleCells()
     }
@@ -2031,11 +2102,23 @@ class GridDeck(
             Action.NAV_UP, Action.NAV_DOWN, Action.NAV_LEFT, Action.NAV_RIGHT,
             Action.PAGE_PREV, Action.PAGE_NEXT -> {
                 val to = nav.move(from, action)
+                val cells = pageGeometry?.cellsPerPage ?: slotCount.coerceAtLeast(1)
                 pageGeometry?.let { geo ->
                     triggerScrollFeedback(
                         GridScrollFeedback.classify(action, from, to, geo.cellsPerPage, slotCount),
                     )
                 }
+                playAudio(
+                    DeckAudioLogic.gridMoveStepEvent(
+                        action = action,
+                        fromSlot = from,
+                        toSlot = to,
+                        columns = settings.gridColumns,
+                        cellsPerPage = cells,
+                        slotCount = slotCount,
+                        repeatStreak = navStreak(action),
+                    ),
+                )
                 if (to != from) {
                     // 3DS behavior: the lifted tile swaps contents with
                     // whatever is in the target slot.
@@ -2074,6 +2157,7 @@ class GridDeck(
         } else {
             from
         }
+        playAudio(DeckAudioLogic.moveDropEvent(DeckAudioLogic.panForGridSlot(finalSlot, settings.gridColumns)))
         val slots = working.toList()
         dockBar?.announceMoveState(activity.getString(R.string.deck_reordered))
         endMoveVisuals()
@@ -2081,6 +2165,8 @@ class GridDeck(
     }
 
     private fun cancelMove() {
+        val pan = moveIndex?.let { DeckAudioLogic.panForGridSlot(it, settings.gridColumns) } ?: 0f
+        playAudio(DeckAudioLogic.moveCancelEvent(pan))
         dockBar?.announceMoveState(activity.getString(R.string.action_cancel))
         endMoveVisuals()
         // Visible cells still show the discarded working copy: repopulate.
@@ -2181,15 +2267,29 @@ class GridDeck(
                 // dock (same column, clamped into the dock row).
                 val current = selectedIndex()
                 if (action == Action.NAV_DOWN && dockNav.isLastRow(current)) {
-                    state.focusDock(dockNav.enterFromGrid(current))
+                    val dockTarget = dockNav.enterFromGrid(current)
+                    playAudio(DeckAudioLogic.dockEnterEvent(dockTarget, dockVisibleCount()))
+                    state.focusDock(dockTarget)
                     return true
                 }
                 val target = nav.move(current, action)
+                val cells = pageGeometry?.cellsPerPage ?: slotCount.coerceAtLeast(1)
                 pageGeometry?.let { geo ->
                     triggerScrollFeedback(
                         GridScrollFeedback.classify(action, current, target, geo.cellsPerPage, slotCount),
                     )
                 }
+                playAudio(
+                    DeckAudioLogic.gridNavigationEvent(
+                        action = action,
+                        fromSlot = current,
+                        toSlot = target,
+                        columns = settings.gridColumns,
+                        cellsPerPage = cells,
+                        slotCount = slotCount,
+                        repeatStreak = navStreak(action),
+                    ),
+                )
                 state.selectSlot(target, settings.gridSlots.getOrNull(target))
                 true
             }
