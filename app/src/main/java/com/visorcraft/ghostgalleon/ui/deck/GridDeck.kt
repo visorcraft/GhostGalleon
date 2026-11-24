@@ -6,7 +6,6 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -16,7 +15,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
@@ -2318,13 +2316,6 @@ class GridDeck(
             }
             val radiusPx = mosaic.miniCornerRadiusPx
             return ImageView(context).apply {
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
-                    }
-                }
                 CustomIcon.bind(
                     this,
                     iconLoader,
@@ -2332,6 +2323,7 @@ class GridDeck(
                     settings,
                     memberKey,
                     mosaic.miniTilePx,
+                    cornerRadiusPx = radiusPx,
                 )
             }
         }
@@ -2397,7 +2389,9 @@ class GridDeck(
             CustomIcon.bind(
                 icon, iconLoader,
                 (activity.application as GhostGalleonApp).artCache,
-                settings, entry.packageName, iconSize)
+                settings, entry.packageName, iconSize,
+                cornerRadiusPx = context.dpF(innerArtRadiusDp()),
+            )
             cell.addView(icon, LinearLayout.LayoutParams(iconSize, iconSize))
             // Optional app-name label ("Show app names" setting).
             if (settings.showLabels) {
@@ -2408,7 +2402,6 @@ class GridDeck(
     }
 
     private companion object {
-        const val FOCUS_SCALE = 1.08f
         const val FOCUS_ANIM_MS = 80L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()

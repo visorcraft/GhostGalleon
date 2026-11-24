@@ -37,6 +37,30 @@ object DockBarMetrics {
     /** Hard lower bound so touch/focus targets stay usable on extreme widths. */
     const val MIN_SLOT_DP: Int = 28
 
+    /** Minimum "+" placeholder glyph size in sp for compact Sugar slots. */
+    const val MIN_BLANK_PLUS_SP: Float = 15f
+
+    /** Maximum "+" placeholder glyph size in sp for wide Odin 2 Portal slots. */
+    const val MAX_BLANK_PLUS_SP: Float = 26f
+
+    /**
+     * Optical inner icon/art pixel size inside a [slotSizePx] dock slot, keeping
+     * balanced clearance around the 3dp focus ring on every density.
+     */
+    fun iconSizePx(slotSizePx: Int): Int {
+        val safe = slotSizePx.coerceAtLeast(1)
+        return (safe * 40 / 48).coerceIn(1, safe)
+    }
+
+    /**
+     * Adaptive sp text size for the blank "+" placeholder so tight ~32dp Sugar
+     * slots never clip vertically while wide 64dp+ slots stay optically bold.
+     */
+    fun blankPlusTextSp(slotSizeDp: Int): Float {
+        val safeDp = slotSizeDp.coerceAtLeast(MIN_SLOT_DP)
+        return (safeDp * 0.44f).coerceIn(MIN_BLANK_PLUS_SP, MAX_BLANK_PLUS_SP)
+    }
+
     data class Spec(
         val slotSizePx: Int,
         val slotMarginHPx: Int,
@@ -49,6 +73,9 @@ object DockBarMetrics {
             val n = visibleSlots.coerceAtLeast(0)
             return barPadHPx * 2 + n * (slotSizePx + slotMarginHPx * 2)
         }
+
+        /** Optical inner icon/art pixel size for this dock bar spec. */
+        fun iconSizePx(): Int = DockBarMetrics.iconSizePx(slotSizePx)
     }
 
     /**

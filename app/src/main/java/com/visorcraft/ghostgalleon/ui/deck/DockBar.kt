@@ -4,8 +4,10 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -24,6 +26,7 @@ import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.settings.DockSlots
+import com.visorcraft.ghostgalleon.settings.RomNames
 import com.visorcraft.ghostgalleon.settings.Settings
 import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
@@ -65,6 +68,7 @@ class DockBar(
     private var contentView: LinearLayout? = null
     private var pulseAnimator: AnimatorSet? = null
     private var slotSize: Int = 0
+    private var slotSizeDp: Int = 48
     private var slotRadiusDp: Int = 14
     private var innerContentRadiusDp: Int = 10
     private var paintedFocus: Int? = null
@@ -123,8 +127,8 @@ class DockBar(
         val padVDp = 8
         val padV = context.dp(padVDp)
         val density = metrics.density.coerceAtLeast(0.1f)
-        val slotSizeDp = (slotSize / density).toInt()
-        val iconSizeDp = ((slotSize * 40 / 48) / density).toInt()
+        slotSizeDp = (slotSize / density).toInt()
+        val iconSizeDp = (spec.iconSizePx() / density).toInt()
         val themeTokens = ThemePack.resolve(settings)
         slotRadiusDp = DeckCornerMetrics.dockSlotRadiusDp(
             tokens = themeTokens,
@@ -142,6 +146,8 @@ class DockBar(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = TileBackgrounds.pill(context)
+            elevation = context.dpF(4)
+            contentDescription = context.getString(R.string.label_dock)
             setPadding(spec.barPadHPx, padV, spec.barPadHPx, padV)
             minimumHeight = slotSize + padV * 2
             clipChildren = false
@@ -201,6 +207,7 @@ class DockBar(
             val frame = FrameLayout(context).apply {
                 clipChildren = false
                 clipToPadding = false
+                foreground = dockSlotRipple(context, slotRadiusDp)
             }
             frame.setOnClickListener { onTap(index) }
             frame.setOnLongClickListener {
@@ -240,12 +247,23 @@ class DockBar(
     // platform placeholder) / dimmed missing tile / recessed "+" placeholder.
     private fun populate(frame: FrameLayout, index: Int) {
         val context = frame.context
-        val iconSize = slotSize * 40 / 48
+        val iconSize = DockBarMetrics.iconSizePx(slotSize)
+        val innerRadiusPx = context.dpF(innerContentRadiusDp)
 
         frame.removeAllViews()
         val key = keyAt(index)
         val romEntry = key?.takeIf(SlotKey::isRom)?.let { romByKey[it] }
         val appEntry = key?.takeUnless(SlotKey::isRom)?.let { appByPkg[it] }
+        frame.contentDescription = when {
+            romEntry != null -> RomNames.display(romEntry, settings.romNames)
+            appEntry != null -> settings.customNames[key] ?: appEntry.label
+            SlotKey.isRom(key) -> context.getString(
+                R.string.format_colon_pair,
+                context.getString(R.string.label_missing),
+                PlatformTile.shortText(SlotKey.platformIdOf(key) ?: "rom"),
+            )
+            else -> context.getString(R.string.action_add_to_dock)
+        }
         val content: View = when {
             romEntry != null -> ArtTile.view(
                 context = context,
@@ -259,16 +277,19 @@ class DockBar(
                 CustomIcon.bind(
                     this, iconLoader,
                     (activity.application as GhostGalleonApp).artCache,
-                    settings, key, iconSize)
+                    settings, key, iconSize,
+                    cornerRadiusPx = innerRadiusPx,
+                )
             }
             SlotKey.isRom(key) -> PlatformTile.view(
                 context, SlotKey.platformIdOf(key) ?: "rom",
                 cornerRadiusDp = innerContentRadiusDp).apply { alpha = 0.4f }
             else -> TextView(context).apply {
                 setText(R.string.glyph_add)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, DockBarMetrics.blankPlusTextSp(slotSizeDp))
                 setTextColor(UiDimens.ALPHA_SUBTLE)
                 gravity = Gravity.CENTER
+                includeFontPadding = false
                 background = TileBackgrounds.blankSlot(
                     context,
                     cornerRadiusDp = innerContentRadiusDp,
@@ -277,6 +298,14 @@ class DockBar(
         }
         frame.addView(content, FrameLayout.LayoutParams(
             iconSize, iconSize, Gravity.CENTER))
+    }
+
+    private fun dockSlotRipple(context: Context, cornerRadiusDp: Int): RippleDrawable {
+        val mask = GradientDrawable().apply {
+            cornerRadius = context.dpF(cornerRadiusDp)
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(DOCK_SLOT_RIPPLE_COLOR), null, mask)
     }
 
     // Repopulates every slot's contents (a dock move swapped keys in the
@@ -307,6 +336,8 @@ class DockBar(
             )
             val spec = MoveChoreography.dockVisualSpec(role, isBlank(index))
             val surfaceFill = TileBackgrounds.surfaceColor(ctx)
+            frame.isSelected = role == MoveChoreography.SlotRole.FOCUSED ||
+                role == MoveChoreography.SlotRole.LIFTED
             frame.animate().cancel()
             frame.background = when (role) {
                 MoveChoreography.SlotRole.LIFTED -> GradientDrawable().apply {
@@ -369,6 +400,7 @@ class DockBar(
 
     private companion object {
         const val FOCUS_ANIM_MS = 90L
+        const val DOCK_SLOT_RIPPLE_COLOR = 0x38FFFFFF
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PULSE_INTERPOLATOR = AccelerateDecelerateInterpolator()
     }

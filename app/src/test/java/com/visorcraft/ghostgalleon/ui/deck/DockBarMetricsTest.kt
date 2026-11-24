@@ -93,4 +93,29 @@ class DockBarMetricsTest {
         )
         assertEquals(16, spec.bottomMarginPx)
     }
+
+    @Test
+    fun `iconSizePx and blankPlusTextSp scale optically across Sugar and Odin slots`() {
+        val compactSpec = DockBarMetrics.compute(
+            windowWidthPx = 1080,
+            density = 2.0f,
+            suggestedSlotDp = 48,
+            visibleSlots = 9,
+            hasChromeIcons = true,
+        )
+        val compactIcon = compactSpec.iconSizePx()
+        assertTrue("compact icon $compactIcon must stay strictly inside slot ${compactSpec.slotSizePx}", compactIcon < compactSpec.slotSizePx)
+        assertTrue(compactIcon >= 1)
+
+        val compactSp = DockBarMetrics.blankPlusTextSp((compactSpec.slotSizePx / 2.0f).toInt())
+        val wideSp = DockBarMetrics.blankPlusTextSp(64)
+        assertTrue("compact sp $compactSp in [15, 26]", compactSp in 15f..26f)
+        assertTrue("wide sp $wideSp > compact sp $compactSp", wideSp > compactSp)
+        assertEquals(DockBarMetrics.MAX_BLANK_PLUS_SP, wideSp, 0.01f)
+        assertEquals(DockBarMetrics.MIN_BLANK_PLUS_SP, DockBarMetrics.blankPlusTextSp(28), 0.01f)
+        // Degenerate zero/negative slot sizes stay safely bounded.
+        assertEquals(1, DockBarMetrics.iconSizePx(0))
+        assertEquals(1, DockBarMetrics.iconSizePx(-10))
+        assertEquals(DockBarMetrics.MIN_BLANK_PLUS_SP, DockBarMetrics.blankPlusTextSp(0), 0.01f)
+    }
 }
