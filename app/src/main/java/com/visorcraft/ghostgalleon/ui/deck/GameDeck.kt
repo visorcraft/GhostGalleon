@@ -1,6 +1,7 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PorterDuff
@@ -8,6 +9,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextUtils
@@ -510,8 +513,16 @@ class GameDeck(
     private var multiSelectChipView: TextView? = null
     /** Last filter-chrome structure; equal → restyle chip colors only. */
     private var chromeStructureKey: String = ""
+    private data class BrowseChipHandle(
+        val view: TextView,
+        var rawLabel: String,
+        val selected: () -> Boolean,
+        var paintedSelected: Boolean? = null,
+        var paintedAccent: Int = 0,
+    )
+
     /** Browse chips + live selected predicates for in-place restyle. */
-    private val browseChipHandles = mutableListOf<Pair<TextView, () -> Boolean>>()
+    private val browseChipHandles = mutableListOf<BrowseChipHandle>()
 
     private var slotMenu: SlotMenu? = null
     private var picker: AppPicker? = null
@@ -902,7 +913,7 @@ class GameDeck(
     }
 
     private fun centerActiveBrowseChip(smooth: Boolean) {
-        val active = browseChipHandles.firstOrNull { (_, selected) -> selected() }?.first ?: return
+        val active = browseChipHandles.firstOrNull { it.selected() }?.view ?: return
         scrollHorizontalToCenter(browseScrollView, active, smooth = smooth)
     }
 
@@ -912,33 +923,103 @@ class GameDeck(
         scrollHorizontalToCenter(letterScrollView, active, smooth = smooth)
     }
 
+    private fun interactivePillBackground(
+        context: Context,
+        fillColor: Int,
+        idleStrokeColor: Int?,
+        selected: Boolean,
+        cornerRadiusDp: Int,
+    ): Drawable {
+        val radiusPx = context.dpF(cornerRadiusDp)
+        val idle = GradientDrawable().apply {
+            setColor(fillColor)
+            cornerRadius = radiusPx
+            if (idleStrokeColor != null) {
+                setStroke(context.strokePx(1), idleStrokeColor)
+            }
+        }
+        val focused = GradientDrawable().apply {
+            setColor(fillColor)
+            cornerRadius = radiusPx
+            setStroke(
+                context.strokePx(2),
+                BrowseChipStyleLogic.focusStrokeColor(selected, settings.accentColor),
+            )
+        }
+        val content = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(), idle)
+        }
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = radiusPx
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(
+                BrowseChipStyleLogic.rippleColor(selected, settings.accentColor),
+            ),
+            content,
+            mask,
+        )
+    }
+
+    private fun styledBrowseChipLabel(rawLabel: String, selected: Boolean): CharSequence {
+        val range = BrowseChipStyleLogic.countSuffixRange(rawLabel) ?: return rawLabel
+        return SpannableString(rawLabel).apply {
+            setSpan(
+                RelativeSizeSpan(BrowseChipStyleLogic.CHIP_COUNT_RELATIVE_SIZE),
+                range.first,
+                range.last + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            setSpan(
+                ForegroundColorSpan(
+                    BrowseChipStyleLogic.countSuffixColor(selected, settings.accentColor),
+                ),
+                range.first,
+                range.last + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+    }
+
     private fun restyleBrowseChips() {
-        browseChipHandles.forEach { (tv, selected) ->
-            paintChip(tv, selected())
+        val accent = settings.accentColor
+        browseChipHandles.forEach { handle ->
+            val nowSelected = handle.selected()
+            if (handle.paintedSelected != nowSelected || handle.paintedAccent != accent) {
+                paintChip(handle, nowSelected)
+            }
         }
         centerActiveBrowseChip(smooth = true)
         paintLetterJumpSelection()
     }
 
-    private fun paintChip(tv: TextView, selected: Boolean) {
+    private fun paintChip(handle: BrowseChipHandle, selected: Boolean) {
+        val tv = handle.view
+        val context = tv.context
+        tv.text = styledBrowseChipLabel(handle.rawLabel, selected)
         tv.setTextColor(
             if (selected) ThemePack.onFillTextColor(settings.accentColor)
             else UiDimens.ALPHA_PRIMARY,
         )
         tv.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         tv.isSelected = selected
-        tv.contentDescription = tv.context.resolveText(
+        tv.contentDescription = context.resolveText(
             GameDeckChromeLogic.browseChipAccessibilityText(
-                chipLabel = tv.text?.toString().orEmpty(),
+                chipLabel = handle.rawLabel,
                 selected = selected,
             ),
         )
-        TileBackgrounds.applyChipState(
-            view = tv,
+        tv.background = interactivePillBackground(
+            context = context,
+            fillColor = if (selected) settings.accentColor else TileBackgrounds.chipIdleColor(context),
+            idleStrokeColor = if (selected) null else TileBackgrounds.hairlineDivider(context),
             selected = selected,
-            accent = settings.accentColor,
             cornerRadiusDp = 16,
         )
+        handle.paintedSelected = selected
+        handle.paintedAccent = settings.accentColor
     }
 
     private fun buildActiveFilterStrip(context: Context, dp: (Int) -> Int): View? {
@@ -979,11 +1060,14 @@ class GameDeck(
             val pill = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = GradientDrawable().apply {
-                    setColor(TileBackgrounds.chipIdleColor(context))
-                    cornerRadius = context.dpF(14)
-                    setStroke(context.strokePx(1), (textAccent and 0x00FFFFFF) or (0x66 shl 24))
-                }
+                minimumHeight = dp(BrowseChipStyleLogic.FILTER_PILL_MIN_HEIGHT_DP)
+                background = interactivePillBackground(
+                    context = context,
+                    fillColor = TileBackgrounds.chipIdleColor(context),
+                    idleStrokeColor = (textAccent and 0x00FFFFFF) or (0x66 shl 24),
+                    selected = false,
+                    cornerRadiusDp = 14,
+                )
                 setPadding(dp(10), dp(4), dp(8), dp(4))
                 isClickable = true
                 contentDescription = context.resolveText(
@@ -1026,9 +1110,12 @@ class GameDeck(
                     gravity = Gravity.CENTER
                     maxLines = 1
                     includeFontPadding = false
-                    background = TileBackgrounds.accentPill(
+                    minimumHeight = dp(BrowseChipStyleLogic.FILTER_PILL_MIN_HEIGHT_DP)
+                    background = interactivePillBackground(
                         context = context,
-                        accent = settings.accentColor,
+                        fillColor = settings.accentColor,
+                        idleStrokeColor = null,
+                        selected = true,
                         cornerRadiusDp = 14,
                     )
                     setPadding(dp(10), dp(4), dp(10), dp(4))
@@ -1072,7 +1159,13 @@ class GameDeck(
             if (CarouselMultiSelectLogic.showSelectAllPill(n, entries.size)) View.VISIBLE
             else View.GONE
         if (state.multiSelectEnabled) {
-            multiSelectChipView?.text = context.getString(R.string.format_select_count, n)
+            val selectLabel = context.getString(R.string.format_select_count, n)
+            browseChipHandles.firstOrNull { it.view === multiSelectChipView }?.let { handle ->
+                handle.rawLabel = selectLabel
+                paintChip(handle, selected = true)
+            } ?: run {
+                multiSelectChipView?.text = selectLabel
+            }
         }
     }
 
@@ -1862,12 +1955,12 @@ class GameDeck(
             selected: () -> Boolean,
             onLongClick: (() -> Unit)? = null,
             onClick: () -> Unit,
-        ): TextView =
-            TextView(context).apply {
-                text = label
+        ): TextView {
+            val tv = TextView(context).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 gravity = Gravity.CENTER
-                paintChip(this, selected())
+                includeFontPadding = false
+                minimumHeight = dp(BrowseChipStyleLogic.CHIP_MIN_HEIGHT_DP)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 setOnClickListener { onClick() }
                 if (onLongClick != null) {
@@ -1876,8 +1969,12 @@ class GameDeck(
                         true
                     }
                 }
-                browseChipHandles.add(this to selected)
             }
+            val handle = BrowseChipHandle(view = tv, rawLabel = label, selected = selected)
+            paintChip(handle, selected())
+            browseChipHandles.add(handle)
+            return tv
+        }
         fun localized(value: UiText): String = context.resolveText(value)
         fun counted(labelRes: Int, count: Int): String = localized(
             LibraryBrowse.labeledChip(text(labelRes), count),
