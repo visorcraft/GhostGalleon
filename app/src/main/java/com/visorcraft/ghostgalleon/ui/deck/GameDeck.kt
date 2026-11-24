@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -12,6 +13,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -579,7 +581,12 @@ class GameDeck(
                 EntryDiff(oldEntries, entries),
                 false,
             )
-            existing.also { diff.dispatchUpdatesTo(it) }
+            existing.also {
+                diff.dispatchUpdatesTo(it)
+                if (entries.isNotEmpty()) {
+                    it.notifyItemRangeChanged(0, entries.size, PAYLOAD_SELECTION)
+                }
+            }
         } else {
             CardAdapter(context, nextSize, nextSpacing, nextPad).also {
                 rv.adapter = it
@@ -3440,6 +3447,7 @@ class GameDeck(
         inner class CardHolder(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
             var cardFrame: FrameLayout? = null
             var multiBadge: ImageView? = null
+            var titleView: TextView? = null
             var metaView: TextView? = null
         }
 
@@ -3467,8 +3475,8 @@ class GameDeck(
         override fun getItemCount() = entries.size
 
         /**
-         * Selection-only: rebind just the cards whose ring/scale must move.
-         * Dock focus change needs every visible card (all rings off/on).
+         * Selection-only: rebind just the cards whose depth tier (center / ±1
+         * near / ±2+ far) changed. Dock focus change updates visible rings.
          */
         fun notifySelectionChanged(
             previousKey: String?,
@@ -3482,14 +3490,14 @@ class GameDeck(
             ) {
                 notifyItemRangeChanged(0, itemCount, PAYLOAD_SELECTION)
             } else if (previousKey != nextKey) {
-                val indices = LinkedHashSet<Int>(2)
-                if (previousKey != null) {
-                    entryIndexByKey[previousKey]?.let { indices.add(it) }
-                }
-                if (nextKey != null) {
-                    entryIndexByKey[nextKey]?.let { indices.add(it) }
-                }
-                indices.forEach { notifyItemChanged(it, PAYLOAD_SELECTION) }
+                val prevIdx = previousKey?.let { entryIndexByKey[it] }
+                val nextIdx = nextKey?.let { entryIndexByKey[it] }
+                val affected = CarouselDepthMetrics.affectedSelectionIndices(
+                    previousIndex = prevIdx,
+                    nextIndex = nextIdx,
+                    itemCount = itemCount,
+                )
+                affected.forEach { notifyItemChanged(it, PAYLOAD_SELECTION) }
             }
             paintedSelectionKey = nextKey
             paintedDockFocused = nextDockFocused
@@ -3516,7 +3524,7 @@ class GameDeck(
             }
         }
 
-        /** Mutate ring/scale/Z-lift/multi-select only; false → full rebind needed. */
+        /** Mutate ring/depth-scale/alpha/Y-lift/Z-elevation/multi-select only; false → full rebind needed. */
         private fun applySelectionVisuals(
             holder: CardHolder,
             position: Int,
@@ -3526,29 +3534,41 @@ class GameDeck(
             val cardFrame = holder.cardFrame
                 ?: (holder.root.getChildAt(0) as? FrameLayout)?.also { holder.cardFrame = it }
                 ?: return false
-            val focused = entry.key == state.selectedKey && state.dockSlot == null
+            val dockFocused = state.dockSlot != null
+            val focusedIndex = state.selectedKey?.let { entryIndexByKey[it] }
+            val focused = entry.key == state.selectedKey && !dockFocused
             val multiSelected = state.multiSelectEnabled && entry.key in state.multiSelectKeys
+            val depthStyle = CarouselDepthMetrics.styleFor(
+                position = position,
+                focusedIndex = focusedIndex,
+                dockFocused = dockFocused,
+                multiSelected = multiSelected,
+            )
             cardFrame.background = if (focused) {
                 TileBackgrounds.selected(context, settings.accentColor)
             } else {
                 TileBackgrounds.card(context)
             }
-            val targetScale = if (focused) FOCUS_SCALE else 1f
-            val targetAlpha = GameDeckChromeLogic.cardVisualAlpha(focused, multiSelected)
-            holder.root.translationZ = if (focused) context.dpF(8) else 0f
+            holder.titleView?.setTextColor(
+                if (focused || multiSelected) UiDimens.ALPHA_PRIMARY else UiDimens.ALPHA_SECONDARY,
+            )
+            val targetLiftY = context.dpF(depthStyle.translationYDp)
+            holder.root.translationZ = context.dpF(depthStyle.translationZDp)
             cardFrame.animate().cancel()
             if (animate && cardFrame.isLaidOut) {
                 cardFrame.animate()
-                    .scaleX(targetScale)
-                    .scaleY(targetScale)
-                    .alpha(targetAlpha)
+                    .scaleX(depthStyle.scale)
+                    .scaleY(depthStyle.scale)
+                    .alpha(depthStyle.alpha)
+                    .translationY(targetLiftY)
                     .setDuration(FOCUS_ANIM_MS)
                     .setInterpolator(FOCUS_INTERPOLATOR)
                     .start()
             } else {
-                cardFrame.scaleX = targetScale
-                cardFrame.scaleY = targetScale
-                cardFrame.alpha = targetAlpha
+                cardFrame.scaleX = depthStyle.scale
+                cardFrame.scaleY = depthStyle.scale
+                cardFrame.alpha = depthStyle.alpha
+                cardFrame.translationY = targetLiftY
             }
             if (multiSelected) {
                 cardFrame.foreground = multiSelectForeground()
@@ -3574,6 +3594,7 @@ class GameDeck(
             holder.cardFrame?.animate()?.cancel()
             holder.cardFrame = null
             holder.multiBadge = null
+            holder.titleView = null
             holder.metaView = null
             holder.root.removeAllViews()
             holder.root.setTag(R.id.carousel_entry_key, entry.key)
@@ -3588,6 +3609,11 @@ class GameDeck(
             }
             paintedSelectionKey = state.selectedKey
             paintedDockFocused = state.dockSlot != null
+            val innerArtRadiusDp = CarouselDepthMetrics.opticalInnerArtRadiusDp(
+                outerCardRadiusDp = ThemePack.resolve(settings).cardRadiusDp,
+                cellPaddingDp = CELL_PADDING_DP,
+            )
+            val innerArtRadiusPx = context.dpF(innerArtRadiusDp)
             // ROM cards show cached artwork over the platform placeholder
             // (async fill, no decode on the UI thread); without art the
             // placeholder shows through — a cheap draw even deep in the ROM
@@ -3598,16 +3624,23 @@ class GameDeck(
                     (activity.application as GhostGalleonApp).artCache,
                     it,
                     targetPx = cardSize,
+                    cornerRadiusDp = innerArtRadiusDp,
                     artOverrides = settings.artOverrides,
                 )
             } ?: ImageView(context).apply {
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, innerArtRadiusPx)
+                    }
+                }
                 CustomIcon.bind(
                     this, iconLoader,
                     (activity.application as GhostGalleonApp).artCache,
                     settings, entry.appPackage!!, cardSize)
             }
             body.addView(art, LinearLayout.LayoutParams(cardSize, cardSize))
-            body.addView(TextView(context).apply {
+            val titleTv = TextView(context).apply {
                 text = entry.label
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
@@ -3616,7 +3649,9 @@ class GameDeck(
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 includeFontPadding = false
-            }, LinearLayout.LayoutParams(
+            }
+            holder.titleView = titleTv
+            body.addView(titleTv, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = context.dp(6) })
@@ -3755,7 +3790,7 @@ class GameDeck(
         /** RecyclerView payload: only ring/scale/multi-select chrome. */
         const val PAYLOAD_SELECTION = "selection"
         const val TAG_GAME_WALLPAPER = "game_wallpaper"
-        const val FOCUS_SCALE = 1.1f
+        const val CELL_PADDING_DP = 8
         const val FOCUS_ANIM_MS = 90L
         val FOCUS_INTERPOLATOR = DecelerateInterpolator()
         val PREFETCH_DELTAS = intArrayOf(-2, -1, 1, 2)
