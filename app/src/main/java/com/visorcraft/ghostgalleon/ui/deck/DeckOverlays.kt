@@ -13,6 +13,7 @@ import com.visorcraft.ghostgalleon.ui.toast
 object DeckOverlays {
 
     fun attach(root: FrameLayout?, child: View) {
+        OverlayPrimitives.cancelAnimations(child)
         root?.addView(
             child,
             FrameLayout.LayoutParams(
@@ -23,7 +24,10 @@ object DeckOverlays {
     }
 
     fun detach(root: FrameLayout?, child: View?) {
-        child?.let { root?.removeView(it) }
+        child?.let {
+            OverlayPrimitives.cancelAnimations(it)
+            root?.removeView(it)
+        }
     }
 
     fun hideIme(activity: Activity, root: View?) {

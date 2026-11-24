@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Typeface
 import android.text.TextUtils
@@ -7,6 +8,8 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -22,13 +25,81 @@ import com.visorcraft.ghostgalleon.ui.strokePx
  * Shared modal/overlay framing primitives used across deck and settings
  * overlays (SlotMenu, QuickPanel, FolderPanel, AppPicker, SessionSwitcherView,
  * SetupCard, AboutPage). Keeps scrim opacity, responsive widths, flicker-free
- * max-height scrolling, and headers/footers consistent across dual short
- * (~540dp) and 16:9 single-screen handheld displays.
+ * max-height scrolling, cancelable entrance choreography, and headers/footers
+ * consistent across dual short (~540dp) and 16:9 single-screen handheld displays.
  */
 object OverlayPrimitives {
 
     /** Standard 80% black modal scrim backdrop. */
     const val MODAL_SCRIM_COLOR: Int = UiDimens.SCRIM_MODAL
+
+    /** Consistent floating modal elevation in dp. */
+    const val MODAL_ELEVATION_DP: Int = 16
+
+    /** Vertical scroll-edge fading length in dp for scrollable modals. */
+    const val FADING_EDGE_DP: Int = 20
+
+    /** Subtle scale-in starting scale for modal cards (0.96 -> 1.0). */
+    const val ENTER_START_SCALE: Float = 0.96f
+
+    /** Crisp modal entrance duration in milliseconds. */
+    const val ENTER_DURATION_MS: Long = 120L
+
+    private val ENTER_INTERPOLATOR = DecelerateInterpolator()
+
+    /**
+     * Pure pixel length for vertical scroll fading edges. Host-tested.
+     */
+    fun fadingEdgeLengthPx(density: Float, edgeDp: Int = FADING_EDGE_DP): Int {
+        val safeDensity = density.coerceAtLeast(0.1f)
+        return (edgeDp.coerceAtLeast(0) * safeDensity).toInt()
+    }
+
+    /**
+     * Pure vertical scroll target that centers an item inside a viewport,
+     * clamped to `0 .. maxScroll`. Shared across modals so focus scrolling is
+     * consistent and never overshoots or produces negative scroll offsets.
+     * Host-tested.
+     */
+    fun scrollCenterTargetY(
+        itemTop: Int,
+        itemHeight: Int,
+        viewportHeight: Int,
+        contentHeight: Int = Int.MAX_VALUE,
+    ): Int {
+        if (viewportHeight <= 0) return 0
+        val safeItemH = itemHeight.coerceAtLeast(0)
+        val ideal = itemTop - (viewportHeight - safeItemH) / 2
+        val maxScroll = if (contentHeight == Int.MAX_VALUE) {
+            Int.MAX_VALUE
+        } else {
+            (contentHeight - viewportHeight).coerceAtLeast(0)
+        }
+        return ideal.coerceIn(0, maxScroll)
+    }
+
+    /**
+     * Pure check for whether entrance choreography should animate or snap
+     * directly to resting state (e.g. when OS animators are disabled or an
+     * overlay is re-attaching in place after an item mutation). Host-tested.
+     */
+    fun shouldAnimateEntrance(
+        animatorsEnabled: Boolean,
+        skipAnimation: Boolean = false,
+    ): Boolean = animatorsEnabled && !skipAnimation
+
+    /**
+     * Pure interpolated card scale for normalized entrance progress `[0, 1]`.
+     * Host-tested.
+     */
+    fun entranceScale(
+        progress: Float,
+        startScale: Float = ENTER_START_SCALE,
+    ): Float {
+        val p = progress.coerceIn(0f, 1f)
+        val clampedStart = startScale.coerceIn(0.5f, 1f)
+        return clampedStart + (1f - clampedStart) * p
+    }
 
     /**
      * Pure responsive modal card width in pixels. Caps width to [maxDp] while
@@ -102,7 +173,9 @@ object OverlayPrimitives {
     /**
      * [ScrollView] that caps its own height directly inside [onMeasure] so
      * short content wraps naturally and tall content scrolls without the
-     * 1-frame `scroll.post` height-shrink flicker.
+     * 1-frame `scroll.post` height-shrink flicker. Enables subtle vertical
+     * scroll-edge fading and overlay scrollbars so scrollable modals signal
+     * additional content cleanly on short handheld panels.
      */
     class MaxHeightScrollView(
         context: Context,
@@ -111,7 +184,33 @@ object OverlayPrimitives {
 
         init {
             isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = true
+            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(
+                fadingEdgeLengthPx(context.resources.displayMetrics.density),
+            )
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+
+        /** Smoothly scroll [target] (direct or nested descendant) to viewport center. */
+        fun smoothScrollToCenter(target: View) {
+            post {
+                val content = getChildAt(0) ?: return@post
+                var offsetTop = target.top
+                var parent = target.parent as? View
+                while (parent != null && parent !== content && parent !== this) {
+                    offsetTop += parent.top
+                    parent = parent.parent as? View
+                }
+                val targetY = scrollCenterTargetY(
+                    itemTop = offsetTop,
+                    itemHeight = target.height,
+                    viewportHeight = height,
+                    contentHeight = content.height,
+                )
+                smoothScrollTo(0, targetY)
+            }
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -133,7 +232,108 @@ object OverlayPrimitives {
         }
     }
 
-    /** Full-screen modal backdrop scrim that dismisses via [onDismiss] on tap. */
+    /** Marker [LinearLayout] subtype returned by [modalCardContainer] for entrance choreography. */
+    private class ModalCardLayout(context: Context) : LinearLayout(context)
+
+    /**
+     * Play a crisp, cancelable fade + scale-in (`0.96 -> 1.0`, `120ms`,
+     * [DecelerateInterpolator]) when a modal attaches. Avoids hardware layers
+     * to stay safe on dual-display GPUs and respects system animator settings.
+     */
+    fun animateModalEnter(
+        backdrop: View,
+        card: View?,
+        skipAnimation: Boolean = false,
+    ) {
+        backdrop.animate().cancel()
+        card?.animate()?.cancel()
+        if (!shouldAnimateEntrance(ValueAnimator.areAnimatorsEnabled(), skipAnimation)) {
+            backdrop.alpha = 1f
+            card?.apply {
+                alpha = 1f
+                scaleX = 1f
+                scaleY = 1f
+            }
+            return
+        }
+        backdrop.alpha = 0f
+        backdrop.animate()
+            .alpha(1f)
+            .setDuration(ENTER_DURATION_MS)
+            .setInterpolator(ENTER_INTERPOLATOR)
+            .start()
+        card?.apply {
+            alpha = 0f
+            scaleX = ENTER_START_SCALE
+            scaleY = ENTER_START_SCALE
+            animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(ENTER_DURATION_MS)
+                .setInterpolator(ENTER_INTERPOLATOR)
+                .start()
+        }
+    }
+
+    /**
+     * Cancel running entrance/focus animations on [view] and its direct modal
+     * card child before detachment so rapid open/close never leaves ghosts.
+     */
+    fun cancelAnimations(view: View?) {
+        view ?: return
+        view.animate().cancel()
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                view.getChildAt(i)?.animate()?.cancel()
+            }
+        }
+    }
+
+    /**
+     * Attach cancelable entrance choreography to [backdrop] and [card] so
+     * overlays run [animateModalEnter] upon window attach and cancel cleanly
+     * on detach.
+     */
+    fun bindModalEnter(
+        backdrop: View,
+        card: View?,
+        skipAnimation: Boolean = false,
+    ) {
+        var played = false
+        val runEnter = {
+            if (!played) {
+                played = true
+                animateModalEnter(backdrop, card, skipAnimation = skipAnimation)
+            }
+        }
+        backdrop.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                runEnter()
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelAnimations(v)
+            }
+        })
+        if (backdrop.isAttachedToWindow) {
+            runEnter()
+        }
+    }
+
+    private fun findModalCard(group: ViewGroup): View? {
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            if (child is ModalCardLayout) return child
+        }
+        return null
+    }
+
+    /**
+     * Full-screen modal backdrop scrim that dismisses via [onDismiss] on tap
+     * and plays [animateModalEnter] automatically for any [modalCardContainer]
+     * child when attached.
+     */
     fun modalBackdrop(
         context: Context,
         onDismiss: () -> Unit,
@@ -142,26 +342,41 @@ object OverlayPrimitives {
         isClickable = true
         isFocusable = true
         setOnClickListener { onDismiss() }
+        var entered = false
+        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                if (!entered) {
+                    entered = true
+                    animateModalEnter(v, findModalCard(this@apply))
+                }
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelAnimations(v)
+            }
+        })
     }
 
     /**
-     * Standard themed modal card container. Marks [View.setClickable] true so
-     * taps on card padding never fall through to the scrim backdrop.
+     * Standard themed modal card container with 16dp elevation and rounded
+     * background outline shadow. Marks [View.setClickable] true so taps on
+     * card padding never fall through to the scrim backdrop.
      */
     fun modalCardContainer(
         context: Context,
         padHorizontalDp: Int = UiDimens.SPACE_LG,
         padVerticalDp: Int = 14,
-    ): LinearLayout = LinearLayout(context).apply {
+    ): LinearLayout = ModalCardLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         background = TileBackgrounds.card(context)
+        outlineProvider = ViewOutlineProvider.BACKGROUND
         setPadding(
             context.dp(padHorizontalDp),
             context.dp(padVerticalDp),
             context.dp(padHorizontalDp),
             context.dp(padVerticalDp),
         )
-        elevation = context.dpF(8)
+        elevation = context.dpF(MODAL_ELEVATION_DP)
         isClickable = true
     }
 

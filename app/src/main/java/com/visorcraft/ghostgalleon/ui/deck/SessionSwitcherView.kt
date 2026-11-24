@@ -75,6 +75,7 @@ object SessionSwitcherView {
         activeKey: String? = activeSessionKey(host.context),
     ) {
         val prevSelection = (host.findViewWithTag<View>(TAG) as? SwitcherOverlay)?.selection
+        val isReattach = prevSelection != null
         detach(host)
         val capped = entries.take(SessionRing.CAP)
         host.addView(
@@ -90,6 +91,7 @@ object SessionSwitcherView {
                     previousSelection = prevSelection,
                     activeKey = activeKey,
                 ),
+                skipEnterAnimation = isReattach,
             ),
             ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -100,6 +102,7 @@ object SessionSwitcherView {
 
     fun detach(host: ViewGroup) {
         val existing = host.findViewWithTag<View>(TAG) ?: return
+        OverlayPrimitives.cancelAnimations(existing)
         host.removeView(existing)
     }
 
@@ -177,12 +180,7 @@ object SessionSwitcherView {
                 }
             }
             val focused = rows.getOrNull(sel) ?: return
-            val scroller = scrollHost ?: return
-            scroller.post {
-                val targetY = (focused.top - (scroller.height - focused.height) / 2)
-                    .coerceAtLeast(0)
-                scroller.smoothScrollTo(0, targetY)
-            }
+            scrollHost?.smoothScrollToCenter(focused)
         }
     }
 
@@ -194,6 +192,7 @@ object SessionSwitcherView {
         onClose: () -> Unit,
         activeKey: String?,
         initialSelection: Int,
+        skipEnterAnimation: Boolean,
     ): SwitcherOverlay {
         val context: Context = host.context
         val themeTokens = tokens(context)
@@ -336,6 +335,11 @@ object SessionSwitcherView {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER,
             ),
+        )
+        OverlayPrimitives.bindModalEnter(
+            backdrop = overlay,
+            card = sheet,
+            skipAnimation = skipEnterAnimation,
         )
         overlay.paint()
         return overlay
