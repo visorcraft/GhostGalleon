@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.LaunchFace
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
@@ -84,6 +85,17 @@ class SettingsStoreTest {
             userPinnedPrimaryId = 1,
             searchHistory = listOf("zelda", "mario"),
             stickDeadzone = 40,
+            soundEnabled = false,
+            soundPack = SoundPackId.NEON.id,
+            sfxVolume = 62,
+            ambientEnabled = true,
+            ambientVolume = 48,
+            bootChimeEnabled = false,
+            raAchievementChime = false,
+            videoPreviewAudio = true,
+            audioRespectMusic = false,
+            audioRespectRinger = false,
+            customSoundPackUri = "content://audio/packs/custom.zip",
         )
         store.save(s)
         val loaded = SettingsStore(f).load()
@@ -597,5 +609,78 @@ class SettingsStoreTest {
         assertEquals(false, migrated.warmResumeLoad)
         assertEquals(true, migrated.warmResumeEnabled)
         assertEquals(11, migrated.schemaVersion)
+    }
+
+    @Test
+    fun `additive v11 audio fields round-trip, default when missing, normalize pack, and clamp volumes`() {
+        val f = tmp.root.resolve("cfg-audio/settings.json")
+        val custom = Settings.DEFAULT.copy(
+            soundEnabled = false,
+            soundPack = SoundPackId.THREEDS.id,
+            sfxVolume = 88,
+            ambientEnabled = true,
+            ambientVolume = 42,
+            bootChimeEnabled = false,
+            raAchievementChime = false,
+            videoPreviewAudio = true,
+            audioRespectMusic = false,
+            audioRespectRinger = false,
+            customSoundPackUri = "content://com.example.provider/pack.zip",
+        )
+        SettingsStore(f).save(custom)
+        val loaded = SettingsStore(f).load()
+        assertEquals(custom, loaded)
+        assertEquals(11, loaded.schemaVersion)
+
+        // Missing audio keys (existing v11 file from before audio shipped) load safe defaults
+        val raw = org.json.JSONObject(f.readText())
+        listOf(
+            "soundEnabled", "soundPack", "sfxVolume", "ambientEnabled", "ambientVolume",
+            "bootChimeEnabled", "raAchievementChime", "videoPreviewAudio",
+            "audioRespectMusic", "audioRespectRinger", "customSoundPackUri",
+        ).forEach { raw.remove(it) }
+        f.writeText(raw.toString())
+        val defaulted = SettingsStore(f).load()
+        assertEquals(true, defaulted.soundEnabled)
+        assertEquals(SoundPackId.AUTO.id, defaulted.soundPack)
+        assertEquals(75, defaulted.sfxVolume)
+        assertEquals(false, defaulted.ambientEnabled)
+        assertEquals(35, defaulted.ambientVolume)
+        assertEquals(true, defaulted.bootChimeEnabled)
+        assertEquals(true, defaulted.raAchievementChime)
+        assertEquals(false, defaulted.videoPreviewAudio)
+        assertEquals(true, defaulted.audioRespectMusic)
+        assertEquals(true, defaulted.audioRespectRinger)
+        assertEquals("", defaulted.customSoundPackUri)
+        assertEquals(11, defaulted.schemaVersion)
+
+        // Out-of-range volumes clamp to 0..100, unknown/null pack normalizes to auto, null URI -> ""
+        raw.put("soundPack", "  UNKNOWN_PACK  ")
+        raw.put("sfxVolume", 240)
+        raw.put("ambientVolume", -15)
+        raw.put("customSoundPackUri", org.json.JSONObject.NULL)
+        f.writeText(raw.toString())
+        val clamped = SettingsStore(f).load()
+        assertEquals(SoundPackId.AUTO.id, clamped.soundPack)
+        assertEquals(100, clamped.sfxVolume)
+        assertEquals(0, clamped.ambientVolume)
+        assertEquals("", clamped.customSoundPackUri)
+
+        // Case/whitespace pack normalization + lower-bound sfxVolume / upper-bound ambientVolume
+        raw.put("soundPack", "  OLED ")
+        raw.put("sfxVolume", -50)
+        raw.put("ambientVolume", 199)
+        raw.put("customSoundPackUri", "  content://pack/oled.zip  ")
+        f.writeText(raw.toString())
+        val normalized = SettingsStore(f).load()
+        assertEquals(SoundPackId.OLED.id, normalized.soundPack)
+        assertEquals(0, normalized.sfxVolume)
+        assertEquals(100, normalized.ambientVolume)
+        assertEquals("content://pack/oled.zip", normalized.customSoundPackUri)
+
+        // JSON null soundPack safely falls back to auto (not literal "null")
+        raw.put("soundPack", org.json.JSONObject.NULL)
+        f.writeText(raw.toString())
+        assertEquals(SoundPackId.AUTO.id, SettingsStore(f).load().soundPack)
     }
 }

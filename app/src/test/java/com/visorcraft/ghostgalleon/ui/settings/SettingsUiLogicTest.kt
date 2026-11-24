@@ -1,6 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.settings
 
 import android.view.KeyEvent
+import com.visorcraft.ghostgalleon.audio.SoundCue
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.BrowseChrome
 import com.visorcraft.ghostgalleon.settings.ThemePack
@@ -278,5 +280,38 @@ class SettingsUiLogicTest {
         assertFalse(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(Float.NaN))
         assertTrue(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(0.5f))
         assertTrue(com.visorcraft.ghostgalleon.ui.UiDimens.isMotionEnabled(1f))
+    }
+
+    @Test
+    fun `audio page test pad cues, responsive columns, and active status badges behave cleanly`() {
+        assertEquals(
+            listOf(
+                SoundCue.NAV_TICK,
+                SoundCue.CONFIRM,
+                SoundCue.LAUNCH_GAME,
+                SoundCue.SWAP_DISPLAY,
+                SoundCue.FAVORITE_ON,
+                SoundCue.RA_ACHIEVEMENT,
+            ),
+            SettingsUiLogic.AUDIO_TEST_PAD_CUES,
+        )
+        assertEquals(3, SettingsUiLogic.audioTestPadColumns(isWide = true))
+        assertEquals(2, SettingsUiLogic.audioTestPadColumns(isWide = false))
+
+        assertTrue(SettingsUiLogic.isSfxAudioActive(true, SoundPackId.AUTO.id, 75))
+        assertTrue(SettingsUiLogic.isSfxAudioActive(true, SoundPackId.NEON.id, 1))
+        assertFalse(SettingsUiLogic.isSfxAudioActive(false, SoundPackId.GHOST.id, 75))
+        assertFalse(SettingsUiLogic.isSfxAudioActive(true, SoundPackId.OFF.id, 75))
+        assertFalse(SettingsUiLogic.isSfxAudioActive(true, SoundPackId.GHOST.id, 0))
+
+        assertTrue(SettingsUiLogic.isAmbientAudioActive(true, true, SoundPackId.AUTO.id, 35))
+        assertFalse(SettingsUiLogic.isAmbientAudioActive(false, true, SoundPackId.AUTO.id, 35))
+        assertFalse(SettingsUiLogic.isAmbientAudioActive(true, false, SoundPackId.AUTO.id, 35))
+        assertFalse(SettingsUiLogic.isAmbientAudioActive(true, true, SoundPackId.OFF.id, 35))
+        assertFalse(SettingsUiLogic.isAmbientAudioActive(true, true, SoundPackId.GHOST.id, 0))
+
+        // 9-page Settings navigation wraps smoothly with AUDIO inserted
+        assertEquals(8, SettingsUiLogic.stepPageIndex(0, -1, 9))
+        assertEquals(0, SettingsUiLogic.stepPageIndex(8, 1, 9))
     }
 }

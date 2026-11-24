@@ -40,6 +40,8 @@ import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.art.ArtArchive
 import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
+import com.visorcraft.ghostgalleon.audio.SoundCue
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.library.AppLibrary
 import com.visorcraft.ghostgalleon.library.PackageManagerAppsSource
 import com.visorcraft.ghostgalleon.library.RetroAchievements
@@ -315,6 +317,31 @@ internal object SettingsUiLogic {
 
     /** Adaptive wide left nav blade width (200dp on compact-wide, 224dp on 820dp+). */
     fun navBladeWidthDp(screenWidthDp: Int): Int = if (screenWidthDp >= 820) 224 else 200
+
+    /** Interactive cues exposed in Settings → Audio Sound Test Pad. */
+    val AUDIO_TEST_PAD_CUES: List<SoundCue> = listOf(
+        SoundCue.NAV_TICK,
+        SoundCue.CONFIRM,
+        SoundCue.LAUNCH_GAME,
+        SoundCue.SWAP_DISPLAY,
+        SoundCue.FAVORITE_ON,
+        SoundCue.RA_ACHIEVEMENT,
+    )
+
+    /** 3x2 grid on wide handheld/tablet displays; 2x3 on narrow panels so localized labels fit cleanly. */
+    fun audioTestPadColumns(isWide: Boolean): Int = if (isWide) 3 else 2
+
+    /** True when UI sound effects are actively audible under current settings. */
+    fun isSfxAudioActive(soundEnabled: Boolean, soundPack: String, sfxVolume: Int): Boolean =
+        soundEnabled && SoundPackId.fromId(soundPack).isPlayable && sfxVolume > 0
+
+    /** True when ambient soundscape is enabled and audible under current settings. */
+    fun isAmbientAudioActive(
+        soundEnabled: Boolean,
+        ambientEnabled: Boolean,
+        soundPack: String,
+        ambientVolume: Int,
+    ): Boolean = soundEnabled && ambientEnabled && SoundPackId.fromId(soundPack).isPlayable && ambientVolume > 0
 }
 
 class SettingsActivity : AppCompatActivity() {
@@ -326,6 +353,7 @@ class SettingsActivity : AppCompatActivity() {
         DISPLAY_GRID(R.string.settings_page_display_grid, R.drawable.ic_nav_display),
         APPS(R.string.settings_page_apps, R.drawable.ic_nav_apps),
         CONTROLS(R.string.settings_page_controls, R.drawable.ic_nav_controls),
+        AUDIO(R.string.settings_page_audio, R.drawable.ic_nav_audio),
         LIBRARY(R.string.settings_page_library, R.drawable.ic_nav_library),
         ART_DATA(R.string.settings_page_art, R.drawable.ic_nav_art),
         STATS(R.string.settings_page_stats, R.drawable.ic_nav_stats),
@@ -2411,6 +2439,8 @@ class SettingsActivity : AppCompatActivity() {
             "apps hidden packages dock helper play-host"),
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, getString(R.string.settings_page_controls),
             "controls remap deadzone haptics lab"),
+        SettingsJump(SettingsCatalog.PAGE_AUDIO, getString(R.string.settings_page_audio),
+            "audio sound sfx volume pack ambient soundscape chime boot achievement video music ringer mute test"),
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, getString(R.string.settings_page_library),
             "library rom folder rescan hidden collections players retroarch network commands talk ferry save warm continue cinema"),
         SettingsJump(SettingsCatalog.PAGE_ART, getString(R.string.settings_page_art),
@@ -3746,6 +3776,268 @@ class SettingsActivity : AppCompatActivity() {
             badgeText = getString(R.string.format_percent, s.stickDeadzone),
             badgeActive = SettingsUiLogic.isCustomDeadzone(s.stickDeadzone),
             onBadgeView = { controlsDeadzoneBadge = it },
+        )
+
+        // --- Audio page (all updates use notify = false to avoid dual-paint rebuilds) ---
+        var audioSfxBadge: TextView? = null
+        var audioAmbientBadge: TextView? = null
+        var liveSoundEnabled = s.soundEnabled
+        var liveSoundPack = SoundPackId.fromId(s.soundPack).id
+        var liveSfxVolume = s.sfxVolume
+        var liveAmbientEnabled = s.ambientEnabled
+        var liveAmbientVolume = s.ambientVolume
+
+        fun refreshAudioBadges() {
+            val sfxActive = SettingsUiLogic.isSfxAudioActive(
+                liveSoundEnabled, liveSoundPack, liveSfxVolume,
+            )
+            audioSfxBadge?.apply {
+                text = if (sfxActive) {
+                    getString(R.string.format_percent, liveSfxVolume)
+                } else {
+                    getString(R.string.label_off)
+                }
+                styleStatusBadge(this, active = sfxActive)
+            }
+            val ambientActive = SettingsUiLogic.isAmbientAudioActive(
+                liveSoundEnabled, liveAmbientEnabled, liveSoundPack, liveAmbientVolume,
+            )
+            audioAmbientBadge?.apply {
+                text = if (ambientActive) {
+                    getString(R.string.format_percent, liveAmbientVolume)
+                } else {
+                    getString(R.string.label_off)
+                }
+                styleStatusBadge(this, active = ambientActive)
+            }
+        }
+
+        val audioSfxCard = sectionCard()
+        toggle(audioSfxCard, getString(R.string.settings_audio_master), s.soundEnabled) { on ->
+            liveSoundEnabled = on
+            app.updateSettings(app.settings.copy(soundEnabled = on), notify = false)
+            refreshAudioBadges()
+            if (on) {
+                app.soundEngine.audition(SoundCue.CONFIRM)
+            }
+        }
+        val audioLocale = resources.configuration.locales[0]
+        val packOptions = listOf(
+            SoundPackId.AUTO.id to getString(R.string.label_auto).uppercase(audioLocale),
+            SoundPackId.GHOST.id to themeName(ThemePack.GHOST.id).uppercase(audioLocale),
+            SoundPackId.THREEDS.id to themeName(ThemePack.THREEDS.id).uppercase(audioLocale),
+            SoundPackId.OLED.id to getString(R.string.settings_audio_pack_oled).uppercase(audioLocale),
+            SoundPackId.NEON.id to themeName(ThemePack.NEON.id).uppercase(audioLocale),
+            SoundPackId.OFF.id to getString(R.string.label_off).uppercase(audioLocale),
+        )
+        val packSwatches = mapOf(
+            SoundPackId.GHOST.id to ThemePack.GHOST.accentColor,
+            SoundPackId.THREEDS.id to ThemePack.THREEDS.accentColor,
+            SoundPackId.OLED.id to ThemePack.OLED.accentColor,
+            SoundPackId.NEON.id to ThemePack.NEON.accentColor,
+        )
+        segmentedRow(
+            card = audioSfxCard,
+            label = getString(R.string.settings_audio_pack),
+            options = packOptions,
+            current = liveSoundPack,
+            swatchColors = packSwatches,
+        ) { nextId ->
+            val pack = SoundPackId.fromId(nextId)
+            liveSoundPack = pack.id
+            app.updateSettings(app.settings.copy(soundPack = pack.id), notify = false)
+            refreshAudioBadges()
+            app.soundEngine.previewPack(pack)
+        }
+        seek(
+            card = audioSfxCard,
+            label = getString(R.string.settings_audio_sfx_volume),
+            value = s.sfxVolume,
+            min = 0,
+            max = 100,
+            format = { n -> getString(R.string.format_percent, n) },
+            onLiveChange = { n ->
+                liveSfxVolume = n
+                refreshAudioBadges()
+            },
+        ) { n ->
+            liveSfxVolume = n
+            app.updateSettings(app.settings.copy(sfxVolume = n), notify = false)
+            refreshAudioBadges()
+            app.soundEngine.audition(SoundCue.NAV_TICK)
+        }
+        val initialSfxActive = SettingsUiLogic.isSfxAudioActive(
+            liveSoundEnabled, liveSoundPack, liveSfxVolume,
+        )
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_sfx),
+            card = audioSfxCard,
+            badgeText = if (initialSfxActive) {
+                getString(R.string.format_percent, liveSfxVolume)
+            } else {
+                getString(R.string.label_off)
+            },
+            badgeActive = initialSfxActive,
+            onBadgeView = { audioSfxBadge = it },
+        )
+
+        val audioTestPadCard = sectionCard()
+        audioTestPadCard.addView(
+            TextView(this).apply {
+                setText(R.string.settings_audio_test_pad_hint)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextColor(UiDimens.ALPHA_SUBTLE)
+                setPadding(dp(10), dp(4), dp(10), dp(8))
+            },
+        )
+        val padCueLabels = mapOf(
+            SoundCue.NAV_TICK to R.string.settings_audio_cue_nav,
+            SoundCue.CONFIRM to R.string.settings_audio_cue_confirm,
+            SoundCue.LAUNCH_GAME to R.string.settings_audio_cue_launch,
+            SoundCue.SWAP_DISPLAY to R.string.settings_audio_cue_swap,
+            SoundCue.FAVORITE_ON to R.string.settings_audio_cue_favorite,
+            SoundCue.RA_ACHIEVEMENT to R.string.settings_audio_cue_achievement,
+        )
+        val padCols = SettingsUiLogic.audioTestPadColumns(wide)
+        val padRows = SettingsUiLogic.AUDIO_TEST_PAD_CUES.chunked(padCols)
+        padRows.forEachIndexed { rowIndex, rowCues ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), 0, dp(10), 0)
+            }
+            val rowPills = mutableListOf<TextView>()
+            rowCues.forEachIndexed { colIndex, cue ->
+                val labelRes = padCueLabels.getValue(cue)
+                val pill = TextView(this).apply {
+                    id = View.generateViewId()
+                    setText(labelRes)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(UiDimens.ALPHA_PRIMARY)
+                    typeface = Typeface.DEFAULT_BOLD
+                    letterSpacing = 0.04f
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    minimumHeight = dp(44)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    isFocusable = true
+                    background = TileBackgrounds.pressableRow(
+                        context = this@SettingsActivity,
+                        accent = accent,
+                        idleBackground = TileBackgrounds.sunkenField(
+                            this@SettingsActivity,
+                            cornerRadiusDp = 12,
+                        ),
+                        cornerRadiusDp = 12,
+                        strokeDp = 2,
+                    )
+                    setOnClickListener {
+                        app.soundEngine.audition(cue)
+                    }
+                }
+                rowPills.add(pill)
+                row.addView(
+                    pill,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (colIndex > 0) marginStart = dp(8)
+                    },
+                )
+            }
+            rowPills.forEachIndexed { colIndex, pill ->
+                if (colIndex > 0) pill.nextFocusLeftId = rowPills[colIndex - 1].id
+                if (colIndex < rowPills.lastIndex) pill.nextFocusRightId = rowPills[colIndex + 1].id
+            }
+            audioTestPadCard.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    bottomMargin = if (rowIndex < padRows.lastIndex) dp(8) else dp(6)
+                },
+            )
+        }
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_test_pad),
+            card = audioTestPadCard,
+        )
+
+        val audioAmbientCard = sectionCard()
+        toggle(audioAmbientCard, getString(R.string.settings_audio_ambient), s.ambientEnabled) { on ->
+            liveAmbientEnabled = on
+            app.updateSettings(app.settings.copy(ambientEnabled = on), notify = false)
+            refreshAudioBadges()
+        }
+        seek(
+            card = audioAmbientCard,
+            label = getString(R.string.settings_audio_ambient_volume),
+            value = s.ambientVolume,
+            min = 0,
+            max = 100,
+            format = { n -> getString(R.string.format_percent, n) },
+            onLiveChange = { n ->
+                liveAmbientVolume = n
+                refreshAudioBadges()
+            },
+        ) { n ->
+            liveAmbientVolume = n
+            app.updateSettings(app.settings.copy(ambientVolume = n), notify = false)
+            refreshAudioBadges()
+        }
+        audioAmbientCard.addView(
+            TextView(this).apply {
+                setText(R.string.settings_audio_ambient_hint)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(UiDimens.ALPHA_SUBTLE)
+                setPadding(dp(10), dp(2), dp(10), dp(6))
+            },
+        )
+        val initialAmbientActive = SettingsUiLogic.isAmbientAudioActive(
+            liveSoundEnabled, liveAmbientEnabled, liveSoundPack, liveAmbientVolume,
+        )
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_ambient),
+            card = audioAmbientCard,
+            badgeText = if (initialAmbientActive) {
+                getString(R.string.format_percent, liveAmbientVolume)
+            } else {
+                getString(R.string.label_off)
+            },
+            badgeActive = initialAmbientActive,
+            onBadgeView = { audioAmbientBadge = it },
+        )
+
+        val audioEventsCard = sectionCard()
+        toggle(audioEventsCard, getString(R.string.settings_audio_boot_chime), s.bootChimeEnabled) { on ->
+            app.updateSettings(app.settings.copy(bootChimeEnabled = on), notify = false)
+        }
+        toggle(audioEventsCard, getString(R.string.settings_audio_ra_chime), s.raAchievementChime) { on ->
+            app.updateSettings(app.settings.copy(raAchievementChime = on), notify = false)
+        }
+        toggle(audioEventsCard, getString(R.string.settings_audio_video_preview), s.videoPreviewAudio) { on ->
+            app.updateSettings(app.settings.copy(videoPreviewAudio = on), notify = false)
+        }
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_events),
+            card = audioEventsCard,
+        )
+
+        val audioEtiquetteCard = sectionCard()
+        toggle(audioEtiquetteCard, getString(R.string.settings_audio_respect_music), s.audioRespectMusic) { on ->
+            app.updateSettings(app.settings.copy(audioRespectMusic = on), notify = false)
+        }
+        toggle(audioEtiquetteCard, getString(R.string.settings_audio_respect_ringer), s.audioRespectRinger) { on ->
+            app.updateSettings(app.settings.copy(audioRespectRinger = on), notify = false)
+        }
+        addSection(
+            page = SettingsPage.AUDIO,
+            title = getString(R.string.settings_audio_section_etiquette),
+            card = audioEtiquetteCard,
         )
 
         val libraryCard = sectionCard()

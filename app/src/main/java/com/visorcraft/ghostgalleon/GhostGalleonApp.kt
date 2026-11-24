@@ -21,6 +21,7 @@ import com.visorcraft.ghostgalleon.art.SgdbScraper
 import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.audio.SoundEngine
 import com.visorcraft.ghostgalleon.audio.SoundEngineConfig
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.audio.SoundRuntimeState
 import com.visorcraft.ghostgalleon.library.DrawerListCache
 import com.visorcraft.ghostgalleon.library.DrawerListKey
@@ -333,8 +334,22 @@ class GhostGalleonApp : Application() {
         SoundEngine(
             context = this,
             configProvider = {
-                val themeId = if (::settings.isInitialized) settings.themePackId else ThemePack.GHOST.id
-                SoundEngineConfig(themePackId = themeId)
+                if (::settings.isInitialized) {
+                    val s = settings
+                    SoundEngineConfig(
+                        soundEnabled = s.soundEnabled,
+                        sfxVolumePercent = s.sfxVolume,
+                        soundPackId = SoundPackId.fromId(s.soundPack),
+                        themePackId = s.themePackId,
+                        respectRinger = s.audioRespectRinger,
+                        respectMusic = s.audioRespectMusic,
+                        bootChimeEnabled = s.bootChimeEnabled,
+                        achievementChimeEnabled = s.raAchievementChime,
+                        videoPreviewUnmuted = s.videoPreviewAudio,
+                    )
+                } else {
+                    SoundEngineConfig(themePackId = ThemePack.GHOST.id)
+                }
             },
             runtimeStateProvider = {
                 SoundRuntimeState(
@@ -2563,10 +2578,10 @@ class GhostGalleonApp : Application() {
                 s.orientationMode != settings.orientationMode ||
                 s.userPinnedPrimaryId != settings.userPinnedPrimaryId
         val modeChanged = s.defaultMode != settings.defaultMode
-        val themeChanged = s.themePackId != settings.themePackId
+        val audioChanged = audioSettingsChanged(settings, s)
         val drawerRelevant = drawerRelevantSettingsChanged(settings, s)
         settings = s
-        if (themeChanged) {
+        if (audioChanged) {
             soundEngine.syncWithSettings()
         }
         // Debounced async persist — every favorite/dock/launch used to
@@ -2602,6 +2617,17 @@ class GhostGalleonApp : Application() {
             prev.romNames != next.romNames ||
             prev.customIcons != next.customIcons ||
             prev.romTreeUris != next.romTreeUris
+
+    private fun audioSettingsChanged(prev: Settings, next: Settings): Boolean =
+        prev.themePackId != next.themePackId ||
+            prev.soundEnabled != next.soundEnabled ||
+            prev.soundPack != next.soundPack ||
+            prev.sfxVolume != next.sfxVolume ||
+            prev.audioRespectMusic != next.audioRespectMusic ||
+            prev.audioRespectRinger != next.audioRespectRinger ||
+            prev.bootChimeEnabled != next.bootChimeEnabled ||
+            prev.raAchievementChime != next.raAchievementChime ||
+            prev.videoPreviewAudio != next.videoPreviewAudio
 
     /**
      * Shared installed-app catalog (PM query is expensive). Pre-warmed on a

@@ -64,7 +64,7 @@ object SoundEngineLogic {
     const val SYNTH_CACHE_VERSION: Int = 1
     const val MAX_STREAMS: Int = 8
     const val AUDITION_MAX_STREAMS: Int = 4
-    const val DEFAULT_SFX_VOLUME_PERCENT: Int = 70
+    const val DEFAULT_SFX_VOLUME_PERCENT: Int = 75
     const val MIN_PLAYBACK_RATE: Float = 0.5f
     const val MAX_PLAYBACK_RATE: Float = 2.0f
     const val MIN_AUDIBLE_GAIN: Float = 1e-4f
@@ -506,6 +506,8 @@ class SoundEngine(
                     loadGen = NO_GENERATION
                 }
                 SoundEngineLogic.SyncAction.RELEASE_TO_IDLE -> {
+                    stopSessionStreams(activeSession.get())
+                    stopSessionStreams(auditionSession.get())
                     loadGen = generationGate.advance()
                     targetPack = SoundPackId.OFF
                     pendingLoadGeneration = NO_GENERATION
@@ -653,9 +655,9 @@ class SoundEngine(
         backgrounded.set(true)
         cancelPendingPreviews()
         stopSessionStreams(activeSession.get())
+        stopSessionStreams(auditionSession.get())
         val oldAudition = detachAuditionSession()
         if (oldAudition != null) {
-            stopSessionStreams(oldAudition)
             AUDIO_SYNTH.execute { retireSession(oldAudition) }
         }
     }
@@ -686,6 +688,8 @@ class SoundEngine(
     fun release() {
         cancelPendingPreviews()
         cooldownTracker.reset()
+        stopSessionStreams(activeSession.get())
+        stopSessionStreams(auditionSession.get())
         val oldActive: PoolSession?
         synchronized(stateLock) {
             generationGate.advance()
@@ -695,8 +699,6 @@ class SoundEngine(
             oldActive?.released = true
         }
         val oldAudition = detachAuditionSession()
-        stopSessionStreams(oldActive)
-        stopSessionStreams(oldAudition)
         if (oldActive != null || oldAudition != null) {
             AUDIO_SYNTH.execute {
                 retireSession(oldActive)

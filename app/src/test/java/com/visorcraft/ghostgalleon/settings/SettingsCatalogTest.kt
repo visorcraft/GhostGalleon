@@ -10,6 +10,7 @@ class SettingsCatalogTest {
         SettingsJump(SettingsCatalog.PAGE_LIBRARY, "Library", "rom folder rescan"),
         SettingsJump(SettingsCatalog.PAGE_ART, "Artwork & backup", "steamgriddb export"),
         SettingsJump(SettingsCatalog.PAGE_CONTROLS, "Controls", "remap deadzone"),
+        SettingsJump(SettingsCatalog.PAGE_AUDIO, "Audio", "sound sfx volume ambient pack chime"),
     )
 
     @Test
@@ -21,6 +22,14 @@ class SettingsCatalogTest {
         assertEquals(
             listOf(SettingsCatalog.PAGE_LIBRARY),
             SettingsCatalog.matches("Library", items).map { it.pageId },
+        )
+        assertEquals(
+            listOf(SettingsCatalog.PAGE_AUDIO),
+            SettingsCatalog.matches("ambient", items).map { it.pageId },
+        )
+        assertEquals(
+            listOf(SettingsCatalog.PAGE_AUDIO),
+            SettingsCatalog.matches("Audio", items).map { it.pageId },
         )
         assertTrue(SettingsCatalog.matches("  ", items).isEmpty())
     }

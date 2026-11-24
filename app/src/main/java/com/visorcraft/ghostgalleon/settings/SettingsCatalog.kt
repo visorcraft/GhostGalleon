@@ -15,6 +15,7 @@ object SettingsCatalog {
     const val PAGE_DISPLAY = "DISPLAY_GRID"
     const val PAGE_APPS = "APPS"
     const val PAGE_CONTROLS = "CONTROLS"
+    const val PAGE_AUDIO = "AUDIO"
     const val PAGE_LIBRARY = "LIBRARY"
     const val PAGE_ART = "ART_DATA"
     const val PAGE_STATS = "STATS"

@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.SessionPolicy
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
@@ -208,6 +209,28 @@ class SettingsStore(private val file: File) {
             romHelpers = o.optJSONObject("romHelpers").toStringMap(),
             warmResumeEnabled = o.optBoolean("warmResumeEnabled", true),
             warmResumeLoad = o.optBoolean("warmResumeLoad", false),
+            // Within schema v11: additive audio & soundscape fields (absent = safe defaults).
+            soundEnabled = o.optBoolean("soundEnabled", true),
+            soundPack = SoundPackId.fromId(
+                if (o.has("soundPack") && !o.isNull("soundPack")) {
+                    o.optString("soundPack", SoundPackId.AUTO.id)
+                } else {
+                    SoundPackId.AUTO.id
+                },
+            ).id,
+            sfxVolume = o.optInt("sfxVolume", 75).coerceIn(0, 100),
+            ambientEnabled = o.optBoolean("ambientEnabled", false),
+            ambientVolume = o.optInt("ambientVolume", 35).coerceIn(0, 100),
+            bootChimeEnabled = o.optBoolean("bootChimeEnabled", true),
+            raAchievementChime = o.optBoolean("raAchievementChime", true),
+            videoPreviewAudio = o.optBoolean("videoPreviewAudio", false),
+            audioRespectMusic = o.optBoolean("audioRespectMusic", true),
+            audioRespectRinger = o.optBoolean("audioRespectRinger", true),
+            customSoundPackUri = if (o.has("customSoundPackUri") && !o.isNull("customSoundPackUri")) {
+                o.optString("customSoundPackUri", "").trim()
+            } else {
+                ""
+            },
             schemaVersion = CURRENT_SCHEMA,
         )
         }
@@ -371,6 +394,17 @@ class SettingsStore(private val file: File) {
             })
             .put("warmResumeEnabled", s.warmResumeEnabled)
             .put("warmResumeLoad", s.warmResumeLoad)
+            .put("soundEnabled", s.soundEnabled)
+            .put("soundPack", SoundPackId.fromId(s.soundPack).id)
+            .put("sfxVolume", s.sfxVolume.coerceIn(0, 100))
+            .put("ambientEnabled", s.ambientEnabled)
+            .put("ambientVolume", s.ambientVolume.coerceIn(0, 100))
+            .put("bootChimeEnabled", s.bootChimeEnabled)
+            .put("raAchievementChime", s.raAchievementChime)
+            .put("videoPreviewAudio", s.videoPreviewAudio)
+            .put("audioRespectMusic", s.audioRespectMusic)
+            .put("audioRespectRinger", s.audioRespectRinger)
+            .put("customSoundPackUri", s.customSoundPackUri)
             .put("schemaVersion", CURRENT_SCHEMA)
         }
 

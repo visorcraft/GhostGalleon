@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.input.SeatAnchor
 import com.visorcraft.ghostgalleon.rom.SessionRingEntry
 import com.visorcraft.ghostgalleon.rom.StagePlot
@@ -168,6 +169,18 @@ data class Settings(
     val romHelpers: Map<String, String> = emptyMap(),
     val warmResumeEnabled: Boolean = true,
     val warmResumeLoad: Boolean = false,
+    // --- within schema v11: additive audio & soundscape fields (optional on disk) ---
+    val soundEnabled: Boolean = true,
+    val soundPack: String = SoundPackId.AUTO.id,
+    val sfxVolume: Int = 75,
+    val ambientEnabled: Boolean = false,
+    val ambientVolume: Int = 35,
+    val bootChimeEnabled: Boolean = true,
+    val raAchievementChime: Boolean = true,
+    val videoPreviewAudio: Boolean = false,
+    val audioRespectMusic: Boolean = true,
+    val audioRespectRinger: Boolean = true,
+    val customSoundPackUri: String = "",
     val schemaVersion: Int = 11,
 ) {
     companion object {

@@ -1,5 +1,6 @@
 package com.visorcraft.ghostgalleon.settings
 
+import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.rom.RomEntry
 import com.visorcraft.ghostgalleon.rom.RomLibrary
 import com.visorcraft.ghostgalleon.state.UIMode
@@ -18,6 +19,17 @@ class SettingsBundleTest {
         hiddenPackages = setOf("x.y"),
         customNames = mapOf("a.b" to "Renamed"),
         customIcons = mapOf("a.b" to "content://media/external/images/media/7"),
+        soundEnabled = true,
+        soundPack = SoundPackId.NEON.id,
+        sfxVolume = 60,
+        ambientEnabled = true,
+        ambientVolume = 40,
+        bootChimeEnabled = false,
+        raAchievementChime = false,
+        videoPreviewAudio = true,
+        audioRespectMusic = false,
+        audioRespectRinger = false,
+        customSoundPackUri = "content://example/custom-pack.zip",
     )
 
     private val roms = listOf(
