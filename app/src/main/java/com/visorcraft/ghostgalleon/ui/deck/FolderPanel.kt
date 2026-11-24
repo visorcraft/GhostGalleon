@@ -1,21 +1,28 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.rom.PlatformTile
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.SlotKey
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
@@ -153,6 +160,7 @@ class FolderPanel(
     private var mirrorButton: TextView? = null
     private var hintFooterView: TextView? = null
     private var thumbSizePx: Int = 0
+    private var activeColumns: Int = FolderPanelNav.COLUMNS
     private var themeTokens: ThemeTokens = ThemePack.GHOST
 
     private val hasMirror: Boolean
@@ -160,17 +168,25 @@ class FolderPanel(
 
     val view: View by lazy {
         themeTokens = resolveTokens(context)
-        val overlay = OverlayPrimitives.modalBackdrop(context, onClose)
-        val cardWidth = OverlayPrimitives.responsiveCardWidth(
-            context = context,
-            maxDp = 420,
-            widthFrac = 0.88f,
-            minMarginDp = UiDimens.SPACE_LG,
+        val dm = context.resources.displayMetrics
+        val layoutSpec = FolderPanelMetrics.compute(
+            screenWidthPx = dm.widthPixels,
+            screenHeightPx = dm.heightPixels,
+            density = dm.density,
+            memberCount = memberKeys.size,
         )
-        val innerWidth = cardWidth - context.dp(UiDimens.SPACE_LG * 2) - context.dp(UiDimens.SPACE_SM)
-        val slotWidth = (innerWidth - context.dp(UiDimens.SPACE_SM * (FolderPanelNav.COLUMNS - 1))) /
-            FolderPanelNav.COLUMNS
-        thumbSizePx = slotWidth.coerceIn(context.dp(64), context.dp(92))
+        activeColumns = layoutSpec.columns
+        thumbSizePx = layoutSpec.thumbSizePx
+        val cardWidth = layoutSpec.cardWidthPx
+
+        val overlay = OverlayPrimitives.modalBackdrop(context, onClose).apply {
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) {
+                    cancelAnimations()
+                }
+            })
+        }
 
         val card = OverlayPrimitives.modalCardContainer(
             context = context,
@@ -202,11 +218,7 @@ class FolderPanel(
 
         val scroll = OverlayPrimitives.MaxHeightScrollView(
             context = context,
-            maxHeightPx = OverlayPrimitives.maxModalHeight(
-                context = context,
-                heightFrac = 0.52f,
-                minDp = 140,
-            ),
+            maxHeightPx = layoutSpec.maxScrollHeightPx,
         ).apply {
             addView(
                 grid,
@@ -318,15 +330,20 @@ class FolderPanel(
             return
         }
 
-        val cols = FolderPanelNav.COLUMNS
-        val thumbSize = thumbSizePx.coerceAtLeast(context.dp(64))
+        val cols = activeColumns
+        val thumbSize = thumbSizePx.coerceAtLeast(context.dp(FolderPanelMetrics.MIN_THUMB_DP))
         val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
+        val cellRadiusDp = DeckCornerMetrics.folderCellRadiusDp(themeTokens)
         val thumbRadiusDp = DeckCornerMetrics.folderThumbRadiusDp(
             tokens = themeTokens,
             cellPaddingDp = UiDimens.SPACE_XS,
             thumbSizeDp = (thumbSize / density).toInt(),
         )
         val thumbRadiusPx = context.dpF(thumbRadiusDp)
+        val rippleColor = GridTileFeedbackMetrics.rippleColorForSurface(
+            surfaceFill = TileBackgrounds.surfaceColor(context),
+            accent = accentColor,
+        )
         memberKeys.chunked(cols).forEachIndexed { rowIndex, rowMembers ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -339,6 +356,9 @@ class FolderPanel(
                 val cell = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER_HORIZONTAL
+                    clipChildren = false
+                    clipToPadding = false
+                    foreground = roundedRipple(cellRadiusDp, rippleColor)
                     setPadding(
                         context.dp(UiDimens.SPACE_XS),
                         context.dp(UiDimens.SPACE_XS),
@@ -357,8 +377,7 @@ class FolderPanel(
                         true
                     }
                 }
-                val thumb = ImageView(context).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
+                val thumbBox = FrameLayout(context).apply {
                     background = TileBackgrounds.sunkenField(context, cornerRadiusDp = thumbRadiusDp)
                     outlineProvider = object : ViewOutlineProvider() {
                         override fun getOutline(view: View, outline: Outline) {
@@ -367,16 +386,40 @@ class FolderPanel(
                     }
                     clipToOutline = true
                 }
-                cell.addView(thumb, LinearLayout.LayoutParams(thumbSize, thumbSize))
+                if (SlotKey.isRom(key)) {
+                    thumbBox.addView(
+                        PlatformTile.view(
+                            context,
+                            SlotKey.platformIdOf(key) ?: "rom",
+                            cornerRadiusDp = thumbRadiusDp,
+                        ),
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                }
+                val thumb = ImageView(context).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+                thumbBox.addView(
+                    thumb,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+                cell.addView(thumbBox, LinearLayout.LayoutParams(thumbSize, thumbSize))
                 onBindThumb?.invoke(thumb, key)
                 cell.addView(
                     TextView(context).apply {
                         text = label
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                        setTextColor(UiDimens.ALPHA_PRIMARY)
+                        setTextColor(GridLabelMetrics.LABEL_UNFOCUSED_COLOR)
                         gravity = Gravity.CENTER
                         maxLines = 2
                         ellipsize = TextUtils.TruncateAt.END
+                        includeFontPadding = false
                         setPadding(0, context.dp(UiDimens.SPACE_XS), 0, 0)
                     },
                     LinearLayout.LayoutParams(
@@ -392,7 +435,7 @@ class FolderPanel(
                     },
                 )
             }
-            // Keep partial last rows aligned to the 3-column grid.
+            // Keep partial last rows aligned to the active column grid.
             repeat(cols - rowMembers.size) {
                 row.addView(
                     View(context),
@@ -412,6 +455,21 @@ class FolderPanel(
             )
         }
         paintSelection()
+    }
+
+    private fun roundedRipple(cornerRadiusDp: Int, rippleColor: Int): RippleDrawable {
+        val mask = GradientDrawable().apply {
+            cornerRadius = context.dpF(cornerRadiusDp)
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(rippleColor), null, mask)
+    }
+
+    private fun cancelAnimations() {
+        cells.forEach { it.animate().cancel() }
+        mirrorButton?.animate()?.cancel()
+        subtitleView?.animate()?.cancel()
+        gridHost?.animate()?.cancel()
     }
 
     private fun paintSelection() {
@@ -434,9 +492,30 @@ class FolderPanel(
             } else {
                 null
             }
-            val scale = if (selected) 1.03f else 1f
-            cell.scaleX = scale
-            cell.scaleY = scale
+            val labelView = (cell as? LinearLayout)?.let { ll ->
+                if (ll.childCount > 1) ll.getChildAt(ll.childCount - 1) as? TextView else null
+            }
+            if (labelView != null) {
+                val style = GridLabelMetrics.labelStyleForRole(
+                    if (selected) MoveChoreography.SlotRole.FOCUSED else MoveChoreography.SlotRole.NORMAL,
+                )
+                labelView.setTextColor(style.textColor)
+                labelView.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+            }
+            val scale = if (selected) FolderPanelMetrics.CELL_FOCUS_SCALE else 1f
+            cell.translationZ = if (selected) context.dpF(FolderPanelMetrics.CELL_FOCUS_ELEVATION_DP) else 0f
+            cell.animate().cancel()
+            if (cell.isLaidOut) {
+                cell.animate()
+                    .scaleX(scale)
+                    .scaleY(scale)
+                    .setDuration(FolderPanelMetrics.FOCUS_ANIM_MS)
+                    .setInterpolator(FOCUS_INTERPOLATOR)
+                    .start()
+            } else {
+                cell.scaleX = scale
+                cell.scaleY = scale
+            }
         }
 
         mirrorButton?.let { btn ->
@@ -487,7 +566,7 @@ class FolderPanel(
                     nav = FolderPanelNav.step(
                         state = nav,
                         memberCount = memberKeys.size,
-                        columns = FolderPanelNav.COLUMNS,
+                        columns = activeColumns,
                         hasMirror = hasMirror,
                         action = action,
                     )
@@ -512,5 +591,9 @@ class FolderPanel(
     private fun resolveTokens(context: Context): ThemeTokens {
         val app = context.applicationContext
         return if (app is GhostGalleonApp) ThemePack.resolve(app.settings) else ThemePack.GHOST
+    }
+
+    private companion object {
+        val FOCUS_INTERPOLATOR = DecelerateInterpolator()
     }
 }

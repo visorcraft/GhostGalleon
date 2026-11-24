@@ -799,22 +799,30 @@ class GridDeck(
     private fun bindFolderThumb(image: ImageView, key: String) {
         val app = activity.application as GhostGalleonApp
         val px = (96 * activity.resources.displayMetrics.density).toInt()
+        val thumbRadiusPx = activity.dpF(
+            DeckCornerMetrics.folderThumbRadiusDp(ThemePack.resolve(settings)),
+        )
         SlotKey.romId(key)?.let { id ->
             val rom = app.romEntry(id) ?: return
+            image.tag = key
+            var syncHit = true
             app.artCache.load(
                 activity, rom, px,
                 artOverrides = app.settings.artOverrides,
-                isStillValid = { image.isAttachedToWindow },
+                isStillValid = { image.tag == key && (syncHit || image.isAttachedToWindow) },
             ) { bmp ->
-                if (bmp != null && image.isAttachedToWindow) {
+                if (bmp != null && image.tag == key && (syncHit || image.isAttachedToWindow)) {
+                    image.setBackgroundColor(TileBackgrounds.surfaceSunken(activity))
                     com.visorcraft.ghostgalleon.art.ArtCache.showDisplayed(image, bmp)
                 }
             }
+            syncHit = false
             return
         }
         if (!SlotKey.isFolder(key) && !SlotKey.isRom(key)) {
             CustomIcon.bind(
                 image, iconLoader, app.artCache, settings, key, px,
+                cornerRadiusPx = thumbRadiusPx,
             )
         }
     }
