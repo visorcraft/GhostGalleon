@@ -493,6 +493,9 @@ class GameDeck(
     /** Horizontal scrollers for auto-centering active browse and letter chips. */
     private var browseScrollView: android.widget.HorizontalScrollView? = null
     private var letterScrollView: android.widget.HorizontalScrollView? = null
+    /** Contextual multi-select banner refs updated in-place on SELECTION ticks. */
+    private var multiSelectCountView: TextView? = null
+    private var multiSelectAllButton: TextView? = null
     /** Last filter-chrome structure; equal → restyle chip colors only. */
     private var chromeStructureKey: String = ""
     /** Browse chips + live selected predicates for in-place restyle. */
@@ -638,6 +641,7 @@ class GameDeck(
         cardSizePx = nextSize
         applyRootWallpaper(root)
         syncEmptyState(context)
+        syncMultiSelectBanner(context)
         val existing = rv.adapter as? CardAdapter
         val sameCards = entries === oldEntries &&
             existing != null &&
@@ -1000,12 +1004,149 @@ class GameDeck(
         }
     }
 
+    private fun syncMultiSelectBanner(context: Context) {
+        val countTv = multiSelectCountView ?: return
+        val n = state.multiSelectKeys.size
+        countTv.text = context.resolveText(CarouselMultiSelectLogic.bannerCountText(n))
+        multiSelectAllButton?.visibility =
+            if (CarouselMultiSelectLogic.showSelectAllPill(n, entries.size)) View.VISIBLE
+            else View.GONE
+    }
+
+    private fun buildMultiSelectBanner(context: Context, dp: (Int) -> Int): View? {
+        if (!state.multiSelectEnabled) {
+            multiSelectCountView = null
+            multiSelectAllButton = null
+            return null
+        }
+        val surface = TileBackgrounds.surfaceColor(context)
+        val accent = settings.accentColor
+        val accentText = ThemePack.accentTextColor(accent, surface)
+        val banner = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(CarouselMultiSelectLogic.bannerTintFill(accent))
+                cornerRadius = context.dpF(14)
+                setStroke(context.strokePx(1), CarouselMultiSelectLogic.bannerTintStroke(accent))
+            }
+            setPadding(dp(12), dp(6), dp(10), dp(6))
+        }
+        banner.addView(
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_check_circle)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setColorFilter(accentText, PorterDuff.Mode.SRC_IN)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            },
+            LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) },
+        )
+        val countTv = TextView(context).apply {
+            text = context.resolveText(
+                CarouselMultiSelectLogic.bannerCountText(state.multiSelectKeys.size),
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+        }
+        multiSelectCountView = countTv
+        banner.addView(
+            countTv,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(8)
+            },
+        )
+        val allBtn = TextView(context).apply {
+            setText(R.string.label_all)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(UiDimens.ALPHA_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            includeFontPadding = false
+            background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 12)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            isClickable = true
+            visibility = if (CarouselMultiSelectLogic.showSelectAllPill(
+                    state.multiSelectKeys.size,
+                    entries.size,
+                )
+            ) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+            setOnClickListener {
+                val railKeys = entries.map { it.key }
+                val all = com.visorcraft.ghostgalleon.library.MultiSelectOps.selectAll(railKeys)
+                state.setMultiSelectKeys(all)
+                Toast.makeText(
+                    activity,
+                    activity.resources.getQuantityString(
+                        R.plurals.count_selected,
+                        all.size,
+                        all.size,
+                    ),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        multiSelectAllButton = allBtn
+        banner.addView(
+            allBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = dp(6) },
+        )
+        val actionsBtn = TextView(context).apply {
+            setText(R.string.bulk_actions)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ThemePack.onFillTextColor(accent))
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            includeFontPadding = false
+            background = TileBackgrounds.accentPill(context, accent, cornerRadiusDp = 12)
+            setPadding(dp(12), dp(5), dp(12), dp(5))
+            isClickable = true
+            setOnClickListener { showBulkActions() }
+        }
+        banner.addView(
+            actionsBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = dp(6) },
+        )
+        val cancelBtn = TextView(context).apply {
+            setText(R.string.action_cancel)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            includeFontPadding = false
+            background = TileBackgrounds.chipIdle(context, cornerRadiusDp = 12)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            isClickable = true
+            setOnClickListener { state.clearMultiSelect() }
+        }
+        banner.addView(cancelBtn)
+        return banner
+    }
+
     private fun rebuildFilterChrome(
         chrome: LinearLayout,
         context: Context,
         dp: (Int) -> Int,
     ) {
         browseChipHandles.clear()
+        multiSelectCountView = null
+        multiSelectAllButton = null
         chrome.removeAllViews()
         chrome.addView(
             buildBrowseBar(context, dp),
@@ -1014,6 +1155,20 @@ class GameDeck(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
+        buildMultiSelectBanner(context, dp)?.let { banner ->
+            chrome.addView(
+                banner,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    marginStart = dp(12)
+                    marginEnd = dp(12)
+                    topMargin = dp(4)
+                    bottomMargin = dp(4)
+                },
+            )
+        }
         buildActiveFilterStrip(context, dp)?.let { strip ->
             chrome.addView(
                 strip,
@@ -1369,6 +1524,7 @@ class GameDeck(
         scrollSelectionToCenter(rv)
         paintLetterJumpSelection()
         syncRailIndicator(rv.context)
+        syncMultiSelectBanner(rv.context)
         dockBar?.updateFocus(state.dockSlot, dockMove.index)
         hintView?.text = if (dockMove.active) {
             HintBar.moveText(activity)
@@ -3877,12 +4033,36 @@ class GameDeck(
                 multiSelectEnabled = state.multiSelectEnabled,
                 multiSelected = multiSelected,
             )
-            if (overlay.showMultiCheck) {
-                cardFrame.foreground = multiSelectForeground()
-                holder.multiBadge?.visibility = View.VISIBLE
-            } else {
-                cardFrame.foreground = null
-                holder.multiBadge?.visibility = View.GONE
+            val checkStyle = CarouselMultiSelectLogic.cardCheckStyle(
+                multiSelectEnabled = state.multiSelectEnabled,
+                multiSelected = multiSelected,
+            )
+            when (checkStyle) {
+                CarouselMultiSelectLogic.CardCheckStyle.CHECKED -> {
+                    cardFrame.foreground = multiSelectForeground()
+                    holder.multiBadge?.apply {
+                        setImageResource(R.drawable.ic_check_circle)
+                        setColorFilter(
+                            ThemePack.accentTextColor(settings.accentColor, Color.BLACK),
+                            PorterDuff.Mode.SRC_IN,
+                        )
+                        (background as? GradientDrawable)?.setColor(0xCC000000.toInt())
+                        visibility = View.VISIBLE
+                    }
+                }
+                CarouselMultiSelectLogic.CardCheckStyle.UNCHECKED -> {
+                    cardFrame.foreground = null
+                    holder.multiBadge?.apply {
+                        setImageResource(R.drawable.ic_radio_unchecked)
+                        setColorFilter(UiDimens.ALPHA_SECONDARY, PorterDuff.Mode.SRC_IN)
+                        (background as? GradientDrawable)?.setColor(0x99000000.toInt())
+                        visibility = View.VISIBLE
+                    }
+                }
+                CarouselMultiSelectLogic.CardCheckStyle.HIDDEN -> {
+                    cardFrame.foreground = null
+                    holder.multiBadge?.visibility = View.GONE
+                }
             }
             holder.favBadge?.visibility =
                 if (overlay.showFavoriteBadge) View.VISIBLE else View.GONE
