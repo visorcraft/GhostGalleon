@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.TextUtils
+import android.util.SparseArray
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.InputDevice
@@ -21,7 +22,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
@@ -31,9 +31,11 @@ import com.visorcraft.ghostgalleon.input.StickThresholds
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
 import com.visorcraft.ghostgalleon.settings.label
+import com.visorcraft.ghostgalleon.ui.deck.OverlayPrimitives
 import com.visorcraft.ghostgalleon.ui.deck.TileBackgrounds
 import com.visorcraft.ghostgalleon.ui.settings.SettingsUiLogic
 import java.text.NumberFormat
+import java.util.EnumMap
 import java.util.EnumSet
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -59,12 +61,27 @@ internal data class AxisPeakState(
     val maxPos: Float = 0f,
 )
 
-/** Standard handheld gamepad indicators illuminated live in Controller Lab. */
+/** Pure 2D radar dot coordinate inside [StickRadarView]. Host-tested. */
+internal data class RadarPoint(
+    val xPx: Float,
+    val yPx: Float,
+)
+
+/** Tested button coverage progress (`0/16 -> 16/16`). Host-tested. */
+internal data class PadCoverage(
+    val seen: Int,
+    val total: Int,
+    val complete: Boolean,
+)
+
+/** Standard 16 handheld gamepad indicators illuminated live in Controller Lab (8+8 symmetry). */
 internal enum class PadIndicator(val keyCode: Int, val glyph: String) {
     L2(KeyEvent.KEYCODE_BUTTON_L2, "L2"),
     L1(KeyEvent.KEYCODE_BUTTON_L1, "L1"),
+    L3(KeyEvent.KEYCODE_BUTTON_THUMBL, "L3"),
     SELECT(KeyEvent.KEYCODE_BUTTON_SELECT, "SL"),
     START(KeyEvent.KEYCODE_BUTTON_START, "ST"),
+    R3(KeyEvent.KEYCODE_BUTTON_THUMBR, "R3"),
     R1(KeyEvent.KEYCODE_BUTTON_R1, "R1"),
     R2(KeyEvent.KEYCODE_BUTTON_R2, "R2"),
     DPAD_LEFT(KeyEvent.KEYCODE_DPAD_LEFT, "\u25C0"),
@@ -82,8 +99,88 @@ internal enum class PadIndicator(val keyCode: Int, val glyph: String) {
  */
 internal object ControllerLabLogic {
 
+    const val CLEAR_BUTTON_MIN_HEIGHT_DP: Int = UiDimens.TOUCH_MIN_DP
+    const val TWO_COLUMN_BREAKPOINT_DP: Int = 720
+    const val TRIGGER_PRESS_THRESHOLD: Float = 0.5f
+    const val BIND_IDLE_ALPHA: Float = 0.55f
+
     fun clampAxis(raw: Float): Float =
         if (raw.isNaN() || raw.isInfinite()) 0f else raw.coerceIn(-1f, 1f)
+
+    fun clampTrigger(raw: Float): Float =
+        if (raw.isNaN() || raw.isInfinite()) 0f else raw.coerceIn(0f, 1f)
+
+    /** Resolve unipolar `[0..1]` trigger pull from primary axis (`LTRIGGER`/`RTRIGGER`) or fallback (`BRAKE`/`GAS`). */
+    fun triggerValue(primary: Float, fallback: Float): Float =
+        maxOf(clampTrigger(primary), clampTrigger(fallback))
+
+    /** Quantize unipolar trigger `[0..1]` to integer hundredths (`0..100`). Pure; host-tested. */
+    fun quantizeTriggerHundredths(raw: Float): Int =
+        (clampTrigger(raw) * 100f).roundToInt().coerceIn(0, 100)
+
+    /** True when analog trigger pull meets or exceeds digital press [threshold]. Pure; host-tested. */
+    fun isTriggerPressed(value: Float, threshold: Float = TRIGGER_PRESS_THRESHOLD): Boolean =
+        clampTrigger(value) >= threshold.coerceIn(0.01f, 1f)
+
+    /** Format quantized unipolar trigger (`0..100`) as `"0.00"`..`"1.00"` with zero regex/printf allocs. */
+    fun formatQuantizedTrigger(hundredths: Int): String {
+        val clamped = hundredths.coerceIn(0, 100)
+        val whole = clamped / 100
+        val frac = clamped % 100
+        return buildString(4) {
+            append(whole)
+            append('.')
+            append(frac / 10)
+            append(frac % 10)
+        }
+    }
+
+    /** Map clamped `[-1..1]` stick `(rawX, rawY)` to pixel point relative to radar center `(cx, cy)` & radius `r`. */
+    fun stickRadarPoint(
+        rawX: Float,
+        rawY: Float,
+        cx: Float,
+        cy: Float,
+        r: Float,
+    ): RadarPoint {
+        val safeR = if (r.isNaN() || r.isInfinite()) 0f else r.coerceAtLeast(0f)
+        val x = clampAxis(rawX)
+        val y = clampAxis(rawY)
+        return RadarPoint(
+            xPx = cx + x * safeR,
+            yPx = cy + y * safeR,
+        )
+    }
+
+    /** True when either stick axis passes the [engage] deadzone threshold. Pure; host-tested. */
+    fun isStickEngaged(x: Float, y: Float, engage: Float): Boolean {
+        val thr = if (engage.isNaN() || engage.isInfinite()) 0.7f else engage.coerceIn(0f, 1f)
+        return abs(clampAxis(x)) >= thr || abs(clampAxis(y)) >= thr
+    }
+
+    /** Responsive 2D stick radar diameter: `88dp` compact (~540dp) / `108dp` tall displays. */
+    fun radarSizeDp(screenHeightDp: Int): Int = if (isCompactHeight(screenHeightDp)) 88 else 108
+
+    /** True when a single bipolar stick axis has deflected past the live deadzone engage threshold. */
+    fun axisEngaged(raw: Float, deadzonePercent: Int): Boolean =
+        abs(clampAxis(raw)) >= StickThresholds.engage(deadzonePercent)
+
+    /** Bind CTA opacity: muted `0.55f` until a key is captured, `1.0f` once ready. */
+    fun bindButtonAlpha(hasLastKey: Boolean): Float = if (hasLastKey) 1f else BIND_IDLE_ALPHA
+
+    /** Tested-button coverage summary (`0/16 -> 16/16`) flipping [PadCoverage.complete] when all pass. */
+    fun padCoverage(seenCount: Int, totalCount: Int = PadIndicator.entries.size): PadCoverage {
+        val safeTotal = totalCount.coerceAtLeast(0)
+        val safeSeen = seenCount.coerceIn(0, safeTotal)
+        return PadCoverage(
+            seen = safeSeen,
+            total = safeTotal,
+            complete = safeTotal > 0 && safeSeen == safeTotal,
+        )
+    }
+
+    /** Side-by-side 2-column lab dashboard on wide handhelds (`>= 720dp`, e.g. Odin 2 Portal). */
+    fun useTwoColumnDashboard(screenWidthDp: Int): Boolean = screenWidthDp >= TWO_COLUMN_BREAKPOINT_DP
 
     fun valueToBarFrac(raw: Float): Float = 0.5f + clampAxis(raw) * 0.5f
 
@@ -198,21 +295,35 @@ class ControllerLabActivity : AppCompatActivity() {
     private lateinit var keyLine: TextView
     private lateinit var actionLine: TextView
     private lateinit var mappedBadge: TextView
+    private lateinit var deviceNameChip: TextView
+    private lateinit var padCoverageBadge: TextView
+    private lateinit var padCoverageBg: GradientDrawable
+    private lateinit var bindBtn: TextView
     private lateinit var axisLine: TextView
+    private lateinit var stickRadar: StickRadarView
     private lateinit var stickXBar: AxisBarView
     private lateinit var stickYBar: AxisBarView
+    private lateinit var stickZBar: AxisBarView
+    private lateinit var stickRzBar: AxisBarView
     private lateinit var hatXBar: AxisBarView
     private lateinit var hatYBar: AxisBarView
+    private lateinit var l2TriggerBar: TriggerBarView
+    private lateinit var r2TriggerBar: TriggerBarView
     private lateinit var stickXVal: TextView
     private lateinit var stickYVal: TextView
+    private lateinit var stickZVal: TextView
+    private lateinit var stickRzVal: TextView
     private lateinit var hatXVal: TextView
     private lateinit var hatYVal: TextView
+    private lateinit var l2TriggerVal: TextView
+    private lateinit var r2TriggerVal: TextView
     private lateinit var logCountBadge: TextView
     private lateinit var log: TextView
     private val recent = ArrayDeque<String>()
     private var totalLogEvents: Int = 0
     private var lastKeyCode: Int? = null
     private var accentColor: Int = ThemePack.GHOST.accentColor
+    private var focusStrokeColor: Int = ThemePack.GHOST.accentColor
     private var accentOnCard: Int = UiDimens.ALPHA_PRIMARY
     private var accentOnSunken: Int = UiDimens.ALPHA_PRIMARY
     private var onAccent: Int = UiDimens.ALPHA_PRIMARY
@@ -220,20 +331,26 @@ class ControllerLabActivity : AppCompatActivity() {
     private var sunkenSurface: Int = 0xFF101014.toInt()
     private var hairline: Int = ThemePack.HAIRLINE_LIGHT
     private var accentBorder: Int = ThemePack.HAIRLINE_LIGHT
+    private var stickDeadzonePercent: Int = StickThresholds.DEFAULT_PERCENT
     private var stickReleaseThreshold: Float = 0.5f
     private var motionEnabled: Boolean = true
-    private val padViews = mutableMapOf<PadIndicator, TextView>()
+    private val padViews = EnumMap<PadIndicator, TextView>(PadIndicator::class.java)
     private val pressedButtons: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
     private val pressedHatDirs: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val pressedAnalogTriggers: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
     private val seenIndicators: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
     private val scratchNextHat: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
     private val scratchChangedHat: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val scratchNextTriggers: MutableSet<PadIndicator> = EnumSet.noneOf(PadIndicator::class.java)
+    private val deviceNameCache = SparseArray<String>()
+    private var lastShownDeviceId: Int = Int.MIN_VALUE
+    private var lastRenderedSeenCount: Int = -1
     private var lastAxisLineXQ: Int = Int.MIN_VALUE
     private var lastAxisLineYQ: Int = Int.MIN_VALUE
     private var lastAxisLineHatXQ: Int = Int.MIN_VALUE
     private var lastAxisLineHatYQ: Int = Int.MIN_VALUE
-    private val lastAxisQuantized = IntArray(4)
-    private val lastAxisHighlighted = BooleanArray(4)
+    private val lastAxisQuantized = IntArray(8)
+    private val lastAxisHighlighted = BooleanArray(8)
 
     private val integerFormat by lazy(LazyThreadSafetyMode.NONE) {
         NumberFormat.getIntegerInstance(resources.configuration.locales[0])
@@ -258,14 +375,24 @@ class ControllerLabActivity : AppCompatActivity() {
         accentOnCard = ThemePack.accentTextColor(accentColor, cardSurface)
         accentOnSunken = ThemePack.accentTextColor(accentColor, sunkenSurface)
         onAccent = SettingsUiLogic.accessibleOnAccent(accentColor)
+        val focusSurface = if (ThemePack.relativeLuminance(tokens.chipIdle) >
+            ThemePack.relativeLuminance(cardSurface)
+        ) {
+            tokens.chipIdle
+        } else {
+            cardSurface
+        }
+        focusStrokeColor = OverlayPrimitives.accessibleFocusStroke(accentColor, focusSurface)
         val activeFocusRing = SettingsUiLogic.activePillFocusRing(accentColor)
-        val deadzonePercent = app.settings.stickDeadzone
-        stickReleaseThreshold = StickThresholds.release(deadzonePercent)
+        stickDeadzonePercent = app.settings.stickDeadzone
+        stickReleaseThreshold = StickThresholds.release(stickDeadzonePercent)
         motionEnabled = UiDimens.areAnimationsEnabled(this)
 
         val dm = resources.displayMetrics
+        val screenWidthDp = (dm.widthPixels / dm.density).toInt()
         val screenHeightDp = (dm.heightPixels / dm.density).toInt()
         val compact = ControllerLabLogic.isCompactHeight(screenHeightDp)
+        val twoColumn = ControllerLabLogic.useTwoColumnDashboard(screenWidthDp)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -286,7 +413,7 @@ class ControllerLabActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             val pad = dp(10)
             setPadding(pad, pad, pad, pad)
-            background = TileBackgrounds.chromeButton(this@ControllerLabActivity, accentColor)
+            background = TileBackgrounds.chromeButton(this@ControllerLabActivity, focusStrokeColor)
             val backLabel = getString(R.string.action_back)
             contentDescription = backLabel
             tooltipText = backLabel
@@ -389,7 +516,50 @@ class ControllerLabActivity : AppCompatActivity() {
         }
         keyCard.addView(actionLine)
 
-        // Live hardware button indicator matrix (shoulders/system + D-pad/face).
+        // Cached active controller name chip + 0/16 pad coverage pill above the 8+8 matrix.
+        val matrixStatusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        deviceNameChip = TextView(this).apply {
+            setText(R.string.glyph_dash)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextColor(UiDimens.ALPHA_SECONDARY)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            background = TileBackgrounds.sunkenField(this@ControllerLabActivity, cornerRadiusDp = 9)
+            setPadding(dp(9), dp(4), dp(9), dp(4))
+        }
+        matrixStatusRow.addView(
+            deviceNameChip,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(UiDimens.SPACE_SM)
+            },
+        )
+        padCoverageBg = GradientDrawable().apply {
+            cornerRadius = dpF(9)
+        }
+        padCoverageBadge = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTypeface(typeface, Typeface.BOLD)
+            useTabularNumerals()
+            gravity = Gravity.CENTER
+            minWidth = dp(48)
+            background = padCoverageBg
+            setPadding(dp(9), dp(4), dp(9), dp(4))
+            OverlayPrimitives.markPoliteLiveRegion(this)
+        }
+        matrixStatusRow.addView(padCoverageBadge)
+        keyCard.addView(
+            matrixStatusRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) },
+        )
+
+        // Live 16-button hardware indicator matrix (8+8 symmetry: shoulders/thumbs/system + D-pad/face).
         padViews.clear()
         val matrixContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -402,7 +572,7 @@ class ControllerLabActivity : AppCompatActivity() {
             items.forEachIndexed { idx, indicator ->
                 val badge = TextView(this@ControllerLabActivity).apply {
                     text = indicator.glyph
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTypeface(typeface, Typeface.BOLD)
                     useTabularNumerals()
                     gravity = Gravity.CENTER
@@ -413,7 +583,7 @@ class ControllerLabActivity : AppCompatActivity() {
                 addView(
                     badge,
                     LinearLayout.LayoutParams(0, dp(30), 1f).apply {
-                        if (idx > 0) marginStart = dp(5)
+                        if (idx > 0) marginStart = dp(4)
                     },
                 )
             }
@@ -421,8 +591,10 @@ class ControllerLabActivity : AppCompatActivity() {
         val topPadRow = listOf(
             PadIndicator.L2,
             PadIndicator.L1,
+            PadIndicator.L3,
             PadIndicator.SELECT,
             PadIndicator.START,
+            PadIndicator.R3,
             PadIndicator.R1,
             PadIndicator.R2,
         )
@@ -451,6 +623,7 @@ class ControllerLabActivity : AppCompatActivity() {
             ),
         )
         refreshAllPadIndicators()
+        refreshPadCoverageBadge()
         keyCard.addView(
             matrixContainer,
             LinearLayout.LayoutParams(
@@ -459,7 +632,7 @@ class ControllerLabActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) },
         )
 
-        val bindBtn = TextView(this).apply {
+        bindBtn = TextView(this).apply {
             id = View.generateViewId()
             setText(R.string.controller_bind_last)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -467,6 +640,7 @@ class ControllerLabActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             isFocusable = true
+            alpha = ControllerLabLogic.bindButtonAlpha(hasLastKey = false)
             val bindLabel = getString(R.string.controller_bind_last)
             contentDescription = bindLabel
             tooltipText = bindLabel
@@ -494,27 +668,20 @@ class ControllerLabActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        content.addView(
-            keyCard,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
-        )
 
-        // Card 2: Analog & HAT visual center-zero bars with deadzone & peak markers.
+        // Card 2: 2D Analog Stick XY Radar + Left/Right Stick, HAT & L2/R2 Trigger gauges.
         val axisCard = labCard()
         axisLine = TextView(this).apply {
             text = getString(R.string.controller_axes_empty)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             setTextColor(UiDimens.ALPHA_SECONDARY)
             typeface = Typeface.MONOSPACE
             useTabularNumerals()
-            setPadding(0, 0, 0, dp(10))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, 0, 0, dp(8))
         }
         axisCard.addView(axisLine)
-
-        val deadzoneTicks = ControllerLabLogic.deadzoneMarkers(deadzonePercent)
 
         fun buildAxisCell(
             axisConst: Int,
@@ -531,7 +698,7 @@ class ControllerLabActivity : AppCompatActivity() {
             top.addView(
                 TextView(this).apply {
                     text = axisTag
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTextColor(UiDimens.ALPHA_MUTED)
                     setTypeface(typeface, Typeface.BOLD)
                 },
@@ -539,7 +706,7 @@ class ControllerLabActivity : AppCompatActivity() {
             )
             val valTv = TextView(this).apply {
                 text = ControllerLabLogic.formatQuantizedAxis(0)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(UiDimens.ALPHA_SECONDARY)
                 typeface = Typeface.MONOSPACE
                 useTabularNumerals()
@@ -550,31 +717,86 @@ class ControllerLabActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { bottomMargin = dp(4) },
+                ).apply { bottomMargin = dp(3) },
             )
             val bar = AxisBarView(
                 context = this,
                 trackColor = sunkenSurface,
                 borderColor = hairline,
                 fillColor = accentColor,
-                deadzoneMarkers = if (showDeadzone) deadzoneTicks else null,
+                hasDeadzone = showDeadzone,
+                deadzonePercent = stickDeadzonePercent,
                 engageTickColor = accentOnSunken,
             )
             col.addView(
                 bar,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)),
+            )
+            return Triple(col, bar, valTv)
+        }
+
+        fun buildTriggerCell(indicator: PadIndicator): Triple<LinearLayout, TriggerBarView, TextView> {
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            val top = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            top.addView(
+                TextView(this).apply {
+                    text = indicator.glyph
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(UiDimens.ALPHA_MUTED)
+                    setTypeface(typeface, Typeface.BOLD)
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            val valTv = TextView(this).apply {
+                text = ControllerLabLogic.formatQuantizedTrigger(0)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextColor(UiDimens.ALPHA_SECONDARY)
+                typeface = Typeface.MONOSPACE
+                useTabularNumerals()
+            }
+            top.addView(valTv)
+            col.addView(
+                top,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(3) },
+            )
+            val bar = TriggerBarView(
+                context = this,
+                trackColor = sunkenSurface,
+                borderColor = hairline,
+                fillColor = accentColor,
+                thresholdTickColor = accentOnSunken,
+            )
+            col.addView(
+                bar,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)),
             )
             return Triple(col, bar, valTv)
         }
 
         val (sxCell, sxBar, sxVal) = buildAxisCell(MotionEvent.AXIS_X, showDeadzone = true)
         val (syCell, syBar, syVal) = buildAxisCell(MotionEvent.AXIS_Y, showDeadzone = true)
+        val (szCell, szBar, szVal) = buildAxisCell(MotionEvent.AXIS_Z, showDeadzone = true)
+        val (srzCell, srzBar, srzVal) = buildAxisCell(MotionEvent.AXIS_RZ, showDeadzone = true)
         val (hxCell, hxBar, hxVal) = buildAxisCell(MotionEvent.AXIS_HAT_X, showDeadzone = false)
         val (hyCell, hyBar, hyVal) = buildAxisCell(MotionEvent.AXIS_HAT_Y, showDeadzone = false)
+        val (l2Cell, l2Bar, l2Val) = buildTriggerCell(PadIndicator.L2)
+        val (r2Cell, r2Bar, r2Val) = buildTriggerCell(PadIndicator.R2)
         stickXBar = sxBar; stickXVal = sxVal
         stickYBar = syBar; stickYVal = syVal
+        stickZBar = szBar; stickZVal = szVal
+        stickRzBar = srzBar; stickRzVal = srzVal
         hatXBar = hxBar; hatXVal = hxVal
         hatYBar = hyBar; hatYVal = hyVal
+        l2TriggerBar = l2Bar; l2TriggerVal = l2Val
+        r2TriggerBar = r2Bar; r2TriggerVal = r2Val
 
         fun axisRow(left: View, right: View) = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -582,34 +804,74 @@ class ControllerLabActivity : AppCompatActivity() {
             addView(
                 right,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginStart = dp(UiDimens.SPACE_MD)
+                    marginStart = dp(10)
                 },
             )
         }
 
+        val radarSizePx = dp(ControllerLabLogic.radarSizeDp(screenHeightDp))
+        stickRadar = StickRadarView(
+            context = this,
+            trackColor = sunkenSurface,
+            borderColor = hairline,
+            accentColor = accentColor,
+            haloColor = activeFocusRing,
+            deadzonePercent = stickDeadzonePercent,
+        )
+        val sticksStack = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                axisRow(sxCell, syCell),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(8) },
+            )
+            addView(
+                axisRow(szCell, srzCell),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        val radarAndSticksRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                stickRadar,
+                LinearLayout.LayoutParams(radarSizePx, radarSizePx).apply {
+                    marginEnd = dp(12)
+                },
+            )
+            addView(
+                sticksStack,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+        }
         axisCard.addView(
-            axisRow(sxCell, syCell),
+            radarAndSticksRow,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(10) },
+            ).apply { bottomMargin = dp(8) },
         )
         axisCard.addView(
             axisRow(hxCell, hyCell),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
+            ).apply { bottomMargin = dp(8) },
         )
-        content.addView(
-            axisCard,
+        axisCard.addView(
+            axisRow(l2Cell, r2Cell),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
+            ),
         )
 
-        // Card 3: Monospace scrollable event log inside sunken field with count & Clear pill.
+        // Card 3: Monospace scrollable event log inside sunken field with count & 44dp Clear pill.
         val logCard = labCard()
         val logHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -639,22 +901,29 @@ class ControllerLabActivity : AppCompatActivity() {
             val clearLabel = getString(R.string.action_clear)
             contentDescription = clearLabel
             tooltipText = clearLabel
-            minHeight = dp(36)
+            minHeight = dp(ControllerLabLogic.CLEAR_BUTTON_MIN_HEIGHT_DP)
             background = TileBackgrounds.pressableRow(
                 context = this@ControllerLabActivity,
-                accent = accentColor,
+                accent = focusStrokeColor,
                 idleBackground = TileBackgrounds.chipIdle(this@ControllerLabActivity, cornerRadiusDp = 12),
                 cornerRadiusDp = 12,
                 strokeDp = 2,
             )
-            setPadding(dp(14), dp(6), dp(14), dp(6))
+            setPadding(dp(14), dp(8), dp(14), dp(8))
             setOnClickListener {
                 app.playSfx(SoundCue.DESTRUCTIVE)
                 clearLabState()
             }
         }
-        bindBtn.nextFocusDownId = clearLogBtn.id
-        clearLogBtn.nextFocusUpId = bindBtn.id
+        if (twoColumn) {
+            backBtn.nextFocusRightId = clearLogBtn.id
+            bindBtn.nextFocusRightId = clearLogBtn.id
+            clearLogBtn.nextFocusLeftId = bindBtn.id
+            clearLogBtn.nextFocusUpId = backBtn.id
+        } else {
+            bindBtn.nextFocusDownId = clearLogBtn.id
+            clearLogBtn.nextFocusUpId = bindBtn.id
+        }
         logHeader.addView(clearLogBtn)
         logCard.addView(
             logHeader,
@@ -692,13 +961,79 @@ class ControllerLabActivity : AppCompatActivity() {
                 dp(ControllerLabLogic.logBoxHeightDp(screenHeightDp)),
             ),
         )
-        content.addView(
-            logCard,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
+
+        if (twoColumn) {
+            val dashboardRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                isBaselineAligned = false
+            }
+            val leftCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    keyCard,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            val rightCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    axisCard,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
+                )
+                addView(
+                    logCard,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            dashboardRow.addView(
+                leftCol,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(UiDimens.SPACE_MD)
+                },
+            )
+            dashboardRow.addView(
+                rightCol,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.15f),
+            )
+            content.addView(
+                dashboardRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        } else {
+            content.addView(
+                keyCard,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
+            )
+            content.addView(
+                axisCard,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(UiDimens.SPACE_MD) },
+            )
+            content.addView(
+                logCard,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
 
         val outerScroll = ScrollView(this).apply {
             isFillViewport = true
@@ -729,7 +1064,15 @@ class ControllerLabActivity : AppCompatActivity() {
         super.onResume()
         hideStatusBar(window)
         motionEnabled = UiDimens.areAnimationsEnabled(this)
-        stickReleaseThreshold = StickThresholds.release(app.settings.stickDeadzone)
+        val liveDeadzone = app.settings.stickDeadzone
+        stickDeadzonePercent = liveDeadzone
+        stickReleaseThreshold = StickThresholds.release(liveDeadzone)
+        stickRadar.updateDeadzone(liveDeadzone)
+        stickXBar.updateDeadzoneMarkers(liveDeadzone)
+        stickYBar.updateDeadzoneMarkers(liveDeadzone)
+        stickZBar.updateDeadzoneMarkers(liveDeadzone)
+        stickRzBar.updateDeadzoneMarkers(liveDeadzone)
+        lastKeyCode?.let(::refreshMappedBadge)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -747,18 +1090,77 @@ class ControllerLabActivity : AppCompatActivity() {
         return true
     }
 
+    private fun noteInputDevice(deviceId: Int) {
+        if (deviceId <= 0 || deviceId == lastShownDeviceId) return
+        lastShownDeviceId = deviceId
+        val cached = deviceNameCache.get(deviceId)
+        val resolved = if (cached != null) {
+            cached
+        } else {
+            val fetched = runCatching {
+                InputDevice.getDevice(deviceId)?.name?.trim().orEmpty()
+            }.getOrDefault("")
+            deviceNameCache.put(deviceId, fetched)
+            fetched
+        }
+        if (resolved.isNotEmpty()) {
+            deviceNameChip.text = resolved
+            deviceNameChip.setTextColor(UiDimens.ALPHA_PRIMARY)
+        }
+    }
+
+    private fun refreshPadCoverageBadge() {
+        val seenCount = seenIndicators.size
+        if (seenCount == lastRenderedSeenCount) return
+        lastRenderedSeenCount = seenCount
+        val cov = ControllerLabLogic.padCoverage(seenCount, PadIndicator.entries.size)
+        padCoverageBadge.text = getString(R.string.format_progress, cov.seen, cov.total)
+        when {
+            cov.complete -> {
+                padCoverageBg.setColor(accentColor)
+                padCoverageBg.setStroke(0, Color.TRANSPARENT)
+                padCoverageBadge.setTextColor(onAccent)
+            }
+            cov.seen > 0 -> {
+                padCoverageBg.setColor(sunkenSurface)
+                padCoverageBg.setStroke(strokePx(1), accentBorder)
+                padCoverageBadge.setTextColor(accentOnSunken)
+            }
+            else -> {
+                padCoverageBg.setColor(sunkenSurface)
+                padCoverageBg.setStroke(strokePx(1), hairline)
+                padCoverageBadge.setTextColor(UiDimens.ALPHA_MUTED)
+            }
+        }
+    }
+
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
             event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
         ) {
+            noteInputDevice(event.deviceId)
             val x = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_X))
             val y = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_Y))
+            val z = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_Z))
+            val rz = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_RZ))
             val hx = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_X))
             val hy = ControllerLabLogic.clampAxis(event.getAxisValue(MotionEvent.AXIS_HAT_Y))
+            val l2 = ControllerLabLogic.triggerValue(
+                event.getAxisValue(MotionEvent.AXIS_LTRIGGER),
+                event.getAxisValue(MotionEvent.AXIS_BRAKE),
+            )
+            val r2 = ControllerLabLogic.triggerValue(
+                event.getAxisValue(MotionEvent.AXIS_RTRIGGER),
+                event.getAxisValue(MotionEvent.AXIS_GAS),
+            )
             val qx = ControllerLabLogic.quantizeAxisHundredths(x)
             val qy = ControllerLabLogic.quantizeAxisHundredths(y)
+            val qz = ControllerLabLogic.quantizeAxisHundredths(z)
+            val qrz = ControllerLabLogic.quantizeAxisHundredths(rz)
             val qhx = ControllerLabLogic.quantizeAxisHundredths(hx)
             val qhy = ControllerLabLogic.quantizeAxisHundredths(hy)
+            val ql2 = ControllerLabLogic.quantizeTriggerHundredths(l2)
+            val qr2 = ControllerLabLogic.quantizeTriggerHundredths(r2)
             if (qx != lastAxisLineXQ || qy != lastAxisLineYQ ||
                 qhx != lastAxisLineHatXQ || qhy != lastAxisLineHatYQ
             ) {
@@ -774,10 +1176,31 @@ class ControllerLabActivity : AppCompatActivity() {
                     qhy * 0.01f,
                 )
             }
+            stickRadar.setStick(x, y)
             updateAxisReadout(0, stickXBar, stickXVal, x, qx, stickReleaseThreshold)
             updateAxisReadout(1, stickYBar, stickYVal, y, qy, stickReleaseThreshold)
-            updateAxisReadout(2, hatXBar, hatXVal, hx, qhx, 0.5f)
-            updateAxisReadout(3, hatYBar, hatYVal, hy, qhy, 0.5f)
+            updateAxisReadout(2, stickZBar, stickZVal, z, qz, stickReleaseThreshold)
+            updateAxisReadout(3, stickRzBar, stickRzVal, rz, qrz, stickReleaseThreshold)
+            updateAxisReadout(4, hatXBar, hatXVal, hx, qhx, 0.5f)
+            updateAxisReadout(5, hatYBar, hatYVal, hy, qhy, 0.5f)
+            updateTriggerReadout(6, l2TriggerBar, l2TriggerVal, l2, ql2)
+            updateTriggerReadout(7, r2TriggerBar, r2TriggerVal, r2, qr2)
+
+            // Sync analog L2/R2 triggers onto the 16-button pad matrix when >= 0.5f.
+            scratchNextTriggers.clear()
+            if (ControllerLabLogic.isTriggerPressed(l2)) scratchNextTriggers.add(PadIndicator.L2)
+            if (ControllerLabLogic.isTriggerPressed(r2)) scratchNextTriggers.add(PadIndicator.R2)
+            if (scratchNextTriggers != pressedAnalogTriggers) {
+                val l2Changed = (PadIndicator.L2 in scratchNextTriggers) != (PadIndicator.L2 in pressedAnalogTriggers)
+                val r2Changed = (PadIndicator.R2 in scratchNextTriggers) != (PadIndicator.R2 in pressedAnalogTriggers)
+                pressedAnalogTriggers.clear()
+                pressedAnalogTriggers.addAll(scratchNextTriggers)
+                seenIndicators.addAll(scratchNextTriggers)
+                if (l2Changed) stylePadIndicator(PadIndicator.L2)
+                if (r2Changed) stylePadIndicator(PadIndicator.R2)
+                refreshPadCoverageBadge()
+            }
+
             ControllerLabLogic.fillPadIndicatorsForHat(hx, hy, scratchNextHat)
             if (scratchNextHat != pressedHatDirs) {
                 var firstNew: PadIndicator? = null
@@ -801,6 +1224,7 @@ class ControllerLabActivity : AppCompatActivity() {
                     val ind = all[i]
                     if (ind in scratchChangedHat) stylePadIndicator(ind)
                 }
+                refreshPadCoverageBadge()
                 if (firstNew != null && AudioHapticCohesion.shouldEmitGamepadAudio(
                         soundEnabled = app.settings.soundEnabled,
                         actionHandled = true,
@@ -841,17 +1265,44 @@ class ControllerLabActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateTriggerReadout(
+        slot: Int,
+        bar: TriggerBarView,
+        label: TextView,
+        value: Float,
+        quantized: Int,
+    ) {
+        bar.setTriggerValue(value)
+        if (lastAxisQuantized[slot] != quantized) {
+            lastAxisQuantized[slot] = quantized
+            label.text = ControllerLabLogic.formatQuantizedTrigger(quantized)
+        }
+        val highlighted = ControllerLabLogic.isTriggerPressed(value)
+        if (lastAxisHighlighted[slot] != highlighted) {
+            lastAxisHighlighted[slot] = highlighted
+            label.setTextColor(
+                if (highlighted) accentOnCard else UiDimens.ALPHA_SECONDARY,
+            )
+        }
+    }
+
     private fun clearLabState() {
         recent.clear()
         totalLogEvents = 0
         logCountBadge.text = integerFormat.format(0)
         log.text = getString(R.string.glyph_dash)
+        stickRadar.reset()
         stickXBar.resetPeaks()
         stickYBar.resetPeaks()
+        stickZBar.resetPeaks()
+        stickRzBar.resetPeaks()
         hatXBar.resetPeaks()
         hatYBar.resetPeaks()
+        l2TriggerBar.resetPeaks()
+        r2TriggerBar.resetPeaks()
         seenIndicators.clear()
         refreshAllPadIndicators()
+        refreshPadCoverageBadge()
     }
 
     private fun refreshAllPadIndicators() {
@@ -860,7 +1311,9 @@ class ControllerLabActivity : AppCompatActivity() {
 
     private fun stylePadIndicator(indicator: PadIndicator) {
         val tv = padViews[indicator] ?: return
-        val active = indicator in pressedButtons || indicator in pressedHatDirs
+        val active = indicator in pressedButtons ||
+            indicator in pressedHatDirs ||
+            indicator in pressedAnalogTriggers
         val seen = indicator in seenIndicators
         val bg = (tv.background as? GradientDrawable)?.apply { mutate() }
             ?: GradientDrawable().also {
@@ -897,7 +1350,7 @@ class ControllerLabActivity : AppCompatActivity() {
         val code = lastKeyCode
         if (code == null) {
             app.playSfx(SoundCue.ERROR_DENY)
-            Toast.makeText(this, R.string.controller_no_key, Toast.LENGTH_SHORT).show()
+            toast(R.string.controller_no_key)
             return
         }
         app.playSfx(SoundCue.MODAL_OPEN)
@@ -921,16 +1374,14 @@ class ControllerLabActivity : AppCompatActivity() {
             next[code] = actions[which]
             app.updateSettings(app.settings.copy(keyMap = next), notify = false)
             refreshMappedBadge(code)
-            Toast.makeText(
-                this,
-                getString(R.string.controller_bound, resolveText(actions[which].label()), code),
-                Toast.LENGTH_SHORT,
-            ).show()
+            toast(R.string.controller_bound, resolveText(actions[which].label()), code)
         }
     }
 
     private fun paintKey(keyCode: Int, action: Int, event: KeyEvent) {
+        noteInputDevice(event.deviceId)
         lastKeyCode = keyCode
+        bindBtn.alpha = ControllerLabLogic.bindButtonAlpha(hasLastKey = true)
         if (AudioHapticCohesion.shouldEmitGamepadAudio(
                 soundEnabled = app.settings.soundEnabled,
                 actionHandled = true,
@@ -951,6 +1402,7 @@ class ControllerLabActivity : AppCompatActivity() {
                 pressedButtons.remove(indicator)
             }
             stylePadIndicator(indicator)
+            refreshPadCoverageBadge()
         }
         val actionName = when (action) {
             KeyEvent.ACTION_DOWN -> getString(R.string.controller_action_down)
@@ -998,17 +1450,22 @@ class ControllerLabActivity : AppCompatActivity() {
 
     /**
      * Lightweight center-zero bipolar gauge driven by [ControllerLabLogic.axisBarSpan],
-     * with symmetric stick deadzone release/engage markers and live peak-deflection ticks.
-     * Tracks primitive floats so 120–250 Hz updates allocate zero objects.
+     * with live-updatable stick deadzone release/engage markers, muted deadzone vs
+     * full-bright engaged fill, and live peak-deflection ticks.
+     * Preallocates all paints/rects so 120–250 Hz updates allocate zero objects.
      */
     private class AxisBarView(
         context: Context,
         trackColor: Int,
         borderColor: Int,
         fillColor: Int,
-        private val deadzoneMarkers: DeadzoneMarkers?,
+        private val hasDeadzone: Boolean,
+        deadzonePercent: Int,
         engageTickColor: Int,
     ) : View(context) {
+        private var deadzonePct: Int = StickThresholds.clamp(deadzonePercent)
+        private var deadzoneMarkers: DeadzoneMarkers? =
+            if (hasDeadzone) ControllerLabLogic.deadzoneMarkers(deadzonePct) else null
         private var clampedValue: Float = 0f
         private var startFrac: Float = 0.5f
         private var widthFrac: Float = 0f
@@ -1039,7 +1496,21 @@ class ControllerLabActivity : AppCompatActivity() {
             strokeWidth = context.dpF(2)
             strokeCap = Paint.Cap.ROUND
         }
-        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fillColor }
+        private val accessibleFill = OverlayPrimitives.accessibleFocusStroke(fillColor, trackColor)
+        private val engagedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accessibleFill }
+        private val deadzoneFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(accessibleFill, 0x73)
+        }
+
+        fun updateDeadzoneMarkers(nextDeadzonePercent: Int) {
+            if (!hasDeadzone) return
+            val clamped = StickThresholds.clamp(nextDeadzonePercent)
+            if (clamped != deadzonePct) {
+                deadzonePct = clamped
+                deadzoneMarkers = ControllerLabLogic.deadzoneMarkers(clamped)
+                invalidate()
+            }
+        }
 
         fun setAxisValue(raw: Float) {
             val v = ControllerLabLogic.clampAxis(raw)
@@ -1078,7 +1549,12 @@ class ControllerLabActivity : AppCompatActivity() {
                 val left = w * startFrac
                 val right = w * (startFrac + widthFrac)
                 rect.set(left, 0f, right, h)
-                canvas.drawRoundRect(rect, radius, radius, fillPaint)
+                val activePaint = if (!hasDeadzone || ControllerLabLogic.axisEngaged(clampedValue, deadzonePct)) {
+                    engagedFillPaint
+                } else {
+                    deadzoneFillPaint
+                }
+                canvas.drawRoundRect(rect, radius, radius, activePaint)
             }
             deadzoneMarkers?.let { dz ->
                 val insetY = h * 0.22f
@@ -1102,6 +1578,246 @@ class ControllerLabActivity : AppCompatActivity() {
             val inset = borderPaint.strokeWidth * 0.5f
             rect.set(inset, inset, w - inset, h - inset)
             canvas.drawRoundRect(rect, radius, radius, borderPaint)
+        }
+    }
+
+    /**
+     * Zero-allocation unipolar `[0..1]` trigger pull bar (`L2`/`R2`) with press
+     * threshold marker (`0.50`) and peak-pull tick.
+     */
+    private class TriggerBarView(
+        context: Context,
+        trackColor: Int,
+        borderColor: Int,
+        fillColor: Int,
+        thresholdTickColor: Int,
+    ) : View(context) {
+        private var clampedValue: Float = 0f
+        private var maxPull: Float = 0f
+        private val radius = context.dpF(7)
+        private val rect = RectF()
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = trackColor }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = borderColor
+            style = Paint.Style.STROKE
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val thresholdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(thresholdTickColor, 0x99)
+            strokeWidth = context.dpF(1.25f)
+        }
+        private val peakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = UiDimens.ALPHA_PRIMARY
+            strokeWidth = context.dpF(2)
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val accessibleFill = OverlayPrimitives.accessibleFocusStroke(fillColor, trackColor)
+        private val pressedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accessibleFill }
+        private val partialFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(accessibleFill, 0x73)
+        }
+
+        fun setTriggerValue(raw: Float) {
+            val v = ControllerLabLogic.clampTrigger(raw)
+            val nextPeak = maxOf(maxPull, v)
+            if (v != clampedValue || nextPeak != maxPull) {
+                clampedValue = v
+                maxPull = nextPeak
+                invalidate()
+            }
+        }
+
+        fun resetPeaks() {
+            if (maxPull != 0f) {
+                maxPull = 0f
+                invalidate()
+            }
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            rect.set(0f, 0f, w, h)
+            canvas.drawRoundRect(rect, radius, radius, trackPaint)
+            if (clampedValue > 0.005f) {
+                val fillW = (w * clampedValue).coerceAtLeast(h * 0.5f).coerceAtMost(w)
+                rect.set(0f, 0f, fillW, h)
+                val paint = if (ControllerLabLogic.isTriggerPressed(clampedValue)) {
+                    pressedFillPaint
+                } else {
+                    partialFillPaint
+                }
+                canvas.drawRoundRect(rect, radius, radius, paint)
+            }
+            val thrX = w * ControllerLabLogic.TRIGGER_PRESS_THRESHOLD
+            canvas.drawLine(thrX, h * 0.16f, thrX, h * 0.84f, thresholdPaint)
+            if (maxPull > 0.02f) {
+                val px = (w * maxPull).coerceIn(borderPaint.strokeWidth, w - borderPaint.strokeWidth)
+                canvas.drawLine(px, h * 0.16f, px, h * 0.84f, peakPaint)
+            }
+            val inset = borderPaint.strokeWidth * 0.5f
+            rect.set(inset, inset, w - inset, h - inset)
+            canvas.drawRoundRect(rect, radius, radius, borderPaint)
+        }
+    }
+
+    /**
+     * Zero-allocation 2D analog stick XY radar & circularity visualizer:
+     * outer unit range ring, crosshairs, shaded release/engage deadzone box,
+     * preallocated 8-point fading trail ring buffer, and live accent dot.
+     */
+    private class StickRadarView(
+        context: Context,
+        trackColor: Int,
+        borderColor: Int,
+        accentColor: Int,
+        haloColor: Int,
+        deadzonePercent: Int,
+    ) : View(context) {
+        private var releaseFrac: Float = StickThresholds.release(deadzonePercent)
+        private var engageFrac: Float = StickThresholds.engage(deadzonePercent)
+        private var currentX: Float = 0f
+        private var currentY: Float = 0f
+        private val trailX = FloatArray(TRAIL_CAPACITY)
+        private val trailY = FloatArray(TRAIL_CAPACITY)
+        private var trailHead: Int = 0
+        private var trailCount: Int = 0
+
+        private val rect = RectF()
+        private val cornerR = context.dpF(12)
+        private val pad = context.dpF(8)
+        private val dotR = context.dpF(4.5f)
+        private val trailDotR = context.dpF(2.5f)
+        private val haloOffset = context.dpF(1.5f)
+
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = trackColor }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = borderColor
+            style = Paint.Style.STROKE
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x44FFFFFF
+            style = Paint.Style.STROKE
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x26FFFFFF
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val releaseBoxFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x16FFFFFF
+            style = Paint.Style.FILL
+        }
+        private val accessibleAccent = OverlayPrimitives.accessibleFocusStroke(accentColor, trackColor)
+        private val engageBoxStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(accessibleAccent, 0x66)
+            style = Paint.Style.STROKE
+            strokeWidth = context.strokePx(1).toFloat()
+        }
+        private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accessibleAccent }
+        private val dotIdlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ThemePack.withAlpha(accessibleAccent, 0x88)
+        }
+        private val dotEngagedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accessibleAccent
+        }
+        private val dotHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = haloColor
+            style = Paint.Style.STROKE
+            strokeWidth = context.dpF(1.5f)
+        }
+
+        init {
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        fun updateDeadzone(nextDeadzonePercent: Int) {
+            val nextRel = StickThresholds.release(nextDeadzonePercent)
+            val nextEng = StickThresholds.engage(nextDeadzonePercent)
+            if (nextRel != releaseFrac || nextEng != engageFrac) {
+                releaseFrac = nextRel
+                engageFrac = nextEng
+                invalidate()
+            }
+        }
+
+        fun setStick(rawX: Float, rawY: Float) {
+            val nx = ControllerLabLogic.clampAxis(rawX)
+            val ny = ControllerLabLogic.clampAxis(rawY)
+            if (abs(nx - currentX) < 0.004f && abs(ny - currentY) < 0.004f) return
+            currentX = nx
+            currentY = ny
+            trailX[trailHead] = nx
+            trailY[trailHead] = ny
+            trailHead = (trailHead + 1) % TRAIL_CAPACITY
+            if (trailCount < TRAIL_CAPACITY) trailCount++
+            invalidate()
+        }
+
+        fun reset() {
+            currentX = 0f
+            currentY = 0f
+            trailHead = 0
+            trailCount = 0
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            rect.set(0f, 0f, w, h)
+            canvas.drawRoundRect(rect, cornerR, cornerR, bgPaint)
+
+            val cx = w * 0.5f
+            val cy = h * 0.5f
+            val r = (minOf(w, h) * 0.5f - pad).coerceAtLeast(1f)
+
+            // Hairline crosshairs and outer circularity range ring.
+            canvas.drawLine(cx - r, cy, cx + r, cy, crosshairPaint)
+            canvas.drawLine(cx, cy - r, cx, cy + r, crosshairPaint)
+            canvas.drawCircle(cx, cy, r, ringPaint)
+
+            // Shaded release deadzone box + engage threshold box.
+            val relHalf = r * releaseFrac
+            rect.set(cx - relHalf, cy - relHalf, cx + relHalf, cy + relHalf)
+            canvas.drawRect(rect, releaseBoxFillPaint)
+            val engHalf = r * engageFrac
+            rect.set(cx - engHalf, cy - engHalf, cx + engHalf, cy + engHalf)
+            canvas.drawRect(rect, engageBoxStrokePaint)
+
+            // Fading 8-point sweep trail (oldest to newest, zero heap allocations).
+            if (trailCount > 1) {
+                val oldest = (trailHead - trailCount + TRAIL_CAPACITY) % TRAIL_CAPACITY
+                for (i in 0 until trailCount - 1) {
+                    val idx = (oldest + i) % TRAIL_CAPACITY
+                    val frac = (i + 1).toFloat() / trailCount.toFloat()
+                    trailPaint.alpha = (frac * 150f).toInt().coerceIn(20, 160)
+                    val px = cx + trailX[idx] * r
+                    val py = cy + trailY[idx] * r
+                    canvas.drawCircle(px, py, trailDotR * (0.65f + 0.35f * frac), trailPaint)
+                }
+            }
+
+            // Live stick position dot (muted inside deadzone, full bright + halo when engaged).
+            val dotX = cx + currentX * r
+            val dotY = cy + currentY * r
+            val engaged = ControllerLabLogic.isStickEngaged(currentX, currentY, engageFrac)
+            canvas.drawCircle(dotX, dotY, dotR, if (engaged) dotEngagedPaint else dotIdlePaint)
+            if (engaged) {
+                canvas.drawCircle(dotX, dotY, dotR + haloOffset, dotHaloPaint)
+            }
+
+            val inset = borderPaint.strokeWidth * 0.5f
+            rect.set(inset, inset, w - inset, h - inset)
+            canvas.drawRoundRect(rect, cornerR, cornerR, borderPaint)
+        }
+
+        private companion object {
+            const val TRAIL_CAPACITY = 8
         }
     }
 }

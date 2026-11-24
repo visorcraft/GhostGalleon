@@ -161,4 +161,87 @@ class ControllerLabLogicTest {
         ControllerLabLogic.fillPadIndicatorsForHat(0f, 0f, buf)
         assertTrue(buf.isEmpty())
     }
+
+    @Test
+    fun `stickRadarPoint, isStickEngaged, and radarSizeDp map 2D stick geometry cleanly`() {
+        val center = ControllerLabLogic.stickRadarPoint(0f, 0f, cx = 50f, cy = 50f, r = 40f)
+        assertEquals(50f, center.xPx, 0.001f)
+        assertEquals(50f, center.yPx, 0.001f)
+
+        val edge = ControllerLabLogic.stickRadarPoint(1.5f, -1.5f, cx = 50f, cy = 50f, r = 40f)
+        assertEquals(90f, edge.xPx, 0.001f)
+        assertEquals(10f, edge.yPx, 0.001f)
+
+        val nanPt = ControllerLabLogic.stickRadarPoint(Float.NaN, Float.POSITIVE_INFINITY, cx = 50f, cy = 50f, r = 40f)
+        assertEquals(50f, nanPt.xPx, 0.001f)
+        assertEquals(50f, nanPt.yPx, 0.001f)
+
+        assertFalse(ControllerLabLogic.isStickEngaged(0.3f, -0.4f, engage = 0.7f))
+        assertTrue(ControllerLabLogic.isStickEngaged(0.75f, 0f, engage = 0.7f))
+        assertTrue(ControllerLabLogic.isStickEngaged(0f, -0.7f, engage = 0.7f))
+
+        assertEquals(88, ControllerLabLogic.radarSizeDp(540))
+        assertEquals(108, ControllerLabLogic.radarSizeDp(720))
+    }
+
+    @Test
+    fun `analog trigger clamping, fallback, quantization, and threshold detection work cleanly`() {
+        assertEquals(0.75f, ControllerLabLogic.triggerValue(primary = 0.75f, fallback = 0.1f), 0.001f)
+        assertEquals(0.82f, ControllerLabLogic.triggerValue(primary = 0f, fallback = 0.82f), 0.001f)
+        assertEquals(0f, ControllerLabLogic.triggerValue(primary = -0.5f, fallback = Float.NaN), 0.001f)
+        assertEquals(1f, ControllerLabLogic.triggerValue(primary = 1.8f, fallback = 0f), 0.001f)
+
+        assertEquals(0, ControllerLabLogic.quantizeTriggerHundredths(-0.2f))
+        assertEquals(0, ControllerLabLogic.quantizeTriggerHundredths(Float.NaN))
+        assertEquals(50, ControllerLabLogic.quantizeTriggerHundredths(0.504f))
+        assertEquals(100, ControllerLabLogic.quantizeTriggerHundredths(1.4f))
+        assertEquals("0.00", ControllerLabLogic.formatQuantizedTrigger(0))
+        assertEquals("0.50", ControllerLabLogic.formatQuantizedTrigger(50))
+        assertEquals("1.00", ControllerLabLogic.formatQuantizedTrigger(100))
+
+        assertFalse(ControllerLabLogic.isTriggerPressed(0.49f))
+        assertTrue(ControllerLabLogic.isTriggerPressed(0.50f))
+        assertTrue(ControllerLabLogic.isTriggerPressed(0.95f))
+        assertFalse(ControllerLabLogic.isTriggerPressed(0.50f, threshold = 0.75f))
+    }
+
+    @Test
+    fun `L3 R3 indicators, 16-button padCoverage, axisEngaged, bindButtonAlpha, and wide dashboard contract`() {
+        assertEquals(16, PadIndicator.entries.size)
+        assertEquals(PadIndicator.L3, ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_BUTTON_THUMBL))
+        assertEquals(PadIndicator.R3, ControllerLabLogic.padIndicatorForKeyCode(KeyEvent.KEYCODE_BUTTON_THUMBR))
+
+        val zeroCov = ControllerLabLogic.padCoverage(0, 16)
+        assertEquals(0, zeroCov.seen)
+        assertEquals(16, zeroCov.total)
+        assertFalse(zeroCov.complete)
+
+        val partialCov = ControllerLabLogic.padCoverage(9, 16)
+        assertEquals(9, partialCov.seen)
+        assertFalse(partialCov.complete)
+
+        val fullCov = ControllerLabLogic.padCoverage(16, 16)
+        assertEquals(16, fullCov.seen)
+        assertTrue(fullCov.complete)
+
+        val overflowCov = ControllerLabLogic.padCoverage(22, 16)
+        assertEquals(16, overflowCov.seen)
+        assertTrue(overflowCov.complete)
+
+        // Default 50% deadzone -> engage threshold 0.70.
+        assertFalse(ControllerLabLogic.axisEngaged(0.69f, deadzonePercent = 50))
+        assertTrue(ControllerLabLogic.axisEngaged(0.70f, deadzonePercent = 50))
+        assertTrue(ControllerLabLogic.axisEngaged(-0.75f, deadzonePercent = 50))
+        // Lower 20% deadzone -> engage threshold 0.40.
+        assertTrue(ControllerLabLogic.axisEngaged(0.42f, deadzonePercent = 20))
+
+        assertEquals(0.55f, ControllerLabLogic.bindButtonAlpha(hasLastKey = false), 0.001f)
+        assertEquals(1f, ControllerLabLogic.bindButtonAlpha(hasLastKey = true), 0.001f)
+
+        assertTrue(ControllerLabLogic.CLEAR_BUTTON_MIN_HEIGHT_DP >= 44)
+        assertFalse(ControllerLabLogic.useTwoColumnDashboard(360))
+        assertFalse(ControllerLabLogic.useTwoColumnDashboard(540))
+        assertTrue(ControllerLabLogic.useTwoColumnDashboard(720))
+        assertTrue(ControllerLabLogic.useTwoColumnDashboard(960))
+    }
 }
