@@ -32,6 +32,18 @@ class CollectionDialogsTest {
         assertTrue(bulk.getValue("RPGs").alreadyContainsAll)
         assertFalse(bulk.getValue("Favorites").alreadyContainsAll)
         assertTrue(bulk.getValue("Favorites").alreadyContainsSome)
+
+        // Row 0 is "New collection…", so the first matching collection option shifts by +1.
+        assertEquals(
+            single.indexOfFirst { it.alreadyContainsAll } + 1,
+            CollectionDialogRows.firstCheckedAddOptionRowIndex(single),
+        )
+        assertEquals(
+            -1,
+            CollectionDialogRows.firstCheckedAddOptionRowIndex(
+                CollectionDialogRows.buildAddOptions(collections, listOf("rom:gba:metroid")),
+            ),
+        )
     }
 
     @Test

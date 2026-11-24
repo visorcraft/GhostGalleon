@@ -45,6 +45,16 @@ internal object CollectionDialogRows {
     fun normalizeCollectionName(raw: String): String? =
         raw.trim().takeIf { it.isNotEmpty() }
 
+    /**
+     * Row index inside [CollectionDialogs.promptAdd] (offset by +1 for row 0
+     * `"New collection…"`) of the first collection already containing all keys,
+     * or `-1` when none match. Host-tested.
+     */
+    fun firstCheckedAddOptionRowIndex(options: List<CollectionOption>): Int {
+        val idx = options.indexOfFirst { it.alreadyContainsAll }
+        return if (idx >= 0) idx + 1 else -1
+    }
+
     enum class MemberAction(
         @StringRes val labelRes: Int,
         @StringRes val feedbackRes: Int?,
@@ -129,10 +139,12 @@ object CollectionDialogs {
         } else {
             baseTitle
         }
+        val checkedIdx = CollectionDialogRows.firstCheckedAddOptionRowIndex(options)
         DeckDialogs.chooseItem(
             context = context,
             title = dialogTitle,
             items = rows.toTypedArray(),
+            checkedIndex = checkedIdx,
         ) { which ->
             if (which == 0) {
                 DeckDialogs.promptText(

@@ -202,6 +202,7 @@ class AppPicker(
     private var emptyLabel: TextView? = null
     private var emptyClearBtn: TextView? = null
     private var countBadge: TextView? = null
+    private var keycapFooter: LinearLayout? = null
     private var overlayView: FrameLayout? = null
     private var hideMenu: SlotMenu? = null
     private val searchHandler = Handler(Looper.getMainLooper())
@@ -534,8 +535,35 @@ class AppPicker(
             emptyBox,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
+        val cardWidthDp = (cardWidth / context.resources.displayMetrics.density.coerceAtLeast(0.1f)).toInt()
+        val footer = OverlayPrimitives.modalKeycapFooter(
+            context = context,
+            accent = accentColor,
+            tokens = tokens,
+            cues = listOf(
+                OverlayPrimitives.FooterCue(
+                    keycap = OverlayPrimitives.KEYCAP_CONFIRM,
+                    labelRes = if (emitPickConfirmSound) R.string.label_select else R.string.action_open,
+                ),
+                OverlayPrimitives.FooterCue(
+                    keycap = OverlayPrimitives.KEYCAP_PAGE,
+                    scrollOnly = true,
+                    keycapSymbol = "\u2195",
+                ),
+                OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CLOSE, R.string.action_close),
+            ),
+            compactWidthDp = cardWidthDp,
+            isScrollable = items.size > 6,
+        )
+        keycapFooter = footer
+        list.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            OverlayPrimitives.updateKeycapFooterScrollable(
+                footer,
+                isScrollable = v.canScrollVertically(-1) || v.canScrollVertically(1),
+            )
+        }
         card.addView(
-            OverlayPrimitives.modalHintFooter(context, R.string.deck_hint_folder_close),
+            footer,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -678,6 +706,17 @@ class AppPicker(
         val none = selectable == 0
         emptyContainer?.visibility = if (none) View.VISIBLE else View.GONE
         recycler?.visibility = if (none) View.GONE else View.VISIBLE
+        if (none) {
+            OverlayPrimitives.updateKeycapFooterScrollable(keycapFooter, isScrollable = false)
+        } else {
+            recycler?.post {
+                val rv = recycler ?: return@post
+                OverlayPrimitives.updateKeycapFooterScrollable(
+                    keycapFooter,
+                    isScrollable = rv.canScrollVertically(-1) || rv.canScrollVertically(1),
+                )
+            }
+        }
         if (none) {
             val trimmed = query.trim()
             emptyLabel?.text = if (trimmed.isNotEmpty()) {

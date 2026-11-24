@@ -238,6 +238,7 @@ class QuickPanel(
     private var headerSubtitleView: TextView? = null
     private var topScrollCue: View? = null
     private var bottomScrollCue: View? = null
+    private var keycapFooter: LinearLayout? = null
 
     val view: View by lazy { build() }
 
@@ -547,9 +548,20 @@ class QuickPanel(
             })
         }
 
-        val scrollCueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
-        val topCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
-        val bottomCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
+        val cardSurface = ThemePack.cardFill(themeTokens)
+        val scrollCueColor = OverlayPrimitives.scrollCueTint(accent, cardSurface)
+        val topCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = true,
+            surfaceColor = cardSurface,
+        )
+        val bottomCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = false,
+            surfaceColor = cardSurface,
+        )
         topScrollCue = topCue
         bottomScrollCue = bottomCue
 
@@ -569,33 +581,41 @@ class QuickPanel(
                 ),
             )
         }
-        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue)
+        val footer = OverlayPrimitives.modalKeycapFooter(
+            context = context,
+            accent = accent,
+            tokens = themeTokens,
+            cues = listOf(
+                OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CONFIRM, R.string.action_open),
+                OverlayPrimitives.FooterCue(
+                    keycap = OverlayPrimitives.KEYCAP_PAGE,
+                    scrollOnly = true,
+                    keycapSymbol = "\u2195",
+                ),
+                OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CLOSE, R.string.action_close),
+            ),
+            compactWidthDp = (cardWidth / density).toInt(),
+            isScrollable = cells.size > columns * 2,
+        )
+        keycapFooter = footer
+        OverlayPrimitives.bindScrollCues(scroll, topCue, bottomCue, keycapFooter = footer)
         scrollHost = scroll
 
         sheet.addView(
-            topCue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.strokePx(2),
+            OverlayPrimitives.scrollViewportWithCues(
+                context = context,
+                scroll = scroll,
+                topCue = topCue,
+                bottomCue = bottomCue,
             ),
-        )
-        sheet.addView(
-            scroll,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        sheet.addView(
-            bottomCue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.strokePx(2),
-            ),
-        )
 
         sheet.addView(
-            OverlayPrimitives.modalHintFooter(context, R.string.deck_hint_folder_close),
+            footer,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -802,15 +822,16 @@ class QuickPanel(
         }
         themeTokens = next
         accent = next.accentColor
-        sheetContainer?.background = TileBackgrounds.card(activity)
+        sheetContainer?.background = OverlayPrimitives.modalCardBackground(activity)
         val label = activity.getString(
             R.string.format_theme,
             activity.themeName(next.id, next.displayName),
         )
         headerSubtitleView?.text = label
-        val cueColor = OverlayPrimitives.scrollCueTint(accent, ThemePack.cardFill(themeTokens))
-        topScrollCue?.setBackgroundColor(cueColor)
-        bottomScrollCue?.setBackgroundColor(cueColor)
+        val cardSurface = ThemePack.cardFill(themeTokens)
+        OverlayPrimitives.updateScrollCueBar(topScrollCue, cardSurface, accent, isTop = true)
+        OverlayPrimitives.updateScrollCueBar(bottomScrollCue, cardSurface, accent, isTop = false)
+        OverlayPrimitives.restyleKeycapFooter(keycapFooter, accent, themeTokens)
         paint(
             animateFocus = false,
             scrollToFocused = false,

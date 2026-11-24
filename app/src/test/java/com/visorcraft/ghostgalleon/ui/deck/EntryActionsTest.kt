@@ -98,4 +98,33 @@ class EntryActionsTest {
             EntryActionChoices.builtInPolicyLabelRes(SessionPolicy.KEEP_COMPANION),
         )
     }
+
+    @Test
+    fun `selectedRowIndex finds active emulator, profile, or stage-plot row and returns -1 when absent`() {
+        val snes = Platforms.byId("snes")!!
+        val profileRows = EntryActionChoices.playerProfileRows(
+            players = snes.players,
+            currentProfileId = null,
+            isInstalled = { true },
+        )
+        assertEquals(
+            profileRows.lastIndex,
+            EntryActionChoices.selectedRowIndex(profileRows) { it.selected },
+        )
+
+        val dualOther = EntryActionChoices.stagePlotRows(
+            dual = true,
+            current = StagePlot(SessionPolicy.KEEP_COMPANION, LaunchFace.OTHER),
+        )
+        assertEquals(3, EntryActionChoices.selectedRowIndex(dualOther) { it.selected })
+
+        assertEquals(
+            -1,
+            EntryActionChoices.selectedRowIndex(snes.players) { it.id == "nonexistent-player" },
+        )
+        assertEquals(
+            -1,
+            EntryActionChoices.selectedRowIndex(emptyList<String>()) { true },
+        )
+    }
 }

@@ -133,6 +133,10 @@ internal object EntryActionChoices {
         SessionPolicy.YIELD_BOTH -> R.string.settings_stage_yield
         SessionPolicy.KEEP_COMPANION -> R.string.settings_stage_keep
     }
+
+    /** First index matching [predicate] (active emulator/profile/stage-plot row), or `-1`. */
+    fun <T> selectedRowIndex(rows: List<T>, predicate: (T) -> Boolean): Int =
+        rows.indexOfFirst(predicate)
 }
 
 /** Shared, locale-safe library entry actions. */
@@ -225,11 +229,13 @@ object EntryActions {
                 player.displayName
             }
         }.toTypedArray()
+        val checkedIdx = EntryActionChoices.selectedRowIndex(installed) { it.id == preferred }
         DeckDialogs.chooseItem(
             context = activity,
             titleRes = R.string.action_open_with,
             items = labels,
             emitPickSound = false,
+            checkedIndex = checkedIdx,
         ) { which ->
             val player = installed.getOrNull(which) ?: return@chooseItem
             app.updateSettings(
@@ -283,10 +289,12 @@ object EntryActions {
             activity.getString(R.string.deck_player_profile),
             rom.name,
         )
+        val checkedIdx = EntryActionChoices.selectedRowIndex(rows) { it.selected }
         DeckDialogs.chooseItem(
             context = activity,
             title = dialogTitle,
             items = labels,
+            checkedIndex = checkedIdx,
         ) { which ->
             val chosen = rows.getOrNull(which) ?: return@chooseItem
             val live = app.settings
@@ -398,10 +406,12 @@ object EntryActions {
             activity.getString(R.string.settings_stage_plot),
             rom.name,
         )
+        val checkedIdx = EntryActionChoices.selectedRowIndex(rows) { it.selected }
         DeckDialogs.chooseItem(
             context = activity,
             title = dialogTitle,
             items = labels,
+            checkedIndex = checkedIdx,
         ) { which ->
             rows.getOrNull(which)?.let(::applyOption)
         }

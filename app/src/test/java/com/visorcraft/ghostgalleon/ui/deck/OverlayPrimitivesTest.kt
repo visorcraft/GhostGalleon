@@ -1,6 +1,8 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -225,5 +227,83 @@ class OverlayPrimitivesTest {
         assertEquals("Select", OverlayPrimitives.resolvePaneTitle("", "Select"))
         assertEquals("Select", OverlayPrimitives.resolvePaneTitle("   ", "Select"))
         assertEquals("Select", OverlayPrimitives.resolvePaneTitle(null, "Select"))
+    }
+
+    @Test
+    fun `scrollCueTransitionMs respects reduced motion and scrollCueGradientColors fades cleanly with contrast`() {
+        assertEquals(OverlayPrimitives.SCROLL_CUE_FADE_MS, OverlayPrimitives.scrollCueTransitionMs(animatorsEnabled = true))
+        assertEquals(0L, OverlayPrimitives.scrollCueTransitionMs(animatorsEnabled = false))
+        assertEquals(8, OverlayPrimitives.SCROLL_CUE_HEIGHT_DP)
+        assertEquals(0x20FFFFFF, OverlayPrimitives.MODAL_TOP_SHEEN_COLOR)
+
+        for (tokens in ThemePack.BUILTINS) {
+            val surface = ThemePack.cardFill(tokens)
+            val colors = OverlayPrimitives.scrollCueGradientColors(surface, tokens.accentColor)
+            assertEquals(3, colors.size)
+            // Stop 0: translucent WCAG-lifted accent edge.
+            assertEquals(0x66, (colors[0] ushr 24) and 0xFF)
+            val edgeOpaque = (0xFF shl 24) or (colors[0] and 0x00FFFFFF)
+            assertTrue(
+                "Scroll cue edge RGB must meet WCAG AA on ${tokens.id}",
+                ThemePack.contrastRatio(edgeOpaque, surface) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            // Stop 1: translucent card surface mid-stop.
+            assertEquals(OverlayPrimitives.SCROLL_CUE_SURFACE_MID_ALPHA, (colors[1] ushr 24) and 0xFF)
+            assertEquals(surface and 0x00FFFFFF, colors[1] and 0x00FFFFFF)
+            // Stop 2: fully transparent feather tail.
+            assertEquals(0, (colors[2] ushr 24) and 0xFF)
+            assertEquals(surface and 0x00FFFFFF, colors[2] and 0x00FFFFFF)
+        }
+    }
+
+    @Test
+    fun `visibleFooterCues hides L1 R1 on narrow or non-scrollable sheets and keycap text meets WCAG AA`() {
+        val cues = listOf(
+            OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CONFIRM, R.string.label_select),
+            OverlayPrimitives.FooterCue(
+                keycap = OverlayPrimitives.KEYCAP_PAGE,
+                scrollOnly = true,
+                keycapSymbol = "\u2195",
+            ),
+            OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CLOSE, R.string.action_close),
+        )
+        // Scrollable + sufficient width (540dp Sugar SlotMenu card = 340dp): shows all 3 cues.
+        val full = OverlayPrimitives.visibleFooterCues(cues, compactWidthDp = 340, isScrollable = true)
+        assertEquals(listOf("A", "L1/R1", "B"), full.map { it.keycap })
+
+        // Non-scrollable sheet: hides L1/R1 even on wide 960dp Odin 2 Portal.
+        val short = OverlayPrimitives.visibleFooterCues(cues, compactWidthDp = 560, isScrollable = false)
+        assertEquals(listOf("A", "B"), short.map { it.keycap })
+
+        // Narrow compact width (< 320dp): hides L1/R1 even when scrollable to stay <= 24dp.
+        val narrow = OverlayPrimitives.visibleFooterCues(cues, compactWidthDp = 300, isScrollable = true)
+        assertEquals(listOf("A", "B"), narrow.map { it.keycap })
+        assertTrue(OverlayPrimitives.FOOTER_MAX_HEIGHT_DP <= 24)
+
+        val customAccents = listOf(
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+            0xFF101840.toInt(),
+            0xFFFFEE00.toInt(),
+            0xFF00FF88.toInt(),
+        )
+        for (tokens in ThemePack.BUILTINS) {
+            val surface = ThemePack.cardFill(tokens)
+            for (accent in listOf(tokens.accentColor) + customAccents) {
+                val style = OverlayPrimitives.keycapFooterStyle(accent, tokens)
+                val keycapContrast = ThemePack.contrastRatio(style.keycapText, style.pillFill)
+                assertTrue(
+                    "Low keycap text contrast $keycapContrast on ${tokens.id} accent=${Integer.toHexString(accent)}",
+                    keycapContrast >= ThemePack.MIN_TEXT_CONTRAST,
+                )
+                val labelEffective = SlotMenuNav.blendOverOpaque(style.labelText, surface)
+                val labelContrast = ThemePack.contrastRatio(labelEffective, surface)
+                assertTrue(
+                    "Low keycap footer label contrast $labelContrast on ${tokens.id}",
+                    labelContrast >= ThemePack.MIN_TEXT_CONTRAST,
+                )
+            }
+        }
+        assertEquals(UiDimens.ALPHA_MUTED, OverlayPrimitives.keycapFooterStyle(ThemePack.GHOST.accentColor, ThemePack.GHOST).labelText)
     }
 }

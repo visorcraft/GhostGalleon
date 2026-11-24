@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.util.TypedValue
@@ -23,11 +24,14 @@ import androidx.annotation.StringRes
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.TextViewCompat
+import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 
 /**
  * Shared modal/overlay framing primitives used across deck and settings
@@ -62,11 +66,87 @@ object OverlayPrimitives {
     /** Standard subtle white touch ripple color for dark modal surfaces. */
     const val DEFAULT_RIPPLE_COLOR: Int = 0x26FFFFFF
 
+    /** Height in dp for vertical feather scroll-overflow masks. */
+    const val SCROLL_CUE_HEIGHT_DP: Int = 8
+
+    /** Cancelable alpha-fade duration in ms for scroll-overflow masks at 60/120 Hz. */
+    const val SCROLL_CUE_FADE_MS: Long = 90L
+
+    /** Subtle 1dp top specular sheen separating floating cards from OLED scrims. */
+    const val MODAL_TOP_SHEEN_COLOR: Int = 0x20FFFFFF
+
+    internal const val SCROLL_CUE_SURFACE_MID_ALPHA: Int = 0xCC
+
+    /** Standard gamepad keycap labels for [modalKeycapFooter]. */
+    const val KEYCAP_CONFIRM: String = "A"
+    const val KEYCAP_PAGE: String = "L1/R1"
+    const val KEYCAP_REMOVE: String = "Y"
+    const val KEYCAP_CLOSE: String = "B"
+
+    /** Target maximum height in dp for compact modal keycap footers on 540dp Sugar. */
+    const val FOOTER_MAX_HEIGHT_DP: Int = 24
+
+    /** Minimum modal card width in dp before showing optional L1/R1 scroll cues. */
+    const val FOOTER_SCROLL_CUE_MIN_WIDTH_DP: Int = 320
+
     private val ENTER_INTERPOLATOR = DecelerateInterpolator()
+
+    private data class ModalCardBgKey(
+        val fill: Int,
+        val hairline: Int,
+        val radiusPx: Float,
+        val stroke1Px: Int,
+    )
+
+    private val modalCardBgCache =
+        TileBackgrounds.BoundedTemplateCache<ModalCardBgKey, LayerDrawable>(
+            TileBackgrounds.CARD_CACHE_MAX_ENTRIES,
+        )
+
+    /** Single gamepad keycap cue item rendered in [modalKeycapFooter]. */
+    data class FooterCue(
+        val keycap: String,
+        @StringRes val labelRes: Int? = null,
+        val scrollOnly: Boolean = false,
+        val keycapSymbol: String? = null,
+    )
+
+    /** Pure WCAG-verified color tokens for [modalKeycapFooter]. Host-tested. */
+    data class KeycapFooterStyle(
+        val pillFill: Int,
+        val pillStroke: Int,
+        val keycapText: Int,
+        val labelText: Int,
+    )
+
+    private data class KeycapFooterHolder(
+        val pillDrawables: List<GradientDrawable>,
+        val keycapViews: List<TextView>,
+        val scrollOnlyItems: List<View>,
+        val compactWidthDp: Int,
+    )
 
     /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling vertical scroll overflow. */
     fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
         (if (canScrollUp) 1f else 0f) to (if (canScrollDown) 1f else 0f)
+
+    /** Pure scroll-overflow fade duration respecting reduced-motion settings. Host-tested. */
+    fun scrollCueTransitionMs(animatorsEnabled: Boolean): Long =
+        MotionPolicy.effectiveDurationMs(SCROLL_CUE_FADE_MS, animatorsEnabled)
+
+    /**
+     * Pure 3-stop vertical feather gradient `[accentEdge, surfaceMid, transparent]`
+     * for 8dp modal scroll-overflow masks. Edge RGB is WCAG-lifted via [scrollCueTint]
+     * and fades smoothly through [surface] to full transparency. Host-tested.
+     */
+    fun scrollCueGradientColors(surface: Int, accent: Int): IntArray =
+        scrollCueGradientColorsFromTint(surface, scrollCueTint(accent, surface))
+
+    private fun scrollCueGradientColorsFromTint(surface: Int, edgeTint: Int): IntArray = intArrayOf(
+        edgeTint,
+        ThemePack.withAlpha(surface, SCROLL_CUE_SURFACE_MID_ALPHA),
+        ThemePack.withAlpha(surface, 0),
+    )
 
     /** WCAG 2.1 non-text UI contrast floor (1.4.11) for modal focus rings. */
     const val MIN_FOCUS_STROKE_CONTRAST: Double = 3.0
@@ -93,25 +173,339 @@ object OverlayPrimitives {
         return (0x66 shl 24) or (lifted and 0x00FFFFFF)
     }
 
-    /** Create a subtle decorative scroll-overflow indicator hairline view. */
-    fun scrollCueBar(context: Context, color: Int): View = View(context).apply {
-        setBackgroundColor(color)
+    /**
+     * Create an 8dp vertical feather scroll-overflow mask (`surface -> transparent`
+     * with a subtle lifted accent edge). Preserves 2-argument source compatibility
+     * with callers passing [scrollCueTint].
+     */
+    fun scrollCueBar(
+        context: Context,
+        color: Int,
+        isTop: Boolean = true,
+        surfaceColor: Int = TileBackgrounds.surfaceColor(context),
+    ): View = View(context).apply {
+        val edgeColor = if (((color ushr 24) and 0xFF) == 0xFF) {
+            scrollCueTint(color, surfaceColor)
+        } else {
+            color
+        }
+        background = GradientDrawable(
+            if (isTop) GradientDrawable.Orientation.TOP_BOTTOM else GradientDrawable.Orientation.BOTTOM_TOP,
+            scrollCueGradientColorsFromTint(surfaceColor, edgeColor),
+        )
         alpha = 0f
+        isClickable = false
+        isFocusable = false
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
-    /** Wire [topCue] and [bottomCue] visibility to [scroll]'s vertical overflow state. */
-    fun bindScrollCues(scroll: View, topCue: View, bottomCue: View) {
+    /** Mutate an existing [scrollCueBar] gradient in place (e.g. on live theme cycle). */
+    fun updateScrollCueBar(
+        cue: View?,
+        surfaceColor: Int,
+        accent: Int,
+        isTop: Boolean,
+    ) {
+        val bg = cue?.background as? GradientDrawable ?: return
+        bg.mutate()
+        bg.orientation = if (isTop) {
+            GradientDrawable.Orientation.TOP_BOTTOM
+        } else {
+            GradientDrawable.Orientation.BOTTOM_TOP
+        }
+        bg.colors = scrollCueGradientColors(surfaceColor, accent)
+    }
+
+    /**
+     * Wrap [scroll] inside a [FrameLayout] with 8dp [topCue] and [bottomCue]
+     * feather masks overlaid cleanly over the scroll viewport edges.
+     */
+    fun scrollViewportWithCues(
+        context: Context,
+        scroll: View,
+        topCue: View,
+        bottomCue: View,
+        horizontalInsetDp: Int = 0,
+    ): FrameLayout = FrameLayout(context).apply {
+        val cueHeightPx = context.dp(SCROLL_CUE_HEIGHT_DP)
+        val hInsetPx = context.dp(horizontalInsetDp)
+        addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        addView(
+            topCue,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                cueHeightPx,
+                Gravity.TOP,
+            ).apply {
+                marginStart = hInsetPx
+                marginEnd = hInsetPx
+            },
+        )
+        addView(
+            bottomCue,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                cueHeightPx,
+                Gravity.BOTTOM,
+            ).apply {
+                marginStart = hInsetPx
+                marginEnd = hInsetPx
+            },
+        )
+    }
+
+    /**
+     * Wire [topCue] and [bottomCue] visibility to [scroll]'s vertical overflow state
+     * with a cancelable `90ms` alpha fade (instant snap when OS animators are off).
+     * Optionally syncs scroll-only keycap pills on [keycapFooter].
+     */
+    fun bindScrollCues(
+        scroll: View,
+        topCue: View,
+        bottomCue: View,
+        keycapFooter: View? = null,
+    ) {
+        var lastTop = -1f
+        var lastBottom = -1f
+        fun applyCue(cue: View, target: Float, previous: Float): Float {
+            if (target == previous) return previous
+            cue.animate().cancel()
+            val durationMs = scrollCueTransitionMs(ValueAnimator.areAnimatorsEnabled())
+            if (durationMs > 0L && cue.isAttachedToWindow && previous >= 0f) {
+                cue.animate()
+                    .alpha(target)
+                    .setDuration(durationMs)
+                    .setInterpolator(ENTER_INTERPOLATOR)
+                    .start()
+            } else {
+                cue.alpha = target
+            }
+            return target
+        }
         fun refresh() {
+            val canUp = scroll.canScrollVertically(-1)
+            val canDown = scroll.canScrollVertically(1)
             val (topAlpha, bottomAlpha) = scrollCueAlphas(
-                canScrollUp = scroll.canScrollVertically(-1),
-                canScrollDown = scroll.canScrollVertically(1),
+                canScrollUp = canUp,
+                canScrollDown = canDown,
             )
-            topCue.alpha = topAlpha
-            bottomCue.alpha = bottomAlpha
+            lastTop = applyCue(topCue, topAlpha, lastTop)
+            lastBottom = applyCue(bottomCue, bottomAlpha, lastBottom)
+            if (keycapFooter != null) {
+                updateKeycapFooterScrollable(keycapFooter, isScrollable = canUp || canDown)
+            }
         }
         scroll.setOnScrollChangeListener { _, _, _, _, _ -> refresh() }
         scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refresh() }
+        scroll.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                v.post { refresh() }
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                topCue.animate().cancel()
+                bottomCue.animate().cancel()
+            }
+        })
+    }
+
+    /**
+     * Filter modal footer keycap cues for the active width & scrollability:
+     * hides `scrollOnly` cues (such as `L1/R1`) when the sheet is narrow or
+     * does not scroll so footers stay crisp within `<= 24dp` on 540dp Sugar.
+     * Host-tested.
+     */
+    fun visibleFooterCues(
+        cues: List<FooterCue>,
+        compactWidthDp: Int,
+        isScrollable: Boolean,
+    ): List<FooterCue> = cues.filter { cue ->
+        !cue.scrollOnly || (isScrollable && compactWidthDp >= FOOTER_SCROLL_CUE_MIN_WIDTH_DP)
+    }
+
+    /** Resolve WCAG AA (`>= 4.5:1`) recessed keycap pill colors for [modalKeycapFooter]. */
+    fun keycapFooterStyle(accent: Int, tokens: ThemeTokens): KeycapFooterStyle {
+        val pillFill = ThemePack.surfaceSunken(tokens)
+        val pillStroke = ThemePack.accentHairline(accent, alpha = 0x55)
+        val keycapText = ThemePack.accentTextColor(accent, pillFill)
+        return KeycapFooterStyle(
+            pillFill = pillFill,
+            pillStroke = pillStroke,
+            keycapText = keycapText,
+            labelText = UiDimens.ALPHA_MUTED,
+        )
+    }
+
+    /**
+     * Build a compact (`<= 24dp`) visual gamepad keycap footer pairing recessed
+     * `tnum` bold keycap pills (`A`, `L1/R1`, `Y`, `B`) with localized action
+     * labels. Auto-hides `scrollOnly` cues when narrow or non-scrollable.
+     */
+    fun modalKeycapFooter(
+        context: Context,
+        accent: Int,
+        tokens: ThemeTokens,
+        cues: List<FooterCue>,
+        compactWidthDp: Int = Int.MAX_VALUE,
+        isScrollable: Boolean = true,
+    ): LinearLayout {
+        val style = keycapFooterStyle(accent, tokens)
+        val visibleSet = visibleFooterCues(cues, compactWidthDp, isScrollable).toSet()
+        val pillDrawables = ArrayList<GradientDrawable>(cues.size)
+        val keycapViews = ArrayList<TextView>(cues.size)
+        val scrollOnlyItems = ArrayList<View>(1)
+        val radiusPx = context.dpF(5)
+        val strokePx = context.strokePx(1)
+        val hPad = context.dp(6)
+        val vPad = context.dp(1)
+        val itemGap = context.dp(12)
+        val labelGap = context.dp(5)
+
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(context.dp(4), context.dp(6), context.dp(4), 0)
+            cues.forEachIndexed { index, cue ->
+                val itemRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    visibility = if (cue in visibleSet) View.VISIBLE else View.GONE
+                }
+                val pillBg = GradientDrawable().apply {
+                    setColor(style.pillFill)
+                    cornerRadius = radiusPx
+                    setStroke(strokePx, style.pillStroke)
+                }
+                pillDrawables.add(pillBg)
+                val keyTv = TextView(context).apply {
+                    text = cue.keycap
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                    setTextColor(style.keycapText)
+                    setTypeface(typeface, Typeface.BOLD)
+                    useTabularNumerals()
+                    gravity = Gravity.CENTER
+                    minWidth = context.dp(18)
+                    maxLines = 1
+                    background = pillBg
+                    setPadding(hPad, vPad, hPad, vPad)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
+                keycapViews.add(keyTv)
+                itemRow.addView(
+                    keyTv,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+                val trailingText = cue.labelRes?.let { context.getString(it) } ?: cue.keycapSymbol
+                if (!trailingText.isNullOrEmpty()) {
+                    val labelTv = TextView(context).apply {
+                        text = trailingText
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                        setTextColor(style.labelText)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    itemRow.addView(
+                        labelTv,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply { marginStart = labelGap },
+                    )
+                }
+                if (cue.scrollOnly) {
+                    scrollOnlyItems.add(itemRow)
+                }
+                addView(
+                    itemRow,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        if (index > 0) marginStart = itemGap
+                    },
+                )
+            }
+            tag = KeycapFooterHolder(
+                pillDrawables = pillDrawables,
+                keycapViews = keycapViews,
+                scrollOnlyItems = scrollOnlyItems,
+                compactWidthDp = compactWidthDp,
+            )
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }
+    }
+
+    /** Toggle visibility of `scrollOnly` pills in [footer] without allocating views. */
+    fun updateKeycapFooterScrollable(footer: View?, isScrollable: Boolean) {
+        val holder = footer?.tag as? KeycapFooterHolder ?: return
+        val show = isScrollable && holder.compactWidthDp >= FOOTER_SCROLL_CUE_MIN_WIDTH_DP
+        val targetVis = if (show) View.VISIBLE else View.GONE
+        for (item in holder.scrollOnlyItems) {
+            if (item.visibility != targetVis) {
+                item.visibility = targetVis
+            }
+        }
+    }
+
+    /** Mutate keycap pill colors in place when live theme packs cycle (zero allocs). */
+    fun restyleKeycapFooter(footer: View?, accent: Int, tokens: ThemeTokens) {
+        val holder = footer?.tag as? KeycapFooterHolder ?: return
+        val context = footer.context
+        val style = keycapFooterStyle(accent, tokens)
+        val strokePx = context.strokePx(1)
+        for (bg in holder.pillDrawables) {
+            bg.mutate()
+            bg.setColor(style.pillFill)
+            bg.setStroke(strokePx, style.pillStroke)
+        }
+        for (tv in holder.keycapViews) {
+            tv.setTextColor(style.keycapText)
+        }
+    }
+
+    /**
+     * Cached floating modal card background combining the active theme card fill
+     * with a subtle 1dp `0x20FFFFFF` top specular hairline sheen so `#1C1C22` cards
+     * separate cleanly from `#CC000000` OLED scrims. Zero [Context] references cached.
+     */
+    fun modalCardBackground(context: Context): Drawable {
+        val app = context.applicationContext
+        val tokens = if (app is GhostGalleonApp) ThemePack.resolve(app.settings) else ThemePack.GHOST
+        val density = context.resources.displayMetrics.density
+        val key = ModalCardBgKey(
+            fill = ThemePack.cardFill(tokens),
+            hairline = ThemePack.hairlineDivider(tokens),
+            radiusPx = (tokens.cardRadiusDp * density).coerceAtLeast(0f),
+            stroke1Px = context.strokePx(1),
+        )
+        val template = modalCardBgCache.getOrPut(key) {
+            val base = GradientDrawable().apply {
+                setColor(key.fill)
+                cornerRadius = key.radiusPx
+                setStroke(key.stroke1Px, key.hairline)
+            }
+            val sheen = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0x00FFFFFF, MODAL_TOP_SHEEN_COLOR, MODAL_TOP_SHEEN_COLOR, 0x00FFFFFF),
+            )
+            LayerDrawable(arrayOf(base, sheen)).apply {
+                setLayerGravity(1, Gravity.TOP or Gravity.FILL_HORIZONTAL)
+                setLayerHeight(1, key.stroke1Px)
+                val hInset = (key.radiusPx * 0.55f).toInt()
+                setLayerInset(1, hInset, 0, hInset, 0)
+            }
+        }
+        return template.constantState?.newDrawable()?.mutate() ?: template
     }
 
     /** Wrap [content] in a crisp rounded [RippleDrawable] clipped to [cornerRadiusDp]. */
@@ -558,7 +952,7 @@ object OverlayPrimitives {
         padVerticalDp: Int = 14,
     ): LinearLayout = ModalCardLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        background = TileBackgrounds.card(context)
+        background = modalCardBackground(context)
         outlineProvider = ViewOutlineProvider.BACKGROUND
         setPadding(
             context.dp(padHorizontalDp),

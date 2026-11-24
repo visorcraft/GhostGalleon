@@ -168,4 +168,94 @@ class DeckDialogsTest {
             )
         }
     }
+
+    @Test
+    fun `dialogWidthPx clamps cleanly across 360dp, 540dp Sugar, and 960dp Odin 2 Portal viewports`() {
+        // 360dp @ 2x = 720px: 88% = 633px (< 460dp = 920px).
+        assertEquals(633, DeckDialogTokens.dialogWidthPx(screenWidthPx = 720, density = 2f, isCustomView = false))
+        assertEquals(633, DeckDialogTokens.dialogWidthPx(screenWidthPx = 720, density = 2f, isCustomView = true))
+
+        // 540dp @ 2x = 1080px: 88% = 950px -> standard clamps to 460dp (920px), customView uses 950px (< 520dp = 1040px).
+        assertEquals(920, DeckDialogTokens.dialogWidthPx(screenWidthPx = 1080, density = 2f, isCustomView = false))
+        assertEquals(950, DeckDialogTokens.dialogWidthPx(screenWidthPx = 1080, density = 2f, isCustomView = true))
+
+        // 960dp @ 2x = 1920px (Odin 2 Portal): standard clamps to 460dp (920px), customView clamps to 520dp (1040px).
+        assertEquals(920, DeckDialogTokens.dialogWidthPx(screenWidthPx = 1920, density = 2f, isCustomView = false))
+        assertEquals(1040, DeckDialogTokens.dialogWidthPx(screenWidthPx = 1920, density = 2f, isCustomView = true))
+    }
+
+    @Test
+    fun `shouldShowClearButton and inputFocusStrokeColor respond accurately to text, focus, and invalid nudge`() {
+        assertFalse(DeckDialogTokens.shouldShowClearButton(null))
+        assertFalse(DeckDialogTokens.shouldShowClearButton(""))
+        assertTrue(DeckDialogTokens.shouldShowClearButton(" "))
+        assertTrue(DeckDialogTokens.shouldShowClearButton("Chrono Trigger"))
+        assertFalse(DeckDialogTokens.shouldShowClearButton("Chrono Trigger", hasExternalChild = true))
+        assertFalse(DeckDialogTokens.shouldShowClearButton("", hasExternalChild = true))
+
+        assertEquals(1, DeckDialogTokens.inputStrokeDp(focused = false, invalid = false))
+        assertEquals(2, DeckDialogTokens.inputStrokeDp(focused = true, invalid = false))
+        assertEquals(2, DeckDialogTokens.inputStrokeDp(focused = false, invalid = true))
+
+        for (tokens in ThemePack.BUILTINS) {
+            val sunken = ThemePack.surfaceSunken(tokens)
+            val hairline = ThemePack.hairlineDivider(tokens)
+            assertEquals(
+                hairline,
+                DeckDialogTokens.inputFocusStrokeColor(
+                    focused = false,
+                    invalid = false,
+                    accent = tokens.accentColor,
+                    surface = sunken,
+                    idleHairline = hairline,
+                ),
+            )
+            assertEquals(
+                UiDimens.COLOR_DESTRUCTIVE,
+                DeckDialogTokens.inputFocusStrokeColor(
+                    focused = true,
+                    invalid = true,
+                    accent = tokens.accentColor,
+                    surface = sunken,
+                ),
+            )
+            val focusedStroke = DeckDialogTokens.inputFocusStrokeColor(
+                focused = true,
+                invalid = false,
+                accent = tokens.accentColor,
+                surface = sunken,
+            )
+            assertTrue(
+                "Input focus stroke must meet WCAG 1.4.11 (>= 3.0:1) on ${tokens.id}",
+                ThemePack.contrastRatio(focusedStroke, sunken) >= OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+        }
+    }
+
+    @Test
+    fun `initialCheckedFocusIndex, stripTrailingCheckmark, and checkedRowTextColor enforce bounds and contrast`() {
+        assertEquals(-1, DeckDialogTokens.initialCheckedFocusIndex(checkedIndex = -1, count = 5))
+        assertEquals(-1, DeckDialogTokens.initialCheckedFocusIndex(checkedIndex = 0, count = 0))
+        assertEquals(-1, DeckDialogTokens.initialCheckedFocusIndex(checkedIndex = 5, count = 5))
+        assertEquals(0, DeckDialogTokens.initialCheckedFocusIndex(checkedIndex = 0, count = 5))
+        assertEquals(3, DeckDialogTokens.initialCheckedFocusIndex(checkedIndex = 3, count = 5))
+        assertEquals(48, DeckDialogTokens.LIST_ROW_MIN_HEIGHT_DP)
+
+        assertEquals("RetroArch", DeckDialogTokens.stripTrailingCheckmark("RetroArch \u2713").toString())
+        assertEquals("RetroArch", DeckDialogTokens.stripTrailingCheckmark("RetroArch").toString())
+
+        for (tokens in ThemePack.BUILTINS) {
+            val color = DeckDialogTokens.checkedRowTextColor(tokens.accentColor, tokens)
+            val idleBg = ThemePack.cardFill(tokens)
+            val focusBg = DeckDialogTokens.listFocusedFill(tokens.accentColor, tokens)
+            assertTrue(
+                "Checked row contrast on idle bg must meet WCAG AA for ${tokens.id}",
+                ThemePack.contrastRatio(color, idleBg) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Checked row contrast on focused bg must meet WCAG AA for ${tokens.id}",
+                ThemePack.contrastRatio(color, focusBg) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

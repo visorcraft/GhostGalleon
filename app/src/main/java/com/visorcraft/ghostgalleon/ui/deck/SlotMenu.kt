@@ -533,8 +533,18 @@ class SlotMenu(
             }
         }
 
-        val topScrollCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
-        val bottomScrollCue = OverlayPrimitives.scrollCueBar(context, scrollCueColor)
+        val topScrollCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = true,
+            surfaceColor = surfaceColor,
+        )
+        val bottomScrollCue = OverlayPrimitives.scrollCueBar(
+            context = context,
+            color = scrollCueColor,
+            isTop = false,
+            surfaceColor = surfaceColor,
+        )
 
         val scroll = OverlayPrimitives.MaxHeightScrollView(
             context = context,
@@ -553,39 +563,43 @@ class SlotMenu(
                 ),
             )
         }
-        OverlayPrimitives.bindScrollCues(scroll, topScrollCue, bottomScrollCue)
+        val density = context.resources.displayMetrics.density.coerceAtLeast(0.1f)
+        val cardWidthDp = (cardWidth / density).toInt()
+        val footer = OverlayPrimitives.modalKeycapFooter(
+            context = context,
+            accent = accentColor,
+            tokens = themeTokens,
+            cues = listOf(
+                OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CONFIRM, R.string.label_select),
+                OverlayPrimitives.FooterCue(
+                    keycap = OverlayPrimitives.KEYCAP_PAGE,
+                    scrollOnly = true,
+                    keycapSymbol = "\u2195",
+                ),
+                OverlayPrimitives.FooterCue(OverlayPrimitives.KEYCAP_CLOSE, R.string.action_close),
+            ),
+            compactWidthDp = cardWidthDp,
+            isScrollable = actionRows.size > 5,
+        )
+        OverlayPrimitives.bindScrollCues(scroll, topScrollCue, bottomScrollCue, keycapFooter = footer)
         scrollHost = scroll
 
         card.addView(
-            topScrollCue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.strokePx(2),
-            ).apply {
-                marginStart = context.dp(UiDimens.SPACE_SM)
-                marginEnd = context.dp(UiDimens.SPACE_SM)
-            },
-        )
-        card.addView(
-            scroll,
+            OverlayPrimitives.scrollViewportWithCues(
+                context = context,
+                scroll = scroll,
+                topCue = topScrollCue,
+                bottomCue = bottomScrollCue,
+                horizontalInsetDp = UiDimens.SPACE_XS,
+            ),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        card.addView(
-            bottomScrollCue,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                context.strokePx(2),
-            ).apply {
-                marginStart = context.dp(UiDimens.SPACE_SM)
-                marginEnd = context.dp(UiDimens.SPACE_SM)
-            },
-        )
 
         card.addView(
-            OverlayPrimitives.modalHintFooter(context, R.string.deck_hint_folder_close),
+            footer,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,

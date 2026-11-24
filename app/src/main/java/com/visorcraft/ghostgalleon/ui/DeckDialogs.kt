@@ -2,6 +2,7 @@ package com.visorcraft.ghostgalleon.ui
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -13,12 +14,17 @@ import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
@@ -105,6 +111,96 @@ internal object DeckDialogTokens {
     internal const val LIST_PRESSED_WASH: Int = 0x22FFFFFF
     internal const val LIST_FOCUSED_WASH_ALPHA: Int = 0x1F
     const val BUTTON_MIN_HEIGHT_DP: Int = 44
+    const val STANDARD_DIALOG_MAX_WIDTH_DP: Int = 460
+    const val CUSTOM_VIEW_DIALOG_MAX_WIDTH_DP: Int = 520
+    const val DIALOG_WIDTH_FRAC: Float = 0.88f
+    const val LIST_ROW_MIN_HEIGHT_DP: Int = 48
+
+    /**
+     * Responsive dialog width clamped cleanly across 360dp portrait, 540dp Sugar,
+     * and 960dp Odin 2 Portal viewports (`460dp` standard, `520dp` custom-view).
+     * Host-tested.
+     */
+    fun dialogWidthPx(
+        screenWidthPx: Int,
+        density: Float,
+        isCustomView: Boolean = false,
+    ): Int = OverlayPrimitives.responsiveCardWidthPx(
+        screenWidthPx = screenWidthPx,
+        density = density,
+        maxDp = if (isCustomView) CUSTOM_VIEW_DIALOG_MAX_WIDTH_DP else STANDARD_DIALOG_MAX_WIDTH_DP,
+        widthFrac = DIALOG_WIDTH_FRAC,
+        minMarginDp = UiDimens.SPACE_LG,
+    )
+
+    /**
+     * True when the inline 44dp quick-clear button should be visible.
+     * Suppresses the internal clear button whenever a caller adds an external
+     * overlay child (e.g. Game Mode search's own clear button) to the returned
+     * container (`hasExternalChild == true`). Host-tested.
+     */
+    fun shouldShowClearButton(
+        text: CharSequence?,
+        hasExternalChild: Boolean = false,
+    ): Boolean = !hasExternalChild && !text.isNullOrEmpty()
+
+    /**
+     * Border stroke color for [DeckDialogs.createInput]'s persistent pill wrapper.
+     * Blank-submit invalid state flashes [UiDimens.COLOR_DESTRUCTIVE]; focused state
+     * lifts [accent] via [OverlayPrimitives.accessibleFocusStroke] (`>= 3.0:1`);
+     * idle falls back to [idleHairline]. Host-tested.
+     */
+    fun inputFocusStrokeColor(
+        focused: Boolean,
+        invalid: Boolean,
+        accent: Int,
+        surface: Int,
+        idleHairline: Int = ThemePack.HAIRLINE_LIGHT,
+    ): Int = when {
+        invalid -> UiDimens.COLOR_DESTRUCTIVE
+        focused -> OverlayPrimitives.accessibleFocusStroke(accent, surface)
+        else -> idleHairline
+    }
+
+    /** Border thickness (dp) for [DeckDialogs.createInput]'s pill wrapper. */
+    fun inputStrokeDp(focused: Boolean, invalid: Boolean): Int =
+        if (focused || invalid) 2 else 1
+
+    /**
+     * Valid initial focus/scroll index for [DeckDialogs.chooseItem]. Returns
+     * [checkedIndex] when in `0 until count`, else `-1`. Host-tested.
+     */
+    fun initialCheckedFocusIndex(checkedIndex: Int, count: Int): Int =
+        if (count > 0 && checkedIndex in 0 until count) checkedIndex else -1
+
+    /**
+     * WCAG AA (`>= 4.5:1`) accent text & checkmark color for the active checked row
+     * in [DeckDialogs.chooseItem], legible over both idle card fill and focused wash.
+     */
+    fun checkedRowTextColor(accent: Int, tokens: ThemeTokens): Int {
+        val idleSurface = ThemePack.cardFill(tokens)
+        val focusedSurface = listFocusedFill(accent, tokens)
+        val onIdle = ThemePack.accentTextColor(accent, idleSurface)
+        val onFocused = ThemePack.accentTextColor(accent, focusedSurface)
+        return if (ThemePack.relativeLuminance(onFocused) >= ThemePack.relativeLuminance(onIdle)) {
+            onFocused
+        } else {
+            onIdle
+        }
+    }
+
+    /**
+     * Strip redundant trailing `" ✓"` from [text] on rows that already render the
+     * dedicated `ic_check_circle` glyph, preserving any `Spanned` formatting spans.
+     */
+    fun stripTrailingCheckmark(text: CharSequence): CharSequence {
+        val suffix = " \u2713"
+        return if (text.length > suffix.length && text.endsWith(suffix)) {
+            text.subSequence(0, text.length - suffix.length)
+        } else {
+            text
+        }
+    }
 
     /** Focus border color for dialog action buttons (destructive positive gets red ring). */
     fun buttonFocusStrokeColor(
@@ -136,42 +232,88 @@ internal object DeckDialogTokens {
 /**
  * Unified OLED-themed [AlertDialog] builders used across decks, settings,
  * about, and controller lab. Applies live [ThemePack] rounded card framing,
- * WCAG-safe accent button tinting, gamepad focus rings on action buttons,
- * padded sunken [EditText] fields, and immersive status-bar preservation.
+ * responsive OLED dialog widths, WCAG-safe accent button tinting, gamepad
+ * focus rings on action buttons, padded sunken [EditText] pills with quick
+ * clear, and immersive status-bar preservation.
  */
 object DeckDialogs {
+
+    private const val TITLE_DIVIDER_TAG = "gg_dialog_title_divider"
+
+    private class InputPillState(
+        val pill: View,
+        val setInvalid: (Boolean) -> Unit,
+    )
+
+    private class ChooseRowHolder(
+        val accentBar: View,
+        val label: TextView,
+        val checkIcon: ImageView,
+    )
 
     /** Theme-bound [AlertDialog.Builder] using `Theme.GhostGalleon.Dialog`. */
     fun builder(context: Context): AlertDialog.Builder =
         AlertDialog.Builder(context, R.style.Theme_GhostGalleon_Dialog)
 
     /**
-     * Apply live [ThemePack] card surface, hairline list dividers, button
-     * contrast/focus rings, and immersive status-bar hiding to a shown dialog.
+     * Apply live [ThemePack] card surface, responsive OLED width clamp, subtle
+     * title hairline, hairline list dividers, button contrast/focus rings, and
+     * immersive status-bar hiding to a shown dialog.
      */
     fun style(
         dialog: AlertDialog,
         context: Context,
         destructivePositive: Boolean = false,
+        isCustomView: Boolean = false,
     ): AlertDialog {
         val tokens = resolveTokens(context)
         val accent = resolveAccent(context, tokens)
         val palette = DeckDialogTokens.palette(accent, tokens)
 
         dialog.window?.let { win ->
-            val inset = context.dp(UiDimens.SPACE_LG)
-            win.setBackgroundDrawable(InsetDrawable(TileBackgrounds.card(context), inset))
+            val dm = context.resources.displayMetrics
+            val widthPx = DeckDialogTokens.dialogWidthPx(
+                screenWidthPx = dm.widthPixels,
+                density = dm.density,
+                isCustomView = isCustomView,
+            )
+            val vInset = context.dp(UiDimens.SPACE_MD)
+            win.setBackgroundDrawable(
+                InsetDrawable(OverlayPrimitives.modalCardBackground(context), 0, vInset, 0, vInset),
+            )
+            win.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
             win.setDimAmount(0.80f)
             hideStatusBar(win)
         }
 
-        dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.apply {
+        val titleView = dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(UiDimens.ALPHA_PRIMARY)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             OverlayPrimitives.markHeading(this)
+        }
+        val topPanel = (titleView?.parent as? View)?.parent as? LinearLayout
+        if (titleView != null && titleView.visibility == View.VISIBLE &&
+            topPanel != null && topPanel.findViewWithTag<View>(TITLE_DIVIDER_TAG) == null
+        ) {
+            val divider = View(context).apply {
+                tag = TITLE_DIVIDER_TAG
+                setBackgroundColor(TileBackgrounds.hairlineDivider(context))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            topPanel.addView(
+                divider,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    context.strokePx(1),
+                ).apply {
+                    marginStart = context.dp(20)
+                    marginEnd = context.dp(20)
+                    topMargin = context.dp(10)
+                },
+            )
         }
         dialog.findViewById<TextView>(android.R.id.message)?.apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
@@ -238,10 +380,17 @@ object DeckDialogs {
         builder: AlertDialog.Builder,
         context: Context,
         destructivePositive: Boolean = false,
-    ): AlertDialog = style(builder.show(), context, destructivePositive)
+        isCustomView: Boolean = false,
+    ): AlertDialog = style(
+        dialog = builder.show(),
+        context = context,
+        destructivePositive = destructivePositive,
+        isCustomView = isCustomView,
+    )
 
     /**
-     * Build a padded, sunken-surface [EditText] ready for dialog insertion.
+     * Build a padded, sunken-surface pill container wrapping an [EditText] with
+     * reactive WCAG focus stroke and a trailing RTL-safe 44dp Clear button.
      * Returns `(container, editText)`.
      */
     fun createInput(
@@ -254,6 +403,43 @@ object DeckDialogs {
     ): Pair<FrameLayout, EditText> {
         val tokens = resolveTokens(context)
         val accent = resolveAccent(context, tokens)
+        val inputFill = ThemePack.surfaceSunken(tokens)
+        val idleHairline = ThemePack.hairlineDivider(tokens)
+        val pillBg = GradientDrawable().apply {
+            setColor(inputFill)
+            cornerRadius = context.dpF(12)
+            setStroke(context.strokePx(1), idleHairline)
+        }
+        var invalidState = false
+        var focusedState = false
+        var hasExternalChild = false
+
+        fun paintPillStroke() {
+            val strokeDp = DeckDialogTokens.inputStrokeDp(focusedState, invalidState)
+            val strokeColor = DeckDialogTokens.inputFocusStrokeColor(
+                focused = focusedState,
+                invalid = invalidState,
+                accent = accent,
+                surface = inputFill,
+                idleHairline = idleHairline,
+            )
+            pillBg.setStroke(context.strokePx(strokeDp), strokeColor)
+        }
+
+        val pill = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = context.dp(48)
+            background = pillBg
+        }
+        lateinit var clearBtn: ImageView
+        fun syncClearVisibility(text: CharSequence?) {
+            clearBtn.visibility = if (DeckDialogTokens.shouldShowClearButton(text, hasExternalChild)) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        }
         val input = EditText(context).apply {
             // Apply singleLine BEFORE inputType so TextView.applySingleLine does
             // not overwrite PasswordTransformationMethod on masked API key prompts.
@@ -271,30 +457,88 @@ object DeckDialogs {
             setHintTextColor(UiDimens.ALPHA_SUBTLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setSelectAllOnFocus(selectAllOnFocus)
-            background = TileBackgrounds.focusableRow(
-                context = context,
-                accent = accent,
-                idleBackground = TileBackgrounds.sunkenField(context, cornerRadiusDp = 12),
-                cornerRadiusDp = 12,
-                strokeDp = 2,
-            )
-            setPadding(
+            background = null
+            setPaddingRelative(
                 context.dp(14),
                 context.dp(12),
-                context.dp(14),
+                context.dp(6),
                 context.dp(12),
             )
+            setOnFocusChangeListener { _, hasFocus ->
+                focusedState = hasFocus
+                paintPillStroke()
+            }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    syncClearVisibility(s)
+                    if (invalidState) {
+                        invalidState = false
+                        paintPillStroke()
+                    }
+                }
+            })
         }
+        clearBtn = ImageView(context).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(UiDimens.ALPHA_SECONDARY)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            contentDescription = context.getString(R.string.action_clear)
+            isFocusable = false
+            isClickable = true
+            background = OverlayPrimitives.roundedRipple(
+                context = context,
+                content = null,
+                cornerRadiusDp = 22,
+            )
+            val pad = context.dp(13)
+            setPadding(pad, pad, pad, pad)
+            setOnClickListener {
+                playCue(context, SoundCue.FILTER_SELECT)
+                input.setText("")
+                input.requestFocus()
+            }
+        }
+        syncClearVisibility(initialText)
+        val touchSize = context.dp(UiDimens.TOUCH_MIN_DP)
+        pill.addView(
+            input,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        pill.addView(
+            clearBtn,
+            LinearLayout.LayoutParams(touchSize, touchSize).apply {
+                marginEnd = context.dp(2)
+            },
+        )
         val container = FrameLayout(context).apply {
             val hPad = context.dp(20)
             setPadding(hPad, context.dp(12), hPad, context.dp(4))
             addView(
-                input,
+                pill,
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
+            setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+                override fun onChildViewAdded(parent: View?, child: View?) {
+                    if (child !== pill) {
+                        hasExternalChild = childCount > 1
+                        syncClearVisibility(input.text)
+                    }
+                }
+
+                override fun onChildViewRemoved(parent: View?, child: View?) {
+                    hasExternalChild = childCount > 1
+                    syncClearVisibility(input.text)
+                }
+            })
+            tag = InputPillState(pill) { invalid ->
+                invalidState = invalid
+                paintPillStroke()
+            }
         }
         return container to input
     }
@@ -343,30 +587,41 @@ object DeckDialogs {
             hintRes = hintRes,
             inputType = inputType,
         )
+        val pillState = container.tag as? InputPillState
+        val shakeTarget: View = pillState?.pill ?: input
         val b = builder(context)
             .setTitle(title)
             .setView(container)
             .setPositiveButton(positiveRes, null)
             .setNegativeButton(negativeRes) { _, _ -> playCue(context, SoundCue.BACK) }
             .setOnCancelListener { playCue(context, SoundCue.BACK) }
-        val dialog = show(b, context)
+        val dialog = b.create()
+        @Suppress("DEPRECATION")
+        dialog.window?.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+        )
+        dialog.show()
+        style(dialog, context)
+        input.post { input.requestFocus() }
 
         fun nudgeInvalidInput() {
+            pillState?.setInvalid?.invoke(true)
             playCue(context, SoundCue.ERROR_DENY)
-            if (!ValueAnimator.areAnimatorsEnabled() || !input.isAttachedToWindow) return
+            if (!ValueAnimator.areAnimatorsEnabled() || !shakeTarget.isAttachedToWindow) return
             val dx = context.dpF(6)
-            input.animate().cancel()
-            input.animate()
+            shakeTarget.animate().cancel()
+            shakeTarget.animate()
                 .translationX(-dx)
                 .setDuration(45L)
                 .withEndAction {
-                    if (input.isAttachedToWindow) {
-                        input.animate()
+                    if (shakeTarget.isAttachedToWindow) {
+                        shakeTarget.animate()
                             .translationX(dx)
                             .setDuration(60L)
                             .withEndAction {
-                                if (input.isAttachedToWindow) {
-                                    input.animate()
+                                if (shakeTarget.isAttachedToWindow) {
+                                    shakeTarget.animate()
                                         .translationX(0f)
                                         .setDuration(45L)
                                         .start()
@@ -377,7 +632,7 @@ object DeckDialogs {
                 }
                 .start()
         }
-        dialog.setOnDismissListener { input.animate().cancel() }
+        dialog.setOnDismissListener { shakeTarget.animate().cancel() }
 
         fun attemptSubmit() {
             val raw = input.text?.toString().orEmpty()
@@ -426,11 +681,12 @@ object DeckDialogs {
     fun chooseItem(
         context: Context,
         @StringRes titleRes: Int,
-        items: Array<String>,
+        items: Array<out CharSequence>,
         @StringRes neutralRes: Int? = null,
         onNeutral: (() -> Unit)? = null,
         @StringRes negativeRes: Int? = R.string.action_cancel,
         emitPickSound: Boolean = true,
+        checkedIndex: Int = -1,
         onPick: (Int) -> Unit,
     ): AlertDialog = chooseItem(
         context = context,
@@ -440,23 +696,35 @@ object DeckDialogs {
         onNeutral = onNeutral,
         negativeRes = negativeRes,
         emitPickSound = emitPickSound,
+        checkedIndex = checkedIndex,
         onPick = onPick,
     )
 
-    /** Styled list-picker dialog (dynamic title). */
+    /** Styled list-picker dialog (dynamic title) with optional active-row emphasis & focus sync. */
     fun chooseItem(
         context: Context,
         title: CharSequence,
-        items: Array<String>,
+        items: Array<out CharSequence>,
         @StringRes neutralRes: Int? = null,
         onNeutral: (() -> Unit)? = null,
         @StringRes negativeRes: Int? = R.string.action_cancel,
         emitPickSound: Boolean = true,
+        checkedIndex: Int = -1,
         onPick: (Int) -> Unit,
     ): AlertDialog {
+        val tokens = resolveTokens(context)
+        val accent = resolveAccent(context, tokens)
+        val initialFocus = DeckDialogTokens.initialCheckedFocusIndex(checkedIndex, items.size)
+        val adapter = chooseItemAdapter(
+            context = context,
+            items = items,
+            checkedIndex = initialFocus,
+            accent = accent,
+            tokens = tokens,
+        )
         val b = builder(context)
             .setTitle(title)
-            .setItems(items) { _, which ->
+            .setAdapter(adapter) { _, which ->
                 if (emitPickSound) playCue(context, SoundCue.CONFIRM)
                 onPick(which)
             }
@@ -470,7 +738,110 @@ object DeckDialogs {
         if (negativeRes != null) {
             b.setNegativeButton(negativeRes) { _, _ -> playCue(context, SoundCue.BACK) }
         }
-        return show(b, context)
+        val dialog = show(b, context)
+        if (initialFocus >= 0) {
+            dialog.listView?.let { lv ->
+                lv.setSelection(initialFocus)
+                lv.post { lv.setSelection(initialFocus) }
+            }
+        }
+        return dialog
+    }
+
+    private fun chooseItemAdapter(
+        context: Context,
+        items: Array<out CharSequence>,
+        checkedIndex: Int,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): BaseAdapter {
+        val hasChecked = checkedIndex >= 0
+        val checkedTint = DeckDialogTokens.checkedRowTextColor(accent, tokens)
+        val barColor = OverlayPrimitives.accessibleFocusStroke(accent, ThemePack.cardFill(tokens))
+        val minRowHeightPx = context.dp(DeckDialogTokens.LIST_ROW_MIN_HEIGHT_DP)
+        val hStartPx = context.dp(if (hasChecked) 14 else 20)
+        val hEndPx = context.dp(18)
+        val vPadPx = context.dp(10)
+        val barWidthPx = context.dp(3)
+        val barHeightPx = context.dp(22)
+        val barGapPx = context.dp(10)
+        val iconSizePx = context.dp(18)
+        val iconGapPx = context.dp(10)
+        val checkTintList = ColorStateList.valueOf(checkedTint)
+
+        return object : BaseAdapter() {
+            override fun getCount(): Int = items.size
+            override fun getItem(position: Int): CharSequence = items[position]
+            override fun getItemId(position: Int): Long = position.toLong()
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row: LinearLayout
+                val holder: ChooseRowHolder
+                if (convertView is LinearLayout && convertView.tag is ChooseRowHolder) {
+                    row = convertView
+                    holder = convertView.tag as ChooseRowHolder
+                } else {
+                    val accentBar = View(context).apply {
+                        background = TileBackgrounds.activeAccentBar(context, barColor, cornerRadiusDp = 2)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    val label = TextView(context).apply {
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+                        useTabularNumerals()
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                    }
+                    val checkIcon = ImageView(context).apply {
+                        setImageResource(R.drawable.ic_check_circle)
+                        imageTintList = checkTintList
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    row = LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        minimumHeight = minRowHeightPx
+                        setPaddingRelative(hStartPx, vPadPx, hEndPx, vPadPx)
+                        addView(
+                            accentBar,
+                            LinearLayout.LayoutParams(barWidthPx, barHeightPx).apply {
+                                marginEnd = barGapPx
+                            },
+                        )
+                        addView(
+                            label,
+                            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                        )
+                        addView(
+                            checkIcon,
+                            LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
+                                marginStart = iconGapPx
+                            },
+                        )
+                    }
+                    holder = ChooseRowHolder(accentBar, label, checkIcon)
+                    row.tag = holder
+                }
+                val isChecked = position == checkedIndex
+                val rawText = items[position]
+                holder.accentBar.visibility = when {
+                    !hasChecked -> View.GONE
+                    isChecked -> View.VISIBLE
+                    else -> View.INVISIBLE
+                }
+                holder.label.text = if (isChecked) {
+                    DeckDialogTokens.stripTrailingCheckmark(rawText)
+                } else {
+                    rawText
+                }
+                holder.label.setTextColor(if (isChecked) checkedTint else UiDimens.ALPHA_PRIMARY)
+                holder.label.setTypeface(null, if (isChecked) Typeface.BOLD else Typeface.NORMAL)
+                holder.checkIcon.visibility = if (isChecked) View.VISIBLE else View.GONE
+                row.contentDescription = rawText
+                return row
+            }
+        }
     }
 
     /** Styled confirmation / informational dialog (CharSequence message). */
@@ -543,7 +914,12 @@ object DeckDialogs {
                 onNegative?.invoke()
             }
         }
-        return show(b, context, destructivePositive = destructivePositive)
+        return show(
+            builder = b,
+            context = context,
+            destructivePositive = destructivePositive,
+            isCustomView = true,
+        )
     }
 
     private fun listSelector(

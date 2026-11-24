@@ -149,6 +149,32 @@ class TrackDModalRegressionTest {
                 ThemePack.contrastRatio(UiDimens.ALPHA_PRIMARY, listFocusBg) >=
                     ThemePack.MIN_TEXT_CONTRAST,
             )
+            val checkedText = DeckDialogTokens.checkedRowTextColor(accent, tokens)
+            assertTrue(
+                "Low dialog checked row idle contrast on $tag",
+                ThemePack.contrastRatio(checkedText, surface) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            assertTrue(
+                "Low dialog checked row focused contrast on $tag",
+                ThemePack.contrastRatio(checkedText, listFocusBg) >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+            val inputFocusedStroke = DeckDialogTokens.inputFocusStrokeColor(
+                focused = true,
+                invalid = false,
+                accent = accent,
+                surface = sunken,
+            )
+            assertTrue(
+                "Low dialog input focus stroke on $tag",
+                ThemePack.contrastRatio(inputFocusedStroke, sunken) >=
+                    OverlayPrimitives.MIN_FOCUS_STROKE_CONTRAST,
+            )
+            val footerStyle = OverlayPrimitives.keycapFooterStyle(accent, tokens)
+            assertTrue(
+                "Low keycap footer text contrast on $tag",
+                ThemePack.contrastRatio(footerStyle.keycapText, footerStyle.pillFill) >=
+                    ThemePack.MIN_TEXT_CONTRAST,
+            )
         }
     }
 
