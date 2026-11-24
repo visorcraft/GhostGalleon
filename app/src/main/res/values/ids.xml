@@ -21,4 +21,6 @@
     <item name="theater_badge_key" type="id" />
     <!-- Status pill: last applied battery chrome (percent/glyph/bars). -->
     <item name="status_chrome" type="id" />
+    <!-- Companion hero video: opt-in audio fade animator & unmuted-claim state. -->
+    <item name="hero_video_audio_state" type="id" />
 </resources>

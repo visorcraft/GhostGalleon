@@ -70,6 +70,7 @@ object SoundEngineLogic {
     const val MIN_AUDIBLE_GAIN: Float = 1e-4f
     const val PREVIEW_SECOND_NOTE_DELAY_MS: Long = 110L
     const val SYSTEM_AUDIO_CACHE_TTL_MS: Long = 250L
+    const val BOOT_CHIME_PENDING_TTL_MS: Long = 2_500L
 
     // Matches android.media.AudioManager.RINGER_MODE_* constants without importing android.*
     const val ANDROID_RINGER_MODE_SILENT: Int = 0
@@ -268,6 +269,30 @@ object SoundEngineLogic {
     }
 
     /**
+     * Masks [AudioManager.isMusicActive] when our own [AmbientEngine] is playing (`USAGE_GAME`/
+     * `CONTENT_TYPE_MUSIC`), so Ghost Galleon's own ambient soundscape never tricks [SoundEngine]
+     * into treating it as external user music (Spotify/podcasts).
+     */
+    fun isExternalMusicActive(
+        systemMusicActive: Boolean,
+        ownAmbientPlaying: Boolean,
+    ): Boolean = systemMusicActive && !ownAmbientPlaying
+
+    /**
+     * Returns `true` iff a cold-start boot chime queued during async warm-up is still within
+     * its freshness window ([ttlMs]) and safe to play once [SoundCue.BOOT_CHIME] finishes decoding.
+     */
+    fun isPendingBootChimeValid(
+        requestedAtMs: Long,
+        nowMs: Long,
+        ttlMs: Long = BOOT_CHIME_PENDING_TTL_MS,
+    ): Boolean {
+        if (requestedAtMs == Long.MIN_VALUE) return false
+        val elapsed = nowMs - requestedAtMs
+        return elapsed in 0L..ttlMs.coerceAtLeast(0L)
+    }
+
+    /**
      * Determines whether an explicit Settings audition or pack preview is allowed to play.
      *
      * Respects global sound enable, volume > 0, playable target pack, screen/foreground state,
@@ -376,6 +401,7 @@ class SoundEngine(
     context: Context,
     private val configProvider: () -> SoundEngineConfig,
     private val runtimeStateProvider: () -> SoundRuntimeState = { SoundRuntimeState() },
+    private val isOwnAmbientPlaying: () -> Boolean = { false },
     private val cacheVersion: Int = SoundEngineLogic.SYNTH_CACHE_VERSION,
 ) {
     private val appContext: Context = context.applicationContext
@@ -388,6 +414,7 @@ class SoundEngine(
     private val cooldownTracker = AudioPolicy.CooldownTracker()
     private val generationGate = SoundEngineLogic.GenerationGate()
     private val previewToken = AtomicLong(0L)
+    private val pendingBootChimeRequestedAtMs = AtomicLong(NO_PENDING_TIME)
     private val staleCacheCleaned = AtomicBoolean(false)
     private val backgrounded = AtomicBoolean(false)
 
@@ -408,7 +435,7 @@ class SoundEngine(
     @Volatile
     private var cachedRingerState: AudioPolicy.RingerState = AudioPolicy.RingerState.NORMAL
     @Volatile
-    private var cachedExternalMusicActive: Boolean = false
+    private var cachedSystemMusicActive: Boolean = false
 
     private class PoolSession(
         val generation: Long,
@@ -527,6 +554,7 @@ class SoundEngine(
         when (action) {
             SoundEngineLogic.SyncAction.NO_OP -> Unit
             SoundEngineLogic.SyncAction.RELEASE_TO_IDLE -> {
+                pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
                 cancelPendingPreviews()
                 val oldAudition = detachAuditionSession()
                 if (oldSession != null || oldAudition != null) {
@@ -582,7 +610,7 @@ class SoundEngine(
         refreshSystemProbeIfNeeded(nowMs, config.respectRinger, config.respectMusic)
 
         val ringerState = cachedRingerState
-        val externalMusicActive = cachedExternalMusicActive
+        val externalMusicActive = effectiveExternalMusicActive()
 
         val allowed = AudioPolicy.shouldPlaySfx(
             soundEnabled = config.soundEnabled,
@@ -620,6 +648,42 @@ class SoundEngine(
     }
 
     /**
+     * Plays [SoundCue.BOOT_CHIME] immediately if decoded, or arms a bounded one-shot pending
+     * trigger (`2,500 ms` TTL) so it fires automatically as soon as cold-start async warm-up
+     * finishes decoding `BOOT_CHIME` while the launcher stays foregrounded and out of KEEP sessions.
+     */
+    fun requestBootChime(): Boolean {
+        if (backgrounded.get()) return false
+        val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
+        val effectivePack = config.resolvedPack()
+        if (!config.soundEnabled || !config.bootChimeEnabled || !effectivePack.isPlayable) {
+            return false
+        }
+        val runtime = runCatching { runtimeStateProvider() }.getOrDefault(SoundRuntimeState())
+        if (runtime.screenOff || runtime.hasKeepSession || runtime.activeAppActivityCount <= 0) {
+            return false
+        }
+
+        if (play(SoundCue.BOOT_CHIME)) {
+            pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
+            return true
+        }
+
+        val current = activeSession.get()
+        if (current != null && !current.released && current.pack == effectivePack &&
+            isCueLoaded(SoundCue.BOOT_CHIME)
+        ) {
+            // Already loaded; suppressed by ringer/external-music/volume policy, so do not pend.
+            return false
+        }
+
+        syncWithSettings()
+        pendingBootChimeRequestedAtMs.set(SystemClock.elapsedRealtime())
+        // Re-check immediately in case BOOT_CHIME finished decoding concurrently.
+        return maybeFirePendingBootChime()
+    }
+
+    /**
      * Auditions a single [cue] (optionally for [packOverride]) without blocking the UI thread.
      * Intended for Settings sliders and test buttons.
      */
@@ -653,6 +717,7 @@ class SoundEngine(
      */
     fun onAppBackgrounded() {
         backgrounded.set(true)
+        pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
         cancelPendingPreviews()
         stopSessionStreams(activeSession.get())
         stopSessionStreams(auditionSession.get())
@@ -677,6 +742,7 @@ class SoundEngine(
      * Called on `ACTION_SCREEN_OFF` to silence any active streams and pending preview motifs.
      */
     fun onScreenOff() {
+        pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
         cancelPendingPreviews()
         stopSessionStreams(activeSession.get())
         stopSessionStreams(auditionSession.get())
@@ -686,6 +752,7 @@ class SoundEngine(
      * Safe, idempotent teardown releasing all active and audition `SoundPool` instances off-UI.
      */
     fun release() {
+        pendingBootChimeRequestedAtMs.set(NO_PENDING_TIME)
         cancelPendingPreviews()
         cooldownTracker.reset()
         stopSessionStreams(activeSession.get())
@@ -895,7 +962,7 @@ class SoundEngine(
             sfxVolumePercent = config.sfxVolumePercent,
             pan = step.pan,
             respectMusic = config.respectMusic,
-            externalMusicActive = cachedExternalMusicActive,
+            externalMusicActive = effectiveExternalMusicActive(),
             videoPreviewUnmuted = config.videoPreviewUnmuted,
         ) ?: return
 
@@ -941,6 +1008,9 @@ class SoundEngine(
             if (status == 0 && !session.released && generationGate.isCurrent(generation)) {
                 session.loadedSampleIds.add(sampleId)
                 maybeFirePendingAudition(session)
+                if (sampleId == session.sampleIds.get(SoundCue.BOOT_CHIME.ordinal)) {
+                    maybeFirePendingBootChime(session)
+                }
             }
         }
 
@@ -987,8 +1057,41 @@ class SoundEngine(
             if (sampleId != 0) {
                 session.sampleIds.set(cue.ordinal, sampleId)
                 maybeFirePendingAudition(session)
+                if (cue == SoundCue.BOOT_CHIME) {
+                    maybeFirePendingBootChime(session)
+                }
             }
         }
+    }
+
+    private fun maybeFirePendingBootChime(session: PoolSession? = activeSession.get()): Boolean {
+        val reqMs = pendingBootChimeRequestedAtMs.get()
+        if (reqMs == NO_PENDING_TIME) return false
+        val nowMs = SystemClock.elapsedRealtime()
+        if (!SoundEngineLogic.isPendingBootChimeValid(reqMs, nowMs)) {
+            pendingBootChimeRequestedAtMs.compareAndSet(reqMs, NO_PENDING_TIME)
+            return false
+        }
+        if (backgrounded.get()) {
+            pendingBootChimeRequestedAtMs.compareAndSet(reqMs, NO_PENDING_TIME)
+            return false
+        }
+        val config = runCatching { configProvider() }.getOrDefault(SoundEngineConfig())
+        val effectivePack = config.resolvedPack()
+        val runtime = runCatching { runtimeStateProvider() }.getOrDefault(SoundRuntimeState())
+        if (!config.soundEnabled || !config.bootChimeEnabled || !effectivePack.isPlayable ||
+            runtime.screenOff || runtime.hasKeepSession || runtime.activeAppActivityCount <= 0
+        ) {
+            pendingBootChimeRequestedAtMs.compareAndSet(reqMs, NO_PENDING_TIME)
+            return false
+        }
+        val current = session ?: activeSession.get() ?: return false
+        if (current.released || current.pack != effectivePack) return false
+        val sampleId = current.sampleIds.get(SoundCue.BOOT_CHIME.ordinal)
+        if (sampleId == 0 || !current.loadedSampleIds.contains(sampleId)) return false
+
+        if (!pendingBootChimeRequestedAtMs.compareAndSet(reqMs, NO_PENDING_TIME)) return false
+        return play(SoundCue.BOOT_CHIME)
     }
 
     private fun clearPendingLoadIfMatches(generation: Long) {
@@ -1009,7 +1112,7 @@ class SoundEngine(
                 currentVersion = cacheVersion,
             ).toHashSet()
             for (child in children) {
-                if (child.name in staleNames) {
+                if (child.isFile && child.name in staleNames) {
                     runCatching { child.delete() }
                 }
             }
@@ -1161,6 +1264,14 @@ class SoundEngine(
         lastSystemProbeMs = Long.MIN_VALUE
     }
 
+    private fun effectiveExternalMusicActive(): Boolean {
+        val ownAmbient = runCatching { isOwnAmbientPlaying() }.getOrDefault(false)
+        return SoundEngineLogic.isExternalMusicActive(
+            systemMusicActive = cachedSystemMusicActive,
+            ownAmbientPlaying = ownAmbient,
+        )
+    }
+
     private fun refreshSystemProbeIfNeeded(
         nowMs: Long,
         queryRinger: Boolean,
@@ -1176,11 +1287,11 @@ class SoundEngine(
                 cachedRingerState = SoundEngineLogic.mapRingerMode(rawMode)
             }
             if (queryMusic) {
-                cachedExternalMusicActive = runCatching { am.isMusicActive }.getOrDefault(false)
+                cachedSystemMusicActive = runCatching { am.isMusicActive }.getOrDefault(false)
             }
         } else {
             cachedRingerState = AudioPolicy.RingerState.NORMAL
-            cachedExternalMusicActive = false
+            cachedSystemMusicActive = false
         }
         lastSystemProbeMs = nowMs
     }
@@ -1188,6 +1299,7 @@ class SoundEngine(
     private companion object {
         const val TAG = "GGSound"
         const val NO_GENERATION = -1L
+        const val NO_PENDING_TIME = Long.MIN_VALUE
 
         val AUDIO_SYNTH: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "AUDIO_SYNTH").apply { isDaemon = true }

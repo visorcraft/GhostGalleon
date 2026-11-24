@@ -18,11 +18,19 @@ import android.os.SystemClock
 import com.visorcraft.ghostgalleon.art.HttpSgdbTransport
 import com.visorcraft.ghostgalleon.art.ScrapeJob
 import com.visorcraft.ghostgalleon.art.SgdbScraper
+import com.visorcraft.ghostgalleon.audio.AmbientConfig
+import com.visorcraft.ghostgalleon.audio.AmbientEngine
+import com.visorcraft.ghostgalleon.audio.AmbientRuntimeState
+import com.visorcraft.ghostgalleon.audio.AudioLifecycleEvents
+import com.visorcraft.ghostgalleon.audio.AudioPolicy
+import com.visorcraft.ghostgalleon.audio.BootChimeGate
 import com.visorcraft.ghostgalleon.audio.SoundCue
 import com.visorcraft.ghostgalleon.audio.SoundEngine
 import com.visorcraft.ghostgalleon.audio.SoundEngineConfig
+import com.visorcraft.ghostgalleon.audio.SoundEngineLogic
 import com.visorcraft.ghostgalleon.audio.SoundPackId
 import com.visorcraft.ghostgalleon.audio.SoundRuntimeState
+import com.visorcraft.ghostgalleon.audio.VideoPreviewAudioTracker
 import com.visorcraft.ghostgalleon.library.DrawerListCache
 import com.visorcraft.ghostgalleon.library.DrawerListKey
 import com.visorcraft.ghostgalleon.library.OpenSession
@@ -326,6 +334,28 @@ class GhostGalleonApp : Application() {
         com.visorcraft.ghostgalleon.art.ArtCache(File(filesDir, "art"))
     }
 
+    private val ambientEngineLock = Any()
+    @Volatile
+    private var _ambientEngine: AmbientEngine? = null
+    private val bootChimeGate = BootChimeGate()
+    private val videoPreviewAudioTracker = VideoPreviewAudioTracker()
+
+    /** True while at least one Companion hero video preview is actively playing unmuted audio. */
+    val isVideoPreviewUnmutedActive: Boolean
+        get() = videoPreviewAudioTracker.isActive
+
+    /**
+     * App-scoped streaming ambient soundscape engine (`AudioTrack`, polite audio focus,
+     * off-UI daemon thread). Survives `CompanionActivity` absorb/redirect/churn cleanly.
+     */
+    val ambientEngine: AmbientEngine
+        get() = _ambientEngine ?: synchronized(ambientEngineLock) {
+            _ambientEngine ?: AmbientEngine(
+                context = this,
+                configProvider = { buildAmbientConfig() },
+            ).also { _ambientEngine = it }
+        }
+
     /**
      * App-scoped UI/system SFX runtime (`SoundPool`, off-UI synthesis/load, never steals
      * audio focus). Survives `CompanionActivity` absorb/redirect/churn cleanly.
@@ -345,7 +375,7 @@ class GhostGalleonApp : Application() {
                         respectMusic = s.audioRespectMusic,
                         bootChimeEnabled = s.bootChimeEnabled,
                         achievementChimeEnabled = s.raAchievementChime,
-                        videoPreviewUnmuted = s.videoPreviewAudio,
+                        videoPreviewUnmuted = isVideoPreviewUnmutedActive,
                     )
                 } else {
                     SoundEngineConfig(themePackId = ThemePack.GHOST.id)
@@ -358,6 +388,7 @@ class GhostGalleonApp : Application() {
                     screenOff = isDeviceScreenOff,
                 )
             },
+            isOwnAmbientPlaying = { _ambientEngine?.isPlaying == true },
         )
     }
 
@@ -377,6 +408,116 @@ class GhostGalleonApp : Application() {
             volumeMul = volumeMul,
         )
     }
+
+    /**
+     * Process-once cold-start boot chime trigger. Invoked strictly from `MainActivity`'s
+     * first real painted frame (never from `CompanionActivity` churn or cold-start hold view).
+     */
+    fun tryPlayBootChimeOnce(isMainActivity: Boolean): Boolean {
+        val s = if (::settings.isInitialized) settings else return false
+        val claimed = bootChimeGate.tryClaim(
+            isMainActivity = isMainActivity,
+            soundEnabled = s.soundEnabled,
+            bootChimeEnabled = s.bootChimeEnabled,
+            hasKeepSession = isKeepSessionActive,
+            screenOff = isDeviceScreenOff,
+            activeAppActivityCount = activeAppActivityCount,
+        )
+        if (!claimed) return false
+        return soundEngine.requestBootChime()
+    }
+
+    /**
+     * Resolves the calibrated opt-in video preview stereo gain (`0f` when disabled or suppressed
+     * by ringer mode, external user music, active KEEP session, screen-off, or background state).
+     * Masks our own [ambientEngine] and active video previews when probing `AudioManager.isMusicActive`.
+     */
+    fun resolveVideoPreviewTargetGain(): Float {
+        val s = if (::settings.isInitialized) settings else return 0f
+        if (!s.soundEnabled || !s.videoPreviewAudio || s.sfxVolume <= 0) return 0f
+        if (activeAppActivityCount <= 0 || isDeviceScreenOff || isKeepSessionActive) return 0f
+
+        val am = runCatching {
+            getSystemService(android.media.AudioManager::class.java)
+        }.getOrNull()
+        val ringerState = if (s.audioRespectRinger && am != null) {
+            val raw = runCatching { am.ringerMode }
+                .getOrDefault(SoundEngineLogic.ANDROID_RINGER_MODE_NORMAL)
+            SoundEngineLogic.mapRingerMode(raw)
+        } else {
+            AudioPolicy.RingerState.NORMAL
+        }
+        val externalMusicActive = if (s.audioRespectMusic && am != null) {
+            val sysMusic = runCatching { am.isMusicActive }.getOrDefault(false)
+            AudioLifecycleEvents.isExternalMusicActiveForVideoPreview(
+                systemMusicActive = sysMusic,
+                ownAmbientPlaying = _ambientEngine?.isPlaying == true,
+                ownVideoPreviewUnmuted = isVideoPreviewUnmutedActive,
+            )
+        } else {
+            false
+        }
+
+        return AudioLifecycleEvents.videoPreviewTargetGain(
+            soundEnabled = s.soundEnabled,
+            videoPreviewAudio = s.videoPreviewAudio,
+            sfxVolumePercent = s.sfxVolume,
+            activeAppActivityCount = activeAppActivityCount,
+            screenOff = isDeviceScreenOff,
+            hasKeepSession = isKeepSessionActive,
+            respectRinger = s.audioRespectRinger,
+            ringerState = ringerState,
+            respectMusic = s.audioRespectMusic,
+            externalMusicActive = externalMusicActive,
+        )
+    }
+
+    /**
+     * Reference-counted notification from [CompanionPanel] when an opt-in unmuted hero video
+     * preview starts (`true`) or stops/detaches (`false`). Smoothly fades out [ambientEngine]
+     * while active and restores it when the last unmuted preview ends.
+     */
+    fun setVideoPreviewUnmutedActive(active: Boolean) {
+        val edgeChanged = if (active) {
+            videoPreviewAudioTracker.acquire()
+        } else {
+            videoPreviewAudioTracker.release()
+        }
+        if (edgeChanged) {
+            syncAmbientEngine()
+        }
+    }
+
+    /** Synchronizes [ambientEngine] with live settings, foreground, sleep, KEEP, and video state. */
+    fun syncAmbientEngine() {
+        val cfg = buildAmbientConfig()
+        val existing = _ambientEngine
+        if (existing == null && (!cfg.enabled || !cfg.soundEnabled)) return
+        val engine = existing ?: ambientEngine
+        engine.sync(cfg, buildAmbientRuntimeState())
+    }
+
+    private fun buildAmbientConfig(): AmbientConfig = if (::settings.isInitialized) {
+        val s = settings
+        AmbientConfig(
+            enabled = s.ambientEnabled,
+            soundPackId = SoundPackId.fromId(s.soundPack),
+            themePackId = s.themePackId,
+            volumePercent = s.ambientVolume,
+            respectMusic = s.audioRespectMusic,
+            respectRinger = s.audioRespectRinger,
+            soundEnabled = s.soundEnabled,
+        )
+    } else {
+        AmbientConfig(themePackId = ThemePack.GHOST.id)
+    }
+
+    private fun buildAmbientRuntimeState(): AmbientRuntimeState = AmbientRuntimeState(
+        activeAppActivityCount = activeAppActivityCount,
+        hasKeepSession = isKeepSessionActive,
+        screenOff = isDeviceScreenOff,
+        videoPreviewUnmuted = isVideoPreviewUnmutedActive,
+    )
 
     // App-scoped owner of the SteamGridDB batch scrape: a multi-thousand-ROM
     // job must survive the settings screen that started it. The executor and
@@ -1105,6 +1246,15 @@ class GhostGalleonApp : Application() {
                 theaterTickerTitle = snap.items.firstOrNull { it.id == unlockId }?.title
                     ?: snap.lastUnlock?.title
                 theaterTickerUntilMs = nowMs + THEATER_TICKER_MS
+                if (AudioLifecycleEvents.shouldPlayRaUnlockFanfare(
+                        previousUnlockedIds = prev.unlockedIds,
+                        currentUnlockedIds = snap.unlockedIds,
+                        soundEnabled = settings.soundEnabled,
+                        raAchievementChimeEnabled = settings.raAchievementChime,
+                    )
+                ) {
+                    playSfx(SoundCue.RA_ACHIEVEMENT)
+                }
             }
         }
         theaterSnap = snap
@@ -2154,6 +2304,7 @@ class GhostGalleonApp : Application() {
     fun noteLaunch(key: String, nowMs: Long = System.currentTimeMillis()) {
         endOpenSession(nowMs)
         openSession = SessionTracker.onLaunch(key, nowMs)
+        syncAmbientEngine()
         val stamped = SessionMath.recordLaunch(
             PlayStats(
                 lastLaunchedMs = settings.lastLaunchedMs,
@@ -2235,6 +2386,7 @@ class GhostGalleonApp : Application() {
         pendingWarmSlot = null
         cancelWarmLoad()
         sessionSurface = surface
+        syncAmbientEngine()
         hostClaimed = false
         hostSurface = HostSurface.HUD
         clearCinemaRing()
@@ -2301,6 +2453,7 @@ class GhostGalleonApp : Application() {
         CompanionPanel.releaseHelperEmbeds(this)
         cancelWarmLoad()
         sessionSurface = null
+        syncAmbientEngine()
         hostClaimed = false
         hostSurface = HostSurface.HUD
         clearCinemaRing()
@@ -2448,6 +2601,7 @@ class GhostGalleonApp : Application() {
                     if (activeAppActivityCount == 0) {
                         soundEngine.onAppBackgrounded()
                     }
+                    syncAmbientEngine()
                 }
             }
 
@@ -2459,6 +2613,7 @@ class GhostGalleonApp : Application() {
                     if (wasBackgrounded && activeAppActivityCount > 0) {
                         soundEngine.onAppForegrounded()
                     }
+                    syncAmbientEngine()
                 }
                 if (activity is BaseDeckActivity) {
                     liveDeckCount++
@@ -2497,6 +2652,7 @@ class GhostGalleonApp : Application() {
                     if (activeAppActivityCount == 0) {
                         soundEngine.onAppBackgrounded()
                     }
+                    syncAmbientEngine()
                 }
             }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
@@ -2514,10 +2670,12 @@ class GhostGalleonApp : Application() {
                         isDeviceScreenOff = true
                         onSessionDeviceSleep()
                         soundEngine.onScreenOff()
+                        _ambientEngine?.onScreenOff()
                     }
                     Intent.ACTION_SCREEN_ON -> {
                         isDeviceScreenOff = false
                         onSessionDeviceWake()
+                        syncAmbientEngine()
                     }
                 }
             }
@@ -2562,6 +2720,13 @@ class GhostGalleonApp : Application() {
 
     /** Finish every other live deck activity; called when one deck exits. */
     fun requestExitAll(except: BaseDeckActivity) {
+        val engineToRelease = synchronized(ambientEngineLock) {
+            val cur = _ambientEngine
+            _ambientEngine = null
+            cur
+        }
+        engineToRelease?.release()
+        videoPreviewAudioTracker.reset()
         liveDeckActivities.filter { it !== except && !it.isFinishing }
             .forEach { it.finish() }
     }
@@ -2579,10 +2744,14 @@ class GhostGalleonApp : Application() {
                 s.userPinnedPrimaryId != settings.userPinnedPrimaryId
         val modeChanged = s.defaultMode != settings.defaultMode
         val audioChanged = audioSettingsChanged(settings, s)
+        val ambientChanged = ambientSettingsChanged(settings, s)
         val drawerRelevant = drawerRelevantSettingsChanged(settings, s)
         settings = s
         if (audioChanged) {
             soundEngine.syncWithSettings()
+        }
+        if (ambientChanged) {
+            syncAmbientEngine()
         }
         // Debounced async persist — every favorite/dock/launch used to
         // block the main thread on pretty-printed JSON IO.
@@ -2628,6 +2797,15 @@ class GhostGalleonApp : Application() {
             prev.bootChimeEnabled != next.bootChimeEnabled ||
             prev.raAchievementChime != next.raAchievementChime ||
             prev.videoPreviewAudio != next.videoPreviewAudio
+
+    private fun ambientSettingsChanged(prev: Settings, next: Settings): Boolean =
+        prev.themePackId != next.themePackId ||
+            prev.soundEnabled != next.soundEnabled ||
+            prev.soundPack != next.soundPack ||
+            prev.ambientEnabled != next.ambientEnabled ||
+            prev.ambientVolume != next.ambientVolume ||
+            prev.audioRespectMusic != next.audioRespectMusic ||
+            prev.audioRespectRinger != next.audioRespectRinger
 
     /**
      * Shared installed-app catalog (PM query is expensive). Pre-warmed on a

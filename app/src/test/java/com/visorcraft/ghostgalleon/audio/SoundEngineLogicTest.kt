@@ -473,4 +473,88 @@ class SoundEngineLogicTest {
         // Clock jump backwards refreshes safely
         assertTrue(SoundEngineLogic.shouldRefreshSystemProbe(1000L, 900L, ttlMs = 250L))
     }
+
+    @Test
+    fun `isExternalMusicActive masks own AmbientEngine playback while preserving real external music ducking`() {
+        // Own ambient playing makes AudioManager.isMusicActive true, but must NOT duck UI SFX
+        assertFalse(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = true,
+                ownAmbientPlaying = true,
+            ),
+        )
+        // Real external music (Spotify / podcast) when own ambient is NOT playing DOES duck
+        assertTrue(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = true,
+                ownAmbientPlaying = false,
+            ),
+        )
+        // Silent system music never ducks regardless of ambient state
+        assertFalse(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = false,
+                ownAmbientPlaying = false,
+            ),
+        )
+        assertFalse(
+            SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = false,
+                ownAmbientPlaying = true,
+            ),
+        )
+
+        val baseline = SoundEngineLogic.computePlayParams(
+            cue = SoundCue.NAV_TICK,
+            sfxVolumePercent = 80,
+            respectMusic = true,
+            externalMusicActive = false,
+        )!!
+        val withOwnAmbient = SoundEngineLogic.computePlayParams(
+            cue = SoundCue.NAV_TICK,
+            sfxVolumePercent = 80,
+            respectMusic = true,
+            externalMusicActive = SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = true,
+                ownAmbientPlaying = true,
+            ),
+        )!!
+        val withSpotify = SoundEngineLogic.computePlayParams(
+            cue = SoundCue.NAV_TICK,
+            sfxVolumePercent = 80,
+            respectMusic = true,
+            externalMusicActive = SoundEngineLogic.isExternalMusicActive(
+                systemMusicActive = true,
+                ownAmbientPlaying = false,
+            ),
+        )!!
+
+        assertEquals(baseline.leftGain, withOwnAmbient.leftGain, 1e-6f)
+        assertEquals(
+            baseline.leftGain * AudioPolicy.DUCK_EXTERNAL_MUSIC_UI,
+            withSpotify.leftGain,
+            1e-4f,
+        )
+    }
+
+    @Test
+    fun `isPendingBootChimeValid honors 2500ms TTL and expires stale or skewed timestamps`() {
+        assertFalse(SoundEngineLogic.isPendingBootChimeValid(Long.MIN_VALUE, 1_000L))
+        assertTrue(SoundEngineLogic.isPendingBootChimeValid(1_000L, 1_000L))
+        assertTrue(SoundEngineLogic.isPendingBootChimeValid(1_000L, 2_200L))
+        assertTrue(
+            SoundEngineLogic.isPendingBootChimeValid(
+                requestedAtMs = 1_000L,
+                nowMs = 1_000L + SoundEngineLogic.BOOT_CHIME_PENDING_TTL_MS,
+            ),
+        )
+        assertFalse(
+            SoundEngineLogic.isPendingBootChimeValid(
+                requestedAtMs = 1_000L,
+                nowMs = 1_000L + SoundEngineLogic.BOOT_CHIME_PENDING_TTL_MS + 1L,
+            ),
+        )
+        // Backwards clock skew never triggers belatedly
+        assertFalse(SoundEngineLogic.isPendingBootChimeValid(2_000L, 1_999L))
+    }
 }

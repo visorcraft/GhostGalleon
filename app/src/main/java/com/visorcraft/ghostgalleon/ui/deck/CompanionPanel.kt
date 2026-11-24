@@ -31,6 +31,7 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -54,7 +55,9 @@ import androidx.core.view.children
 import kotlin.math.abs
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.audio.AudioLifecycleEvents
 import com.visorcraft.ghostgalleon.audio.SoundCue
+import com.visorcraft.ghostgalleon.audio.SoundEngineLogic
 import com.visorcraft.ghostgalleon.i18n.UiText
 import com.visorcraft.ghostgalleon.art.ArtCache
 import com.visorcraft.ghostgalleon.art.ArtTile
@@ -1726,9 +1729,31 @@ object CompanionPanel {
         }
     }
 
+    private class HeroVideoAudioState(
+        var fadeAnimator: ValueAnimator? = null,
+        var unmutedActive: Boolean = false,
+        var desiredUnmuted: Boolean = false,
+    )
+
+    private fun heroVideoAudioState(video: VideoView): HeroVideoAudioState =
+        (video.getTag(R.id.hero_video_audio_state) as? HeroVideoAudioState)
+            ?: HeroVideoAudioState().also { video.setTag(R.id.hero_video_audio_state, it) }
+
+    private fun stopHeroVideoAudio(video: VideoView) {
+        val state = video.getTag(R.id.hero_video_audio_state) as? HeroVideoAudioState ?: return
+        state.fadeAnimator?.cancel()
+        state.fadeAnimator = null
+        if (state.unmutedActive) {
+            state.unmutedActive = false
+            (video.context.applicationContext as? GhostGalleonApp)
+                ?.setVideoPreviewUnmutedActive(false)
+        }
+    }
+
     /**
-     * Muted looping VideoView for [RomEntry.videoUri]. Starts after 300ms;
-     * hides silently on error; stops/releases on detach or rebind.
+     * Looping VideoView for [RomEntry.videoUri] (muted by default; opt-in fade-in audio via
+     * `settings.videoPreviewAudio`). Always uses `AUDIOFOCUS_NONE`, starts after 300ms, hides
+     * silently on error, and cancels fade/restores ambient cleanly on detach or rebind.
      * [host] is a cheap FrameLayout; the SurfaceView is created only when
      * this ROM actually has a video URI.
      */
@@ -1741,10 +1766,15 @@ object CompanionPanel {
             return
         }
         host.visibility = View.VISIBLE
+        val app = host.context.applicationContext as? GhostGalleonApp
+        val wantAudio = app?.let {
+            it.resolveVideoPreviewTargetGain() > SoundEngineLogic.MIN_AUDIBLE_GAIN
+        } ?: false
         var video = host.getChildAt(0) as? VideoView
         if (video != null &&
             video.getTag(R.id.media_bind_uri) == uri &&
-            video.visibility == View.VISIBLE
+            video.visibility == View.VISIBLE &&
+            heroVideoAudioState(video).desiredUnmuted == wantAudio
         ) {
             return
         }
@@ -1752,7 +1782,7 @@ object CompanionPanel {
             val radius = 12 * host.resources.displayMetrics.density
             video = VideoView(host.context).apply {
                 tag = TAG_HERO_VIDEO
-                // Muted previews must not steal audio focus from user music or ambient audio (API 26+).
+                // Never steal audio focus from user music or emulators (API 26+).
                 setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE)
                 clipToOutline = true
                 outlineProvider = object : ViewOutlineProvider() {
@@ -1760,6 +1790,24 @@ object CompanionPanel {
                         outline.setRoundRect(0, 0, view.width, view.height, radius)
                     }
                 }
+                // Release video audio claims when the surface tears down on onStop / SCREEN_OFF
+                // (VideoView releases its MediaPlayer without detaching the view).
+                holder.addCallback(object : SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: SurfaceHolder) {}
+                    override fun surfaceChanged(
+                        holder: SurfaceHolder,
+                        format: Int,
+                        width: Int,
+                        height: Int,
+                    ) {}
+                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                        (getTag(android.R.id.message) as? Runnable)?.let {
+                            removeCallbacks(it)
+                        }
+                        stopHeroVideoAudio(this@apply)
+                        setTag(R.id.media_bind_uri, null)
+                    }
+                })
             }
             host.addView(
                 video,
@@ -1772,9 +1820,11 @@ object CompanionPanel {
             (video.getTag(android.R.id.message) as? Runnable)?.let {
                 video.removeCallbacks(it)
             }
+            stopHeroVideoAudio(video)
             runCatching { video.stopPlayback() }
         }
         video.setTag(R.id.media_bind_uri, uri)
+        heroVideoAudioState(video).desiredUnmuted = wantAudio
         video.visibility = View.VISIBLE
         val bound = video
         val startRunnable = Runnable {
@@ -1788,17 +1838,57 @@ object CompanionPanel {
                         mp.isLooping = true
                         mp.setVolume(0f, 0f)
                     }
-                    if (bound.isAttachedToWindow &&
-                        bound.getTag(R.id.media_bind_uri) == uri
+                    if (!bound.isAttachedToWindow ||
+                        bound.getTag(R.id.media_bind_uri) != uri
                     ) {
-                        bound.start()
+                        return@setOnPreparedListener
+                    }
+                    val liveApp = bound.context.applicationContext as? GhostGalleonApp
+                    val targetGain = liveApp?.resolveVideoPreviewTargetGain() ?: 0f
+                    val audioState = heroVideoAudioState(bound)
+                    audioState.fadeAnimator?.cancel()
+                    audioState.fadeAnimator = null
+                    bound.start()
+                    if (targetGain > 0f && liveApp != null) {
+                        if (!audioState.unmutedActive) {
+                            audioState.unmutedActive = true
+                            liveApp.setVideoPreviewUnmutedActive(true)
+                        }
+                        if (ValueAnimator.areAnimatorsEnabled()) {
+                            val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+                                duration = AudioLifecycleEvents.VIDEO_PREVIEW_FADE_IN_MS
+                                addUpdateListener { a ->
+                                    if (!bound.isAttachedToWindow ||
+                                        bound.getTag(R.id.media_bind_uri) != uri ||
+                                        !audioState.unmutedActive
+                                    ) {
+                                        a.cancel()
+                                        return@addUpdateListener
+                                    }
+                                    val frac = (a.animatedValue as? Float) ?: 1f
+                                    val gain = AudioLifecycleEvents.videoPreviewFadeGain(
+                                        targetGain,
+                                        frac,
+                                    )
+                                    runCatching { mp.setVolume(gain, gain) }
+                                }
+                            }
+                            audioState.fadeAnimator = anim
+                            anim.start()
+                        } else {
+                            runCatching { mp.setVolume(targetGain, targetGain) }
+                        }
+                    } else if (audioState.unmutedActive) {
+                        stopHeroVideoAudio(bound)
                     }
                 }
                 bound.setOnErrorListener { _, _, _ ->
+                    stopHeroVideoAudio(bound)
                     bound.visibility = View.GONE
                     true
                 }
             }.onFailure {
+                stopHeroVideoAudio(bound)
                 bound.visibility = View.GONE
             }
         }
@@ -1812,6 +1902,7 @@ object CompanionPanel {
                         v.removeCallbacks(it)
                     }
                     (v as? VideoView)?.let { vv ->
+                        stopHeroVideoAudio(vv)
                         runCatching { vv.stopPlayback() }
                     }
                 }
@@ -1826,6 +1917,7 @@ object CompanionPanel {
         (video.getTag(android.R.id.message) as? Runnable)?.let {
             video.removeCallbacks(it)
         }
+        stopHeroVideoAudio(video)
         runCatching { video.stopPlayback() }
         host.removeAllViews()
     }

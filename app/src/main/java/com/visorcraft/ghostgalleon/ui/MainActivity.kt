@@ -25,6 +25,7 @@ class MainActivity : BaseDeckActivity() {
         }
     }
     private val oracle = PixelOracle(this) { isFullRenderInFlight }
+    private var bootChimeScheduled: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +77,14 @@ class MainActivity : BaseDeckActivity() {
         armPlayHudTick()
         oracle.start()
         applyPlayHostFocusLock()
+        if (!bootChimeScheduled) {
+            bootChimeScheduled = true
+            hudRoot().post {
+                if (!isFinishing && !isDestroyed) {
+                    app.tryPlayBootChimeOnce(isMainActivity = true)
+                }
+            }
+        }
     }
 
     private fun armPlayHudTick() {
