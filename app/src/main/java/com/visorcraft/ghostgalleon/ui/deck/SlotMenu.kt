@@ -1,28 +1,61 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
+import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.os.Build
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.settings.ThemeTokens
 import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dp
+import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.strokePx
 
 /**
- * Pure, host-tested navigation and destructive-item helpers for [SlotMenu].
+ * Pure, host-tested navigation, destructive-row styling, and scroll-cue helpers
+ * for [SlotMenu].
  */
 internal object SlotMenuNav {
 
+    enum class RowTone { STANDARD, DESTRUCTIVE, CANCEL }
+
+    data class RowVisualSpec(
+        /** Background fill to paint on the row (`0` means transparent over modal card). */
+        val fillColor: Int,
+        /** Effective opaque surface color underneath text (for WCAG contrast verification). */
+        val effectiveSurface: Int,
+        val strokeColor: Int,
+        val strokeDp: Int,
+        val textColor: Int,
+        val rippleColor: Int,
+    )
+
     const val PAGE_STEP = 5
+    const val FOCUS_SCALE = 1.015f
+    const val FOCUS_ANIM_MS = 90L
+
+    internal const val DESTRUCTIVE_WASH_IDLE: Int = 0x14FF5252
+    internal const val DESTRUCTIVE_WASH_SELECTED: Int = 0x2EFF5252
+    internal const val DESTRUCTIVE_TEXT_SELECTED: Int = 0xFFFFB4AB.toInt()
+    internal const val DESTRUCTIVE_RIPPLE: Int = 0x38FF5252
+    internal const val STANDARD_RIPPLE: Int = 0x26FFFFFF
 
     /** Indices into [rows] that are actionable (never section headers). */
     fun actionRowIndices(rows: List<SlotMenu.Row>): List<Int> =
@@ -45,6 +78,106 @@ internal object SlotMenuNav {
             item.choice == SlotMenu.Choice.REMOVE ||
             item.choice == SlotMenu.Choice.REMOVE_FROM_GRID ||
             item.choice == SlotMenu.Choice.HIDE
+
+    fun rowTone(item: SlotMenu.Row.Item): RowTone = when {
+        isDestructive(item) -> RowTone.DESTRUCTIVE
+        item.choice == SlotMenu.Choice.CANCEL -> RowTone.CANCEL
+        else -> RowTone.STANDARD
+    }
+
+    /** Pure alpha-composite of translucent [overlayArgb] over opaque [baseOpaqueRgb]. */
+    fun blendOverOpaque(overlayArgb: Int, baseOpaqueRgb: Int): Int {
+        val a = ((overlayArgb ushr 24) and 0xFF) / 255.0
+        val orCh = (overlayArgb shr 16) and 0xFF
+        val ogCh = (overlayArgb shr 8) and 0xFF
+        val obCh = overlayArgb and 0xFF
+        val br = (baseOpaqueRgb shr 16) and 0xFF
+        val bg = (baseOpaqueRgb shr 8) and 0xFF
+        val bb = baseOpaqueRgb and 0xFF
+        val r = (orCh * a + br * (1.0 - a)).toInt().coerceIn(0, 255)
+        val g = (ogCh * a + bg * (1.0 - a)).toInt().coerceIn(0, 255)
+        val b = (obCh * a + bb * (1.0 - a)).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /**
+     * Resolve row fill, stroke, text, and ripple tokens for every tone and
+     * focus state so destructive rows receive unmistakable red tint + red focus
+     * border while preserving WCAG AA (`>= 4.5:1`) contrast across all themes.
+     */
+    fun rowVisual(
+        tone: RowTone,
+        selected: Boolean,
+        accent: Int,
+        tokens: ThemeTokens,
+    ): RowVisualSpec {
+        val surface = ThemePack.cardFill(tokens)
+        return when (tone) {
+            RowTone.DESTRUCTIVE -> if (selected) {
+                val fill = blendOverOpaque(DESTRUCTIVE_WASH_SELECTED, surface)
+                RowVisualSpec(
+                    fillColor = fill,
+                    effectiveSurface = fill,
+                    strokeColor = UiDimens.COLOR_DESTRUCTIVE,
+                    strokeDp = 3,
+                    textColor = DESTRUCTIVE_TEXT_SELECTED,
+                    rippleColor = DESTRUCTIVE_RIPPLE,
+                )
+            } else {
+                val fill = blendOverOpaque(DESTRUCTIVE_WASH_IDLE, surface)
+                RowVisualSpec(
+                    fillColor = fill,
+                    effectiveSurface = fill,
+                    strokeColor = 0,
+                    strokeDp = 0,
+                    textColor = UiDimens.COLOR_DESTRUCTIVE,
+                    rippleColor = DESTRUCTIVE_RIPPLE,
+                )
+            }
+            RowTone.CANCEL -> if (selected) {
+                RowVisualSpec(
+                    fillColor = surface,
+                    effectiveSurface = surface,
+                    strokeColor = accent,
+                    strokeDp = 3,
+                    textColor = UiDimens.ALPHA_PRIMARY,
+                    rippleColor = STANDARD_RIPPLE,
+                )
+            } else {
+                RowVisualSpec(
+                    fillColor = 0,
+                    effectiveSurface = surface,
+                    strokeColor = 0,
+                    strokeDp = 0,
+                    textColor = UiDimens.ALPHA_SECONDARY,
+                    rippleColor = STANDARD_RIPPLE,
+                )
+            }
+            RowTone.STANDARD -> if (selected) {
+                RowVisualSpec(
+                    fillColor = surface,
+                    effectiveSurface = surface,
+                    strokeColor = accent,
+                    strokeDp = 3,
+                    textColor = UiDimens.ALPHA_PRIMARY,
+                    rippleColor = STANDARD_RIPPLE,
+                )
+            } else {
+                RowVisualSpec(
+                    fillColor = 0,
+                    effectiveSurface = surface,
+                    strokeColor = 0,
+                    strokeDp = 0,
+                    textColor = UiDimens.ALPHA_PRIMARY,
+                    rippleColor = STANDARD_RIPPLE,
+                )
+            }
+        }
+    }
+
+    /** Opacity pair `(topCueAlpha, bottomCueAlpha)` signaling scrollable overflow. */
+    fun scrollCueAlphas(canScrollUp: Boolean, canScrollDown: Boolean): Pair<Float, Float> =
+        (if (canScrollUp) 1f else 0f) to (if (canScrollDown) 1f else 0f)
 }
 
 /**
@@ -117,7 +250,7 @@ class SlotMenu(
     private data class BoundAction(
         val view: TextView,
         val item: Row.Item,
-        val destructive: Boolean,
+        val tone: SlotMenuNav.RowTone,
     )
 
     private var selection = 0
@@ -125,8 +258,16 @@ class SlotMenu(
     private val actionRowIndices: List<Int> = SlotMenuNav.actionRowIndices(rows)
     private val actionRows = mutableListOf<BoundAction>()
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
+    private var themeTokens: ThemeTokens = ThemePack.GHOST
+    private val focusInterpolator = DecelerateInterpolator()
+
+    private fun resolveTokens(): ThemeTokens {
+        val app = context.applicationContext
+        return if (app is GhostGalleonApp) ThemePack.resolve(app.settings) else ThemePack.GHOST
+    }
 
     val view: View by lazy {
+        themeTokens = resolveTokens()
         val overlay = OverlayPrimitives.modalBackdrop(context) { onChoice(Choice.CANCEL) }
         val cardWidth = OverlayPrimitives.responsiveCardWidth(
             context = context,
@@ -161,17 +302,25 @@ class SlotMenu(
         val surfaceColor = TileBackgrounds.surfaceColor(context)
         val headerColor = ThemePack.accentTextColor(accentColor, surfaceColor)
         val dividerColor = TileBackgrounds.hairlineDivider(context)
+        val scrollCueColor = (0x66 shl 24) or (headerColor and 0x00FFFFFF)
         val locale = context.resources.configuration.locales[0]
 
         val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            val hInset = context.dp(UiDimens.SPACE_XS)
+            setPadding(hInset, context.dp(2), hInset, context.dp(2))
         }
         rows.forEachIndexed { index, row ->
             when (row) {
                 is Row.Header -> {
                     if (index > 0) {
                         list.addView(
-                            View(context).apply { setBackgroundColor(dividerColor) },
+                            View(context).apply {
+                                setBackgroundColor(dividerColor)
+                                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                            },
                             LinearLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 context.strokePx(1),
@@ -197,6 +346,9 @@ class SlotMenu(
                         )
                         isClickable = false
                         isFocusable = false
+                        if (Build.VERSION.SDK_INT >= 28) {
+                            isAccessibilityHeading = true
+                        }
                     }
                     list.addView(
                         header,
@@ -208,7 +360,7 @@ class SlotMenu(
                 }
                 is Row.Item -> {
                     val label = row.labelRes ?: row.choice.labelRes
-                    val destructive = SlotMenuNav.isDestructive(row)
+                    val tone = SlotMenuNav.rowTone(row)
                     val actionTv = TextView(context).apply {
                         setText(label)
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -217,15 +369,15 @@ class SlotMenu(
                         ellipsize = TextUtils.TruncateAt.END
                         minHeight = context.dp(44)
                         setPadding(
-                            context.dp(UiDimens.SPACE_LG),
+                            context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
-                            context.dp(UiDimens.SPACE_LG),
+                            context.dp(UiDimens.SPACE_MD),
                             context.dp(10),
                         )
                         setOnClickListener { onChoice(row.choice) }
                         isClickable = true
                     }
-                    actionRows.add(BoundAction(actionTv, row, destructive))
+                    actionRows.add(BoundAction(actionTv, row, tone))
                     list.addView(
                         actionTv,
                         LinearLayout.LayoutParams(
@@ -238,6 +390,17 @@ class SlotMenu(
                     )
                 }
             }
+        }
+
+        val topScrollCue = View(context).apply {
+            setBackgroundColor(scrollCueColor)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val bottomScrollCue = View(context).apply {
+            setBackgroundColor(scrollCueColor)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
         val scroll = OverlayPrimitives.MaxHeightScrollView(
@@ -257,13 +420,44 @@ class SlotMenu(
                 ),
             )
         }
+        fun refreshScrollCues() {
+            val (topAlpha, bottomAlpha) = SlotMenuNav.scrollCueAlphas(
+                canScrollUp = scroll.canScrollVertically(-1),
+                canScrollDown = scroll.canScrollVertically(1),
+            )
+            topScrollCue.alpha = topAlpha
+            bottomScrollCue.alpha = bottomAlpha
+        }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> refreshScrollCues() }
+        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshScrollCues() }
         scrollHost = scroll
+
+        card.addView(
+            topScrollCue,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(2),
+            ).apply {
+                marginStart = context.dp(UiDimens.SPACE_SM)
+                marginEnd = context.dp(UiDimens.SPACE_SM)
+            },
+        )
         card.addView(
             scroll,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
+        )
+        card.addView(
+            bottomScrollCue,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                context.strokePx(2),
+            ).apply {
+                marginStart = context.dp(UiDimens.SPACE_SM)
+                marginEnd = context.dp(UiDimens.SPACE_SM)
+            },
         )
 
         card.addView(
@@ -274,7 +468,7 @@ class SlotMenu(
             ),
         )
 
-        paintRows(scrollToFocused = false)
+        paintRows(scrollToFocused = false, animateFocus = false)
         overlay.addView(
             card,
             FrameLayout.LayoutParams(
@@ -286,33 +480,64 @@ class SlotMenu(
         overlay
     }
 
-    private fun paintRows(scrollToFocused: Boolean = true) {
+    private fun rowBackground(spec: SlotMenuNav.RowVisualSpec): Drawable {
+        val radiusPx = context.dpF(themeTokens.cardRadiusDp.coerceAtMost(14))
+        val content: Drawable? = if (spec.fillColor != 0 || spec.strokeDp > 0) {
+            GradientDrawable().apply {
+                setColor(spec.fillColor)
+                cornerRadius = radiusPx
+                if (spec.strokeDp > 0 && spec.strokeColor != 0) {
+                    setStroke(context.strokePx(spec.strokeDp), spec.strokeColor)
+                }
+            }
+        } else {
+            null
+        }
+        val mask = GradientDrawable().apply {
+            setColor(Color.WHITE)
+            cornerRadius = radiusPx
+        }
+        return RippleDrawable(ColorStateList.valueOf(spec.rippleColor), content, mask)
+    }
+
+    private fun paintRows(
+        scrollToFocused: Boolean = true,
+        animateFocus: Boolean = true,
+    ) {
         if (actionRows.isEmpty()) return
         val sel = GridWrapNav.clampIndex(selection, actionRows.size)
         selection = sel
+        val shouldAnimate = animateFocus && ValueAnimator.areAnimatorsEnabled()
         actionRows.forEachIndexed { index, bound ->
             val selected = index == sel
-            bound.view.background = if (selected) {
-                TileBackgrounds.selected(context, accentColor)
-            } else {
-                null
-            }
-            val color = when {
-                bound.destructive -> UiDimens.COLOR_DESTRUCTIVE
-                bound.item.choice == Choice.CANCEL && !selected -> UiDimens.ALPHA_SECONDARY
-                else -> UiDimens.ALPHA_PRIMARY
-            }
-            bound.view.setTextColor(color)
+            val spec = SlotMenuNav.rowVisual(
+                tone = bound.tone,
+                selected = selected,
+                accent = accentColor,
+                tokens = themeTokens,
+            )
+            bound.view.background = rowBackground(spec)
+            bound.view.setTextColor(spec.textColor)
             bound.view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            bound.view.isSelected = selected
+
+            val targetScale = if (selected) SlotMenuNav.FOCUS_SCALE else 1f
+            bound.view.animate().cancel()
+            if (shouldAnimate) {
+                bound.view.animate()
+                    .scaleX(targetScale)
+                    .scaleY(targetScale)
+                    .setDuration(SlotMenuNav.FOCUS_ANIM_MS)
+                    .setInterpolator(focusInterpolator)
+                    .start()
+            } else {
+                bound.view.scaleX = targetScale
+                bound.view.scaleY = targetScale
+            }
         }
         if (!scrollToFocused) return
         val focused = actionRows.getOrNull(sel)?.view ?: return
-        val scroller = scrollHost ?: return
-        scroller.post {
-            val targetY = (focused.top - (scroller.height - focused.height) / 2)
-                .coerceAtLeast(0)
-            scroller.smoothScrollTo(0, targetY)
-        }
+        scrollHost?.smoothScrollToCenter(focused)
     }
 
     fun handleAction(action: Action): Boolean {

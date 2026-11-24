@@ -2,8 +2,11 @@ package com.visorcraft.ghostgalleon.ui.deck
 
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.settings.Action
+import com.visorcraft.ghostgalleon.settings.ThemePack
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,5 +43,61 @@ class SlotMenuNavTest {
         assertTrue(SlotMenuNav.isDestructive(SlotMenu.Row.Item(SlotMenu.Choice.MOVE, destructive = true)))
         assertFalse(SlotMenuNav.isDestructive(SlotMenu.Row.Item(SlotMenu.Choice.MOVE)))
         assertFalse(SlotMenuNav.isDestructive(SlotMenu.Row.Item(SlotMenu.Choice.CANCEL)))
+    }
+
+    @Test
+    fun `rowTone classifies destructive, cancel, and standard items accurately`() {
+        assertEquals(
+            SlotMenuNav.RowTone.DESTRUCTIVE,
+            SlotMenuNav.rowTone(SlotMenu.Row.Item(SlotMenu.Choice.REMOVE_FROM_GRID)),
+        )
+        assertEquals(
+            SlotMenuNav.RowTone.CANCEL,
+            SlotMenuNav.rowTone(SlotMenu.Row.Item(SlotMenu.Choice.CANCEL)),
+        )
+        assertEquals(
+            SlotMenuNav.RowTone.STANDARD,
+            SlotMenuNav.rowTone(SlotMenu.Row.Item(SlotMenu.Choice.MOVE)),
+        )
+    }
+
+    @Test
+    fun `destructive focused row uses red stroke and tinted wash while all tones meet WCAG AA`() {
+        for (tokens in ThemePack.BUILTINS) {
+            val destructiveSelected = SlotMenuNav.rowVisual(
+                tone = SlotMenuNav.RowTone.DESTRUCTIVE,
+                selected = true,
+                accent = tokens.accentColor,
+                tokens = tokens,
+            )
+            assertEquals(UiDimens.COLOR_DESTRUCTIVE, destructiveSelected.strokeColor)
+            assertTrue(destructiveSelected.strokeDp > 0)
+            assertNotEquals(ThemePack.cardFill(tokens), destructiveSelected.fillColor)
+
+            for (tone in SlotMenuNav.RowTone.entries) {
+                for (selected in listOf(false, true)) {
+                    val spec = SlotMenuNav.rowVisual(
+                        tone = tone,
+                        selected = selected,
+                        accent = tokens.accentColor,
+                        tokens = tokens,
+                    )
+                    val effectiveFg = SlotMenuNav.blendOverOpaque(spec.textColor, spec.effectiveSurface)
+                    val ratio = ThemePack.contrastRatio(effectiveFg, spec.effectiveSurface)
+                    assertTrue(
+                        "Low SlotMenu contrast $ratio for theme=${tokens.id} tone=$tone selected=$selected",
+                        ratio >= ThemePack.MIN_TEXT_CONTRAST,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `scrollCueAlphas reflect vertical overflow cleanly`() {
+        assertEquals(0f to 0f, SlotMenuNav.scrollCueAlphas(canScrollUp = false, canScrollDown = false))
+        assertEquals(0f to 1f, SlotMenuNav.scrollCueAlphas(canScrollUp = false, canScrollDown = true))
+        assertEquals(1f to 0f, SlotMenuNav.scrollCueAlphas(canScrollUp = true, canScrollDown = false))
+        assertEquals(1f to 1f, SlotMenuNav.scrollCueAlphas(canScrollUp = true, canScrollDown = true))
     }
 }
