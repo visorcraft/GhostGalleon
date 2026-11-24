@@ -306,4 +306,20 @@ class OverlayPrimitivesTest {
         }
         assertEquals(UiDimens.ALPHA_MUTED, OverlayPrimitives.keycapFooterStyle(ThemePack.GHOST.accentColor, ThemePack.GHOST).labelText)
     }
+
+    @Test
+    fun `exit choreography constants, shouldAnimateExit, and exitScale clamp cleanly`() {
+        assertEquals(85L, OverlayPrimitives.EXIT_DURATION_MS)
+        assertEquals(0.97f, OverlayPrimitives.EXIT_END_SCALE, 0.0001f)
+
+        assertTrue(OverlayPrimitives.shouldAnimateExit(animatorsEnabled = true, skipAnimation = false))
+        assertFalse(OverlayPrimitives.shouldAnimateExit(animatorsEnabled = false, skipAnimation = false))
+        assertFalse(OverlayPrimitives.shouldAnimateExit(animatorsEnabled = true, skipAnimation = true))
+
+        assertEquals(1.0f, OverlayPrimitives.exitScale(0f), 0.0001f)
+        assertEquals(0.985f, OverlayPrimitives.exitScale(0.5f), 0.0001f)
+        assertEquals(0.97f, OverlayPrimitives.exitScale(1f), 0.0001f)
+        assertEquals(1.0f, OverlayPrimitives.exitScale(-0.5f), 0.0001f)
+        assertEquals(0.97f, OverlayPrimitives.exitScale(1.5f), 0.0001f)
+    }
 }

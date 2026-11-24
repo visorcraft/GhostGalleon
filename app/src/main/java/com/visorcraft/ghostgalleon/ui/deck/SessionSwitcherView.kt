@@ -37,6 +37,7 @@ import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.useTabularNumerals
 
 /**
  * Pure, host-tested navigation, artwork classification, recency, visual
@@ -64,6 +65,15 @@ internal object SessionSwitcherNav {
     internal const val REMOVE_RIPPLE_COLOR: Int = 0x38FF5252
     const val FOCUS_SCALE: Float = 1.015f
     const val FOCUS_ANIM_MS: Long = 90L
+    const val REMOVE_MIN_TOUCH_DP: Int = UiDimens.TOUCH_MIN_DP
+    const val FOCUS_ELEVATION_DP: Float = 4f
+    const val LIVE_DOT_SIZE_DP: Int = 6
+
+    /** Focus elevation lift (dp) applied to the currently focused session row. Host-tested. */
+    fun focusElevationDp(selected: Boolean): Float = if (selected) FOCUS_ELEVATION_DP else 0f
+
+    /** WCAG-AA high-contrast live indicator dot color inside the accent-filled Now-Playing pill. */
+    fun activeDotColor(accent: Int): Int = QuickPanelNav.accessibleOnAccent(accent)
 
     /**
      * Distinct surface, border, and subtitle tokens separating the active
@@ -268,6 +278,8 @@ object SessionSwitcherView {
         private var paintedSelection: Int = -1
         val rows = mutableListOf<View>()
         internal val rowBackgrounds = mutableListOf<GradientDrawable>()
+        internal val accentBars = mutableListOf<View>()
+        internal val accentBarBackgrounds = mutableListOf<GradientDrawable>()
         internal val subtitleViews = mutableListOf<TextView?>()
         internal var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
 
@@ -324,6 +336,11 @@ object SessionSwitcherView {
                 }
             }
             row.isSelected = selected
+            row.translationZ = context.dpF(SessionSwitcherNav.focusElevationDp(selected))
+            accentBars.getOrNull(index)?.visibility = if (selected) View.VISIBLE else View.INVISIBLE
+            if (selected && visual.strokeColor != 0) {
+                accentBarBackgrounds.getOrNull(index)?.setColor(visual.strokeColor)
+            }
             subtitleViews.getOrNull(index)?.setTextColor(visual.subtitleColor)
             OverlayPrimitives.applyFocusScale(
                 view = row,
@@ -398,12 +415,17 @@ object SessionSwitcherView {
         } else {
             context.resources.getQuantityString(R.plurals.count_items, entries.size, entries.size)
         }
+        val header = OverlayPrimitives.modalHeader(
+            context = context,
+            titleRes = R.string.session_switcher_title,
+            subtitle = countSubtitle,
+        )
+        (header.getChildAt(1) as? TextView)?.apply {
+            useTabularNumerals()
+            OverlayPrimitives.markPoliteLiveRegion(this)
+        }
         sheet.addView(
-            OverlayPrimitives.modalHeader(
-                context = context,
-                titleRes = R.string.session_switcher_title,
-                subtitle = countSubtitle,
-            ),
+            header,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -474,7 +496,12 @@ object SessionSwitcherView {
                 val rowBg = GradientDrawable().apply {
                     cornerRadius = context.dpF(rowRadiusDp)
                 }
-                val (row, subtitleView) = rowView(
+                val accentBarBg = TileBackgrounds.activeAccentBar(
+                    context = context,
+                    accent = accent,
+                    cornerRadiusDp = 2,
+                )
+                val built = rowView(
                     context = context,
                     app = app,
                     romsById = romsById,
@@ -486,15 +513,18 @@ object SessionSwitcherView {
                     accent = accent,
                     themeTokens = themeTokens,
                     rowBg = rowBg,
+                    accentBarBg = accentBarBg,
                     rowRadiusDp = rowRadiusDp,
                     onPick = onPick,
                     onRemove = onRemove,
                 )
-                overlay.rows.add(row)
+                overlay.rows.add(built.row)
                 overlay.rowBackgrounds.add(rowBg)
-                overlay.subtitleViews.add(subtitleView)
+                overlay.accentBars.add(built.accentBar)
+                overlay.accentBarBackgrounds.add(accentBarBg)
+                overlay.subtitleViews.add(built.subtitleView)
                 list.addView(
-                    row,
+                    built.row,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -587,6 +617,12 @@ object SessionSwitcherView {
         return overlay
     }
 
+    private data class BuiltRow(
+        val row: View,
+        val accentBar: View,
+        val subtitleView: TextView?,
+    )
+
     private fun rowView(
         context: Context,
         app: GhostGalleonApp?,
@@ -599,10 +635,11 @@ object SessionSwitcherView {
         accent: Int,
         themeTokens: ThemeTokens,
         rowBg: GradientDrawable,
+        accentBarBg: GradientDrawable,
         rowRadiusDp: Int,
         onPick: (SessionRingEntry) -> Unit,
         onRemove: (String) -> Unit,
-    ): Pair<View, TextView?> {
+    ): BuiltRow {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -612,8 +649,8 @@ object SessionSwitcherView {
                 cornerRadiusDp = rowRadiusDp,
                 rippleColor = SessionSwitcherNav.ROW_RIPPLE_COLOR,
             )
-            setPadding(
-                context.dp(UiDimens.SPACE_MD),
+            setPaddingRelative(
+                context.dp(UiDimens.SPACE_SM),
                 context.dp(10),
                 context.dp(UiDimens.SPACE_MD),
                 context.dp(10),
@@ -626,6 +663,17 @@ object SessionSwitcherView {
                 true
             }
         }
+        val accentBar = View(context).apply {
+            background = accentBarBg
+            visibility = View.INVISIBLE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        row.addView(
+            accentBar,
+            LinearLayout.LayoutParams(context.dp(3), context.dp(28)).apply {
+                marginEnd = context.dp(UiDimens.SPACE_SM)
+            },
+        )
         val thumbSize = context.dp(42)
         row.addView(
             artworkBadgeView(
@@ -666,7 +714,30 @@ object SessionSwitcherView {
                 gravity = Gravity.CENTER_VERTICAL
             }
             if (isActive) {
-                metaRow.addView(
+                val dotSizePx = context.dp(SessionSwitcherNav.LIVE_DOT_SIZE_DP)
+                val nowPlayingPill = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = TileBackgrounds.accentPill(
+                        context = context,
+                        accent = accent,
+                        cornerRadiusDp = 8,
+                    )
+                    setPadding(context.dp(7), context.dp(2), context.dp(8), context.dp(2))
+                }
+                nowPlayingPill.addView(
+                    View(context).apply {
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(SessionSwitcherNav.activeDotColor(accent))
+                        }
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    },
+                    LinearLayout.LayoutParams(dotSizePx, dotSizePx).apply {
+                        marginEnd = context.dp(5)
+                    },
+                )
+                nowPlayingPill.addView(
                     TextView(context).apply {
                         setText(R.string.label_now_playing)
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
@@ -675,13 +746,14 @@ object SessionSwitcherView {
                         letterSpacing = 0.06f
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
-                        background = TileBackgrounds.accentPill(
-                            context = context,
-                            accent = accent,
-                            cornerRadiusDp = 8,
-                        )
-                        setPadding(context.dp(8), context.dp(2), context.dp(8), context.dp(2))
                     },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+                metaRow.addView(
+                    nowPlayingPill,
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -754,6 +826,7 @@ object SessionSwitcherView {
             cornerRadiusDp = 10,
             rippleColor = SessionSwitcherNav.REMOVE_RIPPLE_COLOR,
         )
+        val minTouchPx = context.dp(SessionSwitcherNav.REMOVE_MIN_TOUCH_DP)
         row.addView(
             TextView(context).apply {
                 setText(R.string.action_remove)
@@ -766,8 +839,10 @@ object SessionSwitcherView {
                 setTextColor(UiDimens.COLOR_DESTRUCTIVE)
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.CENTER
+                minimumHeight = minTouchPx
+                minWidth = minTouchPx
                 background = removeBg
-                setPadding(context.dp(10), context.dp(6), context.dp(10), context.dp(6))
+                setPadding(context.dp(12), context.dp(10), context.dp(12), context.dp(10))
                 isClickable = true
                 setOnClickListener {
                     playSfx(context, SoundCue.DESTRUCTIVE)
@@ -779,7 +854,7 @@ object SessionSwitcherView {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { marginStart = context.dp(UiDimens.SPACE_SM) },
         )
-        return row to subtitleView
+        return BuiltRow(row = row, accentBar = accentBar, subtitleView = subtitleView)
     }
 
     private fun artworkBadgeView(

@@ -93,4 +93,29 @@ class ToastCoalescerTest {
             coalescer.decide("Follow-up", long = false, nowMs = 3_600L),
         )
     }
+
+    @Test
+    fun `identical message within 450ms on a different display is never suppressed`() {
+        val coalescer = ToastCoalescer(duplicateWindowMs = 450L)
+        // Toast on Sugar top screen (display 0).
+        assertEquals(
+            ToastCoalescer.Decision.SHOW_FRESH,
+            coalescer.decide("Swapped displays", long = false, nowMs = 2_000L, displayId = 0),
+        )
+        // Same message on same display within 450ms is still suppressed.
+        assertEquals(
+            ToastCoalescer.Decision.SUPPRESS_DUPLICATE,
+            coalescer.decide("Swapped displays", long = false, nowMs = 2_100L, displayId = 0),
+        )
+        // Same message on Sugar opposite display (display 1) within 450ms replaces cleanly so active panel gets feedback.
+        assertEquals(
+            ToastCoalescer.Decision.CANCEL_AND_REPLACE,
+            coalescer.decide("Swapped displays", long = false, nowMs = 2_200L, displayId = 1),
+        )
+        // Immediate duplicate on display 1 is now suppressed on display 1.
+        assertEquals(
+            ToastCoalescer.Decision.SUPPRESS_DUPLICATE,
+            coalescer.decide("Swapped displays", long = false, nowMs = 2_300L, displayId = 1),
+        )
+    }
 }

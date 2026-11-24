@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
@@ -27,6 +30,7 @@ import com.visorcraft.ghostgalleon.rom.StagePlot
 import com.visorcraft.ghostgalleon.rom.StagePlots
 import com.visorcraft.ghostgalleon.rom.isInstalled
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
+import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.toast
 
 /** Pure, host-tested choice and state helpers for [EntryActions] dialogs. */
@@ -137,6 +141,27 @@ internal object EntryActionChoices {
     /** First index matching [predicate] (active emulator/profile/stage-plot row), or `-1`. */
     fun <T> selectedRowIndex(rows: List<T>, predicate: (T) -> Boolean): Int =
         rows.indexOfFirst(predicate)
+
+    /**
+     * Character index range covering the `" · <missingLabel>"` suffix on an
+     * uninstalled emulator row so [EntryActions.playerProfile] can style missing
+     * players with [UiDimens.ALPHA_MUTED] while installed players stay bright.
+     * Returns null when [installed] is true or [missingLabel] is absent. Host-tested.
+     */
+    fun missingSuffixRange(
+        fullLabel: String,
+        missingLabel: String,
+        installed: Boolean,
+    ): IntRange? {
+        if (installed || missingLabel.isBlank()) return null
+        val dotSuffix = " \u00B7 $missingLabel"
+        val dotIdx = fullLabel.lastIndexOf(dotSuffix)
+        if (dotIdx >= 0) {
+            return dotIdx until (dotIdx + dotSuffix.length)
+        }
+        val bareIdx = fullLabel.lastIndexOf(missingLabel)
+        return if (bareIdx >= 0) bareIdx until (bareIdx + missingLabel.length) else null
+    }
 }
 
 /** Shared, locale-safe library entry actions. */
@@ -264,8 +289,8 @@ object EntryActions {
             isInstalled = { pm.isInstalled(it) },
         )
         val missingLabel = activity.getString(R.string.label_missing)
-        val labels = rows.map { row ->
-            when {
+        val labels: Array<CharSequence> = rows.map { row ->
+            val raw: String = when {
                 row.isPlatformDefault -> activity.getString(
                     if (row.selected) R.string.deck_platform_default_selected
                     else R.string.deck_platform_default,
@@ -282,6 +307,23 @@ object EntryActions {
                         base
                     }
                 }
+            }
+            val missingRange = EntryActionChoices.missingSuffixRange(
+                fullLabel = raw,
+                missingLabel = missingLabel,
+                installed = row.installed || row.isPlatformDefault,
+            )
+            if (missingRange != null) {
+                SpannableString(raw).apply {
+                    setSpan(
+                        ForegroundColorSpan(UiDimens.ALPHA_MUTED),
+                        missingRange.first,
+                        missingRange.last + 1,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
+            } else {
+                raw
             }
         }.toTypedArray()
         val dialogTitle = activity.getString(

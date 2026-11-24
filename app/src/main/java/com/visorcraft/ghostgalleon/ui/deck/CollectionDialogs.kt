@@ -1,13 +1,21 @@
 package com.visorcraft.ghostgalleon.ui.deck
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.view.KeyEvent
+import android.view.ViewGroup
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AppCompatDialog
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
+import com.visorcraft.ghostgalleon.input.KeyMap
 import com.visorcraft.ghostgalleon.library.CollectionsOps
 import com.visorcraft.ghostgalleon.library.FolderCollectionBridge
 import com.visorcraft.ghostgalleon.library.LibraryBrowse
+import com.visorcraft.ghostgalleon.settings.Action
 import com.visorcraft.ghostgalleon.ui.DeckDialogs
+import com.visorcraft.ghostgalleon.ui.hideStatusBar
 import com.visorcraft.ghostgalleon.ui.toast
 
 /** Pure, host-tested option-building and validation helpers for [CollectionDialogs]. */
@@ -81,6 +89,33 @@ internal object CollectionDialogRows {
             if (index < totalCount - 1) add(MemberAction.MOVE_DOWN)
             if (index < totalCount - 2) add(MemberAction.MOVE_TO_END)
             add(MemberAction.REMOVE)
+        }
+    }
+
+    /**
+     * Build [SlotMenu.Row] entries for a collection member at [index]/[totalCount]
+     * using existing [SlotMenu.Choice] items with destructive red emphasis on
+     * [SlotMenu.Choice.REMOVE_FROM_COLLECTION]. Host-tested.
+     */
+    fun toSlotMenuRows(index: Int, totalCount: Int): List<SlotMenu.Row> {
+        val actions = availableMemberActions(index, totalCount)
+        return buildList(actions.size + 1) {
+            actions.forEach { action ->
+                val choice = when (action) {
+                    MemberAction.MOVE_TO_TOP -> SlotMenu.Choice.MOVE_TO_TOP
+                    MemberAction.MOVE_UP -> SlotMenu.Choice.MOVE_UP
+                    MemberAction.MOVE_DOWN -> SlotMenu.Choice.MOVE_DOWN
+                    MemberAction.MOVE_TO_END -> SlotMenu.Choice.MOVE_TO_END
+                    MemberAction.REMOVE -> SlotMenu.Choice.REMOVE_FROM_COLLECTION
+                }
+                add(
+                    SlotMenu.Row.Item(
+                        choice = choice,
+                        destructive = action == MemberAction.REMOVE,
+                    ),
+                )
+            }
+            add(SlotMenu.Row.Item(SlotMenu.Choice.CANCEL))
         }
     }
 }
@@ -200,44 +235,86 @@ object CollectionDialogs {
             negativeRes = R.string.action_close,
         ) { which ->
             val key = members.getOrNull(which) ?: return@chooseItem
-            val actions = CollectionDialogRows.availableMemberActions(which, members.size)
-            val actionLabels = actions.map { context.getString(it.labelRes) }.toTypedArray()
+            val slotRows = CollectionDialogRows.toSlotMenuRows(which, members.size)
             val memberTitle = context.getString(
                 R.string.format_dot_pair,
                 labelOf(key),
                 context.getString(R.string.format_progress, which + 1, members.size),
             )
-            DeckDialogs.chooseItem(
+            lateinit var menuDialog: AppCompatDialog
+            val menu = SlotMenu(
                 context = context,
+                accentColor = app.settings.accentColor,
+                rows = slotRows,
                 title = memberTitle,
-                items = actionLabels,
-                negativeRes = R.string.action_close,
-            ) { actionIndex ->
-                val chosen = actions.getOrNull(actionIndex)
-                if (chosen != null) {
-                    val live = app.settings.collections
-                    val next = when (chosen) {
-                        CollectionDialogRows.MemberAction.MOVE_TO_TOP ->
-                            CollectionsOps.moveMemberToEdge(live, name, key, toFront = true)
-                        CollectionDialogRows.MemberAction.MOVE_UP ->
-                            CollectionsOps.moveMemberBy(live, name, key, -1)
-                        CollectionDialogRows.MemberAction.MOVE_DOWN ->
-                            CollectionsOps.moveMemberBy(live, name, key, 1)
-                        CollectionDialogRows.MemberAction.MOVE_TO_END ->
-                            CollectionsOps.moveMemberToEdge(live, name, key, toFront = false)
-                        CollectionDialogRows.MemberAction.REMOVE ->
-                            CollectionsOps.removeFromCollection(live, name, key)
-                    }
-                    commitCollection(app, next, name)
-                    onChanged?.invoke()
-                    val feedback = chosen.feedbackRes
-                    if (feedback != null) {
-                        context.toast(feedback)
-                    } else {
-                        context.toast(R.string.format_removed_from_named, name)
-                    }
+            ) { choice ->
+                menuDialog.dismiss()
+                val live = app.settings.collections
+                val action = when (choice) {
+                    SlotMenu.Choice.MOVE_TO_TOP -> CollectionDialogRows.MemberAction.MOVE_TO_TOP
+                    SlotMenu.Choice.MOVE_UP -> CollectionDialogRows.MemberAction.MOVE_UP
+                    SlotMenu.Choice.MOVE_DOWN -> CollectionDialogRows.MemberAction.MOVE_DOWN
+                    SlotMenu.Choice.MOVE_TO_END -> CollectionDialogRows.MemberAction.MOVE_TO_END
+                    SlotMenu.Choice.REMOVE_FROM_COLLECTION -> CollectionDialogRows.MemberAction.REMOVE
+                    else -> null
+                } ?: return@SlotMenu
+                val next = when (action) {
+                    CollectionDialogRows.MemberAction.MOVE_TO_TOP ->
+                        CollectionsOps.moveMemberToEdge(live, name, key, toFront = true)
+                    CollectionDialogRows.MemberAction.MOVE_UP ->
+                        CollectionsOps.moveMemberBy(live, name, key, -1)
+                    CollectionDialogRows.MemberAction.MOVE_DOWN ->
+                        CollectionsOps.moveMemberBy(live, name, key, 1)
+                    CollectionDialogRows.MemberAction.MOVE_TO_END ->
+                        CollectionsOps.moveMemberToEdge(live, name, key, toFront = false)
+                    CollectionDialogRows.MemberAction.REMOVE ->
+                        CollectionsOps.removeFromCollection(live, name, key)
+                }
+                commitCollection(app, next, name)
+                onChanged?.invoke()
+                val feedback = action.feedbackRes
+                if (feedback != null) {
+                    context.toast(feedback)
+                } else {
+                    context.toast(R.string.format_removed_from_named, name)
                 }
             }
+            menuDialog = AppCompatDialog(context, R.style.Theme_GhostGalleon_Dialog).apply {
+                setContentView(menu.view)
+                setCancelable(true)
+                setOnKeyListener { _, keyCode, event ->
+                    if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                    val mapped = KeyMap.resolve(keyCode, app.settings).takeIf { it != Action.NONE }
+                        ?: when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> Action.NAV_UP
+                            KeyEvent.KEYCODE_DPAD_DOWN -> Action.NAV_DOWN
+                            KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> Action.PAGE_PREV
+                            KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> Action.PAGE_NEXT
+                            KeyEvent.KEYCODE_DPAD_CENTER,
+                            KeyEvent.KEYCODE_ENTER,
+                            KeyEvent.KEYCODE_NUMPAD_ENTER,
+                            KeyEvent.KEYCODE_BUTTON_A,
+                            -> Action.CONFIRM
+                            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_BUTTON_B -> Action.BACK
+                            else -> Action.NONE
+                        }
+                    if (mapped != Action.NONE) {
+                        menu.handleAction(mapped)
+                    } else {
+                        false
+                    }
+                }
+                window?.let { win ->
+                    win.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                    win.setLayout(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    win.setDimAmount(0f)
+                    hideStatusBar(win)
+                }
+            }
+            menuDialog.show()
         }
     }
 }

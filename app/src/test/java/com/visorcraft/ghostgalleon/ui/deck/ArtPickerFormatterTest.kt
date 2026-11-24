@@ -79,4 +79,24 @@ class ArtPickerFormatterTest {
         )
         assertNull(ArtPickerFormatter.candidateSublineText(0, 0, "https://cdn.example/noext"))
     }
+
+    @Test
+    fun `gridColumns uses 2 responsive box-art columns on 540dp Sugar and 960dp Odin and 1-col otherwise`() {
+        val gridSpec = ArtPickerFormatter.previewSpec(ArtPickerFormatter.PreviewKind.GRID)
+        assertEquals(68, gridSpec.widthDp)
+        assertEquals(98, gridSpec.heightDp)
+
+        // 360dp narrow portrait stays 1-col even for GRID.
+        assertEquals(1, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.GRID, 360))
+        // 500dp / 540dp Sugar & 960dp Odin 2 Portal promote GRID box art to 2 columns.
+        assertEquals(2, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.GRID, 500))
+        assertEquals(2, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.GRID, 540))
+        assertEquals(2, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.GRID, 960))
+
+        // Wide HERO banners and LOGO tiles always stay 1-col across every viewport.
+        for (widthDp in listOf(360, 540, 960)) {
+            assertEquals(1, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.HERO, widthDp))
+            assertEquals(1, ArtPickerFormatter.gridColumns(ArtPickerFormatter.PreviewKind.LOGO, widthDp))
+        }
+    }
 }

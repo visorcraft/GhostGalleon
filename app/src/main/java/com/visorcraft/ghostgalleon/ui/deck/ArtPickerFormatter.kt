@@ -28,6 +28,8 @@ object ArtPickerFormatter {
         val preserveAlpha: Boolean,
     )
 
+    const val TWO_COLUMN_MIN_WIDTH_DP: Int = 500
+
     /** Map picker dialog title resource to its canonical [PreviewKind]. */
     fun previewKindForTitleRes(titleRes: Int): PreviewKind = when (titleRes) {
         R.string.artwork_pick_hero -> PreviewKind.HERO
@@ -35,11 +37,20 @@ object ArtPickerFormatter {
         else -> PreviewKind.GRID
     }
 
+    /**
+     * Responsive grid column count: portrait `GRID` box art uses 2 columns on
+     * panels `>= 500dp` wide (540dp Sugar & 960dp Odin 2 Portal), while narrow
+     * panels (`< 500dp`), wide `HERO` banners, and `LOGO`s stay single-column.
+     * Host-tested.
+     */
+    fun gridColumns(kind: PreviewKind, screenWidthDp: Int): Int =
+        if (kind == PreviewKind.GRID && screenWidthDp >= TWO_COLUMN_MIN_WIDTH_DP) 2 else 1
+
     /** Aspect-aware thumbnail dimensions and scaling rules per [PreviewKind]. */
     fun previewSpec(kind: PreviewKind): PreviewSpec = when (kind) {
         PreviewKind.GRID -> PreviewSpec(
-            widthDp = 56,
-            heightDp = 80,
+            widthDp = 68,
+            heightDp = 98,
             cornerRadiusDp = 8,
             fitCenter = false,
             preserveAlpha = false,

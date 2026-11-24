@@ -299,6 +299,10 @@ class AppPicker(
         pendingSearch = null
     }
 
+    private fun dismissImeNow() {
+        DeckOverlays.hideIme(activity, searchInput ?: overlayView)
+    }
+
     private fun clearSearch() {
         app.playSfx(SoundCue.FILTER_SELECT)
         searchInput?.setText("")
@@ -396,12 +400,14 @@ class AppPicker(
 
         val overlay = OverlayPrimitives.modalBackdrop(context) {
             app.playSfx(SoundCue.MODAL_CLOSE)
+            dismissImeNow()
             cancelPendingSearch()
             onClose()
         }.apply {
             addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) = Unit
                 override fun onViewDetachedFromWindow(v: View) {
+                    dismissImeNow()
                     cancelPendingSearch()
                     topScrollCue?.animate()?.cancel()
                     bottomScrollCue?.animate()?.cancel()
@@ -880,6 +886,7 @@ class AppPicker(
             Action.CONFIRM -> confirmHighlighted()
             Action.BACK -> {
                 app.playSfx(SoundCue.MODAL_CLOSE)
+                dismissImeNow()
                 cancelPendingSearch()
                 onClose()
             }
@@ -892,11 +899,13 @@ class AppPicker(
         when (val item = items.getOrNull(highlight)) {
             is PickerItem.App -> {
                 if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                dismissImeNow()
                 cancelPendingSearch()
                 onPick(item.entry.packageName)
             }
             is PickerItem.Rom -> {
                 if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                dismissImeNow()
                 cancelPendingSearch()
                 onPick(SlotKey.rom(item.entry.id))
             }
@@ -995,6 +1004,7 @@ class AppPicker(
         ) { choice ->
             closeHideMenu()
             if (choice == SlotMenu.Choice.HIDE) {
+                dismissImeNow()
                 cancelPendingSearch()
                 onHide(entry.packageName)
             }
@@ -1260,12 +1270,14 @@ class AppPicker(
                     is PickerItem.App -> {
                         performPickHaptic(row)
                         if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                        dismissImeNow()
                         cancelPendingSearch()
                         onPick(bound.entry.packageName)
                     }
                     is PickerItem.Rom -> {
                         performPickHaptic(row)
                         if (emitPickConfirmSound) app.playSfx(SoundCue.CONFIRM)
+                        dismissImeNow()
                         cancelPendingSearch()
                         onPick(SlotKey.rom(bound.entry.id))
                     }

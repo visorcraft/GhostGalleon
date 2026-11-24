@@ -127,4 +127,28 @@ class EntryActionsTest {
             EntryActionChoices.selectedRowIndex(emptyList<String>()) { true },
         )
     }
+
+    @Test
+    fun `missingSuffixRange highlights dot-Missing suffix only on uninstalled emulator rows`() {
+        assertNull(
+            EntryActionChoices.missingSuffixRange(
+                fullLabel = "RetroArch",
+                missingLabel = "Missing",
+                installed = true,
+            ),
+        )
+        val plain = "Snes9x EX+ \u00B7 Missing"
+        val range = EntryActionChoices.missingSuffixRange(plain, "Missing", installed = false)!!
+        assertEquals(" \u00B7 Missing", plain.substring(range))
+
+        val selectedMissing = "Snes9x EX+ \u00B7 Missing \u2713"
+        val selRange = EntryActionChoices.missingSuffixRange(selectedMissing, "Missing", installed = false)!!
+        assertEquals(" \u00B7 Missing", selectedMissing.substring(selRange))
+
+        val localized = "Dolphin \u00B7 Fehlt"
+        val locRange = EntryActionChoices.missingSuffixRange(localized, "Fehlt", installed = false)!!
+        assertEquals(" \u00B7 Fehlt", localized.substring(locRange))
+
+        assertNull(EntryActionChoices.missingSuffixRange("RetroArch", "Missing", installed = false))
+    }
 }

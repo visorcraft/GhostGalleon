@@ -17,8 +17,11 @@ object FolderPanelMetrics {
     const val WIDE_FOUR_COLUMN_MIN_MEMBERS: Int = 7
     const val WIDE_COLUMNS: Int = 4
 
+    const val CARD_MAX_WIDTH_1COL_DP: Int = 280
+    const val CARD_MAX_WIDTH_2COL_DP: Int = 340
     const val CARD_MAX_WIDTH_3COL_DP: Int = 420
     const val CARD_MAX_WIDTH_4COL_DP: Int = 520
+    const val SCROLL_CUE_FADE_MS: Long = OverlayPrimitives.SCROLL_CUE_FADE_MS
 
     const val MIN_THUMB_DP: Int = 56
     const val MAX_THUMB_DP: Int = 96
@@ -121,12 +124,18 @@ object FolderPanelMetrics {
         val safeH = screenHeightPx.coerceAtLeast(1)
         val widthDp = (safeW / d).roundToInt()
 
-        val columns = if (widthDp >= WIDE_PANEL_MIN_DP && memberCount >= WIDE_FOUR_COLUMN_MIN_MEMBERS) {
-            WIDE_COLUMNS
-        } else {
-            FolderPanelNav.COLUMNS
+        val columns = when {
+            memberCount == 1 -> 1
+            memberCount == 2 -> 2
+            widthDp >= WIDE_PANEL_MIN_DP && memberCount >= WIDE_FOUR_COLUMN_MIN_MEMBERS -> WIDE_COLUMNS
+            else -> FolderPanelNav.COLUMNS
         }
-        val maxCardDp = if (columns >= WIDE_COLUMNS) CARD_MAX_WIDTH_4COL_DP else CARD_MAX_WIDTH_3COL_DP
+        val maxCardDp = when (columns) {
+            1 -> CARD_MAX_WIDTH_1COL_DP
+            2 -> CARD_MAX_WIDTH_2COL_DP
+            WIDE_COLUMNS -> CARD_MAX_WIDTH_4COL_DP
+            else -> CARD_MAX_WIDTH_3COL_DP
+        }
         val cardWidthPx = OverlayPrimitives.responsiveCardWidthPx(
             screenWidthPx = safeW,
             density = d,

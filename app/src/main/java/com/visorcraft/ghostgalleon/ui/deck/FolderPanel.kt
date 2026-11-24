@@ -208,11 +208,16 @@ class FolderPanel(
     private val cells = mutableListOf<BoundCell>()
     private var memberKeys: MutableList<Pair<String, String>> = members.toMutableList()
     private var gridHost: LinearLayout? = null
+    private var cardContainer: LinearLayout? = null
     private var scrollHost: OverlayPrimitives.MaxHeightScrollView? = null
     private var topScrollCue: View? = null
     private var bottomScrollCue: View? = null
+    private var lastTopCueAlpha: Float = -1f
+    private var lastBottomCueAlpha: Float = -1f
     private var subtitleView: TextView? = null
-    private var mirrorButton: TextView? = null
+    private var mirrorButton: LinearLayout? = null
+    private var mirrorIconView: ImageView? = null
+    private var mirrorLabelView: TextView? = null
     private var hintFooterView: TextView? = null
     private var thumbSizePx: Int = 0
     private var activeColumns: Int = FolderPanelNav.COLUMNS
@@ -251,7 +256,10 @@ class FolderPanel(
             context = context,
             padHorizontalDp = UiDimens.SPACE_LG,
             padVerticalDp = 14,
-        ).also { ViewCompat.setAccessibilityPaneTitle(it, title) }
+        ).also {
+            cardContainer = it
+            ViewCompat.setAccessibilityPaneTitle(it, title)
+        }
         val header = OverlayPrimitives.modalHeader(
             context = context,
             title = title,
@@ -308,18 +316,20 @@ class FolderPanel(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(cardSurface, Color.TRANSPARENT),
             )
-            visibility = View.GONE
+            alpha = 0f
             isClickable = false
             isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         val bottomCue = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(cardSurface, Color.TRANSPARENT),
             )
-            visibility = View.GONE
+            alpha = 0f
             isClickable = false
             isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         topScrollCue = topCue
         bottomScrollCue = bottomCue
@@ -363,21 +373,47 @@ class FolderPanel(
                 surfaceFill = TileBackgrounds.surfaceColor(context),
                 accent = accentColor,
             )
-            val mirror = TextView(context).apply {
-                setText(R.string.action_mirror_to_collection)
+            val mirrorText = context.getString(R.string.action_mirror_to_collection)
+            val mirrorIcon = ImageView(context).apply {
+                setImageResource(R.drawable.ic_folder)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            val mirrorLabel = TextView(context).apply {
+                text = mirrorText
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(UiDimens.ALPHA_PRIMARY)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                minHeight = context.dp(FolderPanelMetrics.MIRROR_MIN_HEIGHT_DP)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            val mirror = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                minimumHeight = context.dp(FolderPanelMetrics.MIRROR_MIN_HEIGHT_DP)
                 foreground = roundedRipple(mirrorRadius, mirrorRipple)
                 accessibilityDelegate = BUTTON_ROLE_DELEGATE
+                contentDescription = mirrorText
+                isClickable = true
                 setPadding(
                     context.dp(UiDimens.SPACE_MD),
                     context.dp(10),
                     context.dp(UiDimens.SPACE_MD),
                     context.dp(10),
+                )
+                addView(
+                    mirrorIcon,
+                    LinearLayout.LayoutParams(context.dp(16), context.dp(16)).apply {
+                        marginEnd = context.dp(UiDimens.SPACE_SM)
+                    },
+                )
+                addView(
+                    mirrorLabel,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
                 )
                 setOnClickListener {
                     nav = nav.copy(mirrorFocused = true)
@@ -386,6 +422,8 @@ class FolderPanel(
                     onMirrorToCollection.invoke()
                 }
             }
+            mirrorIconView = mirrorIcon
+            mirrorLabelView = mirrorLabel
             mirrorButton = mirror
             card.addView(
                 mirror,
@@ -438,6 +476,23 @@ class FolderPanel(
         mirrorButton?.visibility = if (hasMirror) View.VISIBLE else View.GONE
         hintFooterView?.setText(hintResForState())
 
+        val dm = context.resources.displayMetrics
+        val updatedSpec = FolderPanelMetrics.compute(
+            screenWidthPx = dm.widthPixels,
+            screenHeightPx = dm.heightPixels,
+            density = dm.density,
+            memberCount = memberKeys.size,
+        )
+        activeColumns = updatedSpec.columns
+        thumbSizePx = updatedSpec.thumbSizePx
+        cardContainer?.let { container ->
+            val lp = container.layoutParams
+            if (lp != null && lp.width != updatedSpec.cardWidthPx) {
+                lp.width = updatedSpec.cardWidthPx
+                container.layoutParams = lp
+            }
+        }
+
         if (memberKeys.isEmpty()) {
             nav = FolderNavState(selectedCell = 0, mirrorFocused = false)
             grid.addView(
@@ -447,8 +502,12 @@ class FolderPanel(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
-            topScrollCue?.visibility = View.GONE
-            bottomScrollCue?.visibility = View.GONE
+            topScrollCue?.animate()?.cancel()
+            bottomScrollCue?.animate()?.cancel()
+            topScrollCue?.alpha = 0f
+            bottomScrollCue?.alpha = 0f
+            lastTopCueAlpha = 0f
+            lastBottomCueAlpha = 0f
             return
         }
 
@@ -642,6 +701,24 @@ class FolderPanel(
         }
     }
 
+    private fun applyScrollCueAlpha(cue: View?, target: Float, previous: Float): Float {
+        if (cue == null || target == previous) return previous
+        cue.animate().cancel()
+        val durationMs = OverlayPrimitives.scrollCueTransitionMs(
+            DeckMotionPolicy.areSystemAnimatorsEnabled(),
+        )
+        if (durationMs > 0L && cue.isAttachedToWindow && previous >= 0f) {
+            cue.animate()
+                .alpha(target)
+                .setDuration(durationMs)
+                .setInterpolator(FOCUS_INTERPOLATOR)
+                .start()
+        } else {
+            cue.alpha = target
+        }
+        return target
+    }
+
     private fun updateScrollCues() {
         val scroller = scrollHost ?: return
         val contentH = gridHost?.height ?: 0
@@ -650,8 +727,12 @@ class FolderPanel(
             contentHeightPx = contentH,
             viewportHeightPx = scroller.height,
         )
-        topScrollCue?.visibility = if (cueState.showTopCue) View.VISIBLE else View.GONE
-        bottomScrollCue?.visibility = if (cueState.showBottomCue) View.VISIBLE else View.GONE
+        val (topTarget, bottomTarget) = OverlayPrimitives.scrollCueAlphas(
+            canScrollUp = cueState.showTopCue,
+            canScrollDown = cueState.showBottomCue,
+        )
+        lastTopCueAlpha = applyScrollCueAlpha(topScrollCue, topTarget, lastTopCueAlpha)
+        lastBottomCueAlpha = applyScrollCueAlpha(bottomScrollCue, bottomTarget, lastBottomCueAlpha)
     }
 
     private fun roundedRipple(cornerRadiusDp: Int, rippleColor: Int): RippleDrawable {
@@ -667,6 +748,8 @@ class FolderPanel(
         mirrorButton?.animate()?.cancel()
         subtitleView?.animate()?.cancel()
         gridHost?.animate()?.cancel()
+        topScrollCue?.animate()?.cancel()
+        bottomScrollCue?.animate()?.cancel()
     }
 
     private fun paintSelection() {
@@ -767,8 +850,9 @@ class FolderPanel(
                         setStroke(context.strokePx(style.strokeDp), style.strokeColor)
                     }
                 }
-                btn.setTextColor(style.textColor)
-                btn.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+                mirrorLabelView?.setTextColor(style.textColor)
+                mirrorLabelView?.setTypeface(null, if (style.bold) Typeface.BOLD else Typeface.NORMAL)
+                mirrorIconView?.imageTintList = ColorStateList.valueOf(style.textColor)
                 btn.translationZ = if (style.elevationDp > 0f) context.dpF(style.elevationDp) else 0f
                 btn.animate().cancel()
                 if (DeckMotionPolicy.shouldAnimate(animatorsEnabled, btn.isLaidOut)) {

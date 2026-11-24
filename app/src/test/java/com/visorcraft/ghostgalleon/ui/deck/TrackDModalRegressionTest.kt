@@ -243,5 +243,10 @@ class TrackDModalRegressionTest {
         assertEquals(ToastCoalescer.Decision.SUPPRESS_DUPLICATE, coalescer.decide("A", false, 200L))
         assertEquals(ToastCoalescer.Decision.CANCEL_AND_REPLACE, coalescer.decide("B", false, 250L))
         assertEquals(ToastCoalescer.Decision.IGNORE_BLANK, coalescer.decide("   ", false, 300L))
+        // Cross-display identical toast within 450ms replaces instead of suppressing.
+        assertEquals(
+            ToastCoalescer.Decision.CANCEL_AND_REPLACE,
+            coalescer.decide("B", false, 350L, displayId = 1),
+        )
     }
 }

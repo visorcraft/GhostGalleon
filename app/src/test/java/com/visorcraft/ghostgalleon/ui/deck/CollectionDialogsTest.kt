@@ -130,4 +130,34 @@ class CollectionDialogsTest {
             CollectionDialogRows.availableMemberActions(index = 4, totalCount = 5),
         )
     }
+
+    @Test
+    fun `toSlotMenuRows maps member actions to SlotMenu choices with destructive remove emphasis`() {
+        val midRows = CollectionDialogRows.toSlotMenuRows(index = 2, totalCount = 5)
+            .filterIsInstance<SlotMenu.Row.Item>()
+        assertEquals(
+            listOf(
+                SlotMenu.Choice.MOVE_TO_TOP,
+                SlotMenu.Choice.MOVE_UP,
+                SlotMenu.Choice.MOVE_DOWN,
+                SlotMenu.Choice.MOVE_TO_END,
+                SlotMenu.Choice.REMOVE_FROM_COLLECTION,
+                SlotMenu.Choice.CANCEL,
+            ),
+            midRows.map { it.choice },
+        )
+        val removeItem = midRows.first { it.choice == SlotMenu.Choice.REMOVE_FROM_COLLECTION }
+        assertTrue(removeItem.destructive)
+        assertEquals(SlotMenuNav.RowTone.DESTRUCTIVE, SlotMenuNav.rowTone(removeItem))
+        assertTrue(midRows.filter { it.choice != SlotMenu.Choice.REMOVE_FROM_COLLECTION }.none { it.destructive })
+
+        // Single-item collection offers destructive Remove + Cancel only.
+        val singleRows = CollectionDialogRows.toSlotMenuRows(index = 0, totalCount = 1)
+            .filterIsInstance<SlotMenu.Row.Item>()
+        assertEquals(
+            listOf(SlotMenu.Choice.REMOVE_FROM_COLLECTION, SlotMenu.Choice.CANCEL),
+            singleRows.map { it.choice },
+        )
+        assertTrue(singleRows.first().destructive)
+    }
 }

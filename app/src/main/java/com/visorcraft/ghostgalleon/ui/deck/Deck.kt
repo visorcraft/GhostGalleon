@@ -37,6 +37,7 @@ import com.visorcraft.ghostgalleon.ui.UiDimens
 import com.visorcraft.ghostgalleon.ui.dpF
 import com.visorcraft.ghostgalleon.ui.resolveText
 import com.visorcraft.ghostgalleon.ui.strokePx
+import com.visorcraft.ghostgalleon.ui.toast
 
 interface Deck {
     fun primaryView(context: Context): View
@@ -239,6 +240,7 @@ private fun pickSgdbMatchThenStart(
     rom: RomEntry,
     apiKey: String,
 ) {
+    activity.toast(R.string.settings_scanning)
     ART_SEARCH_EXECUTOR.execute {
         val query = com.visorcraft.ghostgalleon.art.Sgdb.normalizeName(rom.name)
         val json = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
@@ -337,6 +339,7 @@ private fun pickImageKind(
         kind = kind,
         density = activity.resources.displayMetrics.density,
     )
+    activity.toast(R.string.settings_scanning)
     ART_SEARCH_EXECUTOR.execute {
         val transport = com.visorcraft.ghostgalleon.art.HttpSgdbTransport()
         val shown = urls.take(12)
@@ -352,8 +355,11 @@ private fun pickImageKind(
                 thumbs.forEach { (_, d) -> d.bitmap?.takeIf { !it.isRecycled }?.recycle() }
                 return@runOnUiThread
             }
-            val density = activity.resources.displayMetrics.density
+            val dm = activity.resources.displayMetrics
+            val density = dm.density.coerceAtLeast(0.1f)
             fun dp(v: Int) = (v * density).toInt()
+            val screenWidthDp = (dm.widthPixels / density).toInt()
+            val columns = ArtPickerFormatter.gridColumns(kind, screenWidthDp)
             val col = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -368,9 +374,17 @@ private fun pickImageKind(
             val accent = (activity.application as? com.visorcraft.ghostgalleon.GhostGalleonApp)
                 ?.settings?.accentColor
                 ?: com.visorcraft.ghostgalleon.settings.ThemePack.GHOST.accentColor
+            val cardSurface = TileBackgrounds.surfaceColor(activity)
+            val focusStroke = OverlayPrimitives.accessibleFocusStroke(accent, cardSurface)
+            val sunkenSurface = TileBackgrounds.surfaceSunken(activity)
+            val hairlineColor = TileBackgrounds.hairlineDivider(activity)
+            val stroke1Px = activity.strokePx(1)
             val thumbViews = mutableListOf<ImageView>()
             val thumbRadiusPx = activity.dpF(spec.cornerRadiusDp)
-            thumbs.forEachIndexed { i, (url, decoded) ->
+            val thumbOutline = OutlineCache.roundedRect(thumbRadiusPx)
+            val fallbackTint = android.content.res.ColorStateList.valueOf(UiDimens.ALPHA_MUTED)
+
+            fun buildCandidateCard(i: Int, url: String, decoded: DecodedThumb): LinearLayout {
                 val titleUi = ArtPickerFormatter.candidateTitleText(
                     indexOneBased = i + 1,
                     totalCount = thumbs.size,
@@ -382,23 +396,34 @@ private fun pickImageKind(
                     url = url,
                 )
                 val idleCardBg = GradientDrawable().apply {
-                    setColor(TileBackgrounds.surfaceSunken(activity))
+                    setColor(sunkenSurface)
                     cornerRadius = activity.dpF(12)
-                    setStroke(activity.strokePx(1), TileBackgrounds.hairlineDivider(activity))
+                    setStroke(stroke1Px, hairlineColor)
                 }
-                val row = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(10), dp(8), dp(12), dp(8))
+                val focusableBg = TileBackgrounds.focusableRow(
+                    context = activity,
+                    accent = focusStroke,
+                    idleBackground = idleCardBg,
+                    cornerRadiusDp = 12,
+                )
+                val isTwoCol = columns > 1
+                val card = LinearLayout(activity).apply {
+                    orientation = if (isTwoCol) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+                    gravity = if (isTwoCol) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
+                    setPadding(
+                        dp(if (isTwoCol) 8 else 10),
+                        dp(8),
+                        dp(if (isTwoCol) 8 else 12),
+                        dp(8),
+                    )
                     isClickable = true
                     isFocusable = true
                     contentDescription = activity.resolveText(
                         ArtPickerFormatter.candidateAccessibilityText(titleUi, sublineUi),
                     )
-                    background = TileBackgrounds.focusableRow(
+                    background = OverlayPrimitives.roundedRipple(
                         context = activity,
-                        accent = accent,
-                        idleBackground = idleCardBg,
+                        content = focusableBg,
                         cornerRadiusDp = 12,
                     )
                     setOnClickListener {
@@ -408,28 +433,33 @@ private fun pickImageKind(
                 }
                 val thumbFrame = FrameLayout(activity).apply {
                     background = GradientDrawable().apply {
-                        setColor(TileBackgrounds.surfaceColor(activity))
+                        setColor(cardSurface)
                         cornerRadius = thumbRadiusPx
-                        setStroke(activity.strokePx(1), TileBackgrounds.hairlineDivider(activity))
+                        setStroke(stroke1Px, hairlineColor)
                     }
                     clipToOutline = true
-                    outlineProvider = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) {
-                            outline.setRoundRect(0, 0, view.width, view.height, thumbRadiusPx)
-                        }
-                    }
+                    outlineProvider = thumbOutline
                 }
+                val liveBmp = decoded.bitmap?.takeIf { !it.isRecycled }
                 val thumb = ImageView(activity).apply {
-                    scaleType = if (spec.fitCenter) {
-                        ImageView.ScaleType.FIT_CENTER
+                    if (liveBmp != null) {
+                        scaleType = if (spec.fitCenter) {
+                            ImageView.ScaleType.FIT_CENTER
+                        } else {
+                            ImageView.ScaleType.CENTER_CROP
+                        }
+                        if (spec.fitCenter) {
+                            val logoPad = dp(4)
+                            setPadding(logoPad, logoPad, logoPad, logoPad)
+                        }
+                        setImageBitmap(liveBmp)
                     } else {
-                        ImageView.ScaleType.CENTER_CROP
+                        scaleType = ImageView.ScaleType.CENTER_INSIDE
+                        val pad = dp(12)
+                        setPadding(pad, pad, pad, pad)
+                        setImageResource(R.drawable.ic_nav_art)
+                        imageTintList = fallbackTint
                     }
-                    if (spec.fitCenter) {
-                        val logoPad = dp(4)
-                        setPadding(logoPad, logoPad, logoPad, logoPad)
-                    }
-                    decoded.bitmap?.takeIf { !it.isRecycled }?.let { setImageBitmap(it) }
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
                 thumbViews.add(thumb)
@@ -440,18 +470,25 @@ private fun pickImageKind(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     ),
                 )
-                row.addView(thumbFrame, LinearLayout.LayoutParams(dp(spec.widthDp), dp(spec.heightDp)))
+                card.addView(thumbFrame, LinearLayout.LayoutParams(dp(spec.widthDp), dp(spec.heightDp)))
 
                 val textCol = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(12), 0, 0, 0)
+                    if (isTwoCol) {
+                        gravity = Gravity.CENTER_HORIZONTAL
+                        setPadding(0, dp(6), 0, 0)
+                    } else {
+                        setPadding(dp(12), 0, 0, 0)
+                    }
                 }
                 textCol.addView(
                     TextView(activity).apply {
                         text = activity.resolveText(titleUi)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isTwoCol) 12.5f else 14f)
                         setTextColor(UiDimens.ALPHA_PRIMARY)
                         typeface = Typeface.DEFAULT_BOLD
+                        UiDimens.applyTabularNumerals(this)
+                        gravity = if (isTwoCol) Gravity.CENTER else Gravity.START
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                         includeFontPadding = false
@@ -461,8 +498,10 @@ private fun pickImageKind(
                     textCol.addView(
                         TextView(activity).apply {
                             text = activity.resolveText(sublineUi)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isTwoCol) 11f else 12f)
                             setTextColor(UiDimens.ALPHA_MUTED)
+                            UiDimens.applyTabularNumerals(this)
+                            gravity = if (isTwoCol) Gravity.CENTER else Gravity.START
                             maxLines = 1
                             ellipsize = TextUtils.TruncateAt.END
                             includeFontPadding = false
@@ -473,19 +512,65 @@ private fun pickImageKind(
                         ).apply { topMargin = dp(3) },
                     )
                 }
-                row.addView(
+                card.addView(
                     textCol,
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-                )
-                col.addView(
-                    row,
-                    LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ).apply {
-                        if (i > 0) topMargin = dp(6)
+                    if (isTwoCol) {
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        )
+                    } else {
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     },
                 )
+                return card
+            }
+
+            if (columns > 1) {
+                thumbs.chunked(columns).forEachIndexed { rowIdx, chunk ->
+                    val rowLine = LinearLayout(activity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.TOP
+                    }
+                    chunk.forEachIndexed { colIdx, (url, decoded) ->
+                        val itemIndex = rowIdx * columns + colIdx
+                        rowLine.addView(
+                            buildCandidateCard(itemIndex, url, decoded),
+                            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                if (colIdx > 0) marginStart = dp(8)
+                            },
+                        )
+                    }
+                    repeat(columns - chunk.size) {
+                        rowLine.addView(
+                            View(activity),
+                            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                marginStart = dp(8)
+                            },
+                        )
+                    }
+                    col.addView(
+                        rowLine,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply {
+                            if (rowIdx > 0) topMargin = dp(8)
+                        },
+                    )
+                }
+            } else {
+                thumbs.forEachIndexed { i, (url, decoded) ->
+                    col.addView(
+                        buildCandidateCard(i, url, decoded),
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply {
+                            if (i > 0) topMargin = dp(6)
+                        },
+                    )
+                }
             }
             val scroll = OverlayPrimitives.MaxHeightScrollView(
                 activity,
@@ -503,7 +588,7 @@ private fun pickImageKind(
             }
             dialog.setView(scroll)
             dialog.show()
-            DeckDialogs.style(dialog, activity)
+            DeckDialogs.style(dialog, activity, isCustomView = columns > 1)
         }
     }
 }

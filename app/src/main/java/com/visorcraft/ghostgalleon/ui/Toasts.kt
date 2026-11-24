@@ -1,20 +1,21 @@
 package com.visorcraft.ghostgalleon.ui
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.WindowManager
 import android.widget.Toast
 import com.visorcraft.ghostgalleon.i18n.UiText
 import java.lang.ref.WeakReference
 
 /**
- * Pure, host-tested coalescing policy for [toast] feedback.
+ * Pure, host-tested display-aware coalescing policy for [toast] feedback.
  *
- * Prevents rapid-tap toast pileups (e.g. cycling themes, toggling favorites,
- * or tapping unavailable chips repeatedly) by replacing an active toast
- * immediately and suppressing identical rapid double-taps within a short
- * debounce window.
+ * Prevents rapid-tap toast pileups on the same display while allowing cross-display
+ * feedback (e.g. One X Sugar top vs bottom panel within 450ms) to always surface
+ * on the active display.
  */
 internal class ToastCoalescer(
     private val duplicateWindowMs: Long = DUPLICATE_SUPPRESS_MS,
@@ -27,10 +28,16 @@ internal class ToastCoalescer(
     }
 
     private var lastMessage: String? = null
+    private var lastDisplayId: Int = DEFAULT_DISPLAY_ID
     private var lastShownAtMs: Long = 0L
     private var lastExpiresAtMs: Long = 0L
 
-    fun decide(message: String, long: Boolean, nowMs: Long): Decision {
+    fun decide(
+        message: String,
+        long: Boolean,
+        nowMs: Long,
+        displayId: Int = DEFAULT_DISPLAY_ID,
+    ): Decision {
         val normalized = message.trim()
         if (normalized.isEmpty()) return Decision.IGNORE_BLANK
 
@@ -38,6 +45,7 @@ internal class ToastCoalescer(
         val elapsed = nowMs - lastShownAtMs
         if (stillActive &&
             lastMessage == normalized &&
+            lastDisplayId == displayId &&
             elapsed >= 0L &&
             elapsed < duplicateWindowMs
         ) {
@@ -46,6 +54,7 @@ internal class ToastCoalescer(
 
         val windowMs = if (long) LONG_WINDOW_MS else SHORT_WINDOW_MS
         lastMessage = normalized
+        lastDisplayId = displayId
         lastShownAtMs = nowMs
         lastExpiresAtMs = nowMs + windowMs
         return if (stillActive) Decision.CANCEL_AND_REPLACE else Decision.SHOW_FRESH
@@ -53,11 +62,13 @@ internal class ToastCoalescer(
 
     fun reset() {
         lastMessage = null
+        lastDisplayId = DEFAULT_DISPLAY_ID
         lastShownAtMs = 0L
         lastExpiresAtMs = 0L
     }
 
     companion object {
+        const val DEFAULT_DISPLAY_ID: Int = 0
         const val SHORT_WINDOW_MS: Long = 2_000L
         const val LONG_WINDOW_MS: Long = 3_500L
         const val DUPLICATE_SUPPRESS_MS: Long = 450L
@@ -69,12 +80,24 @@ private object ToastCoordinator {
     private val coalescer = ToastCoalescer()
     private var activeRef: WeakReference<Toast>? = null
 
+    private fun resolveDisplayId(context: Context): Int = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display?.displayId
+        } else {
+            @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)
+                ?.defaultDisplay?.displayId
+        }
+    }.getOrNull() ?: ToastCoalescer.DEFAULT_DISPLAY_ID
+
     fun show(context: Context, message: String, long: Boolean) {
+        val displayId = resolveDisplayId(context)
         val showNow = Runnable {
             val decision = coalescer.decide(
                 message = message,
                 long = long,
                 nowMs = SystemClock.elapsedRealtime(),
+                displayId = displayId,
             )
             when (decision) {
                 ToastCoalescer.Decision.IGNORE_BLANK,

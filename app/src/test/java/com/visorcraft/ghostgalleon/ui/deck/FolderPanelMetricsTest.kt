@@ -137,4 +137,38 @@ class FolderPanelMetricsTest {
             )
         }
     }
+
+    @Test
+    fun `compute adapts small 1-2 item folders cleanly across 540dp Sugar and 960dp Odin 2 Portal`() {
+        val viewports = listOf(
+            "sugar-540dp" to Triple(1080, 1080, 2.0f),
+            "odin-960dp" to Triple(1920, 1080, 2.0f),
+        )
+        for ((name, vp) in viewports) {
+            val (w, h, d) = vp
+            val empty = FolderPanelMetrics.compute(w, h, d, memberCount = 0)
+            val one = FolderPanelMetrics.compute(w, h, d, memberCount = 1)
+            val two = FolderPanelMetrics.compute(w, h, d, memberCount = 2)
+            val three = FolderPanelMetrics.compute(w, h, d, memberCount = 3)
+            val seven = FolderPanelMetrics.compute(w, h, d, memberCount = 7)
+            val twelve = FolderPanelMetrics.compute(w, h, d, memberCount = 12)
+
+            assertEquals("$name empty columns", 3, empty.columns)
+            assertEquals("$name 1-item columns", 1, one.columns)
+            assertEquals("$name 2-item columns", 2, two.columns)
+            assertEquals("$name 3-item columns", 3, three.columns)
+            assertEquals("$name 1-item card width", (280 * d).toInt(), one.cardWidthPx)
+            assertEquals("$name 2-item card width", (340 * d).toInt(), two.cardWidthPx)
+            assertTrue("$name 1-item card narrower than 2-item", one.cardWidthPx < two.cardWidthPx)
+            assertTrue("$name 2-item card narrower than 3-item", two.cardWidthPx < three.cardWidthPx)
+            if (name == "odin-960dp") {
+                assertEquals(4, seven.columns)
+                assertEquals(4, twelve.columns)
+            } else {
+                assertEquals(3, seven.columns)
+                assertEquals(3, twelve.columns)
+            }
+        }
+        assertEquals(90L, FolderPanelMetrics.SCROLL_CUE_FADE_MS)
+    }
 }

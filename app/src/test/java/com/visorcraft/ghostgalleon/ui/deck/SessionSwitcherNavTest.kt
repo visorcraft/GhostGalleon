@@ -157,4 +157,28 @@ class SessionSwitcherNavTest {
         assertEquals(listOf(7, 0), SessionSwitcherNav.dirtyRowIndices(7, 0, count = 8))
         assertEquals(emptyList<Int>(), SessionSwitcherNav.dirtyRowIndices(2, 2, count = 8))
     }
+
+    @Test
+    fun `remove button enforces 44dp touch floor, focus elevation lifts, and live dot meets WCAG AA`() {
+        assertTrue(SessionSwitcherNav.REMOVE_MIN_TOUCH_DP >= 44)
+        assertEquals(4f, SessionSwitcherNav.focusElevationDp(selected = true), 0.001f)
+        assertEquals(0f, SessionSwitcherNav.focusElevationDp(selected = false), 0.001f)
+        assertEquals(6, SessionSwitcherNav.LIVE_DOT_SIZE_DP)
+
+        val customAccents = listOf(
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+            0xFFFFEE00.toInt(),
+            0xFF101840.toInt(),
+            0xFF00FF88.toInt(),
+        )
+        for (accent in ThemePack.BUILTINS.map { it.accentColor } + customAccents) {
+            val dot = SessionSwitcherNav.activeDotColor(accent)
+            val ratio = ThemePack.contrastRatio(dot, accent)
+            assertTrue(
+                "Live Now-Playing dot contrast too low ($ratio) for accent=${Integer.toHexString(accent)}",
+                ratio >= ThemePack.MIN_TEXT_CONTRAST,
+            )
+        }
+    }
 }

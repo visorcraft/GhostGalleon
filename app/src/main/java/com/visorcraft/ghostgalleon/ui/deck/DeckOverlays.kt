@@ -23,10 +23,17 @@ object DeckOverlays {
         )
     }
 
-    fun detach(root: FrameLayout?, child: View?) {
-        child?.let {
-            OverlayPrimitives.cancelAnimations(it)
-            root?.removeView(it)
+    fun detach(root: FrameLayout?, child: View?, animate: Boolean = true) {
+        child?.let { target ->
+            if (!animate || root == null) {
+                OverlayPrimitives.cancelAnimations(target)
+                root?.removeView(target)
+            } else {
+                OverlayPrimitives.animateModalExit(backdrop = target) {
+                    OverlayPrimitives.cancelAnimations(target)
+                    root.removeView(target)
+                }
+            }
         }
     }
 

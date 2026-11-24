@@ -202,12 +202,13 @@ class TrackARegressionMatrixTest {
                 }
             }
 
-            for (members in listOf(0, 1, 5, 7, 16)) {
+            for (members in listOf(0, 1, 2, 5, 7, 16)) {
                 val folder = FolderPanelMetrics.compute(vp.widthPx, vp.heightPx, vp.density, members)
                 assertTrue(folder.cardWidthPx <= vp.widthPx)
                 assertTrue(folder.maxScrollHeightPx <= vp.heightPx)
                 assertTrue(folder.thumbSizePx >= 1)
-                assertTrue(folder.columns in 3..4)
+                val expectedCols = if (members in 1..2) members..members else 3..4
+                assertTrue(folder.columns in expectedCols)
             }
         }
     }

@@ -57,6 +57,12 @@ object OverlayPrimitives {
     /** Crisp modal entrance duration in milliseconds. */
     const val ENTER_DURATION_MS: Long = 120L
 
+    /** Subtle scale-out target scale for modal cards (1.0 -> 0.97). */
+    const val EXIT_END_SCALE: Float = 0.97f
+
+    /** Crisp modal exit duration in milliseconds. */
+    const val EXIT_DURATION_MS: Long = 85L
+
     /** Standard duration for modal row/tile focus lift animations. */
     const val FOCUS_ANIM_MS: Long = 90L
 
@@ -102,6 +108,8 @@ object OverlayPrimitives {
         TileBackgrounds.BoundedTemplateCache<ModalCardBgKey, LayerDrawable>(
             TileBackgrounds.CARD_CACHE_MAX_ENTRIES,
         )
+
+    private val exitingModals = java.util.WeakHashMap<View, Boolean>()
 
     /** Single gamepad keycap cue item rendered in [modalKeycapFooter]. */
     data class FooterCue(
@@ -685,6 +693,28 @@ object OverlayPrimitives {
     }
 
     /**
+     * Pure check for whether exit choreography should animate (`85ms` fade + scale-out)
+     * or detach immediately (e.g. when OS animators are disabled). Host-tested.
+     */
+    fun shouldAnimateExit(
+        animatorsEnabled: Boolean,
+        skipAnimation: Boolean = false,
+    ): Boolean = animatorsEnabled && !skipAnimation
+
+    /**
+     * Pure interpolated card scale for normalized exit progress `[0, 1]`
+     * (`1.0 -> EXIT_END_SCALE`). Host-tested.
+     */
+    fun exitScale(
+        progress: Float,
+        endScale: Float = EXIT_END_SCALE,
+    ): Float {
+        val p = progress.coerceIn(0f, 1f)
+        val clampedEnd = endScale.coerceIn(0.5f, 1f)
+        return 1f - (1f - clampedEnd) * p
+    }
+
+    /**
      * Pure responsive modal card width in pixels. Caps width to [maxDp] while
      * respecting [widthFrac] of the screen and keeping at least [minMarginDp]
      * breathing room on each horizontal edge. Host-tested.
@@ -860,11 +890,57 @@ object OverlayPrimitives {
     }
 
     /**
-     * Cancel running entrance/focus animations on [view] and its direct modal
+     * Play a re-entrancy-guarded crisp exit animation (`85ms` fade + `1.0 -> 0.97`
+     * card scale) before invoking [onEnd]. Executes [onEnd] immediately when OS
+     * animators are disabled, [skipAnimation] is true, or [backdrop] is detached.
+     */
+    fun animateModalExit(
+        backdrop: View,
+        card: View? = null,
+        skipAnimation: Boolean = false,
+        onEnd: () -> Unit,
+    ) {
+        if (exitingModals.containsKey(backdrop)) return
+        val resolvedCard = card ?: (backdrop as? ViewGroup)?.let(::findModalCard)
+        backdrop.animate().cancel()
+        resolvedCard?.animate()?.cancel()
+        if (!shouldAnimateExit(ValueAnimator.areAnimatorsEnabled(), skipAnimation) ||
+            !backdrop.isAttachedToWindow
+        ) {
+            onEnd()
+            return
+        }
+        exitingModals[backdrop] = true
+        backdrop.isClickable = false
+        var finished = false
+        fun finishOnce() {
+            if (finished) return
+            finished = true
+            exitingModals.remove(backdrop)
+            onEnd()
+        }
+        resolvedCard?.animate()
+            ?.alpha(0f)
+            ?.scaleX(EXIT_END_SCALE)
+            ?.scaleY(EXIT_END_SCALE)
+            ?.setDuration(EXIT_DURATION_MS)
+            ?.setInterpolator(ENTER_INTERPOLATOR)
+            ?.start()
+        backdrop.animate()
+            .alpha(0f)
+            .setDuration(EXIT_DURATION_MS)
+            .setInterpolator(ENTER_INTERPOLATOR)
+            .withEndAction { finishOnce() }
+            .start()
+    }
+
+    /**
+     * Cancel running entrance/exit/focus animations on [view] and its direct modal
      * card child before detachment so rapid open/close never leaves ghosts.
      */
     fun cancelAnimations(view: View?) {
         view ?: return
+        exitingModals.remove(view)
         view.animate().cancel()
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
