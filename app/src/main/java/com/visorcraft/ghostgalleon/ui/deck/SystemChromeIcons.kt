@@ -10,10 +10,11 @@ import androidx.appcompat.app.AppCompatActivity
 import com.visorcraft.ghostgalleon.GhostGalleonApp
 import com.visorcraft.ghostgalleon.R
 import com.visorcraft.ghostgalleon.display.DisplayTopology
+import com.visorcraft.ghostgalleon.display.LayoutMetricsResolver
 import com.visorcraft.ghostgalleon.display.SurfaceMode
 import com.visorcraft.ghostgalleon.display.currentDisplayId
+import com.visorcraft.ghostgalleon.settings.DockSlots
 import com.visorcraft.ghostgalleon.state.DeckState
-import com.visorcraft.ghostgalleon.ui.dp
 import com.visorcraft.ghostgalleon.ui.settings.SettingsActivity
 
 /** Swap + Settings on the larger DUAL panel; SINGLE shows Settings only. */
@@ -34,23 +35,35 @@ internal fun attachSystemChromeOverlay(
     activity: AppCompatActivity,
     state: DeckState,
 ) {
-    val size = context.dp(40)
-    val edge = context.dp(DockBarMetrics.EDGE_MARGIN_DP)
-    // Vertically aligned with the floating dock pill's centerline.
-    val bottom = context.dp(14)
+    val app = activity.application as? GhostGalleonApp
+    val dm = context.resources.displayMetrics
+    val topoMode = app?.displayConfig?.mode ?: SurfaceMode.SINGLE
+    val layout = LayoutMetricsResolver.fromWindow(
+        windowWidthPx = dm.widthPixels,
+        windowHeightPx = dm.heightPixels,
+        densityDpi = dm.densityDpi,
+        topologyMode = topoMode,
+        isCompanionRole = false,
+    )
+    val visibleSlots = app?.settings?.dockSlots?.let(DockSlots::visibleCount)
+        ?: DockSlots.MIN_VISIBLE
+    val chrome = SystemChromeMetrics.computeForWindow(
+        windowWidthPx = dm.widthPixels,
+        density = dm.density,
+        suggestedSlotDp = layout.suggestedDockSlotDp,
+        visibleSlots = visibleSlots,
+    )
 
     // Swap is a dual-display action; on SINGLE it can only ever toast
     // "only one display" — hide it there instead of teasing a dead button.
-    val singleDisplay = (activity.application as? GhostGalleonApp)
-        ?.displayConfig?.mode == SurfaceMode.SINGLE
+    val singleDisplay = topoMode == SurfaceMode.SINGLE
     if (!singleDisplay) {
         val swap = iconButton(
             context,
             R.drawable.ic_swap,
             context.getString(R.string.action_swap_screens),
         ) {
-            val appCtx = activity.application as? GhostGalleonApp
-            if (appCtx != null && !appCtx.swapInteractiveDisplay()) {
+            if (app != null && !app.swapInteractiveDisplay()) {
                 Toast.makeText(
                     context,
                     context.getString(R.string.deck_only_one_display),
@@ -60,9 +73,9 @@ internal fun attachSystemChromeOverlay(
         }
         root.addView(
             swap,
-            FrameLayout.LayoutParams(size, size).apply {
+            FrameLayout.LayoutParams(chrome.buttonSizePx, chrome.buttonSizePx).apply {
                 gravity = Gravity.BOTTOM or Gravity.START
-                setMargins(edge, 0, 0, bottom)
+                setMargins(chrome.edgeMarginPx, 0, 0, chrome.bottomMarginPx)
             },
         )
     }
@@ -80,9 +93,9 @@ internal fun attachSystemChromeOverlay(
     }
     root.addView(
         settingsBtn,
-        FrameLayout.LayoutParams(size, size).apply {
+        FrameLayout.LayoutParams(chrome.buttonSizePx, chrome.buttonSizePx).apply {
             gravity = Gravity.BOTTOM or Gravity.END
-            setMargins(0, 0, edge, bottom)
+            setMargins(0, 0, chrome.edgeMarginPx, chrome.bottomMarginPx)
         },
     )
 }
